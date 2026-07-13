@@ -1,0 +1,292 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-normal); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+}
+
+@layer components {
+  /* Premium Soft UI container card */
+  .glass {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 0 3px rgba(0,0,0,0.02);
+  }
+
+  /* Lighter glass/card for nested elements */
+  .glass-light {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+  }
+
+  /* Premium primary action button */
+  .btn-primary {
+    background: var(--accent);
+    @apply text-white font-medium shadow-sm hover:shadow-md
+           transition-all duration-300 hover:-translate-y-0.5
+           active:scale-95 rounded-full text-sm py-2.5 px-6;
+  }
+
+  /* Secondary / outline button */
+  .btn-secondary {
+    @apply bg-transparent hover:bg-[var(--bg-muted)] text-[var(--text-primary)] font-medium
+           border border-[var(--border-normal)] transition-all duration-300 active:scale-95 rounded-full text-sm py-2.5 px-6;
+  }
+
+  /* Form input - Soft UI */
+  .form-input {
+    @apply w-full bg-[var(--input-bg)] border border-[var(--input-border)]
+           text-[var(--text-primary)] placeholder-[var(--text-muted)]
+           rounded-xl px-4 py-3 text-sm
+           focus:outline-none focus:ring-2 focus:ring-[var(--accent-glow)] focus:border-[var(--accent)]
+           transition-all duration-300;
+  }
+
+  /* Form label */
+  .form-label {
+    @apply block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider;
+  }
+
+  /* Form error */
+  .form-error {
+    @apply text-red-500 text-xs mt-1 font-medium;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border;
+  }
+  .badge-green  { @apply badge bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800/30; }
+  .badge-red    { @apply badge bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800/30; }
+  .badge-amber  { @apply badge bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/30; }
+  .badge-indigo { @apply badge bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/30; }
+  .badge-slate  { @apply badge bg-gray-50 dark:bg-slate-700/30 text-gray-600 dark:text-slate-400 border-gray-200 dark:border-slate-600/30; }
+}
+
+@layer utilities {
+  /* Smooth fade-in for page transitions */
+  .animate-fadeIn {
+    animation: fadeIn 0.25s ease-out forwards;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-slideInRight {
+    animation: slideInRight 0.2s ease-out forwards;
+  }
+  @keyframes slideInRight {
+    from { opacity: 0; transform: translateX(8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Scrollable table container — adapts to screen height */
+  .table-scroll {
+    max-height: max(400px, calc(100vh - 260px));
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+    border-radius: 0.75rem;
+  }
+  .table-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .table-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .table-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-normal);
+    border-radius: 9999px;
+  }
+  .table-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+  }
+  .table-scroll thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .table-scroll thead tr {
+    background: var(--table-head-bg);
+    box-shadow: 0 1px 0 var(--border-subtle);
+  }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--border-normal);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+  }
+}
+
+/* ────────────────────────────────────────────
+   SISTEMA DE TEMAS — Teal + Violet Accent
+   ──────────────────────────────────────────── */
+
+/* Tema Claro (Light) - Clean Enterprise */
+:root, [data-theme="light"] {
+  --bg-base:       #F8FAFC;
+  --bg-surface:    #FFFFFF;
+  --bg-elevated:   #F1F5F9;
+  --bg-muted:      #E2E8F0;
+  --bg-card:       #FFFFFF;
+  --border-subtle: #F1F5F9;
+  --border-normal: #E2E8F0;
+  --text-primary:  #0F172A;
+  --text-secondary:#334155;
+  --text-muted:    #64748B;
+  --glass-bg:      #FFFFFF;
+  --glass-light:   #F8FAFC;
+  --scrollbar:     #CBD5E1;
+  --input-bg:      #FFFFFF;
+  --input-border:  #E2E8F0;
+  --sidebar-bg:    #FFFFFF;
+  --header-bg:     rgba(255,255,255,0.95);
+  --table-head-bg: #F8FAFC;
+  --accent:        #0369A1;
+  --accent-hover:  #0284C7;
+  --accent-soft:   rgba(3,105,161,0.1);
+  --accent-glow:   rgba(3,105,161,0.2);
+  --accent-gradient: linear-gradient(135deg, #0369A1, #0EA5E9);
+}
+
+/* Tema Oscuro (Dark) - Deep Professional Navy */
+[data-theme="dark"] {
+  --bg-base:       #020617;
+  --bg-surface:    #0F172A;
+  --bg-elevated:   #1E293B;
+  --bg-muted:      #334155;
+  --bg-card:       #0F172A;
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-normal: rgba(255,255,255,0.12);
+  --text-primary:  #F8FAFC;
+  --text-secondary:#CBD5E1;
+  --text-muted:    #94A3B8;
+  --glass-bg:      #0F172A;
+  --glass-light:   #1E293B;
+  --scrollbar:     #334155;
+  --input-bg:      #020617;
+  --input-border:  #334155;
+  --sidebar-bg:    #020617;
+  --header-bg:     rgba(2,6,23,0.95);
+  --table-head-bg: #1E293B;
+  --accent:        #38BDF8;
+  --accent-hover:  #0EA5E9;
+  --accent-soft:   rgba(56,189,248,0.15);
+  --accent-glow:   rgba(56,189,248,0.3);
+  --accent-gradient: linear-gradient(135deg, #38BDF8, #818CF8);
+}
+
+/* Tema Cómodo (Comfortable) - Soft Indigo / Eye-Care */
+[data-theme="comfortable"] {
+  --bg-base:       #111827;
+  --bg-surface:    #1F2937;
+  --bg-elevated:   #374151;
+  --bg-muted:      #4B5563;
+  --bg-card:       #1F2937;
+  --border-subtle: rgba(255,255,255,0.08);
+  --border-normal: rgba(255,255,255,0.15);
+  --text-primary:  #F9FAFB;
+  --text-secondary:#D1D5DB;
+  --text-muted:    #9CA3AF;
+  --glass-bg:      #1F2937;
+  --glass-light:   #374151;
+  --scrollbar:     #4B5563;
+  --input-bg:      #111827;
+  --input-border:  #4B5563;
+  --sidebar-bg:    #111827;
+  --header-bg:     rgba(17,24,39,0.95);
+  --table-head-bg: #374151;
+  --accent:        #818CF8;
+  --accent-hover:  #6366F1;
+  --accent-soft:   rgba(129,140,248,0.15);
+  --accent-glow:   rgba(129,140,248,0.3);
+  --accent-gradient: linear-gradient(135deg, #818CF8, #A78BFA);
+}
+
+/* Aplicar variables al body de forma suave */
+[data-theme] body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+[data-density="compact"] .table-scroll { max-height: max(450px, calc(100vh - 220px)); }
+[data-density="compact"] .table-scroll td,
+[data-density="compact"] .table-scroll th { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+[data-density="spacious"] .table-scroll { max-height: max(350px, calc(100vh - 300px)); }
+[data-density="spacious"] .table-scroll td,
+[data-density="spacious"] .table-scroll th { padding-top: 0.875rem; padding-bottom: 0.875rem; }
+
+/* Capacidad RYS — tabla compacta con scroll interno dinámico */
+.capacidad-rys-table {
+  max-height: max(400px, calc(100vh - 260px));
+  min-height: 280px;
+}
+[data-density="compact"] .capacidad-rys-table { max-height: max(450px, calc(100vh - 220px)); }
+[data-density="spacious"] .capacidad-rys-table { max-height: max(350px, calc(100vh - 300px)); }
+
+/* Glass según tema */
+[data-theme] .glass {
+  background: var(--glass-bg) !important;
+  border-color: var(--border-subtle) !important;
+  box-shadow: 0 1px 3px 0 rgba(0,0,0,0.05), 0 1px 2px 0 rgba(0,0,0,0.06);
+}
+[data-theme] .glass-light {
+  background: var(--glass-light) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+/* Custom scrollbar for horizontal filters */
+.select-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.select-scrollbar::-webkit-scrollbar {
+  height: 5px;
+}
+.select-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.select-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-normal);
+  border-radius: 99px;
+}
+.select-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
