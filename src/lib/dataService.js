@@ -35,6 +35,39 @@ const isSupabaseConfigured = () => {
 export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 
 // ─────────────────────────────────────────────
+// CACHE LAYER
+// ─────────────────────────────────────────────
+const apiCache = new Map();
+
+async function withCache(key, ttlMs = 300000, fetcher) {
+  if (DB_MODE !== 'supabase') return fetcher();
+  
+  const now = Date.now();
+  const cached = apiCache.get(key);
+  if (cached && (now - cached.timestamp < ttlMs)) {
+    return cached.data;
+  }
+  
+  const data = await fetcher();
+  if (data !== null && data !== undefined) {
+    apiCache.set(key, { data, timestamp: now });
+  }
+  return data;
+}
+
+export function invalidateCache(keyPrefix) {
+  if (!keyPrefix) {
+    apiCache.clear();
+    return;
+  }
+  for (const key of apiCache.keys()) {
+    if (key.startsWith(keyPrefix)) {
+      apiCache.delete(key);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
 // AUTH & PERFIL
 // ─────────────────────────────────────────────
 
@@ -130,17 +163,20 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 // ─────────────────────────────────────────────
 // ROLES DINÁMICOS
 // ─────────────────────────────────────────────
-export async function fetchAppRoles() {
-  if (DB_MODE !== 'supabase') return []
-  const { data, error } = await supabase.from('config_roles').select('*').order('created_at', { ascending: true })
-  if (error) throw error
-  return data
+export function fetchAppRoles() {
+  return withCache('config_roles', 600000, async () => {
+    if (DB_MODE !== 'supabase') return []
+    const { data, error } = await supabase.from('config_roles').select('id, nombre, id_name, created_at, nivel_acceso, modulos_permitidos').order('created_at', { ascending: true })
+    if (error) throw error
+    return data
+  });
 }
 
 export async function createAppRole(roleData) {
   if (DB_MODE !== 'supabase') return null
   const { data, error } = await supabase.from('config_roles').insert([roleData]).select().single()
   if (error) throw error
+  invalidateCache('config_roles')
   return data
 }
 
@@ -193,7 +229,7 @@ async function fetchAllConsolidado() {
   const step = 1000;
   let hasMore = true;
   while(hasMore) {
-    const { data, error } = await supabase.from('consolidado_asistencias').select('*').order('created_at', { ascending: true }).range(from, from + step - 1);
+    const { data, error } = await supabase.from('consolidado_asistencias').select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla').order('created_at', { ascending: true }).range(from, from + step - 1);
     if(error) throw error;
     if(data && data.length > 0) {
       allData = allData.concat(data);
@@ -1634,20 +1670,23 @@ export async function upsertEvaluaciones(records) {
 // ─────────────────────────────────────────────
 // MOTIVOS DE BAJA
 // ─────────────────────────────────────────────
-export async function fetchMotivosBaja() {
-  if (DB_MODE === 'supabase') {
-    const { data, error } = await supabase.from('motivos_baja').select('*')
-    if (error) throw error
-    return data || []
-  }
-  initLocalStorageDb()
-  return getFromStorage('motivos_baja') || []
+export function fetchMotivosBaja() {
+  return withCache('motivos_baja', 600000, async () => {
+    if (DB_MODE === 'supabase') {
+      const { data, error } = await supabase.from('motivos_baja').select('motivo')
+      if (error) throw error
+      return data || []
+    }
+    initLocalStorageDb()
+    return getFromStorage('motivos_baja') || []
+  });
 }
 
 export async function insertMotivoBaja(payload) {
   if (DB_MODE === 'supabase') {
     const { data, error } = await supabase.from('motivos_baja').insert([payload]).select().single()
     if (error) throw error
+    invalidateCache('motivos_baja')
     return data
   }
   const list = getFromStorage('motivos_baja') || []
@@ -1660,6 +1699,7 @@ export async function updateMotivoBaja(motivoId, payload) {
   if (DB_MODE === 'supabase') {
     const { data, error } = await supabase.from('motivos_baja').update(payload).eq('motivo', motivoId).select().single()
     if (error) throw error
+    invalidateCache('motivos_baja')
     return data
   }
   const list = getFromStorage('motivos_baja') || []
@@ -1676,6 +1716,7 @@ export async function deleteMotivoBaja(motivoId) {
   if (DB_MODE === 'supabase') {
     const { error } = await supabase.from('motivos_baja').delete().eq('motivo', motivoId)
     if (error) throw error
+    invalidateCache('motivos_baja')
     return true
   }
   const list = getFromStorage('motivos_baja') || []
@@ -2585,21 +2626,23 @@ export async function deleteDashboardLink(id) {
 // EQUIPO DE RECLUTAMIENTO
 // ==========================================
 
-export async function getEquipoReclutamiento() {
-  if (DB_MODE === 'supabase') {
-    const { data, error } = await supabase
-      .from('equipo_reclutamiento')
-      .select('*')
-      .order('nombres_completos');
-      
-    if (error) {
-      console.error("Error fetching equipo_reclutamiento:", error);
-      return [];
+export function getEquipoReclutamiento() {
+  return withCache('equipo_reclutamiento', 300000, async () => {
+    if (DB_MODE === 'supabase') {
+      const { data, error } = await supabase
+        .from('equipo_reclutamiento')
+        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, alix, base, meta_diaria, rch')
+        .order('nombres_completos');
+        
+      if (error) {
+        console.error("Error fetching equipo_reclutamiento:", error);
+        return [];
+      }
+      return data || [];
     }
-    return data || [];
-  }
-  
-  return [];
+    
+    return [];
+  });
 }
 
 export async function updateEquipoReclutamiento(documento, payload) {
@@ -2614,6 +2657,7 @@ export async function updateEquipoReclutamiento(documento, payload) {
       console.error("Error updating equipo_reclutamiento:", error);
       throw error;
     }
+    invalidateCache('equipo_reclutamiento');
     return data;
   }
   return null;
@@ -2630,6 +2674,7 @@ export async function addEquipoReclutamiento(payload) {
       console.error("Error adding equipo_reclutamiento:", error);
       throw error;
     }
+    invalidateCache('equipo_reclutamiento');
     return data;
   }
   return null;
@@ -2639,26 +2684,28 @@ export async function addEquipoReclutamiento(payload) {
 // EQUIPO DE FORMACION
 // ==========================================
 
-export async function getEquipoFormacion() {
-  if (DB_MODE === 'supabase') {
-    const { data, error } = await supabase
-      .from('equipo_formacion')
-      .select('*')
-      .order('nombres_completos');
-      
-    if (error) {
-      console.error("Error fetching equipo_formacion:", error);
-      return [];
+export function getEquipoFormacion() {
+  return withCache('equipo_formacion', 300000, async () => {
+    if (DB_MODE === 'supabase') {
+      const { data, error } = await supabase
+        .from('equipo_formacion')
+        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, usuario_alix')
+        .order('nombres_completos');
+        
+      if (error) {
+        console.error("Error fetching equipo_formacion:", error);
+        return [];
+      }
+      return (data || []).map(f => ({
+        ...f,
+        nombres_completos: (f.nombres_completos || '').trim().toUpperCase(),
+        cargo_funcional: (f.cargo_funcional || '').trim().toUpperCase(),
+        estado: (f.estado || '').trim().toUpperCase()
+      }));
     }
-    return (data || []).map(f => ({
-      ...f,
-      nombres_completos: (f.nombres_completos || '').trim().toUpperCase(),
-      cargo_funcional: (f.cargo_funcional || '').trim().toUpperCase(),
-      estado: (f.estado || '').trim().toUpperCase()
-    }));
-  }
-  
-  return [];
+    
+    return [];
+  });
 }
 
 export async function updateEquipoFormacion(documento, payload) {
@@ -2678,6 +2725,7 @@ export async function updateEquipoFormacion(documento, payload) {
       console.error("Error updating equipo_formacion:", error);
       throw error;
     }
+    invalidateCache('equipo_formacion');
     return data;
   }
   return null;
@@ -2699,6 +2747,7 @@ export async function addEquipoFormacion(payload) {
       console.error("Error adding equipo_formacion:", error);
       throw error;
     }
+    invalidateCache('equipo_formacion');
     return data;
   }
   return null;
