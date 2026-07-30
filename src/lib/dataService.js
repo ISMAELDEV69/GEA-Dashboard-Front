@@ -230,7 +230,7 @@ async function fetchAllConsolidado() {
   const step = 1000;
   let hasMore = true;
   while(hasMore) {
-    const { data, error } = await supabase.from('consolidado_asistencias').select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla').order('created_at', { ascending: true }).range(from, from + step - 1);
+    const { data, error } = await supabase.from('consolidado_asistencias').select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, observacion_estado, condicion_laboral, tipo_reclutado').order('created_at', { ascending: true }).range(from, from + step - 1);
     if(error) throw error;
     if(data && data.length > 0) {
       allData = allData.concat(data);
