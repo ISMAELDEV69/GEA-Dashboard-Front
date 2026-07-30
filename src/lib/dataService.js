@@ -996,8 +996,16 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
     return results
   }
 
-  // 2. Borrar todos los registros actuales
+  // 2. Rescatar datos manuales antes de borrar
   try {
+    const { data: existingData } = await supabase.from('capacidad_rys').select('codigo, campana, formador_documento')
+    const existingMap = new Map()
+    if (existingData) {
+      for (const g of existingData) {
+        existingMap.set(g.campana + '_' + g.codigo, g.formador_documento)
+      }
+    }
+
     const { error: errDel } = await supabase.from('capacidad_rys').delete().neq('codigo', 'xxxx_impossible_xxxx')
     if (errDel) throw errDel
 
@@ -1031,6 +1039,7 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
         area_traslado: p.area_traslado || null,
         segmento: p.segmento ? String(p.segmento).trim() : inferSegmento(campana),
         estado: p.estado || 'PLANIFICADO',
+        formador_documento: existingMap.get(campana + '_' + codigo) || null,
       }
     })
 
