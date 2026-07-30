@@ -166,7 +166,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 export function fetchAppRoles() {
   return withCache('config_roles', 600000, async () => {
     if (DB_MODE !== 'supabase') return []
-    const { data, error } = await supabase.from('config_roles').select('id, nombre, id_name, created_at, nivel_acceso, modulos_permitidos').order('created_at', { ascending: true })
+    const { data, error } = await supabase.from('config_roles').select('*').order('created_at', { ascending: true })
     if (error) throw error
     return data
   });
