@@ -295,6 +295,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                           <option value="">-- Sin Formador --</option>
                           {formadoresActivos
                             .filter(f => {
+                              if (f.documento === g.formador_documento) return true;
                               if (!g.segmento) return true;
                               if (!f.segmento) return false;
                               return f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
