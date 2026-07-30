@@ -1077,7 +1077,7 @@ const CAPACIDAD_RYS_GID = '0'
 
 export async function syncCapacidadRysFromDrive({ onProgress } = {}) {
   // Import statically via top-level (already imported in this module's consumers)
-  const { parseCapacidadRysCsv } = await import(/* @vite-ignore */ './capacidadRysSchema.js')
+  const { parseCapacidadRysCsv } = await import('./capacidadRysSchema.js')
 
   onProgress?.({ phase: 'download', message: 'Descargando hoja de Google Drive…' })
 
