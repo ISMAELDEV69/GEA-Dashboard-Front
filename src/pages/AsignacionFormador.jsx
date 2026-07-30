@@ -313,7 +313,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                             
                             return opciones.map(f => (
                               <option key={f.documento} value={f.documento}>
-                                {f.nombres_completos} {f.estado?.toUpperCase() !== 'ACTIVO' ? '(Inactivo)' : ''}
+                                {f.datos_completos || f.nombres_completos} {f.estado?.toUpperCase() !== 'ACTIVO' ? '(Inactivo)' : ''}
                               </option>
                             ));
                           })()}
