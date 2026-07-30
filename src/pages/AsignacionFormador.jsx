@@ -293,18 +293,30 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                           }}
                         >
                           <option value="">-- Sin Formador --</option>
-                          {formadoresActivos
-                            .filter(f => {
-                              if (f.documento === g.formador_documento) return true;
+                          {(() => {
+                            // Encontrar al formador asignado actualmente (incluso si está inactivo)
+                            const currentFormador = equipoFormacionData.find(
+                              f => String(f.documento).trim() === String(g.formador_documento).trim()
+                            );
+                            
+                            // Filtrar los activos por segmento
+                            let opciones = formadoresActivos.filter(f => {
                               if (!g.segmento) return true;
                               if (!f.segmento) return false;
                               return f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
-                            })
-                            .map(f => (
+                            });
+                            
+                            // Si hay un formador asignado y no está en las opciones filtradas, agregarlo
+                            if (currentFormador && !opciones.some(f => String(f.documento) === String(currentFormador.documento))) {
+                              opciones = [currentFormador, ...opciones];
+                            }
+                            
+                            return opciones.map(f => (
                               <option key={f.documento} value={f.documento}>
-                                {f.datos_completos || f.nombres_completos}
+                                {f.nombres_completos} {f.estado?.toUpperCase() !== 'ACTIVO' ? '(Inactivo)' : ''}
                               </option>
-                          ))}
+                            ));
+                          })()}
                         </select>
                         
                         {/* Status Icon */}
