@@ -11,6 +11,7 @@ import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
 import { parseCsvToMatrix, parseNominaRows } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
+import { parseCapacidadRysCsv } from './capacidadRysSchema.js'
 import {
   getFromStorage,
   saveToStorage,
@@ -1076,9 +1077,6 @@ const CAPACIDAD_RYS_SHEET_ID = '2PACX-1vR5cIgvA11b8Xczt-fwGREZ9XPWMXxPq5OTpNMXga
 const CAPACIDAD_RYS_GID = '0'
 
 export async function syncCapacidadRysFromDrive({ onProgress } = {}) {
-  // Import statically via top-level (already imported in this module's consumers)
-  const { parseCapacidadRysCsv } = await import('./capacidadRysSchema.js')
-
   onProgress?.({ phase: 'download', message: 'Descargando hoja de Google Drive…' })
 
   // Use the published Google Sheets CSV URL
