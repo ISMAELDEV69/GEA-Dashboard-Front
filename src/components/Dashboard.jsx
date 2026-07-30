@@ -27,3 +27,4 @@ export default function Dashboard({
       return <VisorDashboard {...props} />
   }
 }
+

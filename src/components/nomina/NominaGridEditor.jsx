@@ -2,6 +2,26 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { checkCalibracionDia1 } from '../../lib/dataService'
 import { Loader2, Save, AlertCircle, CheckCircle2 } from 'lucide-react'
+import ColumnFilter from '../ui/ColumnFilter'
+
+function getHeaderColor(key, isSelected = false) {
+  const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final'];
+  const group3 = ['validacion_reingreso', 'fecha_validacion', 'observacion_reingreso'];
+  
+  if (isSelected) {
+    return 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 shadow-inner';
+  }
+  
+  if (group2.includes(key)) {
+    return 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300';
+  }
+  
+  if (group3.includes(key)) {
+    return 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300';
+  }
+  
+  return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
+}
 
 // The editable columns for Phase B
 const EDITABLE_COLUMNS = [
@@ -42,7 +62,10 @@ const EDITABLE_COLUMNS = [
   { key: 'doc_ficha_datos', label: 'FICHA DATOS', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'doc_autorizacion', label: 'AUTORIZACIÓN', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'status_final', label: 'STATUS FINAL', width: 120, type: 'select', options: ['COMPLETO', 'PENDIENTE'] },
-  { key: 'observacion_final', label: 'OBS. FINAL', width: 200 }
+  { key: 'observacion_final', label: 'OBS. FINAL', width: 200 },
+  { key: 'validacion_reingreso', label: 'VALIDACIÓN DE REINGRESO', width: 160, type: 'select', options: ['REINGRESO', 'NO REINGRESO'] },
+  { key: 'fecha_validacion', label: 'FECHA DE VALIDACIÓN', width: 150, type: 'date' },
+  { key: 'observacion_reingreso', label: 'OBSERVACIÓN REINGRESO', width: 200 }
 ]
 
 export default function NominaGridEditor({ grupoCodigo, campana }) {
@@ -51,6 +74,32 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
   const [savingRow, setSavingRow] = useState(null)
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
+  const [filters, setFilters] = useState({})
+
+  const handleFilterChange = (key, value) => {
+    setFilters(prev => ({ ...prev, [key]: value }))
+  }
+
+  const filteredData = React.useMemo(() => {
+    return data.filter(row => {
+      for (const key in filters) {
+        const selections = filters[key];
+        if (!selections || selections.length === 0) continue;
+        
+        let rowVal = '';
+        if (key === 'candidato') {
+          rowVal = `${row.apellido_paterno || ''} ${row.nombres || ''} ${row.documento || ''}`.trim();
+        } else {
+          rowVal = String(row[key] || '').trim();
+        }
+        
+        if (!selections.includes(rowVal)) {
+          return false;
+        }
+      }
+      return true
+    })
+  }, [data, filters])
 
   useEffect(() => {
     if (grupoCodigo) loadData()
@@ -83,17 +132,17 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
     }
   }
 
-  const handleCellChange = async (docId, key, value) => {
+  const handleCellChange = async (rowId, key, value) => {
     // Optimistic update locally
-    setData(prev => prev.map(r => r.documento === docId ? { ...r, [key]: value } : r))
+    setData(prev => prev.map(r => r.id === rowId ? { ...r, [key]: value } : r))
     
     // Save to DB
-    setSavingRow(docId)
+    setSavingRow(rowId)
     try {
       const { error: err } = await supabase
         .from('nominas')
         .update({ [key]: value || null })
-        .eq('documento', docId)
+        .eq('id', rowId)
         
       if (err) throw err
       
@@ -110,26 +159,34 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
   }
 
   
-  const copyFirstRow = async () => {
-    if (data.length < 2 || !selectedColumn) return
-    const firstRow = data[0]
+  const handleBulkUpdate = async () => {
+    if (!selectedColumn || filteredData.length < 2) return
+    const firstRow = filteredData[0]
     const updates = []
     
-    // Copy only the selected column from the first row to the rest
-    const updatedData = data.map((row, index) => {
-      if (index === 0) return row
-      const newRow = { ...row }
-      newRow[selectedColumn] = firstRow[selectedColumn]
-      updates.push(newRow)
-      return newRow
+    const updatedData = data.map(row => {
+      // Find if this row is in the filtered view
+      const inFilter = filteredData.some(f => f.id === row.id)
+      if (inFilter && row.id !== firstRow.id) {
+        const newRow = { ...row }
+        newRow[selectedColumn] = firstRow[selectedColumn]
+        updates.push(newRow)
+        return newRow
+      }
+      return row
     })
     
     setData(updatedData)
     setSavingRow('ALL')
     
     try {
-      // Upsert all modified rows
-      const { error: err } = await supabase.from('nominas').upsert(updates, { onConflict: 'documento' })
+      // Usar update masivo por IDs para evitar políticas RLS de INSERT
+      const targetIds = filteredData.filter(f => f.id !== firstRow.id).map(f => f.id)
+      const { error: err } = await supabase
+        .from('nominas')
+        .update({ [selectedColumn]: firstRow[selectedColumn] || null })
+        .in('id', targetIds)
+        
       if (err) throw err
 
       if (selectedColumn === 'dia_1') {
@@ -192,7 +249,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
         </div>
           <div className="mt-2">
             <button 
-              onClick={copyFirstRow}
+              onClick={handleBulkUpdate}
               disabled={data.length < 2 || savingRow || !selectedColumn}
               className="text-xs px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-semibold rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 flex items-center gap-1"
             >
@@ -244,27 +301,49 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="p-2 font-semibold text-slate-600 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 shadow-sm">
-                  CANDIDATO (Solo Lectura)
+                <th className="p-2 font-semibold text-slate-600 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 shadow-sm align-middle">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>CANDIDATO (Solo Lectura)</span>
+                    <ColumnFilter 
+                      columnKey="candidato"
+                      label="Candidato"
+                      data={data}
+                      currentSelection={filters['candidato']}
+                      onApply={(selections) => handleFilterChange('candidato', selections)}
+                    />
+                  </div>
                 </th>
                 {EDITABLE_COLUMNS.map(col => (
                   <th 
                     key={col.key} 
-                    onClick={() => setSelectedColumn(col.key)}
-                    className={`p-2 font-semibold border-r border-slate-200 dark:border-slate-700 cursor-pointer transition-colors select-none hover:bg-indigo-50 dark:hover:bg-indigo-900/30 ${selectedColumn === col.key ? 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 shadow-inner' : 'text-slate-600 dark:text-slate-300'}`} 
+                    className={`p-2 font-semibold border-r border-slate-200 dark:border-slate-700 select-none align-middle ${getHeaderColor(col.key, selectedColumn === col.key)}`} 
                     style={{ minWidth: col.width }}
-                    title="Haz clic para seleccionar y replicar esta columna"
                   >
-                    {col.label}
+                    <div className="flex items-center justify-between gap-1">
+                      <div 
+                        className="cursor-pointer hover:text-indigo-500 transition-colors flex-1"
+                        onClick={() => setSelectedColumn(col.key)}
+                        title="Haz clic para seleccionar y replicar esta columna"
+                      >
+                        {col.label}
+                      </div>
+                      <ColumnFilter 
+                        columnKey={col.key}
+                        label={col.label}
+                        data={data}
+                        currentSelection={filters[col.key]}
+                        onApply={(selections) => handleFilterChange(col.key, selections)}
+                      />
+                    </div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {data.map(row => (
-                <tr key={row.documento} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              {filteredData.map(row => (
+                <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <td className="p-2 border-r border-slate-200 dark:border-slate-700 sticky left-0 bg-white dark:bg-slate-900 z-10 shadow-sm flex flex-col">
-                    <span className="font-semibold text-slate-700 dark:text-slate-200">{row.apellido_paterno} {row.nombres}</span>
+                    <span className="font-semibold text-slate-700 dark:text-slate-200 uppercase">{row.apellido_paterno} {row.nombres}</span>
                     <span className="text-[10px] text-slate-400">{row.documento}</span>
                   </td>
                   {EDITABLE_COLUMNS.map(col => {
@@ -281,12 +360,14 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
                     }
 
                     return (
-                      <td key={col.key} className={`p-0 border-r border-slate-100 dark:border-slate-800/50 ${bgColorClass.includes('bg-') ? bgColorClass.split(' ').find(c => c.startsWith('bg-')) : ''} ${bgColorClass.includes('dark:bg-') ? bgColorClass.split(' ').find(c => c.startsWith('dark:bg-')) : ''}`}>
+                      <td key={col.key} className={`p-0 border-r border-slate-100 dark:border-slate-800/50 ${['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final'].includes(col.key) ? 'bg-amber-50/50 dark:bg-amber-900/20' : ''} ${bgColorClass.includes('bg-') ? bgColorClass.split(' ').find(c => c.startsWith('bg-')) : ''} ${bgColorClass.includes('dark:bg-') ? bgColorClass.split(' ').find(c => c.startsWith('dark:bg-')) : ''}`}>
                         {col.type === 'select' ? (
                           <select
                             value={val}
-                            onChange={e => setData(prev => prev.map(r => r.documento === row.documento ? { ...r, [col.key]: e.target.value } : r))}
-                            onBlur={e => handleCellChange(row.documento, col.key, e.target.value)}
+                            onChange={e => setData(prev => prev.map(r => r.id === row.id ? { ...r, [col.key]: e.target.value } : r))}
+                            onBlur={e => handleCellChange(row.id, col.key, e.target.value)}
+                            onFocus={() => setSelectedColumn(col.key)}
+                            onKeyDown={e => e.key === 'Enter' && e.target.blur()}
                             className={`w-full h-full p-2 border-none focus:ring-2 focus:ring-inset focus:ring-blue-500 outline-none transition-colors ${bgColorClass.replace(/bg-[a-z0-9/-]+/, '').replace(/dark:bg-[a-z0-9/-]+/, '')} bg-transparent`}
                           >
                             <option value=""></option>
@@ -296,8 +377,10 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
                           <input
                             type={col.type || 'text'}
                             value={val}
-                            onChange={e => setData(prev => prev.map(r => r.documento === row.documento ? { ...r, [col.key]: e.target.value } : r))}
-                            onBlur={e => handleCellChange(row.documento, col.key, e.target.value)}
+                            onChange={e => setData(prev => prev.map(r => r.id === row.id ? { ...r, [col.key]: e.target.value } : r))}
+                            onBlur={e => handleCellChange(row.id, col.key, e.target.value)}
+                            onFocus={() => setSelectedColumn(col.key)}
+                            onKeyDown={e => e.key === 'Enter' && e.target.blur()}
                             className={`w-full h-full p-2 border-none focus:ring-2 focus:ring-inset focus:ring-blue-500 outline-none transition-colors ${bgColorClass.replace(/bg-[a-z0-9/-]+/, '').replace(/dark:bg-[a-z0-9/-]+/, '')} bg-transparent`}
                             placeholder="..."
                           />

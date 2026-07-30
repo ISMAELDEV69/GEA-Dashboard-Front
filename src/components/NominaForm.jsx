@@ -9,7 +9,7 @@ import {
   UploadCloud, FileSpreadsheet, RefreshCw, UserPlus, FileText, ClipboardPaste, Lock
 } from 'lucide-react'
 import { ensureReclutador, ensureSede, ensureCampana } from '../lib/dataService'
-import { findGrupoPlan, grupoToNominaDefaults } from '../lib/capacidadRysSync'
+import { findGrupoPlan, grupoToNominaDefaults, inferSegmento, SEGMENTOS_SIU } from '../lib/capacidadRysSync'
 import {
   NOMINA_FORM_GROUPS, STEP_LABELS, STEP_FIELDS, REQUIRED_NOMINA_FIELDS,
   parseNominaRows, applyNominaPayloadToForm, parseMoney,
@@ -57,16 +57,6 @@ function CatalogField({ label, name, value, onChange, onBlur, errors, options = 
       {errors?.[name] && <p className="form-error">{errors[name].message}</p>}
     </div>
   )
-}
-
-const SEGMENTOS_SIU = ['CLARO PERU', 'CLARO PERU RETENCIONES', 'CLARO CHILE', 'CLARO PERU OUT']
-
-function inferSegmento(campana) {
-  const c = (campana || '').toUpperCase()
-  if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
-  if (c.includes('CHILE') || c.includes('VTR')) return 'CLARO CHILE'
-  if (c.includes('OUT') || c.includes('UPGRADE')) return 'CLARO PERU OUT'
-  return 'CLARO PERU'
 }
 
 function suggestGrupoCodigo(periodo, semana, campana) {
@@ -291,22 +281,26 @@ export default function NominaForm({
   }, [grupos])
 
   const bulkSegmentos = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim())
-    return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
-  }, [grupos, bulkPeriodo])
+    return SEGMENTOS_SIU
+  }, [])
 
   const bulkCampanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim())
-    if (bulkSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(bulkSegmento).trim())
+    if (bulkSegmento) filtered = filtered.filter(g => {
+      const seg = g.segmento || inferSegmento(g.campana)
+      return String(seg).trim() === String(bulkSegmento).trim()
+    })
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
   }, [grupos, bulkPeriodo, bulkSegmento])
 
   const bulkGruposList = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo);
     if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim());
-    if (bulkSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(bulkSegmento).trim());
+    if (bulkSegmento) filtered = filtered.filter(g => {
+      const seg = g.segmento || inferSegmento(g.campana)
+      return String(seg).trim() === String(bulkSegmento).trim()
+    });
     if (bulkCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(bulkCampana).trim());
     
     // Remove duplicates
@@ -1440,19 +1434,40 @@ export default function NominaForm({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Campaña</label>
-                  <select value={bulkCampana} onChange={e => { setBulkCampana(e.target.value); setBulkGrupo('') }} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500">
+                  <select 
+                    value={bulkCampana} 
+                    onChange={e => { 
+                      const c = e.target.value;
+                      setBulkCampana(c); 
+                      setBulkGrupo('');
+                      const match = grupos.find(g => g.campana === c);
+                      if (match) setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(c));
+                    }} 
+                    className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
+                  >
                     <option value="" disabled>Seleccione Campaña</option>
                     {bulkCampanas.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Grupo (GPE)</label>
-                  <select value={bulkGrupo} onChange={e => setBulkGrupo(e.target.value)} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500">
-                    <option value="" disabled>Seleccione Grupo (GPE)</option>
+                  <select 
+                    value={bulkGrupo} 
+                    onChange={e => {
+                      const cod = e.target.value;
+                      setBulkGrupo(cod);
+                      const match = grupos.find(g => g.codigo === cod);
+                      if (match) {
+                        setBulkCampana(match.campana);
+                        setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(match.campana));
+                        setBulkPeriodo(match.periodo);
+                      }
+                    }} 
+                    className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
+                  >
+                    <option value="" disabled>Seleccione Grupo</option>
                     {bulkGruposList.map(g => (
-                      <option key={g.codigo} value={g.codigo}>
-                        {String(g.codigo).startsWith('PROY-') ? '—' : String(g.codigo).replace(/_\d+$/, '')}
-                      </option>
+                      <option key={g.codigo} value={g.codigo}>{g.codigo}</option>
                     ))}
                   </select>
                 </div>
@@ -1462,7 +1477,7 @@ export default function NominaForm({
                 <div className="mb-4 p-3 bg-blue-50/50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 rounded-xl text-blue-700 dark:text-blue-300 text-xs flex items-center space-x-2">
                   <User size={16} className="text-blue-500 flex-shrink-0" />
                   <span>
-                    El grupo seleccionado ya tiene <strong>{postulantes.filter(p => p.grupo_codigo === bulkGrupo).length}</strong> persona(s) inscrita(s). Al cargar el archivo, solo se agregarán las personas nuevas.
+                    El grupo seleccionado ya tiene <strong>{postulantes.filter(p => p.grupo_codigo === bulkGrupo && p.campana === bulkCampana).length}</strong> persona(s) inscrita(s). Al cargar el archivo, solo se agregarán las personas nuevas.
                   </span>
                 </div>
               )}

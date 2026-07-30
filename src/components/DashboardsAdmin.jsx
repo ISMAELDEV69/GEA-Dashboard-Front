@@ -1,19 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Plus, Trash2, Edit2, Save, X, Link, AlertTriangle } from 'lucide-react';
-import { fetchDashboardsLinks, saveDashboardLink, deleteDashboardLink } from '../lib/dataService';
+import { fetchDashboardsLinks, saveDashboardLink, deleteDashboardLink, fetchAppRoles } from '../lib/dataService';
 import PageLayout from './ui/PageLayout';
 import PageHeader from './ui/PageHeader';
 import Card from './ui/Card';
 
-const AVAILABLE_ROLES = [
-  { id: 'admin', label: 'Administrador' },
-  { id: 'formador', label: 'Formador' },
-  { id: 'reclutador', label: 'Reclutador' },
-  { id: 'visor', label: 'Visor' }
-];
-
 export default function DashboardsAdmin() {
   const [links, setLinks] = useState([]);
+  const [appRoles, setAppRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   
@@ -24,8 +18,12 @@ export default function DashboardsAdmin() {
   const loadLinks = async () => {
     setLoading(true);
     try {
-      const data = await fetchDashboardsLinks();
-      setLinks(data);
+      const [data, rolesData] = await Promise.all([
+        fetchDashboardsLinks(),
+        fetchAppRoles()
+      ]);
+      setLinks(data || []);
+      setAppRoles(rolesData || []);
     } catch (err) {
       console.error(err);
       setErrorMsg("Error al cargar los enlaces. Asegúrate de haber creado la tabla en Supabase.");
@@ -151,7 +149,7 @@ export default function DashboardsAdmin() {
               <div>
                 <label className="block text-sm font-semibold text-[var(--text-secondary)] mb-2">Permisos (Roles autorizados)</label>
                 <div className="flex flex-wrap gap-3">
-                  {AVAILABLE_ROLES.map(role => (
+                  {appRoles.map(role => (
                     <label key={role.id} className={`flex items-center gap-2 border px-3 py-2 rounded-xl cursor-pointer transition-colors ${
                       (currentLink.roles || []).includes(role.id) 
                         ? 'bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent)]' 
@@ -217,11 +215,14 @@ export default function DashboardsAdmin() {
                         <td className="p-4 font-bold text-[var(--text-primary)]">{link.nombre}</td>
                         <td className="p-4">
                           <div className="flex gap-1.5 flex-wrap">
-                            {(link.roles || []).map(r => (
-                              <span key={r} className="bg-[var(--accent-soft)] text-[var(--accent)] text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider shadow-sm border border-[var(--accent)]/20">
-                                {r}
-                              </span>
-                            ))}
+                            {(link.roles || []).map(r => {
+                              const rInfo = appRoles.find(ar => ar.id === r)
+                              return (
+                                <span key={r} className="bg-[var(--accent-soft)] text-[var(--accent)] text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider shadow-sm border border-[var(--accent)]/20">
+                                  {rInfo ? rInfo.label : r}
+                                </span>
+                              )
+                            })}
                           </div>
                         </td>
                         <td className="p-4 text-[var(--text-muted)] max-w-xs truncate" title={link.url}>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { AlertTriangle, Save, CheckCircle, Filter, Undo2, Calendar as CalendarIcon, Clock, Download, EyeOff, LayoutPanelLeft } from 'lucide-react'
+import { AlertTriangle, Save, CheckCircle, Filter, Undo2, Calendar as CalendarIcon, Clock, Download, EyeOff, LayoutPanelLeft, Copy } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { insertConsolidado, fetchGruposDia1 } from '../lib/dataService'
 import PageLayout from './ui/PageLayout'
@@ -214,7 +214,7 @@ export default function AsistenciaForm({
     // Buscar las fechas donde este grupo ya tiene asistencia, 
     // recordando que un grupo se compone de CAMPAÑA y GRUPO
     const groupDates = asistencias
-      .filter(a => a.grupo_codigo === activeGrupoObj.codigo || a.grupo_codigo === selectedGrupo)
+      .filter(a => (a.grupo_codigo === activeGrupoObj.codigo || a.grupo_codigo === selectedGrupo) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
       .map(a => a.fecha_asistencia)
       .sort();
 
@@ -238,16 +238,21 @@ export default function AsistenciaForm({
       setAttendanceList([])
       return
     }
-    const mappedDocs = new Set(asistencias.filter(a => 
-        a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)
-    ).map(a => a.postulante_documento))
+    const mappedDocs = new Set(asistencias.filter(a => {
+        const matchGrupo = a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo);
+        const matchCampana = !activeGrupoObj || a.campana === activeGrupoObj.campana;
+        return matchGrupo && matchCampana;
+    }).map(a => a.postulante_documento))
     // Lógica DÍA 0: Solo incluir a quienes asistieron al día 0 (dia_0 = 'ASISTIO')
     // o fueron agregados directamente al día 1 (status_dia_1 = 'AGREGADO')
     // Si dia_0 es null (datos sin valor), incluir todos para no perder registros
     const invalidList = []
     const filteredPostulantes = postulantes.filter(p => {
-      const inGroup = mappedDocs.has(p.documento) || p.grupo_codigo === selectedGrupo || p.grupo_codigo === selectedGrupo || (activeGrupoObj && p.grupo_codigo === activeGrupoObj.codigo)
-      if (!inGroup) return false
+      const isGrupoMatch = p.grupo_codigo === selectedGrupo || (activeGrupoObj && p.grupo_codigo === activeGrupoObj.codigo);
+      const isCampanaMatch = !activeGrupoObj || p.campana === activeGrupoObj.campana;
+      
+      const inGroup = (isGrupoMatch && isCampanaMatch) || mappedDocs.has(p.documento);
+      if (!inGroup) return false;
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
@@ -282,14 +287,28 @@ export default function AsistenciaForm({
     
     setMissingDataCandidates(invalidList)
 
-    const groupRecordsAll = asistencias.filter(a => a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo));
+    const groupRecordsAll = asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana));
     const firstDateOfGroup = groupRecordsAll.length > 0 ? groupRecordsAll.map(a => a.fecha_asistencia).sort()[0] : null;
     const isFirstRecordGroup = groupRecordsAll.length === 0 || fecha <= firstDateOfGroup;
 
-    const list = filteredPostulantes.map(p => {
+    const uniquePostulantes = [];
+    const seenDocs = new Set();
+    const sortedPostulantes = [...filteredPostulantes].sort((a, b) => {
+       const aMatch = (a.grupo_codigo === activeGrupoObj?.codigo || a.grupo_codigo === selectedGrupo) && a.campana === activeGrupoObj?.campana ? 1 : 0;
+       const bMatch = (b.grupo_codigo === activeGrupoObj?.codigo || b.grupo_codigo === selectedGrupo) && b.campana === activeGrupoObj?.campana ? 1 : 0;
+       return bMatch - aMatch;
+    });
+    for (const p of sortedPostulantes) {
+       if (!seenDocs.has(p.documento)) {
+           seenDocs.add(p.documento);
+           uniquePostulantes.push(p);
+       }
+    }
+
+    const list = uniquePostulantes.map(p => {
       // Eliminar el bloqueo "N/A" por created_at para permitir a los formadores hacer backfills de asistencias antiguas
       const isLateInclusion = false;
-      const existing = asistencias.find(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && a.fecha_asistencia === fecha)
+      const existing = asistencias.find(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia === fecha)
       const tipoReclutado = (p.status_dia_1 || '').toString().toUpperCase().trim() || 'APTO'
 
       let docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
@@ -304,7 +323,7 @@ export default function AsistenciaForm({
       } else if (!isLateInclusion) {
         // Buscar el último registro anterior
         const previousRecords = asistencias
-          .filter(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && a.fecha_asistencia < fecha)
+          .filter(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia < fecha)
           .sort((a, b) => (b.fecha_asistencia > a.fecha_asistencia ? 1 : -1));
         
         if (previousRecords.length > 0) {
@@ -418,7 +437,7 @@ export default function AsistenciaForm({
       const nowStr = new Date().toLocaleString('es-PE');
       
       const groupDates = [...new Set(asistencias
-        .filter(a => a.grupo_codigo === targetGroup)
+        .filter(a => (a.grupo_codigo === targetGroup) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
         .map(a => a.fecha_asistencia))]
         .sort();
       const pastDates = groupDates.filter(d => d < fecha);
@@ -452,7 +471,7 @@ export default function AsistenciaForm({
         // Auto-backfill (FI) para fechas anteriores si fue agregado tardíamente
         // Y Restauración de Bajas: Si hoy asiste (!== 'B'), cambiar Bajas pasadas a FI (INCLUSO BAJA DIA 1)
         pastDates.forEach(pastDate => {
-          const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (a.grupo_codigo === targetGroup || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && a.fecha_asistencia === pastDate);
+          const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (a.grupo_codigo === targetGroup || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia === pastDate);
           
           let shouldBackfillFI = false;
           
@@ -550,6 +569,45 @@ export default function AsistenciaForm({
     XLSX.writeFile(wb, `Asistencia_${activeGrupoObj?.codigo || selectedGrupo}_${fecha}.xlsx`)
   }
 
+  const handleCopySummary = async () => {
+    if (displayedList.length === 0) return alert('No hay datos para copiar.')
+    
+    const campana = activeGrupoObj?.campana || selectedCampana || 'SIN CAMPAÑA'
+    const docFormador = activeGrupoObj?.formador_documento || ''
+    const formador = formadores.find(f => f.documento === docFormador)?.nombre_completo || activeGrupoObj?.formador_nombre || 'SIN ASIGNAR'
+    const grupo = activeGrupoObj?.codigo || selectedGrupo || 'SIN GRUPO'
+    
+    const targetGroup = activeGrupoObj?.codigo || selectedGrupo;
+    const groupDates = [...new Set(asistencias
+      .filter(a => (a.grupo_codigo === targetGroup) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
+      .map(a => a.fecha_asistencia))]
+      .sort();
+      
+    // Determinar dia de capacitacion basandose en las fechas registradas hasta hoy
+    const allDatesUntilNow = new Set([...groupDates, fecha].filter(d => d <= fecha));
+    const diaCapacitacion = allDatesUntilNow.size;
+    
+    const total = attendanceList.length;
+    const bajas = attendanceList.filter(r => r.sigla === 'B').length;
+    const activos = total - bajas;
+    const faltas = attendanceList.filter(r => r.sigla === 'FI' || r.sigla === 'FJ').length;
+    
+    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapacitacion}\n📄 Q Día 0: ${total}\n👥 Q Día 1 (Activos al corte): ${activos}\n❌ Q Desertores (DIA 0): ${bajas}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
+
+    const asistentes = attendanceList.filter(r => r.sigla !== 'B');
+    if (asistentes.length > 0) {
+      text += `\n\n📋 LISTA DE ASISTENCIA (ACTIVOS):\n`;
+      text += asistentes.map((r, i) => `${i + 1}. ${r.documento} - ${r.apellido_paterno} ${r.apellido_materno} ${r.nombres}`).join('\n');
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Resumen copiado al portapapeles. Puede pegarlo en WhatsApp u otra aplicación.');
+    } catch (err) {
+      alert('Error al copiar el texto. Su navegador podría no tener los permisos necesarios.');
+    }
+  }
+
   
   // Helper for Calendar
   const renderCalendar = () => {
@@ -567,7 +625,7 @@ export default function AsistenciaForm({
      const calendarStart = new Date(start.getUTCFullYear(), start.getUTCMonth(), 1, 12, 0, 0);
      // Set of registered dates
      const registeredDates = new Set(
-       asistencias.filter(a => a.grupo_codigo === selectedGrupo || a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)).map(a => a.fecha_asistencia)
+       asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana)).map(a => a.fecha_asistencia)
      );
 
      const todayStr = new Date().toISOString().split('T')[0];
@@ -985,22 +1043,37 @@ export default function AsistenciaForm({
               {displayedList.length} postulantes encontrados
             </p>
           </div>
-          <button 
-            onClick={exportToExcel} 
-            disabled={displayedList.length === 0} 
-            className="flex flex-col items-center gap-1 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-30"
-            title="Exportar a Excel"
-          >
-            <svg viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" className="block h-8 w-8 overflow-visible">
-              <path fill="#1F7A3F" d="M33 7h14c1.3 0 2.4 1.1 2.4 2.4v37.2c0 1.3-1.1 2.4-2.4 2.4H33z"/>
-              <path fill="#2E9D55" d="M33 12h12v6H33zm0 8h12v6H33zm0 8h12v6H33zm0 8h12v6H33z"/>
-              <path fill="#185C37" d="M8.4 13.4 33 8.6v38.8L8.4 42.6c-.7-.1-1.2-.7-1.2-1.4V14.8c0-.7.5-1.3 1.2-1.4z"/>
-              <path fill="#FFFFFF" d="m16 20.3 3.8 6.3 4-6.3h4.6l-6.2 8.9 6.4 8.9h-4.8l-4.2-6.6-4.2 6.6h-4.5l6.4-8.9-6-8.9z"/>
-            </svg>
-            <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
-              Excel
-            </span>
-          </button>
+          <div className="flex items-center gap-6">
+            <button 
+              onClick={handleCopySummary} 
+              disabled={displayedList.length === 0} 
+              className="flex flex-col items-center gap-1 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-30"
+              title="Copiar Resumen WhatsApp"
+            >
+              <div className="w-8 h-8 rounded bg-[#25D366] flex items-center justify-center text-white shadow-sm">
+                <Copy size={16} />
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                Copiar
+              </span>
+            </button>
+            <button 
+              onClick={exportToExcel} 
+              disabled={displayedList.length === 0} 
+              className="flex flex-col items-center gap-1 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-30"
+              title="Exportar a Excel"
+            >
+              <svg viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" className="block h-8 w-8 overflow-visible">
+                <path fill="#1F7A3F" d="M33 7h14c1.3 0 2.4 1.1 2.4 2.4v37.2c0 1.3-1.1 2.4-2.4 2.4H33z"/>
+                <path fill="#2E9D55" d="M33 12h12v6H33zm0 8h12v6H33zm0 8h12v6H33zm0 8h12v6H33z"/>
+                <path fill="#185C37" d="M8.4 13.4 33 8.6v38.8L8.4 42.6c-.7-.1-1.2-.7-1.2-1.4V14.8c0-.7.5-1.3 1.2-1.4z"/>
+                <path fill="#FFFFFF" d="m16 20.3 3.8 6.3 4-6.3h4.6l-6.2 8.9 6.4 8.9h-4.8l-4.2-6.6-4.2 6.6h-4.5l6.4-8.9-6-8.9z"/>
+              </svg>
+              <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                Excel
+              </span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto table-scroll">

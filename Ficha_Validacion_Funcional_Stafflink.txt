@@ -1,0 +1,2059 @@
+FICHA DE VALIDACIÓN FUNCIONAL
+Solicitudes, convocatorias y seguimiento de candidatos
+Proyecto Stafflink
+
+Dato
+Información a completar
+Empresa o área que valida
+
+Responsable de la validación
+
+Cargo
+
+Fecha
+____ / ____ / ________
+Versión
+
+
+Finalidad: presentar los campos que actualmente tiene el sistema para que el cliente indique qué debe mantenerse, eliminarse, renombrarse, agregarse o modificarse, y cómo debe funcionar la herencia de información entre plantillas, solicitudes y convocatorias.
+
+1. OBJETIVO DEL DOCUMENTO
+Este documento presenta los módulos, campos y procesos que actualmente se encuentran considerados en el sistema.
+El cliente deberá revisar cada sección e indicar qué campos deben mantenerse, eliminarse, cambiar de nombre o agregarse; cuáles serán obligatorios u opcionales; qué datos se heredarán automáticamente y cuáles podrán modificarse en cada convocatoria.
+Los campos marcados con un asterisco (*) son obligatorios en la versión actual.
+
+2. Criterios de validación
+☐ Mantener
+☐ Eliminar
+☐ Cambiar nombre
+☐ Hacer obligatorio
+☐ Hacer opcional
+☐ Agregar validación
+☐ Completar automáticamente
+☐ Heredar desde otro módulo
+☐ Permitir modificación
+☐ No permitir modificación
+3. CAMPAÑAS
+Ruta actual: /campaigns
+Campo actual
+Condición actual
+Ejemplo o detalle
+Área
+Obligatorio
+Claro Perú, Claro Chile, Claro Perú Retenciones
+Nombre
+Obligatorio
+Nombre de la campaña
+Sede
+Obligatorio
+Ate, Comas, San Isidro
+Estado
+Sin indicación
+Activo / Inactivo
+
+3.1 Validación de campos
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Área
+☐
+☐
+☐
+☐
+☐
+Nombre
+☐
+☐
+☐
+☐
+☐
+Sede
+☐
+☐
+☐
+☐
+☐
+Estado
+☐
+☐
+☐
+☐
+☐
+
+3.2 Cambios y campos faltantes
+Campo actual
+Nuevo nombre solicitado
+Observación
+
+
+
+
+
+
+
+
+
+
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Ejemplo o detalle
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+¿Qué representa actualmente el campo “Área”?
+☐ Cliente
+☐ País
+☐ Servicio
+☐ Tipo de gestión
+☐ Campaña
+☐ Otro: ______________________________
+¿Una campaña puede estar relacionada con más de una sede?
+☐ Sí
+☐ No
+Observaciones del cliente:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+4. EMPRESAS CONTRATISTAS
+Ruta actual: /contractors
+Campo actual
+Condición actual
+Detalle
+Nombre
+Obligatorio
+Nombre de la empresa contratista
+Estado
+Sin indicación
+Activo / Inactivo
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Nombre
+☐
+☐
+☐
+☐
+☐
+Estado
+☐
+☐
+☐
+☐
+☐
+
+4.1 Campos que faltan agregar
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Ejemplo o detalle
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+¿Una convocatoria puede cambiar de empresa contratista?
+☐ Sí
+☐ No
+¿La empresa contratista debe definirse en la plantilla de puesto?
+☐ Sí
+☐ No
+¿La empresa contratista debe seleccionarse en cada solicitud?
+☐ Sí
+☐ No
+Observaciones:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+5. PLANTILLAS DE PUESTO
+Ruta actual: /job-templates
+La plantilla contiene información reutilizable para crear solicitudes y convocatorias.
+5.1 Datos generales actuales
+Campo actual
+Condición actual
+Detalle
+Nombre
+Obligatorio
+Nombre de la plantilla
+Código
+Sin indicación
+Código interno
+Cargo contractual
+Sin indicación
+Cargo utilizado en la contratación
+Estado
+Sin indicación
+Activo / Inactivo
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Nombre
+☐
+☐
+☐
+☐
+☐
+Código
+☐
+☐
+☐
+☐
+☐
+Cargo contractual
+☐
+☐
+☐
+☐
+☐
+Estado
+☐
+☐
+☐
+☐
+☐
+
+5.2 Compensación base actual
+Actualmente, estos montos se registran como valores por defecto para ser heredados en solicitudes y convocatorias.
+Campo actual
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Remuneración
+☐
+☐
+☐
+☐
+☐
+Bono variable
+☐
+☐
+☐
+☐
+☐
+Bono de movilidad
+☐
+☐
+☐
+☐
+☐
+Bono de bienvenida
+☐
+☐
+☐
+☐
+☐
+Bono de permanencia
+☐
+☐
+☐
+☐
+☐
+Bono de asistencia
+☐
+☐
+☐
+☐
+☐
+Pago de capacitación
+☐
+☐
+☐
+☐
+☐
+
+5.3 Comportamiento de los montos
+¿La remuneración se debe heredar automáticamente?
+☐ Sí
+☐ No
+¿Dónde se podrá modificar la remuneración?
+☐ No se podrá modificar
+☐ En la solicitud
+☐ En la convocatoria
+☐ En ambos módulos
+¿Los bonos se deben heredar automáticamente?
+☐ Sí, todos
+☐ No
+☐ Solo algunos
+Bonos que deben heredarse:
+☐ Bono variable
+☐ Bono de movilidad
+☐ Bono de bienvenida
+☐ Bono de permanencia
+☐ Bono de asistencia
+☐ Otro: __________________________
+¿Los bonos heredados podrán modificarse por cada convocatoria?
+☐ Sí
+☐ No
+☐ Solo algunos
+¿El pago de capacitación se debe heredar automáticamente?
+☐ Sí
+☐ No
+¿El pago de capacitación puede modificarse por convocatoria?
+☐ Sí
+☐ No
+5.4 Regla principal de herencia
+☐ Opción 1: Los valores de la plantilla son fijos y no pueden modificarse.
+☐ Opción 2: Los valores se heredan, pero pueden modificarse en la solicitud.
+☐ Opción 3: Los valores se heredan, pero pueden modificarse en la convocatoria.
+☐ Opción 4: Los valores pueden modificarse en la solicitud y en la convocatoria.
+☐ Opción 5: Solo determinados usuarios pueden modificar los valores.
+Usuarios o perfiles autorizados para modificar montos:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+Cuando se modifica un monto en la solicitud, la convocatoria debe utilizar:
+☐ El valor original de la plantilla
+☐ El valor modificado en la solicitud
+☐ El usuario debe volver a seleccionar el valor
+Cuando se modifica una plantilla que ya fue utilizada, las solicitudes y convocatorias existentes deben:
+☐ Mantener los valores anteriores
+☐ Actualizarse automáticamente
+☐ Mostrar una alerta para decidir
+☐ Otro: __________________________
+5.5 Oferta laboral actual
+Campo actual
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Descripción
+☐
+☐
+☐
+☐
+☐
+Características
+☐
+☐
+☐
+☐
+☐
+Experiencia
+☐
+☐
+☐
+☐
+☐
+
+¿El texto se debe heredar automáticamente en la convocatoria?
+☐ Sí
+☐ No
+¿El reclutador podrá editar el texto para cada convocatoria?
+☐ Sí
+☐ No
+¿Qué campos podrán modificarse?
+☐ Descripción
+☐ Características
+☐ Experiencia
+☐ Todos
+☐ Ninguno
+5.6 Campos que faltan agregar
+Sección
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Datos generales
+
+☐
+☐
+Datos generales
+
+☐
+☐
+Compensación
+
+☐
+☐
+Compensación
+
+☐
+☐
+Oferta laboral
+
+☐
+☐
+Oferta laboral
+
+☐
+☐
+
+Observaciones:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+6. SOLICITUDES DE PERSONAL
+Ruta actual: /requests
+La solicitud registra la necesidad de personal. Después de ser aceptada, se completa o genera la convocatoria.
+6.1 Campos actuales
+Campo actual
+Condición actual
+Origen o detalle
+Nombre de la solicitud
+Obligatorio
+Registro manual
+Campaña
+Obligatorio
+Selección manual
+Sede
+Sin indicación
+Selección manual
+Empresa contratista
+Obligatorio
+Selección manual
+Plantilla de puesto
+Obligatorio
+Selección manual
+Encargados
+Sin indicación
+Selección de usuarios
+Observación
+Opcional
+Registro manual
+País
+Sin indicación
+Registro o selección manual
+Modalidad
+Obligatorio
+Selección manual
+Condición inicial
+Obligatorio
+Selección manual
+Horario
+Obligatorio
+Selección manual
+Número de convocados
+Obligatorio
+Registro manual
+Porcentaje de agregados
+Sin indicación
+Registro manual
+Fecha de captación
+Obligatorio
+Inicio de captación; no es la expiración del enlace
+Cargo contractual
+Obligatorio
+Se completa desde la plantilla
+
+6.2 Validación de campos
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Nombre de la solicitud
+☐
+☐
+☐
+☐
+☐
+Campaña
+☐
+☐
+☐
+☐
+☐
+Sede
+☐
+☐
+☐
+☐
+☐
+Empresa contratista
+☐
+☐
+☐
+☐
+☐
+Plantilla de puesto
+☐
+☐
+☐
+☐
+☐
+Encargados
+☐
+☐
+☐
+☐
+☐
+Observación
+☐
+☐
+☐
+☐
+☐
+País
+☐
+☐
+☐
+☐
+☐
+Modalidad
+☐
+☐
+☐
+☐
+☐
+Condición inicial
+☐
+☐
+☐
+☐
+☐
+Horario
+☐
+☐
+☐
+☐
+☐
+Número de convocados
+☐
+☐
+☐
+☐
+☐
+Porcentaje de agregados
+☐
+☐
+☐
+☐
+☐
+Fecha de captación
+☐
+☐
+☐
+☐
+☐
+Cargo contractual
+☐
+☐
+☐
+☐
+☐
+
+6.3 Origen de los datos
+Campo
+Manual
+Desde campaña
+Desde plantilla
+Automático
+Editable
+Sede
+☐
+☐
+☐
+☐
+☐
+Empresa contratista
+☐
+☐
+☐
+☐
+☐
+País
+☐
+☐
+☐
+☐
+☐
+Modalidad
+☐
+☐
+☐
+☐
+☐
+Condición inicial
+☐
+☐
+☐
+☐
+☐
+Horario
+☐
+☐
+☐
+☐
+☐
+Cargo contractual
+☐
+☐
+☐
+☐
+☐
+
+6.4 Definiciones pendientes
+El campo “Número de convocados” representa:
+☐ Número de puestos o vacantes requeridas
+☐ Número de candidatos que deben postular
+☐ Número de candidatos que deben ser contactados
+☐ Número de candidatos que deben ingresar
+☐ Otro: __________________________
+¿Debe cambiar de nombre?
+☐ No
+☐ Sí. Nuevo nombre: __________________________
+El porcentaje de agregados representa:
+☐ Candidatos adicionales sobre el número solicitado
+☐ Margen por abandono
+☐ Margen por inasistencia
+☐ Cantidad adicional para evaluación
+☐ Otro: __________________________
+¿El sistema debe calcular automáticamente la cantidad total?
+☐ Sí
+☐ No
+¿Cuántos encargados puede tener una solicitud?
+☐ Uno
+☐ Varios
+¿Los encargados se trasladan automáticamente a la convocatoria?
+☐ Sí
+☐ No
+¿El cargo contractual siempre proviene de la plantilla?
+☐ Sí
+☐ No
+¿Puede modificarse en la solicitud?
+☐ Sí
+☐ No
+6.5 Aprobación de la solicitud
+Acciones que deben existir:
+☐ Guardar como borrador
+☐ Enviar para aprobación
+☐ Aprobar
+☐ Observar
+☐ Rechazar
+☐ Cancelar
+☐ Editar después de aprobar
+¿Quién puede aprobar una solicitud?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+¿Al aprobarse debe crearse automáticamente la convocatoria?
+☐ Sí
+☐ No
+La convocatoria debe crearse con estado:
+☐ Borrador
+☐ Pendiente de completar
+☐ Publicada
+☐ Otro: __________________________
+6.6 Campos que faltan agregar
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Observación
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+Observaciones:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+7. EDICIÓN DE LA CONVOCATORIA
+La convocatoria se completa después de aceptar o aprobar la solicitud.
+7.1 Datos generales actuales
+Campo actual
+Condición actual
+Comportamiento actual
+Título de la convocatoria
+Obligatorio
+Registro manual
+Campaña
+Obligatorio
+Proviene de la solicitud
+Sede
+Sin indicación
+Proviene de la solicitud
+Reclutador
+Sin indicación
+Se asigna al crear la convocatoria
+Plantilla de puesto
+Sin indicación
+Proviene de la solicitud
+Grupo
+Sin indicación
+Formato esperado G000
+Slug público
+Obligatorio
+Se genera automáticamente
+Encargados
+Sin indicación
+Provienen de la solicitud
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Título de la convocatoria
+☐
+☐
+☐
+☐
+☐
+Campaña
+☐
+☐
+☐
+☐
+☐
+Sede
+☐
+☐
+☐
+☐
+☐
+Reclutador
+☐
+☐
+☐
+☐
+☐
+Plantilla de puesto
+☐
+☐
+☐
+☐
+☐
+Grupo
+☐
+☐
+☐
+☐
+☐
+Slug público
+☐
+☐
+☐
+☐
+☐
+Encargados
+☐
+☐
+☐
+☐
+☐
+
+7.2 Datos heredados y modificación
+Campo
+De solicitud
+De plantilla
+Permitir modificación
+Campaña
+☐
+☐
+☐
+Sede
+☐
+☐
+☐
+Reclutador
+☐
+☐
+☐
+Plantilla de puesto
+☐
+☐
+☐
+Encargados
+☐
+☐
+☐
+Empresa contratista
+☐
+☐
+☐
+Cargo contractual
+☐
+☐
+☐
+Modalidad
+☐
+☐
+☐
+Condición
+☐
+☐
+☐
+Horario
+☐
+☐
+☐
+
+7.3 Grupo y slug público
+El grupo debe ser:
+☐ Ingresado manualmente
+☐ Generado automáticamente
+☐ Seleccionado de una lista
+La numeración del grupo debe ser:
+☐ General para todo el sistema
+☐ Por campaña
+☐ Por sede
+☐ Por año
+☐ Otro: __________________________
+¿El usuario podrá modificar el slug público?
+☐ Sí
+☐ No
+¿Qué debe ocurrir si el slug ya existe?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+7.4 Encargados actuales
+Usuario
+Identificador
+Acción
+request.creator
+f162eaa5-571e-465a-aa8e-09eac3cb4998
+Según disponibilidad
+
+¿Se debe mostrar el identificador técnico al usuario?
+☐ Sí
+☐ No
+¿Qué información debe mostrarse del encargado?
+☐ Nombre completo
+☐ Usuario
+☐ Correo
+☐ Cargo
+☐ Rol dentro de la convocatoria
+☐ Otro: __________________________
+¿Se podrán agregar o retirar encargados?
+☐ Sí
+☐ No
+8. PERIODO Y CONDICIONES DE LA CONVOCATORIA
+Campo actual
+Condición actual
+Comportamiento actual
+Periodo reclutado
+Sin indicación
+Representa el periodo de trabajo
+Semana de trabajo
+Automático
+Se calcula automáticamente
+Número de convocados
+Sin indicación
+Cantidad relacionada con la convocatoria
+Modalidad
+Obligatorio
+Proviene de la solicitud
+Condición
+Obligatorio
+Proviene de la solicitud
+Horario de gestión
+Obligatorio
+Proviene de la solicitud
+Descanso
+Obligatorio
+Registro en convocatoria
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Periodo reclutado
+☐
+☐
+☐
+☐
+☐
+Semana de trabajo
+☐
+☐
+☐
+☐
+☐
+Número de convocados
+☐
+☐
+☐
+☐
+☐
+Modalidad
+☐
+☐
+☐
+☐
+☐
+Condición
+☐
+☐
+☐
+☐
+☐
+Horario de gestión
+☐
+☐
+☐
+☐
+☐
+Descanso
+☐
+☐
+☐
+☐
+☐
+
+¿Qué representa “Periodo reclutado”?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+¿Cómo debe calcularse la semana de trabajo?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+¿Modalidad, condición y horario pueden cambiar respecto a la solicitud?
+☐ Sí
+☐ No
+☐ Solo con autorización
+¿El descanso debe formar parte de la plantilla?
+☐ Sí
+☐ No
+9. CONTRATO ESTÁNDAR DE LA CONVOCATORIA
+Actualmente, la compensación y las condiciones se heredan desde la plantilla.
+Campo actual
+Condición actual
+Tipo de contratación
+Obligatorio
+Empresa contratista
+Obligatorio
+Remuneración
+Obligatorio
+Bono 1: Variable
+Obligatorio
+Bono 2: Movilidad
+Obligatorio
+Bono 3: Bienvenida
+Obligatorio
+Bono 4: Permanencia
+Obligatorio
+Bono 5: Asistencia perfecta
+Obligatorio
+Cargo contractual
+Obligatorio
+Pago de capacitación
+Obligatorio
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Heredado
+Editable
+Tipo de contratación
+☐
+☐
+☐
+☐
+☐
+Empresa contratista
+☐
+☐
+☐
+☐
+☐
+Remuneración
+☐
+☐
+☐
+☐
+☐
+Bono 1: Variable
+☐
+☐
+☐
+☐
+☐
+Bono 2: Movilidad
+☐
+☐
+☐
+☐
+☐
+Bono 3: Bienvenida
+☐
+☐
+☐
+☐
+☐
+Bono 4: Permanencia
+☐
+☐
+☐
+☐
+☐
+Bono 5: Asistencia perfecta
+☐
+☐
+☐
+☐
+☐
+Cargo contractual
+☐
+☐
+☐
+☐
+☐
+Pago de capacitación
+☐
+☐
+☐
+☐
+☐
+
+¿Cada convocatoria puede tener montos diferentes aunque utilice la misma plantilla?
+☐ Sí
+☐ No
+Cuando se cambie un monto, el sistema debe:
+☐ Guardar solamente el nuevo valor
+☐ Guardar el valor original y el nuevo
+☐ Solicitar motivo del cambio
+☐ Solicitar aprobación
+☐ Registrar usuario y fecha
+¿Qué usuarios podrán modificar los valores?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+¿Los cambios realizados en una convocatoria deben modificar la plantilla?
+☐ Sí
+☐ No
+9.1 Campos que faltan agregar al contrato
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Heredado de plantilla
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+10. OFERTA LABORAL PÚBLICA
+Este contenido será visible para el postulante.
+Campo actual
+Condición actual
+Ejemplo
+Descripción de la oferta
+Obligatorio
+Retención y fidelización de clientes
+Características
+Obligatorio
+Presencial, full time, gestión de objeciones
+Experiencia requerida
+Obligatorio
+Experiencia en retenciones o ventas telefónicas
+Expira el
+Obligatorio
+Fecha de expiración de la publicación
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Editable
+Descripción de la oferta
+☐
+☐
+☐
+☐
+☐
+Características
+☐
+☐
+☐
+☐
+☐
+Experiencia requerida
+☐
+☐
+☐
+☐
+☐
+Expira el
+☐
+☐
+☐
+☐
+☐
+
+Información que debe mostrarse al postulante:
+☐ Remuneración
+☐ Bono variable
+☐ Bono de movilidad
+☐ Bono de bienvenida
+☐ Bono de permanencia
+☐ Bono de asistencia
+☐ Pago de capacitación
+☐ Empresa contratista
+☐ Número de vacantes
+☐ Horario
+☐ Descanso
+☐ Modalidad
+☐ Sede
+☐ Dirección de la sede
+☐ Fecha estimada de ingreso
+☐ Otro: __________________________
+10.1 Campos que faltan agregar
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Visible públicamente
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+☐
+☐
+☐
+
+11. LISTA NEGRA
+Ruta actual: /blacklist
+Campo actual
+Condición actual
+DNI
+Obligatorio
+Nombres
+Obligatorio
+Descripción
+Obligatorio
+Estado
+Sin indicación
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+DNI
+☐
+☐
+☐
+☐
+☐
+Nombres
+☐
+☐
+☐
+☐
+☐
+Descripción
+☐
+☐
+☐
+☐
+☐
+Estado
+☐
+☐
+☐
+☐
+☐
+
+Cuando un postulante figure en la lista negra, el sistema debe:
+☐ Impedir la postulación
+☐ Permitir y mostrar una alerta
+☐ Permitir, pero solicitar aprobación
+☐ Marcar para revisión
+☐ No mostrar alerta al postulante
+☐ Otro: __________________________
+¿Quién puede agregar o retirar personas de la lista negra?
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+¿Se debe guardar el motivo del retiro?
+☐ Sí
+☐ No
+Nuevo campo solicitado
+Obligatorio
+Opcional
+
+☐
+☐
+
+☐
+☐
+
+☐
+☐
+
+12. FORMULARIO PÚBLICO DE POSTULACIÓN
+Cuando la convocatoria se publica, el postulante completa un formulario dividido en tres pasos.
+12.1 Paso 1 de 3: Datos personales
+Campo actual
+Condición actual
+Tipo de documento
+Obligatorio
+Número de documento
+Obligatorio
+Apellido paterno
+Obligatorio
+Apellido materno
+Obligatorio
+Nombres completos
+Obligatorio
+Celular
+Obligatorio
+Celular de referencia
+Obligatorio
+Correo electrónico
+Obligatorio
+Género
+Obligatorio
+Fecha de nacimiento
+Obligatorio
+Edad (calculada automáticamente)
+Calculado
+Estado civil
+Obligatorio
+Número de hijos
+Obligatorio
+Nivel académico
+Obligatorio
+Carrera
+Obligatorio
+Nacionalidad
+Obligatorio
+Lugar de residencia
+Obligatorio
+Distrito de residencia
+Obligatorio
+Dirección de domicilio
+Obligatorio
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+Tipo de documento
+☐
+☐
+☐
+☐
+☐
+Número de documento
+☐
+☐
+☐
+☐
+☐
+Apellido paterno
+☐
+☐
+☐
+☐
+☐
+Apellido materno
+☐
+☐
+☐
+☐
+☐
+Nombres completos
+☐
+☐
+☐
+☐
+☐
+Celular
+☐
+☐
+☐
+☐
+☐
+Celular de referencia
+☐
+☐
+☐
+☐
+☐
+Correo electrónico
+☐
+☐
+☐
+☐
+☐
+Género
+☐
+☐
+☐
+☐
+☐
+Fecha de nacimiento
+☐
+☐
+☐
+☐
+☐
+Edad (calculada automáticamente)
+☐
+☐
+☐
+☐
+☐
+Estado civil
+☐
+☐
+☐
+☐
+☐
+Número de hijos
+☐
+☐
+☐
+☐
+☐
+Nivel académico
+☐
+☐
+☐
+☐
+☐
+Carrera
+☐
+☐
+☐
+☐
+☐
+Nacionalidad
+☐
+☐
+☐
+☐
+☐
+Lugar de residencia
+☐
+☐
+☐
+☐
+☐
+Distrito de residencia
+☐
+☐
+☐
+☐
+☐
+Dirección de domicilio
+☐
+☐
+☐
+☐
+☐
+
+¿El número de documento debe validarse para evitar duplicados?
+☐ Sí
+☐ No
+¿Un candidato puede postular más de una vez a la misma convocatoria?
+☐ Sí
+☐ No
+¿Un candidato puede postular a diferentes convocatorias?
+☐ Sí
+☐ No
+¿El celular de referencia debe ser obligatorio?
+☐ Sí
+☐ No
+¿La carrera debe ser obligatoria para todos los niveles académicos?
+☐ Sí
+☐ No
+12.2 Paso 2 de 3: Experiencia laboral
+Campo actual
+Condición actual
+¿Cuentas con experiencia en call center?
+Sin indicación
+Otra experiencia laboral
+Obligatorio
+Tiempo de experiencia
+Obligatorio
+Tipo de experiencia
+Obligatorio
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+¿Cuentas con experiencia en call center?
+☐
+☐
+☐
+☐
+☐
+Otra experiencia laboral
+☐
+☐
+☐
+☐
+☐
+Tiempo de experiencia
+☐
+☐
+☐
+☐
+☐
+Tipo de experiencia
+☐
+☐
+☐
+☐
+☐
+
+Si el candidato no tiene experiencia, “Otra experiencia laboral” debe ser:
+☐ Obligatoria
+☐ Opcional
+☐ No debe mostrarse
+¿Se podrá registrar más de una experiencia laboral?
+☐ Sí
+☐ No
+El tiempo de experiencia se registrará en:
+☐ Días
+☐ Meses
+☐ Años
+☐ Texto libre
+☐ Lista de rangos
+12.3 Paso 3 de 3: Cierre y envío
+Campo actual
+Condición actual
+¿Cómo te enteraste de la oferta?
+Obligatorio
+
+Campo
+Mantener
+Eliminar
+Renombrar
+Obligatorio
+Opcional
+¿Cómo te enteraste de la oferta?
+☐
+☐
+☐
+☐
+☐
+
+Nuevo campo solicitado
+Obligatorio
+Opcional
+
+☐
+☐
+
+☐
+☐
+
+☐
+☐
+
+¿Se debe mostrar una declaración de aceptación antes de enviar?
+☐ Sí
+☐ No
+¿Se debe solicitar autorización para el tratamiento de datos?
+☐ Sí
+☐ No
+¿El postulante debe recibir una confirmación después del envío?
+☐ Sí, por correo
+☐ Sí, por mensaje
+☐ Sí, por ambos medios
+☐ No
+13. REVISIÓN Y VERIFICACIÓN DEL CANDIDATO
+Después de que el postulante completa el formulario público, su registro aparece en el sistema para completar y verificar información.
+13.1 Documentos adjuntos actuales
+Documento actual
+Mantener
+Eliminar
+Obligatorio
+Opcional
+CV
+☐
+☐
+☐
+☐
+DNI
+☐
+☐
+☐
+☐
+Certificado de trabajo
+☐
+☐
+☐
+☐
+Recibo de servicio
+☐
+☐
+☐
+☐
+Ficha de datos
+☐
+☐
+☐
+☐
+Autorización de datos
+☐
+☐
+☐
+☐
+Observación
+☐
+☐
+☐
+☐
+
+13.2 Estado de revisión de documentos
+Estados que deben utilizarse:
+☐ Pendiente
+☐ Cargado
+☐ En revisión
+☐ Aprobado
+☐ Observado
+☐ Rechazado
+☐ No aplica
+☐ Vencido
+☐ Falta adjuntar
+¿Cada documento puede tener una observación independiente?
+☐ Sí
+☐ No
+¿Quién adjunta los documentos?
+☐ El postulante
+☐ El reclutador
+☐ Ambos
+¿El postulante puede reemplazar un documento observado?
+☐ Sí
+☐ No
+¿El candidato puede continuar mientras tenga documentos pendientes?
+☐ Sí
+☐ No
+☐ Depende del documento
+13.3 Documentos que faltan agregar
+Nuevo documento solicitado
+Obligatorio
+Opcional
+Quién lo adjunta
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+☐
+☐
+
+
+14. SEGUIMIENTO Y EVALUACIÓN DEL CANDIDATO
+Una vez completada la información y revisados los documentos, cada candidato se controla mediante los siguientes campos:
+Campo
+Mantener
+Eliminar
+Renombrar
+Automático
+Manual
+Documento
+☐
+☐
+☐
+☐
+☐
+Apellidos y nombres
+☐
+☐
+☐
+☐
+☐
+Test psicológico
+☐
+☐
+☐
+☐
+☐
+Validación PC
+☐
+☐
+☐
+☐
+☐
+Evaluación día 0
+☐
+☐
+☐
+☐
+☐
+Día 0
+☐
+☐
+☐
+☐
+☐
+Observaciones día 0
+☐
+☐
+☐
+☐
+☐
+Estado día 1
+☐
+☐
+☐
+☐
+☐
+Día 1
+☐
+☐
+☐
+☐
+☐
+Observaciones día 1
+☐
+☐
+☐
+☐
+☐
+Asistencia final
+☐
+☐
+☐
+☐
+☐
+Observación final
+☐
+☐
+☐
+☐
+☐
+Estado
+☐
+☐
+☐
+☐
+☐
+
+14.1 Valores de cada evaluación
+Test psicológico:
+☐ Pendiente
+☐ Programado
+☐ Aprobado
+☐ Desaprobado
+☐ No asistió
+☐ No aplica
+☐ Otro
+Validación PC:
+☐ Pendiente
+☐ Cumple
+☐ No cumple
+☐ En revisión
+☐ No aplica
+☐ Otro
+Evaluación día 0:
+☐ Pendiente
+☐ Aprobado
+☐ Desaprobado
+☐ No asistió
+☐ Retirado
+☐ Otro
+Estado día 1:
+☐ Pendiente
+☐ Asistió
+☐ No asistió
+☐ Continúa
+☐ Retirado
+☐ Otro
+Asistencia final:
+☐ Asistió
+☐ No asistió
+☐ Retirado
+☐ Completó el proceso
+☐ Otro
+14.2 Definición de los campos de fecha
+El campo “Día 0” representa:
+☐ Fecha programada
+☐ Fecha de asistencia
+☐ Resultado
+☐ Otro: __________________________
+El campo “Día 1” representa:
+☐ Fecha programada
+☐ Fecha de asistencia
+☐ Resultado
+☐ Otro: __________________________
+¿Debe registrarse la hora además de la fecha?
+☐ Sí
+☐ No
+14.3 Estado general del candidato
+Estados que debe manejar el sistema:
+☐ Postulación recibida
+☐ Pendiente de revisión
+☐ Documentos incompletos
+☐ En evaluación
+☐ Aprobado
+☐ Desaprobado
+☐ Observado
+☐ No asistió
+☐ Retirado
+☐ Seleccionado
+☐ Contratado
+☐ Ingresó
+☐ No ingresó
+☐ Lista negra
+☐ Otro
+¿El estado general debe calcularse automáticamente según las evaluaciones?
+☐ Sí
+☐ No
+¿El reclutador puede modificar manualmente el estado?
+☐ Sí
+☐ No
+☐ Solo con autorización
+¿Se debe solicitar una observación al desaprobar o retirar al candidato?
+☐ Sí
+☐ No
+14.4 Campos adicionales para seguimiento
+Nuevo campo solicitado
+Obligatorio
+Opcional
+Automático
+Manual
+
+☐
+☐
+☐
+☐
+
+☐
+☐
+☐
+☐
+
+☐
+☐
+☐
+☐
+
+☐
+☐
+☐
+☐
+
+15. FLUJO ACTUAL QUE DEBE VALIDARSE
+Se crean las campañas.
+Se crean las empresas contratistas.
+Se crean las plantillas de puesto.
+Se registra una solicitud de personal.
+La solicitud es revisada y aceptada.
+Se genera o completa la convocatoria.
+La convocatoria hereda datos de la solicitud y de la plantilla.
+El reclutador completa los datos faltantes.
+Se publica la convocatoria.
+El postulante completa el formulario de tres pasos.
+La postulación aparece en el sistema.
+Se revisan y validan los documentos.
+Se completan las evaluaciones del candidato.
+Se registra la asistencia de los días correspondientes.
+Se asigna el estado final del candidato.
+Validación del flujo:
+☐ El flujo es correcto
+☐ El flujo requiere modificaciones
+Pasos que deben eliminarse:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+Pasos que deben agregarse:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+Pasos que deben cambiar de orden:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+16. REGLA DE HERENCIA ENTRE MÓDULOS
+El cliente deberá validar el origen definitivo de cada dato.
+Dato
+Plantilla
+Solicitud
+Convocatoria
+Editable en convocatoria
+Cargo contractual
+☐
+☐
+☐
+☐
+Empresa contratista
+☐
+☐
+☐
+☐
+Tipo de contratación
+☐
+☐
+☐
+☐
+Remuneración
+☐
+☐
+☐
+☐
+Bono variable
+☐
+☐
+☐
+☐
+Bono de movilidad
+☐
+☐
+☐
+☐
+Bono de bienvenida
+☐
+☐
+☐
+☐
+Bono de permanencia
+☐
+☐
+☐
+☐
+Bono de asistencia
+☐
+☐
+☐
+☐
+Pago de capacitación
+☐
+☐
+☐
+☐
+Descripción de la oferta
+☐
+☐
+☐
+☐
+Características
+☐
+☐
+☐
+☐
+Experiencia requerida
+☐
+☐
+☐
+☐
+Modalidad
+☐
+☐
+☐
+☐
+Condición
+☐
+☐
+☐
+☐
+Horario
+☐
+☐
+☐
+☐
+Descanso
+☐
+☐
+☐
+☐
+
+Regla seleccionada:
+☐ La plantilla es la fuente principal y no se permiten cambios
+☐ La plantilla proporciona valores iniciales, pero la solicitud puede modificarlos
+☐ La solicitud consolida los valores y la convocatoria los hereda sin cambios
+☐ La convocatoria puede modificar los valores según cada necesidad
+☐ Determinados campos son fijos y otros pueden modificarse
+Campos que nunca podrán modificarse:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+Campos que sí podrán modificarse:
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+17. CAMPOS QUE DEBEN ELIMINARSE
+Módulo
+Campo que debe eliminarse
+Motivo
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+18. CAMPOS QUE DEBEN CAMBIAR DE NOMBRE
+Módulo
+Nombre actual
+Nuevo nombre
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+19. CAMPOS NUEVOS SOLICITADOS
+Módulo
+Nuevo campo
+Obligatorio
+Opcional
+Observación
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+
+☐
+☐
+
+
+20. OBSERVACIONES GENERALES
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+______________________________________________________________________________________________________________
+21. RESULTADO DE LA VALIDACIÓN
+☐ Se mantienen los campos actuales sin cambios.
+☐ Se deben agregar campos.
+☐ Se deben eliminar campos.
+☐ Se deben cambiar nombres de campos.
+☐ Se deben modificar campos obligatorios y opcionales.
+☐ Se deben modificar las reglas de herencia.
+☐ Se deben modificar los permisos de edición.
+☐ Se debe realizar una segunda reunión de validación.
+22. CONFORMIDAD DEL CLIENTE
+Nombre completo: ________________________________________________________________________________
+Cargo: ________________________________________________________________________________
+Área o empresa: ________________________________________________________________________________
+Fecha: ________________________________________________________________________________
+Firma o confirmación: ________________________________________________________________________________

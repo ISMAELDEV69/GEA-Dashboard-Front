@@ -3,9 +3,8 @@ import { Shield, Loader2, Save, Check } from 'lucide-react'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
-import { fetchModulePermissions, updateModulePermissions } from '../lib/dataService'
+import { fetchModulePermissions, updateModulePermissions, fetchAppRoles, createAppRole } from '../lib/dataService'
 
-const ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion']
 // Note: 'perfil' and other non-module views are not included here, only manageable ones
 export const AVAILABLE_MODULES = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -35,23 +34,55 @@ export const AVAILABLE_MODULES = [
 
 export default function RolePermissionsAdmin() {
   const [permissions, setPermissions] = useState([])
+  const [appRoles, setAppRoles] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(null)
   const [successRow, setSuccessRow] = useState(null)
+  
+  const [showRoleModal, setShowRoleModal] = useState(false)
+  const [newRole, setNewRole] = useState({ id: '', label: '', short_label: '' })
+  const [creatingRole, setCreatingRole] = useState(false)
 
   useEffect(() => {
-    loadPermissions()
+    loadData()
   }, [])
 
-  const loadPermissions = async () => {
+  const loadData = async () => {
     setLoading(true)
     try {
-      const data = await fetchModulePermissions()
-      setPermissions(data)
+      const [permData, rolesData] = await Promise.all([
+        fetchModulePermissions(),
+        fetchAppRoles()
+      ])
+      setPermissions(permData || [])
+      setAppRoles(rolesData || [])
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleCreateRole = async (e) => {
+    e.preventDefault()
+    if (!newRole.id || !newRole.label || !newRole.short_label) return alert("Completa todos los campos.")
+    
+    const roleData = {
+      id: newRole.id.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      label: newRole.label,
+      short_label: newRole.short_label.toUpperCase().substring(0, 3)
+    }
+
+    setCreatingRole(true)
+    try {
+      await createAppRole(roleData)
+      await loadData()
+      setShowRoleModal(false)
+      setNewRole({ id: '', label: '', short_label: '' })
+    } catch(err) {
+      alert("Error al crear rol: " + err.message)
+    } finally {
+      setCreatingRole(false)
     }
   }
 
@@ -110,6 +141,15 @@ export default function RolePermissionsAdmin() {
         title="Gestor de Permisos por Rol"
         subtitle="Habilita o deshabilita los módulos de navegación para cada tipo de usuario."
         icon={Shield}
+        actions={
+          <button 
+            onClick={() => setShowRoleModal(true)}
+            className="btn-primary px-4 py-2 text-xs flex items-center gap-2"
+          >
+            <Shield size={14} />
+            Agregar Nuevo Rol
+          </button>
+        }
       />
 
       <Card noPadding className="overflow-hidden">
@@ -123,9 +163,9 @@ export default function RolePermissionsAdmin() {
               <thead>
                 <tr className="bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)]">
                   <th className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[var(--text-muted)]">Módulo</th>
-                  {ROLES.map(role => (
-                    <th key={role} className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[var(--text-muted)] text-center">
-                      {role === 'visor' ? 'Directivo (Visor)' : role}
+                  {appRoles.map(role => (
+                    <th key={role.id} className="px-6 py-4 font-bold text-xs uppercase tracking-wider text-[var(--text-muted)] text-center">
+                      {role.label}
                     </th>
                   ))}
                 </tr>
@@ -140,7 +180,8 @@ export default function RolePermissionsAdmin() {
                       </div>
                     </td>
                     
-                    {ROLES.map(role => {
+                    {appRoles.map(roleObj => {
+                      const role = roleObj.id
                       const hasAccess = getRoleAccess(module.id, role)
                       const isSaving = saving === `${module.id}-${role}`
                       const isSuccess = successRow === `${module.id}-${role}`
@@ -185,6 +226,58 @@ export default function RolePermissionsAdmin() {
           * Nota: Los cambios se guardan instantáneamente, pero los usuarios conectados deberán recargar la página (F5) para ver sus nuevos menús reflejados.
         </p>
       </div>
+
+      {/* Modal Nuevo Rol */}
+      {showRoleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative">
+            <div className="p-6">
+              <h2 className="text-lg font-black mb-4">Crear Nuevo Rol</h2>
+              <form onSubmit={handleCreateRole} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">ID Único (ej: analista_calidad)</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRole.id}
+                    onChange={(e) => setNewRole({ ...newRole, id: e.target.value })}
+                    className="w-full input-base"
+                    placeholder="Solo letras, números y guiones bajos"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">Nombre Público (ej: Analista Calidad)</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRole.label}
+                    onChange={(e) => setNewRole({ ...newRole, label: e.target.value })}
+                    className="w-full input-base"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1">Sigla (ej: AC)</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={3}
+                    value={newRole.short_label}
+                    onChange={(e) => setNewRole({ ...newRole, short_label: e.target.value })}
+                    className="w-full input-base uppercase"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-4">
+                  <button type="button" onClick={() => setShowRoleModal(false)} className="btn-secondary px-4 py-2 text-xs">Cancelar</button>
+                  <button type="submit" disabled={creatingRole} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
+                    {creatingRole ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Guardar Rol
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </PageLayout>
   )
 }

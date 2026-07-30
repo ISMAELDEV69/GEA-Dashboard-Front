@@ -74,12 +74,13 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
       return (a.codigo || '').localeCompare(b.codigo || '')
     })
 
-    // Eliminar duplicados de código
+    // Eliminar duplicados de código y campaña
     const unique = []
     const seen = new Set()
     for (const g of res) {
-      if (!seen.has(g.codigo)) {
-        seen.add(g.codigo)
+      const key = `${g.codigo}|${g.campana}`
+      if (!seen.has(key)) {
+        seen.add(key)
         unique.push(g)
       }
     }
@@ -93,12 +94,13 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
       .sort((a, b) => (a.datos_completos || a.nombres_completos || '').localeCompare(b.datos_completos || b.nombres_completos || ''))
   }, [equipoFormacionData])
 
-  const handleAssign = async (grupo_codigo, formador_documento) => {
+  const handleAssign = async (grupo_codigo, campana, formador_documento) => {
     try {
-      setSavingRow(grupo_codigo)
-      await updateGrupoFormador(grupo_codigo, formador_documento || null)
+      const rowKey = `${grupo_codigo}|${campana}`
+      setSavingRow(rowKey)
+      await updateGrupoFormador(grupo_codigo, campana, formador_documento || null)
       
-      setSuccessRow(grupo_codigo)
+      setSuccessRow(rowKey)
       setTimeout(() => setSuccessRow(null), 2000)
       
       // Actualizar los datos globales (que refrescarán la vista)
@@ -241,11 +243,12 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                   </td>
                 </tr>
               ) : filteredGrupos.map(g => {
-                const isSaving = savingRow === g.codigo;
-                const isSuccess = successRow === g.codigo;
+                const rowKey = `${g.codigo}|${g.campana}`;
+                const isSaving = savingRow === rowKey;
+                const isSuccess = successRow === rowKey;
                 
                 return (
-                  <tr key={g.codigo} className="transition-colors hover:bg-[var(--bg-muted)] group">
+                  <tr key={rowKey} className="transition-colors hover:bg-[var(--bg-muted)] group">
                     {/* Periodo */}
                     <td className="px-4 py-3 text-xs font-semibold text-[var(--text-secondary)]">
                       {g.periodo || '—'}
@@ -274,7 +277,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                       <div className="relative w-full max-w-sm flex items-center gap-2">
                         <select
                           value={g.formador_documento || ''}
-                          onChange={(e) => handleAssign(g.codigo, e.target.value)}
+                          onChange={(e) => handleAssign(g.codigo, g.campana, e.target.value)}
                           disabled={isSaving}
                           className={`w-full px-3 py-2 rounded-lg border text-sm transition-all focus:outline-none appearance-none ${isSaving ? 'opacity-50 cursor-not-allowed' : ''} ${isSuccess ? 'border-emerald-500/50 bg-emerald-500/5' : ''}`}
                           style={{ 

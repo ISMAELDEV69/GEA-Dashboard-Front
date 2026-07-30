@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
  */
 
 import { supabase } from './supabase'
-import { enrichGruposWithStats } from './capacidadRysSync'
+import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
 import { parseCsvToMatrix, parseNominaRows } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
@@ -66,14 +66,16 @@ export async function fetchUserProfile(userId, sessionUser = null) {
   const attachNombreCompleto = async (profile) => {
     if (!profile) return profile;
     try {
+      const searchTerm = profile.nombre;
       const { data: recData } = await supabase
         .from('equipo_reclutamiento')
         .select('apellido_paterno, apellido_materno, nombres_completos')
-        .ilike('alix', profile.nombre)
+        .or(`alix.ilike.${searchTerm},nombres_completos.ilike.%${searchTerm}%`)
+        .limit(1)
         .maybeSingle();
 
       if (recData) {
-        const full = `${recData.apellido_paterno || ''} ${recData.apellido_materno || ''} ${recData.nombres_completos || ''}`.trim().replace(/\\s+/g, ' ');
+        const full = `${recData.apellido_paterno || ''} ${recData.apellido_materno || ''} ${recData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
         profile.nombre_completo = full;
         profile.nombre = full;
         return profile;
@@ -82,11 +84,12 @@ export async function fetchUserProfile(userId, sessionUser = null) {
       const { data: formData } = await supabase
         .from('equipo_formacion')
         .select('apellido_paterno, apellido_materno, nombres_completos')
-        .ilike('usuario_alix', profile.nombre)
+        .or(`usuario_alix.ilike.${searchTerm},nombres_completos.ilike.%${searchTerm}%`)
+        .limit(1)
         .maybeSingle();
 
       if (formData) {
-        const full = `${formData.apellido_paterno || ''} ${formData.apellido_materno || ''} ${formData.nombres_completos || ''}`.trim().replace(/\\s+/g, ' ');
+        const full = `${formData.apellido_paterno || ''} ${formData.apellido_materno || ''} ${formData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
         profile.nombre_completo = full;
         profile.nombre = full;
         return profile;
@@ -122,6 +125,23 @@ export async function fetchUserProfile(userId, sessionUser = null) {
   }
 
   return null
+}
+
+// ─────────────────────────────────────────────
+// ROLES DINÁMICOS
+// ─────────────────────────────────────────────
+export async function fetchAppRoles() {
+  if (DB_MODE !== 'supabase') return []
+  const { data, error } = await supabase.from('config_roles').select('*').order('created_at', { ascending: true })
+  if (error) throw error
+  return data
+}
+
+export async function createAppRole(roleData) {
+  if (DB_MODE !== 'supabase') return null
+  const { data, error } = await supabase.from('config_roles').insert([roleData]).select().single()
+  if (error) throw error
+  return data
 }
 
 const normalizeGPE = (val) => String(val || '').replace(/^GPE-?/i, '').trim();
@@ -197,11 +217,22 @@ export async function getFirstDateFormador(grupo_codigo, campana) {
     .from('consolidado_asistencias')
     .select('fecha_registro_asistencia')
     .eq('codigo_grupo', grupo_codigo)
-    .eq('campana', campana)
-    .order('fecha_registro_asistencia', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return data ? data.fecha_registro_asistencia : null;
+    .eq('campana', campana);
+    
+  if (!data || data.length === 0) return null;
+  
+  let earliestIso = null;
+  let earliestRaw = null;
+  for (const row of data) {
+    if (row.fecha_registro_asistencia) {
+      const iso = parseFechaAsistencia(row.fecha_registro_asistencia);
+      if (iso && (!earliestIso || iso < earliestIso)) {
+        earliestIso = iso;
+        earliestRaw = row.fecha_registro_asistencia;
+      }
+    }
+  }
+  return earliestRaw;
 }
 
 export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
@@ -961,7 +992,7 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
         periodo_ingreso_op: p.periodo_ingreso_op || null,
         periodo_rys: p.periodo_rys || null,
         area_traslado: p.area_traslado || null,
-        segmento: p.segmento || null,
+        segmento: p.segmento ? String(p.segmento).trim() : inferSegmento(campana),
         estado: p.estado || 'PLANIFICADO',
       }
     })
@@ -1174,22 +1205,18 @@ export async function fetchAsistencias() {
     // We only keep the latest record per document+date
     const map = new Map();
     data.forEach(row => {
-      let isoDate = '';
-      if (row.fecha_registro_asistencia) {
-        const parts = row.fecha_registro_asistencia.split('/');
-        if (parts.length === 3) {
-          isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-        }
-      }
+      let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
       
       if (isoDate) {
         const key = `${row.documento}_${isoDate}`;
         map.set(key, {
           postulante_documento: row.documento,
           grupo_codigo: row.codigo_grupo,
+          campana: row.campana,
           fecha_asistencia: isoDate,
           sigla_asistencia: row.sigla,
           motivo_baja: row.motivo_baja,
+          formador: row.nombre_formador,
         });
       }
     });
@@ -1266,27 +1293,17 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
 // ─────────────────────────────────────────────
 export async function fetchReclutadores() {
   if (DB_MODE === 'supabase') {
-    const [recRes, perfRes] = await Promise.all([
-      supabase
-        .from('equipo_reclutamiento')
-        .select('apellido_paterno, apellido_materno, nombres_completos')
-        .eq('estado', 'ACTIVO'),
-      supabase
-        .from('perfiles')
-        .select('nombre')
-        .eq('rol', 'reclutador')
-        .order('nombre'),
-    ])
-    if (recRes.error) throw recRes.error
-    if (perfRes.error) throw perfRes.error
+    const { data: recRes, error: recErr } = await supabase
+      .from('equipo_reclutamiento')
+      .select('apellido_paterno, apellido_materno, nombres_completos')
+      .eq('estado', 'ACTIVO')
+      
+    if (recErr) throw recErr
 
     const names = new Set()
-    for (const r of recRes.data || []) {
-      const full = `${r.apellido_paterno || ''} ${r.apellido_materno || ''} ${r.nombres_completos || ''}`.trim().replace(/\\s+/g, ' ')
+    for (const r of recRes || []) {
+      const full = `${r.apellido_paterno || ''} ${r.apellido_materno || ''} ${r.nombres_completos || ''}`.trim().replace(/\s+/g, ' ')
       if (full) names.add(full.toUpperCase())
-    }
-    for (const p of perfRes.data || []) {
-      if (p.nombre?.trim()) names.add(p.nombre.trim().toUpperCase())
     }
     return [...names].sort()
   }
@@ -1322,9 +1339,31 @@ export async function fetchCampanas() {
 
 export async function fetchReclutadoresFull() {
   if (DB_MODE === 'supabase') {
+    // Sync table with real recruiters
+    const validNames = await fetchReclutadores()
+    
+    const { data: currentRecs } = await supabase.from('reclutadores').select('*')
+    if (currentRecs) {
+      const existingNames = new Set(currentRecs.map(r => (r.nombre_completo || '').trim().toUpperCase()))
+      const missing = validNames.filter(n => !existingNames.has(n.toUpperCase()))
+      
+      if (missing.length > 0) {
+        await supabase.from('reclutadores').insert(missing.map(n => ({ nombre_completo: n, activo: true })))
+      }
+      
+      const garbageIds = currentRecs
+        .filter(r => r.activo && !validNames.includes((r.nombre_completo || '').trim().toUpperCase()))
+        .map(r => r.id)
+        
+      if (garbageIds.length > 0) {
+        await supabase.from('reclutadores').update({ activo: false }).in('id', garbageIds)
+      }
+    }
+
     const { data, error } = await supabase
       .from('reclutadores')
       .select('id, nombre_completo, activo')
+      .eq('activo', true)
       .order('nombre_completo')
     if (error) throw error
     return data
@@ -1341,7 +1380,7 @@ export async function fetchReclutadoresFull() {
 export async function fetchGruposConMetas() {
   if (DB_MODE === 'supabase') {
     // 1. Fetch groups and recruiters in parallel
-    const [gruposRes, relRes, nominasRes] = await Promise.all([
+    const [gruposRes, relRes, nominasRes, equipoRes] = await Promise.all([
       supabase
         .from('capacidad_rys')
         .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
@@ -1351,19 +1390,34 @@ export async function fetchGruposConMetas() {
         .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, reclutadores(nombre_completo)'),
       supabase
         .from('v_nominas_consolidado')
-        .select('grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede')
+        .select('grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede'),
+      supabase
+        .from('equipo_reclutamiento')
+        .select('documento, alias, apellido_paterno, apellido_materno, nombres_completos')
+        .eq('estado', 'ACTIVO')
     ])
 
     if (gruposRes.error) throw gruposRes.error
     if (relRes.error) throw relRes.error
     if (nominasRes.error) throw nominasRes.error
 
+    const equipoMap = {}
+    for (const eq of (equipoRes.data || [])) {
+      const full = `${eq.apellido_paterno || ''} ${eq.apellido_materno || ''} ${eq.nombres_completos || ''}`.trim().replace(/\s+/g, ' ').toUpperCase()
+      equipoMap[full] = { documento: eq.documento, alias: eq.alias }
+    }
+
     const relMap = {}
     for (const r of (relRes.data || [])) {
       if (!relMap[r.grupo_codigo]) relMap[r.grupo_codigo] = []
+      const nomFull = (r.reclutadores?.nombre_completo || 'Desconocido').toUpperCase()
+      const eqData = equipoMap[nomFull] || {}
+      
       relMap[r.grupo_codigo].push({
         reclutador_id: r.reclutador_id,
         nombre_completo: r.reclutadores?.nombre_completo || 'Desconocido',
+        documento: eqData.documento || null,
+        alias: eqData.alias || null,
         meta_rq_individual: r.meta_rq_individual || 0,
         meta_dia_1_individual: r.meta_dia_1_individual || 0
       })
@@ -1828,11 +1882,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     .order('created_at', { ascending: true })
     
   const formAsis = (rawFormAsis || []).map(row => {
-    let isoDate = ''
-    if (row.fecha_registro_asistencia) {
-      const parts = row.fecha_registro_asistencia.split('/')
-      if (parts.length === 3) isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`
-    }
+    let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
     return {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
@@ -1911,11 +1961,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     .order('created_at', { ascending: true })
     
   const formAsis = (rawFormAsis || []).map(row => {
-    let isoDate = ''
-    if (row.fecha_registro_asistencia) {
-      const parts = row.fecha_registro_asistencia.split('/')
-      if (parts.length === 3) isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`
-    }
+    let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
     return {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
@@ -1985,38 +2031,44 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     .eq('campana', campana)
     .order('created_at', { ascending: true })
     
-  const formAsis = (rawFormAsis || []).map(row => {
-    let isoDate = ''
-    if (row.fecha_registro_asistencia) {
-      const parts = row.fecha_registro_asistencia.split('/')
-      if (parts.length === 3) isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`
-    }
+  const formAsis = (rawFormAsis || []).filter(row => row.fecha_registro_asistencia).map(row => {
     return {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
-      fecha_asistencia: isoDate
+      fecha_asistencia: row.fecha_registro_asistencia
     }
-  }).filter(f => f.fecha_asistencia)
+  })
 
   if (!recAsis) return []
 
   const mapNombres = new Map(recAsis.map(p => [p.documento, `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
 
-  const mapFormFull = new Map()
+  const mapFormFull = new Map();
+  const isBajaGlobal = new Map();
+  
   for (const f of formAsis) {
-    const doc = f.postulante_documento
-    if (!mapFormFull.has(doc)) {
-      mapFormFull.set(doc, f)
-    } else {
-      const existing = mapFormFull.get(doc)
-      if (f.motivo_baja === 'BAJA DIA 1') {
-        mapFormFull.set(doc, f)
-      } else if (existing.motivo_baja !== 'BAJA DIA 1' && f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      } else if (f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      }
+    const doc = f.postulante_documento;
+    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    isBajaGlobal.set(doc, isBaja);
+    
+    if (f.fecha_asistencia === fecha_dia1_ref) {
+      mapFormFull.set(doc, f);
+    }
+  }
+  
+  for (const f of formAsis) {
+    const doc = f.postulante_documento;
+    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
+      mapFormFull.set(doc, f);
+    }
+  }
+  
+  for (const [doc, f] of mapFormFull.entries()) {
+    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    if (isBaja && !isBajaGlobal.get(doc)) {
+      mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
     }
   }
 
@@ -2029,8 +2081,6 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const formRecord = mapFormFull.get(doc)
     const recSigla = mapRec.get(doc)
     
-    if (!recSigla) continue;
-    
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
     const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
     
@@ -2038,14 +2088,14 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const displayFormSigla = isBajaDia1 ? 'BAJA DÍA 1' : formSigla;
     
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO'
+    const isRecAsistencia = recSigla ? String(recSigla).toUpperCase().trim() === 'ASISTIO' : false;
     
     if (isFormAsistencia !== isRecAsistencia) {
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
         sigla_formador: displayFormSigla,
-        sigla_reclutador: String(recSigla).toUpperCase().trim()
+        sigla_reclutador: recSigla ? String(recSigla).toUpperCase().trim() : 'SIN REGISTRO'
       })
     }
   }
@@ -2643,12 +2693,13 @@ export async function addEquipoFormacion(payload) {
 // ASIGNACION FORMADORES
 // ==========================================
 
-export async function updateGrupoFormador(grupo_codigo, formador_documento) {
+export async function updateGrupoFormador(grupo_codigo, campana, formador_documento) {
   if (DB_MODE === 'supabase') {
     const { error } = await supabase
       .from('capacidad_rys')
       .update({ formador_documento })
-      .eq('codigo', grupo_codigo);
+      .eq('codigo', grupo_codigo)
+      .eq('campana', campana);
       
     if (error) {
       console.error('Error actualizando formador del grupo:', error);
@@ -2767,14 +2818,11 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
        
        for (const row of groupFormAsisRaw) {
          if (row.fecha_registro_asistencia) {
-            const parts = row.fecha_registro_asistencia.split('/')
-            if (parts.length === 3) {
-               const iso = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-               if (!earliestIso || iso < earliestIso) {
-                 earliestIso = iso;
-                 earliestRaw = row.fecha_registro_asistencia;
-               }
-            }
+            const iso = parseFechaAsistencia(row.fecha_registro_asistencia);
+      if (iso && (!earliestIso || iso < earliestIso)) {
+        earliestIso = iso;
+        earliestRaw = row.fecha_registro_asistencia;
+      }
          }
        }
        fecha_dia1_ref = earliestRaw;
@@ -2791,20 +2839,31 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         }
       });
 
-      const mapFormFull = new Map()
+      const mapFormFull = new Map();
+      const isBajaGlobal = new Map();
+      
       for (const f of formAsis) {
-        const doc = f.postulante_documento
-        if (!mapFormFull.has(doc)) {
-          mapFormFull.set(doc, f)
-        } else {
-          const existing = mapFormFull.get(doc)
-          if (f.motivo_baja === 'BAJA DIA 1') {
-            mapFormFull.set(doc, f)
-          } else if (existing.motivo_baja !== 'BAJA DIA 1' && f.fecha_asistencia === fecha_dia1_ref) {
-            mapFormFull.set(doc, f)
-          } else if (f.fecha_asistencia === fecha_dia1_ref) {
-            mapFormFull.set(doc, f)
-          }
+        const doc = f.postulante_documento;
+        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        isBajaGlobal.set(doc, isBaja);
+        
+        if (f.fecha_asistencia === fecha_dia1_ref) {
+          mapFormFull.set(doc, f);
+        }
+      }
+      
+      for (const f of formAsis) {
+        const doc = f.postulante_documento;
+        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
+          mapFormFull.set(doc, f);
+        }
+      }
+      
+      for (const [doc, f] of mapFormFull.entries()) {
+        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        if (isBaja && !isBajaGlobal.get(doc)) {
+          mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
         }
       }
 
@@ -2815,14 +2874,12 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const formRecord = mapFormFull.get(doc)
         const recSigla = mapRec.get(doc) 
         
-        if (!recSigla) continue;
-
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
         const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
         const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
         
         const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-        const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO'
+        const isRecAsistencia = recSigla ? String(recSigla).toUpperCase().trim() === 'ASISTIO' : false;
         
         if (isFormAsistencia) countForm++;
 
@@ -2873,3 +2930,17 @@ export async function updateModulePermissions(moduleId, roles) {
   if (error) throw error
   return true
 }
+export function parseFechaAsistencia(raw) {
+  if (!raw) return '';
+  raw = String(raw).trim();
+  if (raw.includes('/')) {
+    const parts = raw.split('/');
+    if (parts.length === 3) {
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  } else if (raw.includes('-')) {
+    return raw.substring(0, 10);
+  }
+  return raw;
+}
+

@@ -13,10 +13,13 @@ export default function NominaFormPool({
   const [loading, setLoading] = useState(false)
   const [poolData, setPoolData] = useState([])
   const [existingDocs, setExistingDocs] = useState(new Map())
+  const [historyDocs, setHistoryDocs] = useState(new Map()) // DNI -> [assignments...]
   const [selectedDocs, setSelectedDocs] = useState(new Set())
   const [search, setSearch] = useState('')
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [conflicts, setConflicts] = useState([])
 
   useEffect(() => {
     loadPool()
@@ -33,14 +36,21 @@ export default function NominaFormPool({
       const uniqueDnis = [...new Set(data.map(d => String(d.documento || '').trim()).filter(Boolean))]
       
       let docMap = new Map()
+      let hMap = new Map()
       if (uniqueDnis.length > 0) {
         // We split the query into chunks if there are too many, but up to 800 is fine for 'in'
-        const { data: existing } = await supabase.from('nominas').select('documento, marca_temporal').in('documento', uniqueDnis)
+        const { data: existing } = await supabase.from('nominas').select('documento, marca_temporal, campana, grupo_codigo, reclutador').in('documento', uniqueDnis)
         docMap = new Map((existing || []).map(r => [getExistingKey(r.documento, r.marca_temporal), true]))
+        
+        ;(existing || []).forEach(r => {
+          if (!hMap.has(r.documento)) hMap.set(r.documento, [])
+          hMap.get(r.documento).push(r)
+        })
       }
       
       setPoolData(data)
       setExistingDocs(docMap)
+      setHistoryDocs(hMap)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -79,17 +89,48 @@ export default function NominaFormPool({
     }
   }
 
-  const handleSave = async () => {
+  const handleSaveClick = async () => {
     if (!bulkPeriodo || !bulkSegmento || !bulkCampana || !bulkGrupo) {
       setError('Debes seleccionar Periodo, Segmento, Campaña, Grupo y Sede en los filtros de arriba.')
       return
     }
-    
     if (selectedDocs.size === 0) return
 
+    // Check for conflicts
+    const selectedData = poolData.filter(d => selectedDocs.has(getExistingKey(d.documento, d.marca_temporal)))
+    
+    const foundConflicts = []
+    selectedData.forEach(d => {
+      const hist = historyDocs.get(d.documento)
+      if (hist && hist.length > 0) {
+        // Find if they are in the exact same target group, or just add all history to show
+        hist.forEach(h => {
+          foundConflicts.push({
+            documento: d.documento,
+            nombres: `${d.apellido_paterno} ${d.apellido_materno}, ${d.nombres}`,
+            campana: h.campana,
+            grupo_codigo: h.grupo_codigo,
+            reclutador: h.reclutador
+          })
+        })
+      }
+    })
+
+    if (foundConflicts.length > 0) {
+      // Remove exact duplicates from visual list
+      const uniqueConflicts = Array.from(new Map(foundConflicts.map(c => [`${c.documento}-${c.campana}-${c.grupo_codigo}`, c])).values())
+      setConflicts(uniqueConflicts)
+      setShowConfirmModal(true)
+    } else {
+      executeSave()
+    }
+  }
+
+  const executeSave = async () => {
     try {
       setLoading(true)
       setError(null)
+      setShowConfirmModal(false)
       
       const toInsert = poolData
         .filter(d => selectedDocs.has(`${d.documento}|${d.marca_temporal}`))
@@ -100,7 +141,7 @@ export default function NominaFormPool({
           reclutador: reclutador || 'SISTEMA',
           campana: bulkCampana,
           grupo_codigo: bulkGrupo,
-          status_final: 'RECLUTADO'
+          status_final: null
         }))
 
       // Insert directly since we now allow multiple applications per DNI (id is the new PK)
@@ -204,8 +245,19 @@ export default function NominaFormPool({
                   </td>
                   <td className="p-3 text-slate-700 dark:text-slate-300 font-medium">
                     {d.documento}
-                    {existingDocs.has(d.documento) && (
-                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Asignado: {existingDocs.get(d.documento)}</span>
+                    {existingDocs.has(getExistingKey(d.documento, d.marca_temporal)) && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                        Ingresado
+                      </span>
+                    )}
+                    {!existingDocs.has(getExistingKey(d.documento, d.marca_temporal)) && historyDocs.has(d.documento) && (
+                      <div className="mt-1 flex flex-col gap-1">
+                        {historyDocs.get(d.documento).map((h, i) => (
+                          <span key={i} className="px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800 inline-block w-fit">
+                            Asignado a: {h.campana} - {h.grupo_codigo}
+                          </span>
+                        ))}
+                      </div>
                     )}
                   </td>
                   <td className="p-3 text-slate-600 dark:text-slate-400 text-xs">
@@ -229,7 +281,7 @@ export default function NominaFormPool({
           {selectedDocs.size} candidatos seleccionados
         </span>
         <button 
-          onClick={handleSave}
+          onClick={handleSaveClick}
           disabled={selectedDocs.size === 0 || loading}
           className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-sm flex items-center gap-2"
         >
@@ -237,6 +289,69 @@ export default function NominaFormPool({
           Adjudicar a mi Grupo
         </button>
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl max-w-3xl w-full flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
+              <div className="p-2 bg-amber-100 text-amber-600 rounded-xl">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">Advertencia de Duplicados</h3>
+                <p className="text-xs text-slate-500">Algunas de las personas seleccionadas ya se encuentran en otras nóminas.</p>
+              </div>
+            </div>
+            
+            <div className="p-5 overflow-auto flex-1">
+              <p className="text-sm text-slate-700 dark:text-slate-300 mb-4">
+                Las siguientes personas ya cuentan con un historial en el sistema. ¿Deseas adjudicarlas a este nuevo grupo de todas formas?
+              </p>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500">
+                    <tr>
+                      <th className="p-3 font-semibold">DNI</th>
+                      <th className="p-3 font-semibold">Nombres</th>
+                      <th className="p-3 font-semibold">Campaña Actual</th>
+                      <th className="p-3 font-semibold">Grupo Actual</th>
+                      <th className="p-3 font-semibold">Reclutador</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                    {conflicts.map((c, i) => (
+                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/20">
+                        <td className="p-3 font-medium text-slate-700 dark:text-slate-300">{c.documento}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-400">{c.nombres}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-400">{c.campana}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-400">{c.grupo_codigo}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-400 truncate max-w-[150px]">{c.reclutador}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-b-2xl">
+              <button 
+                onClick={() => setShowConfirmModal(false)}
+                className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700 rounded-xl font-semibold transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={executeSave}
+                className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold transition-all shadow-sm flex items-center gap-2"
+              >
+                <CheckSquare size={18} />
+                Confirmar de todas formas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

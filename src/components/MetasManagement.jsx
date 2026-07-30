@@ -10,7 +10,7 @@ import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
 
 
-export default function MetasManagement() {
+export default function MetasManagement({ postulantes = [], asistencias = [] }) {
   const [grupos, setGrupos] = useState([])
   const [reclutadores, setReclutadores] = useState([])
   const [loading, setLoading] = useState(true)
@@ -43,6 +43,21 @@ export default function MetasManagement() {
       // Filter out CERRADO if you want, or just show all. For now we show all and let filters handle it.
       setGrupos(gData)
       setReclutadores(rData.filter(r => r.activo))
+
+      if (isInit && gData.length > 0) {
+        // Encontrar el último periodo
+        const allPeriodos = [...new Set(gData.map(g => g.periodo).filter(Boolean))].sort((a, b) => b.localeCompare(a))
+        if (allPeriodos.length > 0) {
+          const latestP = allPeriodos[0]
+          setFilterPeriodo(latestP)
+          
+          // Encontrar la última semana dentro de ese periodo
+          const semanasInPeriodo = [...new Set(gData.filter(g => g.periodo === latestP).map(g => g.semana).filter(Boolean))].sort((a, b) => b.localeCompare(a))
+          if (semanasInPeriodo.length > 0) {
+            setFilterSemana(semanasInPeriodo[0])
+          }
+        }
+      }
     } catch (err) {
       console.error(err)
       setError('Error al cargar metas de grupos y reclutadores.')
@@ -279,7 +294,35 @@ export default function MetasManagement() {
             </thead>
           <tbody>
             {filteredGrupos.map(g => {
-              const recs = g.reclutadores_metas || []
+              const recsRaw = g.reclutadores_metas || []
+              const recs = recsRaw.map(r => {
+                 const recName = r.nombre_completo || '';
+                 const recPostulantes = postulantes.filter(p => 
+                   p.grupo_codigo === g.grupo_codigo && 
+                   p.campana === g.campana_nombre && 
+                   (p.reclutador_id === r.reclutador_id || p.reclutador === recName)
+                 );
+                 const rqReal = recPostulantes.length;
+                 const dia1Real = recPostulantes.filter(p => {
+                    const asisGroup = asistencias.filter(a => a.postulante_documento === p.documento && a.grupo_codigo === g.grupo_codigo && a.campana === g.campana_nombre);
+                    if (asisGroup.length === 0) return false;
+                    const earliest = asisGroup.map(a => a.fecha_asistencia).sort()[0];
+                    const asis = asisGroup.find(a => a.fecha_asistencia === earliest);
+                    return asis && (asis.sigla_asistencia === 'A' || asis.sigla_asistencia === 'I-OP');
+                 }).length;
+                 
+                 const parts = recName.split(' ');
+                 let alias = r.alias || parts[0];
+                 if (!r.alias) {
+                   if (parts.length >= 3) {
+                     alias = parts.slice(2).join(' '); // Nombres
+                   } else if (parts.length === 2) {
+                     alias = parts[1];
+                   }
+                 }
+
+                 return { ...r, conteo_individual: rqReal, conectados_dia_1_individual: dia1Real, alias };
+              });
               const rowCount = recs.length > 0 ? recs.length : 1
               const getTrafficColor = (current, target) => {
                 if (target === 0 && current === 0) return 'text-[var(--text-muted)]'
@@ -322,7 +365,7 @@ export default function MetasManagement() {
                     {recs.length > 0 ? (
                       <>
                         <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)}>
-                          {recs[0].nombre_completo.split(' ')[0]}
+                          {recs[0].alias}
                         </td>
                         <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold bg-[var(--bg-muted)] text-[var(--text-primary)]">
                           {recs[0].meta_rq_individual}
@@ -382,7 +425,7 @@ export default function MetasManagement() {
                   {recs.slice(1).map((r, idx) => (
                     <tr key={idx} className={baseRowClasses}>
                       <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)}>
-                        {r.nombre_completo.split(' ')[0]}
+                        {r.alias}
                       </td>
                       <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold bg-[var(--bg-muted)] text-[var(--text-primary)]">
                         {r.meta_rq_individual}
@@ -517,14 +560,36 @@ export default function MetasManagement() {
                 
                 {selectedRecs.length > 0 ? (
                   <div className="space-y-2.5">
-                    {selectedRecs.map((rm, idx) => (
+                    {selectedRecs.map((rm, idx) => {
+                      const recName = rm.nombre_completo || '';
+                      let rqReal = 0;
+                      let dia1Real = 0;
+                      
+                      if (editingGrupo) {
+                        const recPostulantes = postulantes.filter(p => 
+                          p.grupo_codigo === editingGrupo.grupo_codigo && 
+                          p.campana === editingGrupo.campana_nombre && 
+                          (p.reclutador_id === rm.reclutador_id || p.reclutador === recName)
+                        );
+                        rqReal = recPostulantes.length;
+                        
+                        dia1Real = recPostulantes.filter(p => {
+                          const asisGroup = asistencias.filter(a => a.postulante_documento === p.documento && a.grupo_codigo === editingGrupo.grupo_codigo && a.campana === editingGrupo.campana_nombre);
+                          if (asisGroup.length === 0) return false;
+                          const earliest = asisGroup.map(a => a.fecha_asistencia).sort()[0];
+                          const asis = asisGroup.find(a => a.fecha_asistencia === earliest);
+                          return asis && (asis.sigla_asistencia === 'A' || asis.sigla_asistencia === 'I-OP');
+                        }).length;
+                      }
+
+                      return (
                       <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-[var(--bg-muted)] rounded-xl border border-[var(--border-subtle)] gap-4 transition-colors hover:border-[var(--border-normal)]">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20 flex items-center justify-center font-bold text-xs shrink-0">
-                            {rm.nombre_completo[0]}
+                            {recName[0] || '?'}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-[var(--text-primary)] truncate pr-4">{rm.nombre_completo}</p>
+                            <p className="text-xs font-bold text-[var(--text-primary)] truncate pr-4">{recName}</p>
                             <p className="text-[10px] text-[var(--text-muted)]">Miembro del equipo</p>
                           </div>
                         </div>
@@ -533,28 +598,44 @@ export default function MetasManagement() {
                           {/* Input RQ */}
                           <div className="flex flex-col items-center gap-1">
                             <span className="text-[9px] text-[var(--text-secondary)] font-bold uppercase">RQ Indiv.</span>
-                            <input
-                              type="number"
-                              min="0"
-                              value={rm.meta_rq_individual}
-                              onChange={e => handleMetaChange(rm.reclutador_id || rm.nombre_completo, 'meta_rq_individual', e.target.value)}
-                              className="w-16 form-input py-1 px-2 text-center text-xs font-bold"
-                            />
+                            <div className="flex flex-col items-center gap-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                value={rm.meta_rq_individual}
+                                onChange={e => handleMetaChange(rm.reclutador_id || recName, 'meta_rq_individual', e.target.value)}
+                                className="w-16 form-input py-1 px-2 text-center text-xs font-bold"
+                              />
+                              <span className={`text-[9px] font-bold ${rqReal >= (parseInt(rm.meta_rq_individual) || 0) && rqReal > 0 ? 'text-emerald-500' : 'text-[var(--text-muted)]'}`}>Real: {rqReal}</span>
+                            </div>
                           </div>
                           {/* Input Dia 1 */}
                           <div className="flex flex-col items-center gap-1">
                             <span className="text-[9px] text-[var(--text-secondary)] font-bold uppercase">Día 1 Indiv.</span>
-                            <input
-                              type="number"
-                              min="0"
-                              value={rm.meta_dia_1_individual}
-                              onChange={e => handleMetaChange(rm.reclutador_id || rm.nombre_completo, 'meta_dia_1_individual', e.target.value)}
-                              className="w-16 form-input py-1 px-2 text-center text-xs font-bold focus:border-emerald-500 focus:ring-emerald-500/20"
-                            />
+                            <div className="flex flex-col items-center gap-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                value={rm.meta_dia_1_individual}
+                                onChange={e => handleMetaChange(rm.reclutador_id || recName, 'meta_dia_1_individual', e.target.value)}
+                                className="w-16 form-input py-1 px-2 text-center text-xs font-bold focus:border-emerald-500 focus:ring-emerald-500/20"
+                              />
+                              <span className={`text-[9px] font-bold ${dia1Real >= (parseInt(rm.meta_dia_1_individual) || 0) && dia1Real > 0 ? 'text-emerald-500' : 'text-[var(--text-muted)]'}`}>Real: {dia1Real}</span>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRecs(prev => prev.filter(r => r.reclutador_id !== rm.reclutador_id && r.nombre_completo !== rm.nombre_completo));
+                            }}
+                            className="w-7 h-7 rounded bg-rose-500/10 text-rose-500 flex items-center justify-center hover:bg-rose-500 hover:text-white transition-colors ml-2 shrink-0"
+                            title="Quitar reclutador"
+                          >
+                            <X size={14} />
+                          </button>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 ) : (
                   <div className="py-10 text-center text-xs text-[var(--text-muted)] bg-[var(--bg-muted)] rounded-2xl border border-dashed border-[var(--border-normal)]">
@@ -589,7 +670,7 @@ export default function MetasManagement() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving || selectedRecs.length === 0}
+                  disabled={saving}
                   className="btn-primary"
                 >
                   {saving ? (

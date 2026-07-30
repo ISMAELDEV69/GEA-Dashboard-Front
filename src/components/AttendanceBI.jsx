@@ -21,53 +21,92 @@ const SIGLA_COLORS = {
 }
 
 export default function AttendanceBI({ grupos = [], postulantes = [], asistencias = [] }) {
-  const [selectedGrupoCode, setSelectedGrupoCode] = useState('TODOS')
-  const [selectedSede, setSelectedSede] = useState('TODAS')
+  const [selectedPeriodo, setSelectedPeriodo] = useState('TODOS')
+  const [selectedSemana, setSelectedSemana] = useState('TODAS')
+  const [selectedSegmento, setSelectedSegmento] = useState('TODOS')
   const [selectedCampana, setSelectedCampana] = useState('TODAS')
+  const [selectedGrupoCode, setSelectedGrupoCode] = useState('TODOS')
   
-  // HEATMAP Pagination
-  const [heatmapPage, setHeatmapPage] = useState(0)
-  const itemsPerPage = 20
+  // Component State
 
-  // 1. Unique filters list
-  const sedesList = useMemo(() => {
-    const list = new Set(postulantes.map(p => p.sede).filter(Boolean))
-    return ['TODAS', ...Array.from(list)]
-  }, [postulantes])
+  // 1. Unique filters list (Cruzados Estrictos)
+  const periodosList = useMemo(() => {
+    const list = new Set(grupos.map(g => g.periodo).filter(Boolean))
+    return ['TODOS', ...Array.from(list).sort((a, b) => b.localeCompare(a))]
+  }, [grupos])
+
+  const semanasList = useMemo(() => {
+    const subset = grupos.filter(g => {
+      return selectedPeriodo === 'TODOS' || g.periodo === selectedPeriodo;
+    })
+    const list = new Set(subset.map(g => g.semana_label).filter(Boolean))
+    return ['TODAS', ...Array.from(list).sort((a, b) => b.localeCompare(a))]
+  }, [grupos, selectedPeriodo])
+
+  const segmentosList = useMemo(() => {
+    const subset = grupos.filter(g => {
+      const matchPeriodo = selectedPeriodo === 'TODOS' || g.periodo === selectedPeriodo;
+      const matchSemana = selectedSemana === 'TODAS' || g.semana_label === selectedSemana;
+      return matchPeriodo && matchSemana;
+    })
+    const list = new Set(subset.map(g => g.segmento).filter(Boolean))
+    return ['TODOS', ...Array.from(list).sort()]
+  }, [grupos, selectedPeriodo, selectedSemana])
 
   const campanasList = useMemo(() => {
-    const list = new Set(grupos.map(g => g.campana).filter(Boolean))
-    return ['TODAS', ...Array.from(list)]
-  }, [grupos])
+    const subset = grupos.filter(g => {
+      const matchPeriodo = selectedPeriodo === 'TODOS' || g.periodo === selectedPeriodo;
+      const matchSemana = selectedSemana === 'TODAS' || g.semana_label === selectedSemana;
+      const matchSegmento = selectedSegmento === 'TODOS' || g.segmento === selectedSegmento;
+      return matchPeriodo && matchSemana && matchSegmento;
+    })
+    const list = new Set(subset.map(g => g.campana).filter(Boolean))
+    return ['TODAS', ...Array.from(list).sort()]
+  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento])
+
+  const gruposList = useMemo(() => {
+    const subset = grupos.filter(g => {
+      const matchPeriodo = selectedPeriodo === 'TODOS' || g.periodo === selectedPeriodo;
+      const matchSemana = selectedSemana === 'TODAS' || g.semana_label === selectedSemana;
+      const matchSegmento = selectedSegmento === 'TODOS' || g.segmento === selectedSegmento;
+      const matchCampana = selectedCampana === 'TODAS' || g.campana === selectedCampana;
+      return matchPeriodo && matchSemana && matchSegmento && matchCampana;
+    })
+    const list = new Set(subset.map(g => String(g.codigo).startsWith('PROY-') ? 'EN PROYECCIÓN' : String(g.codigo).replace(/_\d+$/, '')).filter(Boolean))
+    return ['TODOS', ...Array.from(list).sort()]
+  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
 
   // 2. Filtered candidate list
   const filteredPostulantes = useMemo(() => {
     return postulantes.filter(p => {
-      const matchSede = selectedSede === 'TODAS' || p.sede === selectedSede
+      const pCampana = (p.campana || p.campaign || '').toUpperCase().trim();
+      const sCampana = selectedCampana.toUpperCase().trim();
+      const matchCampana = selectedCampana === 'TODAS' || pCampana === sCampana;
       
-      let matchGrupo = true
-      if (selectedGrupoCode !== 'TODOS') {
-        const activeGrupo = grupos.find(g => g.codigo === selectedGrupoCode)
-        const mappedDocs = new Set(
-        asistencias
-          .filter(a => {
-            const strippedGpe = String(a.grupo_codigo).startsWith('PROY-') ? 'EN PROYECCIÓN' : String(a.grupo_codigo).replace(/_\d+$/, '');
-            return strippedGpe === selectedGrupoCode;
-          })
-          .map(a => a.postulante_documento)
-        )
-        const matchCampaign = activeGrupo ? (p.campana === activeGrupo.campana || p.campaign === activeGrupo.campana) : true
-        matchGrupo = mappedDocs.has(p.documento) || matchCampaign
-      }
+      const pGpe = String(p.grupo_codigo).startsWith('PROY-') ? 'EN PROYECCIÓN' : String(p.grupo_codigo).replace(/_\d+$/, '');
+      const matchGrupo = selectedGrupoCode === 'TODOS' || pGpe === selectedGrupoCode;
 
-      let matchCampana = true
-      if (selectedCampana !== 'TODAS') {
-        matchCampana = p.campana === selectedCampana || p.campaign === selectedCampana || grupos.some(g => g.codigo === p.grupo_codigo && g.campana === selectedCampana)
-      }
+      // Find official group to inherit hierarchical filters (Periodo, Semana, Segmento)
+      const matchedGrupo = grupos.find(g => {
+         const gCode = String(g.codigo).startsWith('PROY-') ? 'EN PROYECCIÓN' : String(g.codigo).replace(/_\d+$/, '');
+         const gCampana = (g.campana || '').toUpperCase().trim();
+         return gCode === pGpe && gCampana === pCampana;
+      });
 
-      return matchSede && matchGrupo && matchCampana
+      const pSegmento = p.segmento || (matchedGrupo ? matchedGrupo.segmento : null);
+      const safePSegmento = (pSegmento || '').toUpperCase().trim();
+      const safeSSegmento = selectedSegmento.toUpperCase().trim();
+      const matchSegmento = selectedSegmento === 'TODOS' || safePSegmento === safeSSegmento;
+      
+      const pPeriodo = matchedGrupo ? matchedGrupo.periodo : null;
+      const matchPeriodo = selectedPeriodo === 'TODOS' || pPeriodo === selectedPeriodo;
+      
+      const pSemana = matchedGrupo ? matchedGrupo.semana_label : null;
+      const matchSemana = selectedSemana === 'TODAS' || pSemana === selectedSemana;
+
+      return matchPeriodo && matchSemana && matchSegmento && matchCampana && matchGrupo;
     })
-  }, [postulantes, grupos, asistencias, selectedSede, selectedGrupoCode, selectedCampana])
+  }, [postulantes, grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupoCode])
 
   const candidateDocsSet = useMemo(() => new Set(filteredPostulantes.map(p => p.documento)), [filteredPostulantes])
 
@@ -82,7 +121,7 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
   }, [asistencias, selectedGrupoCode, candidateDocsSet])
 
   // 4. BI Metrics & Desertion Processing
-  const { biMetrics, motivesData, desertionTrend, recruiterData } = useMemo(() => {
+  const { biMetrics, motivesData, desertionTrend, recruiterData, formadorData } = useMemo(() => {
     const totalCount = filteredPostulantes.length
     
     // Attendance rate
@@ -113,7 +152,12 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
     bajasDia1Count = bajasDia1Set.size
 
     const activeBajas = bajasMap.size
-    const retentionRate = totalCount > 0 ? Math.round(((totalCount - activeBajas) / totalCount) * 100) : 100
+    
+    // Un postulante es "ACTIVO" (Retenido) solo si llegó a la asistencia del formador y no tiene Baja
+    const asistentesDocs = new Set(filteredAsistencias.map(a => a.postulante_documento))
+    const activeCount = filteredPostulantes.filter(p => asistentesDocs.has(p.documento) && !bajasMap.has(p.documento)).length
+    
+    const retentionRate = totalCount > 0 ? Math.round((activeCount / totalCount) * 100) : 100
 
     // Motives
     const motivesCount = {}
@@ -155,10 +199,12 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       const rec = p.reclutador || 'Sin Reclutador'
       if (!recruiters[rec]) recruiters[rec] = { name: rec, total: 0, active: 0, bajas: 0 }
       recruiters[rec].total++
-      if (bajasMap.has(p.documento)) {
-        recruiters[rec].bajas++
-      } else {
+      
+      // Es retenido si llegó a la asistencia del formador y no es Baja
+      if (asistentesDocs.has(p.documento) && !bajasMap.has(p.documento)) {
         recruiters[rec].active++
+      } else {
+        recruiters[rec].bajas++
       }
     })
 
@@ -171,48 +217,57 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       }))
       .filter(r => r.Total > 0)
 
+    // Formador Performance Matrix
+    const docToFormador = {}
+    filteredAsistencias.forEach(a => {
+      if (a.formador) {
+        docToFormador[a.postulante_documento] = a.formador
+      }
+    })
+
+    const formadoresMap = {}
+    const opDocs = new Set(
+      filteredAsistencias
+        .filter(a => a.sigla_asistencia === 'I-OP')
+        .map(a => a.postulante_documento)
+    )
+
+    filteredPostulantes.forEach(p => {
+      if (!asistentesDocs.has(p.documento)) return // Only count those who reached the formador
+      if (bajasDia1Set.has(p.documento)) return // Exclude Baja Dia 1 from Formador's metrics
+
+      const formador = docToFormador[p.documento] || 'Sin Formador'
+
+      if (!formadoresMap[formador]) {
+         formadoresMap[formador] = { name: formador, total: 0, bajas: 0, op: 0 }
+      }
+      formadoresMap[formador].total++
+      
+      if (bajasMap.has(p.documento)) {
+        formadoresMap[formador].bajas++
+      }
+      if (opDocs.has(p.documento)) {
+        formadoresMap[formador].op++
+      }
+    })
+
+    const formadorData = Object.values(formadoresMap)
+      .map(f => ({
+        name: f.name.split(' ').slice(0, 2).join(' '),
+        Total: f.total,
+        Desercion: f.total > 0 ? Math.round((f.bajas / f.total) * 100) : 0,
+        Dotacion: f.total > 0 ? Math.round((f.op / f.total) * 100) : 0
+      }))
+      .filter(f => f.Total > 0 && f.name !== 'Sin Formador')
+
     return {
       biMetrics: { totalCount, attendanceRate, activeBajas, retentionRate, bajasDia1: bajasDia1Count },
       motivesData,
       desertionTrend,
-      recruiterData
+      recruiterData,
+      formadorData
     }
-  }, [filteredPostulantes, filteredAsistencias])
-
-  // Heatmap Grid Setup
-  const heatmapData = useMemo(() => {
-    const dates = Array.from(new Set(filteredAsistencias.map(a => a.fecha_asistencia)))
-      .sort((a, b) => new Date(a) - new Date(b))
-
-    const gridRows = filteredPostulantes.map(p => {
-      const row = {
-        documento: p.documento,
-        nombre: `${p.apellido_paterno} ${p.apellido_materno?.[0] || ''}. ${p.nombres.split(' ')[0]}`,
-        dates: {}
-      }
-
-      dates.forEach(d => {
-        // Find latest record for that date
-        const recordsForDate = filteredAsistencias.filter(
-          a => a.postulante_documento === p.documento && a.fecha_asistencia === d
-        )
-        const record = recordsForDate[recordsForDate.length - 1]
-        row.dates[d] = record ? record.sigla_asistencia : '—'
-      })
-
-      return row
-    })
-
-    return { dates, rows: gridRows }
-  }, [filteredPostulantes, filteredAsistencias])
-
-  const paginatedHeatmapRows = useMemo(() => {
-    const start = heatmapPage * itemsPerPage
-    return heatmapData.rows.slice(start, start + itemsPerPage)
-  }, [heatmapData.rows, heatmapPage, itemsPerPage])
-
-  const totalPages = Math.ceil(heatmapData.rows.length / itemsPerPage)
-
+  }, [filteredPostulantes, filteredAsistencias, grupos])
   return (
     <PageLayout className="p-4 md:p-6 space-y-6 overflow-y-auto">
       {/* Title */}
@@ -224,31 +279,44 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       {/* Interactive Filters */}
       <Card>
         <CardHeader title="Filtros Dinámicos de Consulta" actions={<Filter size={16} className="text-[var(--accent)]" />} />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Grupo */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {/* Periodo */}
           <div>
-            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Grupo de Capacitación</label>
+            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Periodo</label>
             <select
-              value={selectedGrupoCode}
-              onChange={(e) => { setSelectedGrupoCode(e.target.value); setHeatmapPage(0) }}
+              value={selectedPeriodo}
+              onChange={(e) => { setSelectedPeriodo(e.target.value); setSelectedSemana('TODAS'); setSelectedSegmento('TODOS'); setSelectedCampana('TODAS'); setSelectedGrupoCode('TODOS'); }}
               className="form-input w-full"
             >
-              <option value="TODOS">TODOS LOS GRUPOS</option>
-              {Array.from(new Set(grupos.map(g => String(g.codigo).startsWith('PROY-') ? 'EN PROYECCIÓN' : String(g.codigo).replace(/_\d+$/, '')))).map(codigo => (
-                <option key={codigo} value={codigo}>{codigo}</option>
+              {periodosList.map(p => (
+                <option key={p} value={p}>{p}</option>
               ))}
             </select>
           </div>
 
-          {/* Sede */}
+          {/* Semana */}
           <div>
-            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Sede</label>
+            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Semana</label>
             <select
-              value={selectedSede}
-              onChange={(e) => { setSelectedSede(e.target.value); setHeatmapPage(0) }}
+              value={selectedSemana}
+              onChange={(e) => { setSelectedSemana(e.target.value); setSelectedSegmento('TODOS'); setSelectedCampana('TODAS'); setSelectedGrupoCode('TODOS'); }}
               className="form-input w-full"
             >
-              {sedesList.map(s => (
+              {semanasList.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Segmento */}
+          <div>
+            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Segmento</label>
+            <select
+              value={selectedSegmento}
+              onChange={(e) => { setSelectedSegmento(e.target.value); setSelectedCampana('TODAS'); setSelectedGrupoCode('TODOS'); }}
+              className="form-input w-full"
+            >
+              {segmentosList.map(s => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -259,11 +327,25 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
             <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Campaña</label>
             <select
               value={selectedCampana}
-              onChange={(e) => { setSelectedCampana(e.target.value); setHeatmapPage(0) }}
+              onChange={(e) => { setSelectedCampana(e.target.value); setSelectedGrupoCode('TODOS'); }}
               className="form-input w-full"
             >
               {campanasList.map(c => (
                 <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Grupo */}
+          <div>
+            <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Grupo de Capacitación</label>
+            <select
+              value={selectedGrupoCode}
+              onChange={(e) => { setSelectedGrupoCode(e.target.value); }}
+              className="form-input w-full"
+            >
+              {gruposList.map(codigo => (
+                <option key={codigo} value={codigo}>{codigo}</option>
               ))}
             </select>
           </div>
@@ -399,101 +481,34 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
         </div>
       </Card>
 
-      {/* Attendance Heatmap Matrix Grid */}
-      <Card noPadding className="shadow-xl overflow-hidden">
-        <div className="px-6 py-4 bg-[var(--bg-surface)] border-b border-[var(--border-subtle)] flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-[var(--accent-soft)] text-[var(--accent)] rounded-xl border border-[var(--border-subtle)]">
-              <Grid size={18} />
+      {/* Formador Performance Scatter */}
+      <Card>
+        <CardHeader title="Matriz de Rendimiento por Formador" subtitle="Dotación (I-OP) vs Deserción" actions={<Activity size={16} className="text-emerald-400" />} />
+        <div className="h-80">
+          {formadorData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.2} />
+                <XAxis type="number" dataKey="Dotacion" name="Dotación" unit="%" stroke="var(--text-muted)" fontSize={10} tickLine={false} domain={[0, 100]} label={{ value: 'Dotación (I-OP) %', position: 'insideBottom', offset: -10, fill: 'var(--text-muted)', fontSize: 10 }} />
+                <YAxis type="number" dataKey="Desercion" name="Deserción" unit="%" stroke="var(--text-muted)" fontSize={10} tickLine={false} domain={[0, 100]} label={{ value: 'Deserción %', angle: -90, position: 'insideLeft', fill: 'var(--text-muted)', fontSize: 10 }} />
+                <ZAxis type="category" dataKey="name" name="Formador" />
+                <RechartsTooltip 
+                  cursor={{ strokeDasharray: '3 3' }} 
+                  contentStyle={{ background: 'var(--glass-bg)', border: '1px solid var(--border-subtle)', borderRadius: '12px' }}
+                  itemStyle={{ fontSize: '12px' }}
+                />
+                <Scatter data={formadorData} fill="#10b981">
+                  {formadorData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.Desercion > 50 ? '#ef4444' : entry.Dotacion > 80 ? '#10b981' : '#f59e0b'} />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-xs">
+              Sin datos de formadores.
             </div>
-            <div>
-              <h4 className="font-bold text-[var(--text-primary)] text-sm">Matriz de Asistencia (Heatmap)</h4>
-              <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Seguimiento individual de asistencia a lo largo de la capacitación.</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-6">
-            <div className="flex gap-3 text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-emerald-500/15 border border-emerald-500/20" /> A</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-indigo-500/15 border border-indigo-500/20" /> I-OP</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-rose-500/15 border border-rose-500/20" /> FI</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-violet-500/15 border border-violet-500/20" /> FJ</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-[var(--bg-muted)] border border-[var(--border-normal)]" /> B</span>
-            </div>
-
-            {totalPages > 1 && (
-              <div className="flex items-center space-x-2 bg-[var(--bg-elevated)] px-2 py-1.5 rounded-lg border border-[var(--border-subtle)]">
-                <button 
-                  disabled={heatmapPage === 0} 
-                  onClick={() => setHeatmapPage(p => p - 1)}
-                  className="px-2 py-0.5 text-xs font-bold text-[var(--text-primary)] disabled:opacity-30 hover:bg-[var(--bg-muted)] rounded"
-                >
-                  &lt;
-                </button>
-                <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                  {heatmapPage + 1} / {totalPages}
-                </span>
-                <button 
-                  disabled={heatmapPage >= totalPages - 1} 
-                  onClick={() => setHeatmapPage(p => p + 1)}
-                  className="px-2 py-0.5 text-xs font-bold text-[var(--text-primary)] disabled:opacity-30 hover:bg-[var(--bg-muted)] rounded"
-                >
-                  &gt;
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="table-scroll overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-[var(--table-head-bg)] text-[var(--text-secondary)] font-bold uppercase tracking-wider border-b border-[var(--border-subtle)]">
-              <tr>
-                <th className="px-6 py-3.5 font-bold">Estudiante</th>
-                {heatmapData.dates.length > 0 ? (
-                  heatmapData.dates.map(date => (
-                    <th key={date} className="px-3 py-3.5 text-center font-mono text-[10px] whitespace-nowrap">
-                      {date.split('-').slice(1).join('/')}
-                    </th>
-                  ))
-                ) : (
-                  <th className="px-3 py-3.5 text-center">Sin Fechas</th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-subtle)]">
-              {paginatedHeatmapRows.length > 0 ? (
-                paginatedHeatmapRows.map(row => (
-                  <tr key={row.documento} className="hover:bg-[var(--bg-muted)] transition-colors">
-                    <td className="px-6 py-3.5">
-                      <div className="font-semibold text-[var(--text-primary)]">{row.nombre}</div>
-                      <div className="text-[9px] text-[var(--text-muted)] font-mono mt-0.5">{row.documento}</div>
-                    </td>
-                    {heatmapData.dates.map(date => {
-                      const sigla = row.dates[date] || '—'
-                      const meta = SIGLA_COLORS[sigla] || { bg: 'bg-[var(--bg-muted)] text-[var(--text-secondary)] border border-[var(--border-subtle)]', label: 'No Registrado' }
-                      return (
-                        <td key={date} className="px-3 py-3.5 text-center">
-                          <div
-                            title={`${meta.label} (${date})`}
-                            className={`w-6 h-6 inline-flex items-center justify-center rounded-[6px] font-black text-[9px] border select-none transition-all duration-300 hover:scale-110 ${meta.bg}`}
-                          >
-                            {sigla}
-                          </div>
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={heatmapData.dates.length + 1} className="px-6 py-12 text-center text-[var(--text-muted)] font-semibold">
-                    No hay suficientes datos de asistencia para construir la matriz calórica.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          )}
         </div>
       </Card>
     </PageLayout>

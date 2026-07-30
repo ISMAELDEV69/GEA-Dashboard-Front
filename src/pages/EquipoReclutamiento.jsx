@@ -135,6 +135,20 @@ export default function EquipoReclutamiento() {
     try {
       const payload = { ...editForm }
       delete payload._tempId
+      
+      // Sanitizar campos vacíos que rompen la BD
+      if (payload.fecha_cese === '') payload.fecha_cese = null;
+      if (payload.fecha_ingreso === '') payload.fecha_ingreso = null;
+      if (isNaN(payload.bono) || payload.bono === '') payload.bono = 0;
+      if (isNaN(payload.pct_efectivo) || payload.pct_efectivo === '') payload.pct_efectivo = 0;
+      if (isNaN(payload.pct_sodexo) || payload.pct_sodexo === '') payload.pct_sodexo = 0;
+      
+      // Ensure we don't send fields that don't exist in the database
+      delete payload.remuneracion_basica;
+      delete payload.bono_movilidad;
+      delete payload.porcentaje_efectivo;
+      delete payload.porcentaje_sodexo;
+
 
       let savedData = null
       
@@ -409,14 +423,14 @@ export default function EquipoReclutamiento() {
                         <div className="flex items-center gap-1 justify-end">
                           <input
                             type="number"
-                            value={editForm.porcentaje_efectivo || ''}
-                            onChange={(ev) => handleChange('porcentaje_efectivo', parseFloat(ev.target.value))}
+                            value={editForm.pct_efectivo || ''}
+                            onChange={(ev) => handleChange('pct_efectivo', parseFloat(ev.target.value))}
                             className="w-16 px-2 py-1 rounded bg-black/20 border border-slate-600 focus:border-blue-500 focus:outline-none text-xs text-right"
                           />
                           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>%</span>
                         </div>
                       ) : (
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.porcentaje_efectivo ? e.porcentaje_efectivo + '%' : '—'}</div>
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.pct_efectivo ? e.pct_efectivo + '%' : '—'}</div>
                       )}
                     </td>
 
@@ -426,14 +440,14 @@ export default function EquipoReclutamiento() {
                         <div className="flex items-center gap-1 justify-end">
                           <input
                             type="number"
-                            value={editForm.porcentaje_sodexo || ''}
-                            onChange={(ev) => handleChange('porcentaje_sodexo', parseFloat(ev.target.value))}
+                            value={editForm.pct_sodexo || ''}
+                            onChange={(ev) => handleChange('pct_sodexo', parseFloat(ev.target.value))}
                             className="w-16 px-2 py-1 rounded bg-black/20 border border-slate-600 focus:border-blue-500 focus:outline-none text-xs text-right"
                           />
                           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>%</span>
                         </div>
                       ) : (
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.porcentaje_sodexo ? e.porcentaje_sodexo + '%' : '—'}</div>
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.pct_sodexo ? e.pct_sodexo + '%' : '—'}</div>
                       )}
                     </td>
 

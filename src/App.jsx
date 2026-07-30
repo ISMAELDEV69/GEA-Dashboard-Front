@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   LayoutDashboard, UserPlus, ClipboardCheck, History,
   ChevronRight, Menu, X, Activity, Loader2,
   Wifi, WifiOff, RefreshCw, LogOut, User, Sun, Moon, Laptop,
-  Target, GraduationCap, Layers, BarChart3, CalendarDays, Users, UserCheck, Shield
+  Target, GraduationCap, Layers, BarChart3, CalendarDays, Users, UserCheck, Shield, Eye
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import NominaForm from './components/NominaForm'
@@ -63,6 +63,7 @@ import {
   fetchHomologadas,
   subscribeOperationalData,
   fetchModulePermissions,
+  fetchAppRoles,
 } from './lib/dataService'
 
 // ── RBAC: which nav items each role can see ──────────────────────
@@ -98,7 +99,7 @@ const THEMES = [
   { id: 'light',       icon: Sun,    label: 'Claro' },
 ]
 
-const ROL_COLORS = {
+const DEFAULT_ROL_COLORS = {
   admin:      'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
   reclutador: 'bg-violet-500/15 text-violet-400 border-violet-500/25',
   formador:   'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
@@ -110,7 +111,7 @@ const ROL_COLORS = {
 }
 
 // Etiqueta visual del rol (visor → Directivo)
-const ROL_LABELS = {
+const DEFAULT_ROL_LABELS = {
   admin:      'Admin',
   reclutador: 'Reclutador',
   formador:   'Formador',
@@ -198,7 +199,9 @@ export default function App() {
   const effectiveSession = isDemoMode ? 'demo' : session
   const effectiveProfile = isDemoMode ? demoProfile : userProfile
 
-  const currentRole = effectiveProfile?.rol ?? 'visor'
+  const realRole = (effectiveProfile?.rol || 'visor').toLowerCase()
+  const [viewAsRole, setViewAsRole] = useState(null)
+  const currentRole = realRole === 'admin' && viewAsRole ? viewAsRole : realRole
   
   const [navPermissions, setNavPermissions] = useState([])
 
@@ -241,6 +244,19 @@ export default function App() {
   const [campanasMetas, setCampanasMetas] = useState([])
   const [motivosBaja, setMotivosBaja] = useState([])
   const [opcionesHomologadas, setOpcionesHomologadas] = useState([])
+  const [appRoles, setAppRoles] = useState([])
+
+  const rolLabels = useMemo(() => {
+    const labels = { ...DEFAULT_ROL_LABELS }
+    appRoles.forEach(r => { labels[r.id] = r.label })
+    return labels
+  }, [appRoles])
+
+  const rolColors = useMemo(() => {
+    const colors = { ...DEFAULT_ROL_COLORS }
+    appRoles.forEach(r => { colors[r.id] = r.color })
+    return colors
+  }, [appRoles])
 
   const hasLoadedOnceRef = useRef(false)
 
@@ -248,7 +264,7 @@ export default function App() {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      const [p, a, r, s, c, al, f, cm, mb, mp] = await Promise.all([
+      const [p, a, r, s, c, al, f, cm, mb, mp, ar] = await Promise.all([
         fetchPostulantes(),
         fetchAsistencias(),
         fetchReclutadores(),
@@ -258,7 +274,8 @@ export default function App() {
         fetchFormadores(),
         fetchGruposConMetas(),
         fetchMotivosBaja(),
-        fetchModulePermissions()
+        fetchModulePermissions(),
+        fetchAppRoles()
       ])
       const g = await fetchGrupos(p)
       const homologadasData = await fetchHomologadas()
@@ -274,6 +291,7 @@ export default function App() {
       setCampanasMetas(cm)
       setMotivosBaja(mb)
       setNavPermissions(mp || [])
+      setAppRoles(ar || [])
       setOpcionesHomologadas(homologadasData)
       hasLoadedOnceRef.current = true
     } catch (err) {
@@ -500,8 +518,8 @@ export default function App() {
                     <p className="text-[11px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                       {effectiveProfile.nombre}
                     </p>
-                    <span className={`inline-flex items-center text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider border ${ROL_COLORS[currentRole]}`}>
-                      {ROL_LABELS[currentRole] ?? currentRole}
+                    <span className={`inline-flex items-center text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider border ${rolColors[currentRole]}`}>
+                      {rolLabels[currentRole] ?? currentRole}
                     </span>
                   </div>
                 </div>
@@ -610,6 +628,30 @@ export default function App() {
               </div>
             )}
 
+            {/* View As toggle for Admin */}
+            {realRole === 'admin' && (
+              <div className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] p-1 rounded-xl shadow-sm">
+                <div className="px-2 text-[var(--text-muted)] flex items-center">
+                  <Eye size={12} className="mr-1" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider hidden md:inline">Vista</span>
+                </div>
+                {appRoles.map(r => (
+                  <button
+                    key={r.id}
+                    title={`Ver como ${r.label}`}
+                    onClick={() => setViewAsRole(r.id === 'admin' ? null : r.id)}
+                    className={`px-1.5 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                      (viewAsRole || 'admin') === r.id 
+                        ? 'bg-[var(--accent)] text-white shadow-sm' 
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {r.short_label || r.label.charAt(0).toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Theme toggle pill */}
             <div className="flex gap-0.5 rounded-xl p-1 border" style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }}>
               {THEMES.map(t => {
@@ -679,7 +721,7 @@ export default function App() {
                 )}
               </KeepAliveView>
 
-              {activeView === 'metas' && navItems.some(i => i.id === 'metas') && <MetasManagement />}
+              {activeView === 'metas' && navItems.some(i => i.id === 'metas') && <MetasManagement postulantes={postulantes} asistencias={asistencias} />}
 
               <KeepAliveView viewId="capacidad" activeView={activeView}>
                 {navItems.some(i => i.id === 'capacidad') && (

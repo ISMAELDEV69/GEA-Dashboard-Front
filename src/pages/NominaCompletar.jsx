@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { Layers } from 'lucide-react'
 import NominaGridEditor from '../components/nomina/NominaGridEditor'
 import NominaFullPreview from '../components/nomina/NominaFullPreview'
+import { inferSegmento, SEGMENTOS_SIU } from '../lib/capacidadRysSync'
 
 export default function NominaCompletar({ grupos = [] }) {
   const [bulkPeriodo, setBulkPeriodo] = useState('')
@@ -15,22 +16,26 @@ export default function NominaCompletar({ grupos = [] }) {
   }, [grupos])
 
   const bulkSegmentos = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo) === String(bulkPeriodo))
-    return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
-  }, [grupos, bulkPeriodo])
+    return SEGMENTOS_SIU
+  }, [])
 
   const bulkCampanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo) === String(bulkPeriodo))
-    if (bulkSegmento) filtered = filtered.filter(g => String(g.segmento) === String(bulkSegmento))
+    if (bulkSegmento) filtered = filtered.filter(g => {
+      const seg = g.segmento || inferSegmento(g.campana)
+      return String(seg).trim() === String(bulkSegmento).trim()
+    })
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
   }, [grupos, bulkPeriodo, bulkSegmento])
 
   const bulkGruposList = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo);
     if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim());
-    if (bulkSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(bulkSegmento).trim());
+    if (bulkSegmento) filtered = filtered.filter(g => {
+      const seg = g.segmento || inferSegmento(g.campana)
+      return String(seg).trim() === String(bulkSegmento).trim()
+    });
     if (bulkCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(bulkCampana).trim());
     
     // Remove duplicates
@@ -88,14 +93,38 @@ export default function NominaCompletar({ grupos = [] }) {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5 ml-1">Campaña</label>
-            <select value={bulkCampana} onChange={e => { setBulkCampana(e.target.value); setBulkGrupo('') }} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors p-2.5">
+            <select 
+              value={bulkCampana} 
+              onChange={e => { 
+                const c = e.target.value;
+                setBulkCampana(c); 
+                setBulkGrupo('');
+                const match = grupos.find(g => g.campana === c);
+                if (match) setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(c));
+              }} 
+              className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors p-2.5"
+            >
               <option value="" disabled>Seleccione Campaña</option>
               {bulkCampanas.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 dark:text-slate-300 mb-1.5 ml-1">Grupo (GPE)</label>
-            <select value={bulkGrupo} onChange={e => setBulkGrupo(e.target.value)} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors p-2.5">
+            <select 
+              value={bulkGrupo} 
+              onChange={e => {
+                const cod = e.target.value;
+                setBulkGrupo(cod);
+                // Buscar primero en la lista filtrada actual para respetar la campaña seleccionada
+                const match = bulkGruposList.find(g => g.codigo === cod) || grupos.find(g => g.codigo === cod);
+                if (match) {
+                  setBulkCampana(match.campana);
+                  setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(match.campana));
+                  setBulkPeriodo(match.periodo);
+                }
+              }} 
+              className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-200 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors p-2.5"
+            >
               <option value="" disabled>Seleccione Grupo (GPE)</option>
               {bulkGruposList.map(g => (
                 <option key={g.codigo} value={g.codigo}>

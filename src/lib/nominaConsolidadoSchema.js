@@ -38,7 +38,7 @@ export const NOMINA_DB_FIELDS = [
   'bono_variable', 'bono_movilidad', 'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta',
   'cargo_contractual', 'dia_0', 'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs',
   'doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos',
-  'doc_autorizacion', 'status_final', 'observacion_final', 'evaluar', 'obs_evaluar'
+  'doc_autorizacion', 'status_final', 'observacion_final', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar'
 ]
 
 // The exact column headers from the form to parse

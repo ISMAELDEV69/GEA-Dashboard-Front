@@ -267,8 +267,10 @@ export default function ConsolidadoPowerBI() {
       obj.campana = row.campana;
       obj.gpe = gpe;
       obj.raw_gpe = rawGpe;
-      if (row.isBajaDia1) obj.isBajaDia1 = true;
-      if (row.isDescuento) obj.isDescuento = true;
+      
+      // Actualizar isBajaDia1 y isDescuento siempre con el valor del último registro procesado (created_at ascendente)
+      obj.isBajaDia1 = row.isBajaDia1;
+      if (row.isDescuento) obj.isDescuento = true; // Descuento asumo que sí se acumula, o puedes poner = row.isDescuento si también se anulan
 
       if (fecha && sigla) {
         obj.fechas[fecha] = sigla;

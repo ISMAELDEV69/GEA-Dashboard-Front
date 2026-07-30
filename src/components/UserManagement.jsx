@@ -5,109 +5,39 @@ import {
   Crown, Mail, Lock, TrendingUp, BookOpen, Briefcase, Key
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { createUserAccount, adminResetUserPassword, updateUserRole, getEquipoReclutamiento, getEquipoFormacion, updateEquipoFormacion, updateEquipoReclutamiento } from '../lib/dataService'
+import { createUserAccount, adminResetUserPassword, updateUserRole, getEquipoReclutamiento, getEquipoFormacion, updateEquipoFormacion, updateEquipoReclutamiento, fetchAppRoles } from '../lib/dataService'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
 import { AVAILABLE_MODULES } from './RolePermissionsAdmin'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ROLES
-// ─────────────────────────────────────────────────────────────────────────────
-const ROLES = [
-  {
-    value: 'admin',
-    label: 'Admin',
-    labelPlural: 'Admins',
-    description: 'Acceso total a todos los módulos y configuraciones.',
-    color: 'bg-rose-500/10 text-rose-500 border-rose-500/20',
-    dotColor: 'bg-rose-500',
-    icon: Crown
-  },
-  {
-    value: 'reclutador',
-    label: 'Reclutador',
-    labelPlural: 'Reclutadores',
-    description: 'Gestión de nóminas, ingresos y KPIs de reclutamiento.',
-    color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-    dotColor: 'bg-blue-500',
-    icon: Briefcase
-  },
-  {
-    value: 'formador',
-    label: 'Formador',
-    labelPlural: 'Formadores',
-    description: 'Gestión de aulas, asistencias y reportes de deserción.',
-    color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-    dotColor: 'bg-emerald-500',
-    icon: BookOpen
-  },
-  {
-    value: 'visor',
-    label: 'Directivo',
-    labelPlural: 'Directivos',
-    description: 'Acceso exclusivo a dashboards y reportes gerenciales.',
-    color: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
-    dotColor: 'bg-purple-500',
-    icon: TrendingUp
-  },
-  {
-    value: 'supervisor_capacitacion',
-    label: 'Supervisor Capacitación',
-    labelPlural: 'Supervisores Capacitación',
-    description: 'Gestión y supervisión de equipos de formación.',
-    color: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
-    dotColor: 'bg-orange-500',
-    icon: Users
-  },
-  {
-    value: 'coordinador_rys',
-    label: 'Coordinador RYS',
-    labelPlural: 'Coordinadores RYS',
-    description: 'Coordinación operativa de reclutamiento y selección.',
-    color: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20',
-    dotColor: 'bg-cyan-500',
-    icon: UserPlus
-  },
-  {
-    value: 'jefe_rys',
-    label: 'Jefe RYS',
-    labelPlural: 'Jefes RYS',
-    description: 'Jefatura general de reclutamiento y selección.',
-    color: 'bg-sky-500/10 text-sky-500 border-sky-500/20',
-    dotColor: 'bg-sky-500',
-    icon: Shield
-  },
-  {
-    value: 'jefe_capacitacion',
-    label: 'Jefe Capacitación',
-    labelPlural: 'Jefes Capacitación',
-    description: 'Jefatura general de formación y capacitación.',
-    color: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-    dotColor: 'bg-amber-500',
-    icon: BookOpen
-  }
-]
-
-const getRol = (val) => ROLES.find(r => r.value === val) || ROLES.find(r => r.value === 'visor')
-
-const AVATAR_GRADIENTS = [
-  'from-blue-500 to-indigo-500',
-  'from-emerald-500 to-teal-500',
-  'from-rose-500 to-pink-500',
-  'from-amber-500 to-orange-500',
-  'from-purple-500 to-fuchsia-500',
-  'from-cyan-500 to-blue-500'
-]
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Role Badge
 // ─────────────────────────────────────────────────────────────────────────────
-function RoleBadge({ rol }) {
-  const r = getRol(rol)
+function RoleBadge({ rol, appRoles }) {
+  const defaultRole = {
+    id: 'visor',
+    label: 'Desconocido',
+    color: 'bg-slate-500/10 text-slate-500 border-slate-500/20',
+    icon: 'User'
+  }
+  const r = appRoles.find(ar => ar.id === rol) || defaultRole
+  
+  // Icon Mapping simple
+  const IconComponent = {
+    'Crown': Crown,
+    'Briefcase': Briefcase,
+    'BookOpen': BookOpen,
+    'TrendingUp': TrendingUp,
+    'Users': Users,
+    'UserPlus': UserPlus,
+    'Shield': Shield,
+    'Key': Key
+  }[r.icon] || Shield
+
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${r.color}`}>
-      <r.icon size={11} />
+      <IconComponent size={11} />
       {r.label}
     </span>
   )
@@ -125,18 +55,21 @@ export default function UserManagement({ navPermissions = [] }) {
   const [showReset,  setShowReset]  = useState(null) // Holds perfil object to reset password
   const [showEditRole, setShowEditRole] = useState(null) // Holds perfil object to change role
   const [filterRol,  setFilterRol]  = useState('all')
+  const [appRoles, setAppRoles] = useState([])
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [formacionData, reclutamientoData, perfilesData] = await Promise.all([
+      const [formacionData, reclutamientoData, perfilesData, rolesData] = await Promise.all([
         getEquipoFormacion(),
         getEquipoReclutamiento(),
-        supabase.from('perfiles').select('id, nombre, rol, created_at').order('created_at', { ascending: false })
+        supabase.from('perfiles').select('id, nombre, rol, created_at').order('created_at', { ascending: false }),
+        fetchAppRoles()
       ])
 
       const profiles = perfilesData.data || []
       setPerfiles(profiles)
+      setAppRoles(rolesData || [])
 
       const { data: { session } } = await supabase.auth.getSession()
       const currentUserId = session?.user?.id
@@ -148,13 +81,20 @@ export default function UserManagement({ navPermissions = [] }) {
       }
 
       const matchedProfileIds = new Set()
+      
+      const cleanNamePart = (part) => {
+        if (!part) return ''
+        const str = String(part).trim()
+        return str.replace(/c?undefined/ig, '').replace(/\bnull\b/ig, '').trim()
+      }
 
       const listF = formacionData.map(e => {
         const perfil = profiles.find(p => {
           if (!p.nombre) return false
           const pNom = normalize(p.nombre)
           const byUser = e.usuario_alix && pNom === normalize(e.usuario_alix)
-          const byName = e.nombres_completos && normalize(e.nombres_completos).includes(pNom)
+          const empName = e.nombres_completos ? normalize(e.nombres_completos) : ''
+          const byName = empName && (empName === pNom || ` ${empName} `.includes(` ${pNom} `))
           return byUser || byName
         }) || null
         if (perfil) matchedProfileIds.add(perfil.id)
@@ -176,7 +116,8 @@ export default function UserManagement({ navPermissions = [] }) {
           if (!p.nombre) return false
           const pNom = normalize(p.nombre)
           const byUser = e.alix && pNom === normalize(e.alix)
-          const byName = e.nombres_completos && normalize(e.nombres_completos).includes(pNom)
+          const empName = e.nombres_completos ? normalize(e.nombres_completos) : ''
+          const byName = empName && (empName === pNom || ` ${empName} `.includes(` ${pNom} `))
           return byUser || byName
         }) || null
         if (perfil) matchedProfileIds.add(perfil.id)
@@ -197,7 +138,7 @@ export default function UserManagement({ navPermissions = [] }) {
       const listOrphans = profiles.filter(p => !matchedProfileIds.has(p.id)).map(p => ({
         _key: `perfil_${p.id}`,
         documento: '—',
-        nombres: p.nombre || 'Desconocido',
+        nombres: cleanNamePart(p.nombre) || 'Desconocido',
         cargo: '—',
         equipo: 'Externa / Otros',
         usuario: p.id === currentUserId && currentUserEmailPrefix ? currentUserEmailPrefix : p.nombre,
@@ -260,16 +201,20 @@ export default function UserManagement({ navPermissions = [] }) {
     return matchSearch && matchRol
   })
 
-  const counts = ROLES.reduce((acc, r) => {
-    acc[r.value] = employees.filter(e => e.perfil?.rol === r.value).length
+  const counts = appRoles.reduce((acc, r) => {
+    acc[r.id] = employees.filter(e => e.perfil?.rol === r.id).length
     return acc
   }, {})
 
   const getInitials = (nombre) => {
     if (!nombre) return '?'
-    const parts = nombre.trim().split(' ')
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
-    return nombre[0].toUpperCase()
+    const parts = String(nombre).trim().split(/\s+/)
+    if (parts.length >= 2) {
+      const first = parts[0]?.[0] || ''
+      const second = parts[1]?.[0] || ''
+      return (first + second).toUpperCase()
+    }
+    return (parts[0]?.[0] || '?').toUpperCase()
   }
 
   return (
@@ -289,22 +234,22 @@ export default function UserManagement({ navPermissions = [] }) {
 
       {/* ── Role filters ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {ROLES.map(r => {
-          const Icon = r.icon
+        {appRoles.map(r => {
+          const Icon = Shield
           return (
             <button
-              key={r.value}
-              onClick={() => setFilterRol(filterRol === r.value ? 'all' : r.value)}
-              className={`p-4 rounded-2xl border text-left transition-all hover:scale-[1.02] bg-[var(--bg-surface)] ${filterRol === r.value ? 'border-[var(--accent)] ring-2 ring-[var(--accent)]/20' : 'border-[var(--border-subtle)] hover:border-[var(--accent)]/50'}`}
+              key={r.id}
+              onClick={() => setFilterRol(filterRol === r.id ? 'all' : r.id)}
+              className={`p-4 rounded-2xl border text-left transition-all hover:scale-[1.02] bg-[var(--bg-surface)] ${filterRol === r.id ? 'border-[var(--accent)] ring-2 ring-[var(--accent)]/20' : 'border-[var(--border-subtle)] hover:border-[var(--accent)]/50'}`}
             >
               <div className={`inline-flex p-2 rounded-xl mb-2 ${r.color}`}>
                 <Icon size={14} />
               </div>
               <div className="text-2xl font-black text-[var(--text-primary)]">
-                {counts[r.value] ?? 0}
+                {counts[r.id] ?? 0}
               </div>
               <div className="text-[11px] font-semibold text-[var(--text-muted)]">
-                {r.label}{(counts[r.value] ?? 0) !== 1 ? 's' : ''}
+                {r.label}{(counts[r.id] ?? 0) !== 1 ? 's' : ''}
               </div>
             </button>
           )
@@ -348,7 +293,7 @@ export default function UserManagement({ navPermissions = [] }) {
         ) : (
           <div className="table-scroll divide-y divide-[var(--border-subtle)]">
             {filtered.map((emp, i) => {
-              const grad = AVATAR_GRADIENTS[i % AVATAR_GRADIENTS.length]
+              const grad = ['from-blue-500 to-indigo-600', 'from-emerald-500 to-teal-600', 'from-amber-500 to-orange-600', 'from-rose-500 to-red-600'][i % 4]
               const hasAccount = !!emp.perfil
 
               return (
@@ -375,7 +320,7 @@ export default function UserManagement({ navPermissions = [] }) {
 
                   {/* Rol (si tiene cuenta) */}
                   <div className="flex justify-center">
-                    {hasAccount ? <RoleBadge rol={emp.perfil.rol} /> : <span className="text-[10px] text-[var(--text-muted)] italic text-rose-400">Falta crear clave</span>}
+                    {hasAccount ? <RoleBadge rol={emp.perfil.rol} appRoles={appRoles} /> : <span className="text-[10px] text-[var(--text-muted)] italic text-rose-400">Falta crear clave</span>}
                   </div>
 
                   {/* Usuario */}
@@ -438,27 +383,17 @@ export default function UserManagement({ navPermissions = [] }) {
           <p className="text-xs font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider">Permisos por rol</p>
         </div>
         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {ROLES.map(r => {
-            const Icon = r.icon
+          {appRoles.map(r => {
+            const Icon = Shield
             const roleModules = AVAILABLE_MODULES.filter(mod => {
               const dbPerm = navPermissions.find(p => p.module_id === mod.id)
-              return dbPerm && dbPerm.roles.includes(r.value)
+              return dbPerm && dbPerm.roles.includes(r.id)
             }).map(mod => mod.label)
 
-            const fallbackPerms = {
-              admin:      ['Dashboard gerencial', 'Nómina', 'Asistencias', 'Analítica BI', 'Auditoría', 'Gestión de usuarios'],
-              reclutador: ['Dashboard personal', 'Nómina (ingreso de postulantes)', 'Metas semanales'],
-              formador:   ['Dashboard de aula', 'Registro de asistencias', 'Analítica BI', 'Semáforo de deserción'],
-              visor:      ['Dashboard ejecutivo completo', 'Todos los gráficos e informes', 'Solo lectura — sin modificaciones'],
-              supervisor_capacitacion: ['Supervisión de aulas', 'Analítica BI'],
-              coordinador_rys:         ['Coordinación de nómina', 'Metas RYS'],
-              jefe_rys:                ['Dashboards RYS', 'Gestión general de nómina'],
-              jefe_capacitacion:       ['Dashboards Capacitación', 'Gestión general de aulas'],
-            }
-            const permsList = roleModules.length > 0 ? roleModules : (fallbackPerms[r.value] || ['Acceso básico'])
+            const permsList = roleModules.length > 0 ? roleModules : ['Acceso básico']
 
             return (
-              <div key={r.value} className="flex gap-3 p-3 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
+              <div key={r.id} className="flex gap-3 p-3 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
                 <div className={`p-2 rounded-xl flex-shrink-0 h-fit ${r.color}`}>
                   <Icon size={13} />
                 </div>
@@ -467,7 +402,7 @@ export default function UserManagement({ navPermissions = [] }) {
                   <ul className="space-y-0.5">
                     {permsList.map(p => (
                       <li key={p} className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.dotColor}`} />
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.dotColor || 'bg-slate-400'}`} />
                         {p}
                       </li>
                     ))}
@@ -482,6 +417,7 @@ export default function UserManagement({ navPermissions = [] }) {
       {showCreate && (
         <CreateUserModal 
           employee={showCreate} 
+          appRoles={appRoles}
           onClose={() => setShowCreate(null)} 
           onCreated={loadData} 
         />
@@ -489,7 +425,8 @@ export default function UserManagement({ navPermissions = [] }) {
       
       {showEditRole && (
         <EditRoleModal 
-          perfil={showEditRole} 
+          perfil={showEditRole}
+          appRoles={appRoles}
           onClose={() => setShowEditRole(null)} 
           onUpdated={() => {
             setShowEditRole(null)
@@ -510,10 +447,10 @@ export default function UserManagement({ navPermissions = [] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CreateUserModal
 // ─────────────────────────────────────────────────────────────────────────────
-function CreateUserModal({ employee, onClose, onCreated }) {
+function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
   const [usuario,  setUsuario]  = useState('')
   const [password, setPassword] = useState('')
-  const [rol,      setRol]      = useState('reclutador')
+  const [rol,      setRol]      = useState(appRoles[0]?.id || 'visor')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState(null)
   const [success,  setSuccess]  = useState(false)
@@ -643,9 +580,9 @@ function CreateUserModal({ employee, onClose, onCreated }) {
           <div>
             <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1.5">Rol del sistema</label>
             <div className="space-y-2">
-              {ROLES.map(r => (
-                <label key={r.value} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rol === r.value ? 'border-[var(--accent)] bg-[var(--accent)]/5' : 'border-[var(--border-subtle)] hover:border-[var(--accent)]/30'}`}>
-                  <input type="radio" name="rol" value={r.value} checked={rol === r.value} onChange={() => setRol(r.value)} className="mt-1" />
+              {appRoles.map(r => (
+                <label key={r.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${rol === r.id ? 'border-[var(--accent)] bg-[var(--accent)]/5' : 'border-[var(--border-subtle)] hover:border-[var(--accent)]/30'}`}>
+                  <input type="radio" name="rol" value={r.id} checked={rol === r.id} onChange={() => setRol(r.id)} className="mt-1" />
                   <div>
                     <p className="text-sm font-bold text-[var(--text-primary)]">{r.label}</p>
                     <p className="text-[10px] text-[var(--text-muted)]">{r.description}</p>
@@ -765,7 +702,7 @@ function ResetPasswordModal({ perfil, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MODAL: EditRoleModal
 // ─────────────────────────────────────────────────────────────────────────────
-function EditRoleModal({ perfil, onClose, onUpdated }) {
+function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
   const [role, setRole] = useState(perfil.rol || 'visor')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -797,12 +734,12 @@ function EditRoleModal({ perfil, onClose, onUpdated }) {
               Selecciona el nuevo rol para el usuario <strong className="text-white">{perfil.nombre}</strong>:
             </p>
             <div className="max-h-[60vh] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              {ROLES.map(r => (
-                <label key={r.value} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${role === r.value ? 'bg-[var(--bg-elevated)] border-[var(--accent)] ring-1 ring-[var(--accent)]' : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] hover:border-gray-500'}`}>
-                  <input type="radio" name="role" value={r.value} checked={role === r.value} onChange={() => setRole(r.value)} className="mt-1" />
+              {appRoles.map(r => (
+                <label key={r.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${role === r.id ? 'bg-[var(--bg-elevated)] border-[var(--accent)] ring-1 ring-[var(--accent)]' : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] hover:border-gray-500'}`}>
+                  <input type="radio" name="role" value={r.id} checked={role === r.id} onChange={() => setRole(r.id)} className="mt-1" />
                   <div>
                     <div className="text-sm font-bold text-[var(--text-primary)] flex items-center gap-1.5">
-                      <r.icon size={14} className={role === r.value ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'} />
+                      <Shield size={14} className={role === r.id ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'} />
                       {r.label}
                     </div>
                     <p className="text-[10px] text-[var(--text-muted)] mt-0.5 leading-tight">{r.description}</p>
