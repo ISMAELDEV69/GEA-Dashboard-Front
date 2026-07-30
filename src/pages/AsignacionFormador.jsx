@@ -90,8 +90,14 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
 
   const formadoresActivos = useMemo(() => {
     return equipoFormacionData
-      .filter(f => f.estado?.toUpperCase() === 'ACTIVO' && f.cargo_funcional?.toUpperCase() === 'FORMADOR')
-      .sort((a, b) => (a.datos_completos || a.nombres_completos || '').localeCompare(b.datos_completos || b.nombres_completos || ''))
+      .filter(f => 
+        f.estado?.trim().toUpperCase() === 'ACTIVO' && 
+        (
+          f.cargo_funcional?.trim().toUpperCase().includes('FORMADOR') || 
+          f.cargo_contractual?.trim().toUpperCase().includes('FORMADOR')
+        )
+      )
+      .sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
   }, [equipoFormacionData])
 
   const handleAssign = async (grupo_codigo, campana, formador_documento) => {
@@ -288,7 +294,11 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                         >
                           <option value="">-- Sin Formador --</option>
                           {formadoresActivos
-                            .filter(f => !g.segmento || (f.segmento || '').trim().toUpperCase() === (g.segmento || '').trim().toUpperCase())
+                            .filter(f => {
+                              if (!g.segmento) return true;
+                              if (!f.segmento) return false;
+                              return f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
+                            })
                             .map(f => (
                               <option key={f.documento} value={f.documento}>
                                 {f.datos_completos || f.nombres_completos}

@@ -2650,7 +2650,12 @@ export async function getEquipoFormacion() {
       console.error("Error fetching equipo_formacion:", error);
       return [];
     }
-    return data || [];
+    return (data || []).map(f => ({
+      ...f,
+      nombres_completos: (f.nombres_completos || '').trim().toUpperCase(),
+      cargo_funcional: (f.cargo_funcional || '').trim().toUpperCase(),
+      estado: (f.estado || '').trim().toUpperCase()
+    }));
   }
   
   return [];
@@ -2658,9 +2663,14 @@ export async function getEquipoFormacion() {
 
 export async function updateEquipoFormacion(documento, payload) {
   if (DB_MODE === 'supabase') {
+    const cleanPayload = { ...payload }
+    if (typeof cleanPayload.nombres_completos === 'string') cleanPayload.nombres_completos = cleanPayload.nombres_completos.trim().toUpperCase()
+    if (typeof cleanPayload.cargo_funcional === 'string') cleanPayload.cargo_funcional = cleanPayload.cargo_funcional.trim().toUpperCase()
+    if (typeof cleanPayload.estado === 'string') cleanPayload.estado = cleanPayload.estado.trim().toUpperCase()
+
     const { data, error } = await supabase
       .from('equipo_formacion')
-      .update({ ...payload, updated_at: new Date().toISOString() })
+      .update({ ...cleanPayload, updated_at: new Date().toISOString() })
       .eq('documento', documento)
       .select()
       .single();
@@ -2675,9 +2685,14 @@ export async function updateEquipoFormacion(documento, payload) {
 
 export async function addEquipoFormacion(payload) {
   if (DB_MODE === 'supabase') {
+    const cleanPayload = { ...payload }
+    if (typeof cleanPayload.nombres_completos === 'string') cleanPayload.nombres_completos = cleanPayload.nombres_completos.trim().toUpperCase()
+    if (typeof cleanPayload.cargo_funcional === 'string') cleanPayload.cargo_funcional = cleanPayload.cargo_funcional.trim().toUpperCase()
+    if (typeof cleanPayload.estado === 'string') cleanPayload.estado = cleanPayload.estado.trim().toUpperCase()
+
     const { data, error } = await supabase
       .from('equipo_formacion')
-      .insert([{ ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
+      .insert([{ ...cleanPayload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
       .select()
       .single();
     if (error) {

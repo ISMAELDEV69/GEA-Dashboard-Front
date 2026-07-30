@@ -150,6 +150,7 @@ export default function EquipoFormacion() {
     try {
       const payload = { ...editForm }
       delete payload._tempId
+      delete payload._realUsername // Eliminar campo virtual
       // Auto-generar datos completos
       payload.datos_completos = `${payload.nombres_completos} ${payload.apellido_paterno} ${payload.apellido_materno}`.trim()
 
@@ -181,7 +182,7 @@ export default function EquipoFormacion() {
       setIsNewRecord(false)
     } catch (err) {
       console.error(err)
-      alert("Error al guardar los cambios")
+      alert('Error al guardar los cambios: ' + (err.message || err.toString()))
     } finally {
       setSaving(false)
     }

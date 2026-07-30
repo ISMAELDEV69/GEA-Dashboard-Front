@@ -135,6 +135,7 @@ export default function EquipoReclutamiento() {
     try {
       const payload = { ...editForm }
       delete payload._tempId
+      delete payload._realUsername // Eliminar campo virtual
       
       // Sanitizar campos vacíos que rompen la BD
       if (payload.fecha_cese === '') payload.fecha_cese = null;
