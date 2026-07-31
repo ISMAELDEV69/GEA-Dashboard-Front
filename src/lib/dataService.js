@@ -3015,7 +3015,7 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
   let fHasMore = true;
   while(fHasMore) {
     const { data } = await supabase.from('consolidado_asistencias')
-      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana')
+      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana, estado')
       .in('codigo_grupo', codigos)
       .in('campana', campanas)
       .range(fFrom, fFrom + fStep - 1);
@@ -3058,17 +3058,7 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       
     const total_nomina = validNominas.length;
     const asistio_dia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
-    const asistio_dia1 = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
-    const activos_actuales = validNominas.filter(n => n.activo === true || String(n.activo) === 'true').length;
-
-    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
-    
-    // Activos en OJT y Cantidad de Ingresos (I-OP)
-    let activos_ojt = 0;
-    let ingresos_iop = 0;
-
-    const docs = [...new Set(validNominas.map(n => n.documento))];
-    const targetOjtDate = fecha_inicio_ojt ? new Date(fecha_inicio_ojt).getTime() : null;
+    let activos_actuales = 0;
 
     for (const doc of docs) {
       const records = groupFormAsisRaw.filter(r => r.documento === doc);
@@ -3078,24 +3068,51 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
         ingresos_iop++;
       }
 
+      // Activo Actual?
+      // Revisamos si tiene baja en algún momento (Baja día 1, sigla B, o estado = BAJA/CESADO)
+      let isBaja = false;
+      let currentState = '';
+      if (records.length > 0) {
+        // Tomamos el estado del registro más reciente (el último en el array o el de mayor fecha)
+        const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || 0) - new Date(b.fecha_registro_asistencia || 0));
+        const lastRecord = sortedRecords[sortedRecords.length - 1];
+        currentState = String(lastRecord.estado || '').toUpperCase();
+      }
+
+      if (records.some(r => String(r.sigla).toUpperCase().trim() === 'B' || (r.motivo_baja && r.motivo_baja.includes('BAJA')))) {
+        isBaja = true;
+      }
+      if (currentState.includes('BAJA') || currentState.includes('CESADO') || currentState === 'NO INICIO') {
+        isBaja = true;
+      }
+
+      // Si no tiene registro alguno pero no es baja, ¿es activo?
+      // Asumiremos que si no es baja explícita y su estado no es de cese, sigue activo en nómina.
+      if (!isBaja) {
+        activos_actuales++;
+      }
+
       // Activo en OJT?
       if (targetOjtDate) {
-        // Encontrar la fecha de baja (si existe)
-        const bajaRecords = records.filter(r => String(r.sigla).toUpperCase().trim() === 'B' || r.motivo_baja);
-        let bajaDate = null;
-        for (const b of bajaRecords) {
-           if (b.fecha_registro_asistencia) {
-             const time = new Date(b.fecha_registro_asistencia).getTime();
-             if (!bajaDate || time < bajaDate) bajaDate = time;
-           }
-        }
-        
-        // Si no tiene baja o su baja fue DESPUÉS de la fecha de inicio de OJT, estaba activo en OJT
-        if (!bajaDate || bajaDate > targetOjtDate) {
+        // Debe tener al menos una asistencia como activo con fecha >= fecha_inicio_ojt
+        const hasActiveAttendance = records.some(r => {
+          const sigla = String(r.sigla).toUpperCase().trim();
+          if (sigla === 'B' || (r.motivo_baja && r.motivo_baja.includes('BAJA'))) return false;
+          if (!r.fecha_registro_asistencia) return false;
+          const recordTime = new Date(r.fecha_registro_asistencia).getTime();
+          
+          // Consideramos el mismo día o posterior
+          // Añadimos T00:00:00 a la fecha para asegurar comparación justa de días
+          const recordDateOnly = new Date(r.fecha_registro_asistencia + 'T00:00:00').getTime();
+          const targetDateOnly = new Date(fecha_inicio_ojt + 'T00:00:00').getTime();
+          
+          return recordDateOnly >= targetDateOnly;
+        });
+
+        if (hasActiveAttendance) {
           activos_ojt++;
         }
       } else {
-        // Si no hay fecha de OJT configurada, no podemos calcularlo, o asumimos igual a la nómina inicial
         activos_ojt = 0; 
       }
     }
