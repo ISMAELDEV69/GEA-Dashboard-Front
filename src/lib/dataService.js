@@ -3100,23 +3100,22 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       }
 
       // Activo en OJT?
-      if (targetOjtDate) {
+      if (fecha_inicio_ojt) {
         // Debe tener al menos una asistencia como activo con fecha >= fecha_inicio_ojt
         const hasActiveAttendance = records.some(r => {
           const sigla = String(r.sigla).toUpperCase().trim();
           if (sigla === 'B' || (r.motivo_baja && r.motivo_baja.includes('BAJA'))) return false;
           if (!r.fecha_registro_asistencia) return false;
-          const recordTime = new Date(r.fecha_registro_asistencia).getTime();
           
-          // Consideramos el mismo día o posterior
-          // Añadimos T00:00:00 a la fecha para asegurar comparación justa de días
-          const recordDateOnly = new Date(r.fecha_registro_asistencia + 'T00:00:00').getTime();
-          const targetDateOnly = new Date(fecha_inicio_ojt + 'T00:00:00').getTime();
+          // Extraemos solo YYYY-MM-DD para una comparación de string segura
+          const recordDateStr = String(r.fecha_registro_asistencia).substring(0, 10);
+          const targetDateStr = String(fecha_inicio_ojt).substring(0, 10);
           
-          return recordDateOnly >= targetDateOnly;
+          return recordDateStr >= targetDateStr;
         });
 
-        if (hasActiveAttendance) {
+        // Adicionalmente, el estado global de la persona no puede ser BAJA DIA 1
+        if (hasActiveAttendance && !isBajaDia1) {
           activos_ojt++;
         }
       } else {
