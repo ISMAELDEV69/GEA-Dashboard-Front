@@ -3079,26 +3079,23 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       }
 
       // Activo Actual?
-      // Revisamos si tiene baja en algún momento (Baja día 1, sigla B, o estado = BAJA/CESADO)
-      let isBaja = false;
+      // Usamos la misma lógica del Consolidado BI: estado === 'ACTIVO' y que no sea BAJA DIA 1
       let currentState = '';
+      let isBajaDia1 = false;
       if (records.length > 0) {
-        // Tomamos el estado del registro más reciente (el último en el array o el de mayor fecha)
         const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || 0) - new Date(b.fecha_registro_asistencia || 0));
         const lastRecord = sortedRecords[sortedRecords.length - 1];
         currentState = String(lastRecord.estado || '').toUpperCase();
+        
+        isBajaDia1 = records.some(r => {
+           const txtEstado = String(r.estado || '').toUpperCase();
+           const txtMotivo = String(r.motivo_baja || '').toUpperCase();
+           return txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1');
+        });
       }
 
-      if (records.some(r => String(r.sigla).toUpperCase().trim() === 'B' || (r.motivo_baja && r.motivo_baja.includes('BAJA')))) {
-        isBaja = true;
-      }
-      if (currentState.includes('BAJA') || currentState.includes('CESADO') || currentState === 'NO INICIO') {
-        isBaja = true;
-      }
-
-      // Si no tiene registro alguno, NO es activo (nunca asistió).
-      // Si tiene registros y no tiene baja, es activo.
-      if (records.length > 0 && !isBaja) {
+      // Solo es activo actual si su estado global es ACTIVO, no es Baja Día 1, y tiene registros (asistió alguna vez)
+      if (records.length > 0 && currentState === 'ACTIVO' && !isBajaDia1) {
         activos_actuales++;
       }
 
