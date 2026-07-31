@@ -3114,8 +3114,8 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
           return recordDateStr >= targetDateStr;
         });
 
-        // Adicionalmente, el estado global de la persona no puede ser BAJA DIA 1
-        if (hasActiveAttendance && !isBajaDia1) {
+        // Adicionalmente, el estado global de la persona debe ser ACTIVO y no ser BAJA DIA 1
+        if (hasActiveAttendance && currentState === 'ACTIVO' && !isBajaDia1) {
           activos_ojt++;
         }
       } else {
