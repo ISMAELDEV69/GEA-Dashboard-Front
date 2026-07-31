@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { fetchCapacidadRysOperativo, getMetricasResumenCapacitacion } from '../lib/dataService';
 import { BarChart3, Users, CheckCircle2, UserCheck, CalendarCheck, ShieldCheck, Filter, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
 
 export default function ResumenCapacitacion() {
   const [data, setData] = useState([]);
@@ -267,6 +268,76 @@ export default function ResumenCapacitacion() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Funnel Chart */}
+        <div className="rounded-2xl bg-[var(--bg-elevated)] p-6 shadow-xl border border-[var(--border-color)]">
+          <h2 className="text-lg font-bold text-white mb-6">Embudo de Conversión General</h2>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={[
+                  { name: 'Nómina', value: kpis.total_nomina, color: '#60a5fa' },
+                  { name: 'Día 0', value: kpis.asistio_dia0, color: '#818cf8' },
+                  { name: 'Día 1', value: kpis.asistio_dia1, color: '#e879f9' },
+                  { name: 'OJT', value: kpis.activos_ojt, color: '#34d399' },
+                  { name: 'I-OP', value: kpis.ingresos_iop, color: '#fbbf24' },
+                  { name: 'Actuales', value: kpis.activos_actuales, color: '#22d3ee' },
+                ]}
+                margin={{ top: 5, right: 10, left: -20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                <RechartsTooltip 
+                  cursor={{ fill: '#334155', opacity: 0.4 }}
+                  contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc' }}
+                  itemStyle={{ color: '#f8fafc' }}
+                />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  {
+                    [
+                      { name: 'Nómina', value: kpis.total_nomina, color: '#60a5fa' },
+                      { name: 'Día 0', value: kpis.asistio_dia0, color: '#818cf8' },
+                      { name: 'Día 1', value: kpis.asistio_dia1, color: '#e879f9' },
+                      { name: 'OJT', value: kpis.activos_ojt, color: '#34d399' },
+                      { name: 'I-OP', value: kpis.ingresos_iop, color: '#fbbf24' },
+                      { name: 'Actuales', value: kpis.activos_actuales, color: '#22d3ee' },
+                    ].map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))
+                  }
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Campaign Distribution Chart */}
+        <div className="rounded-2xl bg-[var(--bg-elevated)] p-6 shadow-xl border border-[var(--border-color)]">
+          <h2 className="text-lg font-bold text-white mb-6">Activos Actuales por Campaña</h2>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={groupedData.map(g => ({ name: g.campana, activos: g.activos_actuales })).sort((a, b) => b.activos - a.activos)}
+                layout="vertical"
+                margin={{ top: 5, right: 10, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                <XAxis type="number" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} width={100} />
+                <RechartsTooltip 
+                  cursor={{ fill: '#334155', opacity: 0.4 }}
+                  contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '0.75rem', color: '#f8fafc' }}
+                  itemStyle={{ color: '#22d3ee' }}
+                />
+                <Bar dataKey="activos" fill="#22d3ee" radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
       {/* Table */}
