@@ -3096,9 +3096,9 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
         isBaja = true;
       }
 
-      // Si no tiene registro alguno pero no es baja, ¿es activo?
-      // Asumiremos que si no es baja explícita y su estado no es de cese, sigue activo en nómina.
-      if (!isBaja) {
+      // Si no tiene registro alguno, NO es activo (nunca asistió).
+      // Si tiene registros y no tiene baja, es activo.
+      if (records.length > 0 && !isBaja) {
         activos_actuales++;
       }
 
