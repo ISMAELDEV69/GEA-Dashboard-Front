@@ -3058,7 +3058,17 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       
     const total_nomina = validNominas.length;
     const asistio_dia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
+    const asistio_dia1 = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
     let activos_actuales = 0;
+
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+    
+    // Activos en OJT y Cantidad de Ingresos (I-OP)
+    let activos_ojt = 0;
+    let ingresos_iop = 0;
+
+    const docs = [...new Set(validNominas.map(n => n.documento))];
+    const targetOjtDate = fecha_inicio_ojt ? new Date(fecha_inicio_ojt).getTime() : null;
 
     for (const doc of docs) {
       const records = groupFormAsisRaw.filter(r => r.documento === doc);
