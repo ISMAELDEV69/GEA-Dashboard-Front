@@ -3079,7 +3079,7 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       }
 
       // Activo Actual?
-      // Usamos la misma lógica del Consolidado BI: estado === 'ACTIVO' y que no sea BAJA DIA 1
+      // Usamos la misma lógica del Consolidado BI: estado === 'ACTIVO' y que no sea BAJA DIA 1 en su último registro
       let currentState = '';
       let isBajaDia1 = false;
       if (records.length > 0) {
@@ -3087,11 +3087,11 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
         const lastRecord = sortedRecords[sortedRecords.length - 1];
         currentState = String(lastRecord.estado || '').toUpperCase();
         
-        isBajaDia1 = records.some(r => {
-           const txtEstado = String(r.estado || '').toUpperCase();
-           const txtMotivo = String(r.motivo_baja || '').toUpperCase();
-           return txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1');
-        });
+        const txtEstado = String(lastRecord.estado || '').toUpperCase();
+        const txtMotivo = String(lastRecord.motivo_baja || '').toUpperCase();
+        const txtObs = String(lastRecord.observacion_estado || '').toUpperCase();
+        
+        isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
       }
 
       // Solo es activo actual si su estado global es ACTIVO, no es Baja Día 1, y tiene registros (asistió alguna vez)
