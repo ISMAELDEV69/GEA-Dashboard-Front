@@ -30,6 +30,7 @@ import KeepAliveView from './components/KeepAliveView'
 import GlobalTaskBar from './components/GlobalTaskBar'
 import AsistenciaReclutadorDia1 from './components/AsistenciaReclutadorDia1'
 import ReporteDia1 from './components/ReporteDia1'
+import ResumenCapacitacion from './components/ResumenCapacitacion'
 import PropuestasModule from './pages/PropuestasModule'
 import ResetPassword from './components/ResetPassword'
 import EquipoReclutamiento from './pages/EquipoReclutamiento'
@@ -82,6 +83,7 @@ const ALL_NAV = [
   { id: 'nomina', label: 'Bolsa de Postulantes', icon: UserPlus, description: 'Ingreso de Postulantes', roles: ['admin','reclutador'] },
   { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Completar Datos', roles: ['admin','reclutador','formador'] },
   { id: 'reportedia1',  label: 'Reporte Día 1', icon: Activity,        description: 'Calibración Día 1',      roles: ['admin','visor','reclutador','formador'] },
+  { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'Resumen de Calibración', roles: ['admin','visor','formador'] },
   { id: 'asistencia',   label: 'Asistencias',   icon: ClipboardCheck,  description: 'Registro Diario',         roles: ['admin','formador'] },
   { id: 'auditlogs',    label: 'Auditoría',     icon: History,         description: 'Historial de Cambios',    roles: ['admin'] },
   { id: 'users',        label: 'Usuarios',      icon: User,            description: 'Gestión de Cuentas',     roles: ['admin'] },
@@ -812,6 +814,11 @@ export default function App() {
               <KeepAliveView viewId="reportedia1" activeView={activeView}>
                 {navItems.some(i => i.id === 'reportedia1') && (
                   <ReporteDia1 grupos={grupos} postulantes={postulantes} asistencias={asistencias} userProfile={effectiveProfile} />
+                )}
+              </KeepAliveView>
+              <KeepAliveView viewId="resumen_capacitacion" activeView={activeView}>
+                {navItems.some(i => i.id === 'resumen_capacitacion') && (
+                  <ResumenCapacitacion />
                 )}
               </KeepAliveView>
 

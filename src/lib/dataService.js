@@ -2984,6 +2984,141 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
   return results;
 }
 
+export async function getMetricasResumenCapacitacion(gruposInfo) {
+  if (DB_MODE !== 'supabase' || !gruposInfo || gruposInfo.length === 0) return [];
+  
+  const codigos = [...new Set(gruposInfo.map(g => g.codigo))];
+  const campanas = [...new Set(gruposInfo.map(g => g.campana))];
+
+  // Fetch nominas
+  let nominasAll = [];
+  let nFrom = 0;
+  const nStep = 1000;
+  let nHasMore = true;
+  while(nHasMore) {
+    const { data } = await supabase.from('nominas')
+      .select('documento, dia_0, dia_1, activo, grupo_codigo, campana')
+      .in('grupo_codigo', codigos)
+      .in('campana', campanas)
+      .range(nFrom, nFrom + nStep - 1);
+    if(data && data.length > 0) {
+      nominasAll = nominasAll.concat(data);
+      if(data.length < nStep) nHasMore = false;
+      else nFrom += nStep;
+    } else nHasMore = false;
+  }
+
+  // Fetch consolidado
+  let formAsisAll = [];
+  let fFrom = 0;
+  const fStep = 1000;
+  let fHasMore = true;
+  while(fHasMore) {
+    const { data } = await supabase.from('consolidado_asistencias')
+      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana')
+      .in('codigo_grupo', codigos)
+      .in('campana', campanas)
+      .range(fFrom, fFrom + fStep - 1);
+    if(data && data.length > 0) {
+      formAsisAll = formAsisAll.concat(data);
+      if(data.length < fStep) fHasMore = false;
+      else fFrom += fStep;
+    } else fHasMore = false;
+  }
+
+  const descSet = await getDescuentosSetGlobal();
+
+  const nominasGrouped = new Map();
+  if (nominasAll) {
+    nominasAll.forEach(n => {
+      const key = `${n.campana}|${n.grupo_codigo}`;
+      if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
+      nominasGrouped.get(key).push(n);
+    });
+  }
+
+  const formAsisGrouped = new Map();
+  if (formAsisAll) {
+    formAsisAll.forEach(f => {
+      const key = `${f.campana}|${f.codigo_grupo}`;
+      if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
+      formAsisGrouped.get(key).push(f);
+    });
+  }
+
+  const results = [];
+  for (const grupoInfo of gruposInfo) {
+    const { codigo: grupo_codigo, campana, fecha_inicio_ojt } = grupoInfo;
+    const groupKey = `${campana}|${grupo_codigo}`;
+    
+    const nominas = nominasGrouped.get(groupKey) || [];
+    const validNominas = descSet.size > 0 
+      ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
+      : nominas;
+      
+    const total_nomina = validNominas.length;
+    const asistio_dia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
+    const asistio_dia1 = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
+    const activos_actuales = validNominas.filter(n => n.activo === true || String(n.activo) === 'true').length;
+
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+    
+    // Activos en OJT y Cantidad de Ingresos (I-OP)
+    let activos_ojt = 0;
+    let ingresos_iop = 0;
+
+    const docs = [...new Set(validNominas.map(n => n.documento))];
+    const targetOjtDate = fecha_inicio_ojt ? new Date(fecha_inicio_ojt).getTime() : null;
+
+    for (const doc of docs) {
+      const records = groupFormAsisRaw.filter(r => r.documento === doc);
+      
+      // Tiene I-OP?
+      if (records.some(r => String(r.sigla).toUpperCase().trim() === 'I-OP')) {
+        ingresos_iop++;
+      }
+
+      // Activo en OJT?
+      if (targetOjtDate) {
+        // Encontrar la fecha de baja (si existe)
+        const bajaRecords = records.filter(r => String(r.sigla).toUpperCase().trim() === 'B' || r.motivo_baja);
+        let bajaDate = null;
+        for (const b of bajaRecords) {
+           if (b.fecha_registro_asistencia) {
+             const time = new Date(b.fecha_registro_asistencia).getTime();
+             if (!bajaDate || time < bajaDate) bajaDate = time;
+           }
+        }
+        
+        // Si no tiene baja o su baja fue DESPUÉS de la fecha de inicio de OJT, estaba activo en OJT
+        if (!bajaDate || bajaDate > targetOjtDate) {
+          activos_ojt++;
+        }
+      } else {
+        // Si no hay fecha de OJT configurada, no podemos calcularlo, o asumimos igual a la nómina inicial
+        activos_ojt = 0; 
+      }
+    }
+
+    results.push({
+      grupo_codigo,
+      campana: campana || '',
+      periodo: grupoInfo.periodo || '',
+      semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || '',
+      segmento: grupoInfo.segmento || '',
+      fecha_inicio_ojt: fecha_inicio_ojt || 'No definida',
+      total_nomina,
+      asistio_dia0,
+      asistio_dia1,
+      activos_actuales,
+      activos_ojt,
+      ingresos_iop
+    });
+  }
+
+  return results;
+}
+
 export async function fetchModulePermissions() {
   const { data, error } = await supabase.from('module_permissions').select('*')
   if (error) {
