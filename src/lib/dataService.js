@@ -3101,21 +3101,25 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
 
       // Activo en OJT?
       if (fecha_inicio_ojt) {
-        // Debe tener al menos una asistencia como activo con fecha >= fecha_inicio_ojt
-        const hasActiveAttendance = records.some(r => {
-          const sigla = String(r.sigla).toUpperCase().trim();
-          if (sigla === 'B' || (r.motivo_baja && r.motivo_baja.includes('BAJA'))) return false;
+        const targetDateStr = parseFechaAsistencia(fecha_inicio_ojt);
+
+        // Debe tener asistencia como ACTIVO únicamente en esa fecha específica de inicio OJT
+        const wasActiveOnOjtDate = records.some(r => {
           if (!r.fecha_registro_asistencia) return false;
+          const recordDateStr = parseFechaAsistencia(r.fecha_registro_asistencia);
           
-          // Extraemos solo YYYY-MM-DD para una comparación de string segura
-          const recordDateStr = String(r.fecha_registro_asistencia).substring(0, 10);
-          const targetDateStr = String(fecha_inicio_ojt).substring(0, 10);
+          if (recordDateStr !== targetDateStr) return false;
+
+          const sigla = String(r.sigla || '').toUpperCase().trim();
+          const estado = String(r.estado || '').toUpperCase().trim();
+          const motivo = String(r.motivo_baja || '').toUpperCase().trim();
           
-          return recordDateStr >= targetDateStr;
+          const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado.includes('BAJA') || estado === 'CESADO' || estado === 'INACTIVO';
+          return estado === 'ACTIVO' && !isBaja;
         });
 
-        // Adicionalmente, el estado global de la persona debe ser ACTIVO y no ser BAJA DIA 1
-        if (hasActiveAttendance && currentState === 'ACTIVO' && !isBajaDia1) {
+        // Solo evaluamos su estado en esa fecha OJT y que no sea BAJA DIA 1
+        if (wasActiveOnOjtDate && !isBajaDia1) {
           activos_ojt++;
         }
       } else {
