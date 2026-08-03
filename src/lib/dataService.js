@@ -2638,7 +2638,7 @@ export function getEquipoReclutamiento() {
     if (DB_MODE === 'supabase') {
       const { data, error } = await supabase
         .from('equipo_reclutamiento')
-        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, alix, base, meta_diaria, rch')
+        .select('*')
         .order('nombres_completos');
         
       if (error) {
