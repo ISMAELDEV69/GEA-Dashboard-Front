@@ -243,8 +243,8 @@ export default function AsistenciaForm({
         const matchCampana = !activeGrupoObj || a.campana === activeGrupoObj.campana;
         return matchGrupo && matchCampana;
     }).map(a => a.postulante_documento))
-    // Lógica DÍA 0: Solo incluir a quienes asistieron al día 0 (dia_0 = 'ASISTIO')
-    // o fueron agregados directamente al día 1 (status_dia_1 = 'AGREGADO')
+    // Lógica DÍA 0: Solo incluir a quienes asistieron al día 0 (dia_0 = 'ASISTIO'),
+    // o fueron agregados/recuperados en el día 1 (status_dia_1 = 'AGREGADO' o 'RECUPERADO')
     // Si dia_0 es null (datos sin valor), incluir todos para no perder registros
     const invalidList = []
     const filteredPostulantes = postulantes.filter(p => {
@@ -258,7 +258,7 @@ export default function AsistenciaForm({
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const asistioD0 = dia0Val === 'ASISTIO'
-      const agregadoD1 = statusDia1Val === 'AGREGADO'
+      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
       
       if (!(asistioD0 || agregadoD1)) return false
 
@@ -1109,7 +1109,7 @@ export default function AsistenciaForm({
                     <td className="px-4 py-3 text-[var(--text-secondary)] font-mono whitespace-nowrap">{item.celular}</td>
                     <td className="px-4 py-3 text-center text-[var(--text-secondary)] font-mono whitespace-nowrap">{formatSpreadsheetDate(fecha)}</td>
                     <td className="px-4 py-3 text-center whitespace-nowrap">
-                      <span className={`inline-block px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wide ${item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'}`}>
+                      <span className={`inline-block px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wide ${item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : item.tipoReclutado === 'RECUPERADO' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'}`}>
                          {item.tipoReclutado}
                       </span>
                     </td>

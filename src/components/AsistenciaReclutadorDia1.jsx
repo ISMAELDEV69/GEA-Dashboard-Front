@@ -63,7 +63,7 @@ const AsistenciaReclutadorDia1 = ({ grupos, postulantes, isReadOnly }) => {
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const asistioD0 = dia0Val === 'ASISTIO'
-      const agregadoD1 = statusDia1Val === 'AGREGADO'
+      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
       
       if (!dia0Val && !statusDia1Val) return true
       if (asistioD0 || agregadoD1) return true

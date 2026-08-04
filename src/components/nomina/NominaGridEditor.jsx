@@ -207,7 +207,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const asistioD0 = dia0Val === 'ASISTIO'
-      const agregadoD1 = statusDia1Val === 'AGREGADO'
+      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
       
       if (asistioD0 || agregadoD1) {
         const missing = []
@@ -274,7 +274,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
               Atención: Candidatos con datos incompletos
             </h3>
             <p className="text-sm text-orange-700 dark:text-orange-400 mb-3">
-              Estos candidatos cumplen con la regla de Asistencia (Día 0 o Agregado), pero no podrán pasar a la pantalla del Formador porque les faltan datos obligatorios. Completa la información aquí mismo.
+              Estos candidatos cumplen con la regla de Asistencia (Día 0, Agregado o Recuperado), pero no podrán pasar a la pantalla del Formador porque les faltan datos obligatorios. Completa la información aquí mismo.
             </p>
             <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
               {missingDataCandidates.map((c, idx) => (
