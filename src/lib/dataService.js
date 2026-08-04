@@ -309,12 +309,24 @@ export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
 export async function adminResetUserPassword(userId, newPassword) {
   if (DB_MODE !== 'supabase') throw new Error('Solo disponible en Supabase.')
   
-  // Try edge function
+  // Método principal: RPC en PostgreSQL (rápido, directo, sin errores de Edge Function ni CORS)
+  const { data: rpcData, error: rpcError } = await supabase.rpc('admin_reset_user_password', {
+    p_user_id: userId,
+    p_password: newPassword
+  })
+  
+  if (!rpcError && rpcData) {
+    return rpcData
+  }
+
+  // Si falló el RPC por alguna razón, intentamos como respaldo con Edge Function
   const { data, error } = await supabase.functions.invoke('reset-user-password', {
     body: { userId, password: newPassword }
   })
   
-  if (error) throw new Error(error.message)
+  if (error) {
+    throw new Error(rpcError?.message || error.message || 'No se pudo actualizar la contraseña.')
+  }
   return data
 }
 
