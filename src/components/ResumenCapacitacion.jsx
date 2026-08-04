@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 
 export default function ResumenCapacitacion() {
+  const [capacidadRys, setCapacidadRys] = useState([]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -23,13 +24,14 @@ export default function ResumenCapacitacion() {
     async function loadData() {
       try {
         setLoading(true);
-        // Obtener todos los grupos configurados
+        // Obtener todos los grupos configurados desde Capacidad RYS
         const gruposInfo = await fetchCapacidadRysOperativo();
         
         // Obtener métricas
         const metricas = await getMetricasResumenCapacitacion(gruposInfo || []);
         
         if (active) {
+          setCapacidadRys(gruposInfo || []);
           setData(metricas || []);
           setError(null);
         }
@@ -45,21 +47,28 @@ export default function ResumenCapacitacion() {
     return () => { active = false; };
   }, []);
 
-  // Opciones de filtros
+  // Opciones de filtros cruzados estrictos en base al Capacidad RYS
   const filterOptions = useMemo(() => {
-    const periodos = new Set();
-    const semanas = new Set();
-    const segmentos = new Set();
-    const campanas = new Set();
-    const grupos = new Set();
+    const getSemana = g => g.semana_trabajo || g.semana_label || g.semana || '';
 
-    data.forEach(d => {
-      if (d.periodo) periodos.add(d.periodo);
-      if (d.semana) semanas.add(d.semana);
-      if (d.segmento) segmentos.add(d.segmento);
-      if (d.campana) campanas.add(d.campana);
-      if (d.grupo_codigo) grupos.add(d.grupo_codigo);
-    });
+    // 1. Periodos
+    const periodos = new Set(capacidadRys.map(g => g.periodo).filter(Boolean));
+
+    // 2. Semanas (filtrado por Periodo)
+    const subSemanas = capacidadRys.filter(g => filters.periodo === 'Todos' || g.periodo === filters.periodo);
+    const semanas = new Set(subSemanas.map(g => getSemana(g)).filter(Boolean));
+
+    // 3. Segmentos (filtrado por Periodo y Semana)
+    const subSegmentos = subSemanas.filter(g => filters.semana === 'Todas' || getSemana(g) === filters.semana);
+    const segmentos = new Set(subSegmentos.map(g => g.segmento).filter(Boolean));
+
+    // 4. Campañas (filtrado por Periodo, Semana y Segmento)
+    const subCampanas = subSegmentos.filter(g => filters.segmento === 'Todos' || g.segmento === filters.segmento);
+    const campanas = new Set(subCampanas.map(g => g.campana).filter(Boolean));
+
+    // 5. Grupos (filtrado por Periodo, Semana, Segmento y Campaña)
+    const subGrupos = subCampanas.filter(g => filters.campana === 'Todas' || g.campana === filters.campana);
+    const grupos = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo).filter(Boolean));
 
     return {
       periodos: Array.from(periodos).sort().reverse(),
@@ -68,7 +77,7 @@ export default function ResumenCapacitacion() {
       campanas: Array.from(campanas).sort(),
       grupos: Array.from(grupos).sort()
     };
-  }, [data]);
+  }, [capacidadRys, filters]);
 
   // Datos filtrados
   const filteredData = useMemo(() => {
@@ -238,7 +247,13 @@ export default function ResumenCapacitacion() {
         <div className="flex flex-wrap items-center gap-3">
           <select 
             value={filters.periodo}
-            onChange={(e) => setFilters({...filters, periodo: e.target.value})}
+            onChange={(e) => setFilters({
+              periodo: e.target.value,
+              semana: 'Todas',
+              segmento: 'Todos',
+              campana: 'Todas',
+              grupo: 'Todos'
+            })}
             className="rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm font-medium text-white shadow-inner transition-colors hover:border-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option value="Todos">Periodo: Todos</option>
@@ -247,7 +262,13 @@ export default function ResumenCapacitacion() {
           
           <select 
             value={filters.semana}
-            onChange={(e) => setFilters({...filters, semana: e.target.value})}
+            onChange={(e) => setFilters({
+              ...filters,
+              semana: e.target.value,
+              segmento: 'Todos',
+              campana: 'Todas',
+              grupo: 'Todos'
+            })}
             className="rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm font-medium text-white shadow-inner transition-colors hover:border-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option value="Todas">Semana: Todas</option>
@@ -256,7 +277,12 @@ export default function ResumenCapacitacion() {
 
           <select 
             value={filters.segmento}
-            onChange={(e) => setFilters({...filters, segmento: e.target.value})}
+            onChange={(e) => setFilters({
+              ...filters,
+              segmento: e.target.value,
+              campana: 'Todas',
+              grupo: 'Todos'
+            })}
             className="rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm font-medium text-white shadow-inner transition-colors hover:border-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option value="Todos">Segmento: Todos</option>
@@ -265,7 +291,11 @@ export default function ResumenCapacitacion() {
 
           <select 
             value={filters.campana}
-            onChange={(e) => setFilters({...filters, campana: e.target.value})}
+            onChange={(e) => setFilters({
+              ...filters,
+              campana: e.target.value,
+              grupo: 'Todos'
+            })}
             className="max-w-[200px] truncate rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm font-medium text-white shadow-inner transition-colors hover:border-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option value="Todas">Campaña: Todas</option>
@@ -274,7 +304,10 @@ export default function ResumenCapacitacion() {
 
           <select 
             value={filters.grupo}
-            onChange={(e) => setFilters({...filters, grupo: e.target.value})}
+            onChange={(e) => setFilters({
+              ...filters,
+              grupo: e.target.value
+            })}
             className="max-w-[150px] truncate rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm font-medium text-white shadow-inner transition-colors hover:border-slate-600 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           >
             <option value="Todos">Grupo: Todos</option>
