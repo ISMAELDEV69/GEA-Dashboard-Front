@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
  * si no, cae al mock de localStorage automáticamente.
  */
 
-import { supabase } from './supabase'
+import { supabase, isSupabaseConfigured } from './supabase'
 import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
 import { parseCsvToMatrix, parseNominaRows } from './nominaConsolidadoSchema.js'
@@ -18,20 +18,6 @@ import {
   addAuditLog as mockAuditLog,
   initLocalStorageDb
 } from './mockData'
-
-// Detecta si Supabase está realmente configurado
-const isSupabaseConfigured = () => {
-  const url = import.meta.env.VITE_SUPABASE_URL
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY
-  return (
-    url &&
-    key &&
-    !url.includes('tu-proyecto') &&
-    !url.includes('placeholder') &&
-    !key.includes('PEGA_AQUI') &&
-    !key.includes('placeholder')
-  )
-}
 
 export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 
