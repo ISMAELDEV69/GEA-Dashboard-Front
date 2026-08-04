@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { fetchCapacidadRysOperativo, getMetricasResumenCapacitacion } from '../lib/dataService';
-import { BarChart3, Users, CheckCircle2, UserCheck, CalendarCheck, ShieldCheck, Filter, Download } from 'lucide-react';
+import { fetchCapacidadRysOperativo, getMetricasResumenCapacitacion, parseFechaAsistencia } from '../lib/dataService';
+import { BarChart3, Users, CheckCircle2, UserCheck, CalendarCheck, ShieldCheck, Filter, Download, TrendingDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 
 export default function ResumenCapacitacion() {
   const [data, setData] = useState([]);
@@ -120,6 +120,52 @@ export default function ResumenCapacitacion() {
       g.grupos.push(d);
     });
     return Array.from(map.values()).sort((a, b) => a.campana.localeCompare(b.campana));
+  }, [filteredData]);
+
+  // Curva de Deserción Acumulada (Basado exactamente en Analítica BI)
+  const desertionTrend = useMemo(() => {
+    const allAsistencias = [];
+    filteredData.forEach(d => {
+      if (d.asistencias_raw && Array.isArray(d.asistencias_raw)) {
+        allAsistencias.push(...d.asistencias_raw);
+      }
+    });
+
+    const dailyBajas = {};
+    const seenBajas = new Set();
+
+    // Ordenar por fecha para atrapar la primera vez que son marcados en baja
+    const sortedForBajas = [...allAsistencias].sort((a, b) => {
+      const dateA = parseFechaAsistencia(a.fecha_registro_asistencia || '');
+      const dateB = parseFechaAsistencia(b.fecha_registro_asistencia || '');
+      return new Date(dateA) - new Date(dateB);
+    });
+
+    sortedForBajas.forEach(a => {
+      const sigla = String(a.sigla || '').toUpperCase().trim();
+      const estado = String(a.estado || '').toUpperCase().trim();
+      const motivo = String(a.motivo_baja || '').toUpperCase().trim();
+
+      const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado === 'CESADO' || estado === 'BAJA' || estado === 'INACTIVO';
+
+      if (isBaja && a.documento) {
+        if (!seenBajas.has(a.documento)) {
+          seenBajas.add(a.documento);
+          const date = parseFechaAsistencia(a.fecha_registro_asistencia || '');
+          if (date && date.length === 10) {
+            if (!dailyBajas[date]) dailyBajas[date] = 0;
+            dailyBajas[date]++;
+          }
+        }
+      }
+    });
+
+    const datesSorted = Object.keys(dailyBajas).sort((a, b) => new Date(a) - new Date(b));
+    let cum = 0;
+    return datesSorted.map(d => {
+      cum += dailyBajas[d];
+      return { Fecha: d, BajasAcumuladas: cum, BajasDia: dailyBajas[d] };
+    });
   }, [filteredData]);
 
   const handleExport = () => {
@@ -337,6 +383,43 @@ export default function ResumenCapacitacion() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        </div>
+      </div>
+
+      {/* Curva de Deserción Acumulada */}
+      <div className="rounded-2xl bg-[var(--bg-elevated)] p-6 shadow-xl border border-[var(--border-color)]">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <TrendingDown size={20} className="text-rose-400" />
+            Curva de Deserción Acumulada
+          </h2>
+        </div>
+        <div className="h-72">
+          {desertionTrend.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={desertionTrend} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="colorBajaResumenCap" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.4} vertical={false} />
+                <XAxis dataKey="Fecha" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, 'dataMax']} stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                <RechartsTooltip
+                  contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '0.75rem', color: '#f8fafc' }}
+                  labelStyle={{ color: '#94a3b8', fontWeight: 600, fontSize: '12px' }}
+                  itemStyle={{ color: '#ef4444', fontWeight: 700 }}
+                />
+                <Area type="monotone" name="Bajas Acumuladas" dataKey="BajasAcumuladas" stroke="#ef4444" strokeWidth={2.5} fillOpacity={1} fill="url(#colorBajaResumenCap)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+              No hay datos de bajas registradas en la selección.
+            </div>
+          )}
         </div>
       </div>
 

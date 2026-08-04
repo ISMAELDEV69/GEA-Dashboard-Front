@@ -3139,7 +3139,8 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       asistio_dia1,
       activos_actuales,
       activos_ojt,
-      ingresos_iop
+      ingresos_iop,
+      asistencias_raw: groupFormAsisRaw || []
     });
   }
 
