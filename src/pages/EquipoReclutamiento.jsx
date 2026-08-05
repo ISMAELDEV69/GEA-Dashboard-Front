@@ -173,8 +173,8 @@ export default function EquipoReclutamiento() {
       setEditForm({})
       setIsNewRecord(false)
     } catch (err) {
-      console.error(err)
-      alert("Error al guardar los cambios")
+      console.error("Error al guardar equipo de reclutamiento:", err)
+      alert(`Error al guardar: ${err?.message || err?.error_description || JSON.stringify(err)}`)
     } finally {
       setSaving(false)
     }

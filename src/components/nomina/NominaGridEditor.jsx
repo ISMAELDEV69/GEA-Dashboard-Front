@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { checkCalibracionDia1 } from '../../lib/dataService'
+import { checkCalibracionDia1, fetchReclutadoresFull } from '../../lib/dataService'
 import { Loader2, Save, AlertCircle, CheckCircle2 } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
@@ -25,6 +25,7 @@ function getHeaderColor(key, isSelected = false) {
 
 // The editable columns for Phase B
 const EDITABLE_COLUMNS = [
+  { key: 'reclutador', label: 'RECLUTADOR', width: 220, type: 'select', options: [] },
   { key: 'sede', label: 'SEDE', width: 150, type: 'select', options: ['ATE', 'SAN ISIDRO', 'COMAS', 'JOCKEY'] },
   { key: 'modalidad', label: 'MODALIDAD', width: 120, type: 'select', options: ['PRESENCIAL', 'HIBRIDO', 'REMOTO'] },
   { key: 'condicion', label: 'CONDICIÓN', width: 120, type: 'select', options: ['FULL TIME', 'PART TIME'] },
@@ -75,6 +76,21 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
   const [filters, setFilters] = useState({})
+  const [reclutadores, setReclutadores] = useState([])
+
+  useEffect(() => {
+    fetchReclutadoresFull()
+      .then(res => setReclutadores((res || []).filter(r => r.activo)))
+      .catch(err => console.error("Error cargando reclutadores:", err))
+  }, [])
+
+  const reclutadorOptions = React.useMemo(() => {
+    const names = new Set([
+      ...reclutadores.map(r => r.nombre_completo),
+      ...data.map(d => d.reclutador).filter(Boolean)
+    ]);
+    return [...names].sort();
+  }, [reclutadores, data]);
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
@@ -134,14 +150,19 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
 
   const handleCellChange = async (rowId, key, value) => {
     // Optimistic update locally
-    setData(prev => prev.map(r => r.id === rowId ? { ...r, [key]: value } : r))
+    const updateObj = { [key]: value || null }
+    if (key === 'reclutador') {
+      const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
+      updateObj.reclutador_id = recObj ? recObj.id : null
+    }
+    setData(prev => prev.map(r => r.id === rowId ? { ...r, ...updateObj } : r))
     
     // Save to DB
     setSavingRow(rowId)
     try {
       const { error: err } = await supabase
         .from('nominas')
-        .update({ [key]: value || null })
+        .update(updateObj)
         .eq('id', rowId)
         
       if (err) throw err
@@ -162,14 +183,18 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
   const handleBulkUpdate = async () => {
     if (!selectedColumn || filteredData.length < 2) return
     const firstRow = filteredData[0]
+    const updateObj = { [selectedColumn]: firstRow[selectedColumn] || null }
+    if (selectedColumn === 'reclutador') {
+      const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (firstRow[selectedColumn] || '').trim().toUpperCase())
+      updateObj.reclutador_id = recObj ? recObj.id : null
+    }
     const updates = []
     
     const updatedData = data.map(row => {
       // Find if this row is in the filtered view
       const inFilter = filteredData.some(f => f.id === row.id)
       if (inFilter && row.id !== firstRow.id) {
-        const newRow = { ...row }
-        newRow[selectedColumn] = firstRow[selectedColumn]
+        const newRow = { ...row, ...updateObj }
         updates.push(newRow)
         return newRow
       }
@@ -184,7 +209,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
       const targetIds = filteredData.filter(f => f.id !== firstRow.id).map(f => f.id)
       const { error: err } = await supabase
         .from('nominas')
-        .update({ [selectedColumn]: firstRow[selectedColumn] || null })
+        .update(updateObj)
         .in('id', targetIds)
         
       if (err) throw err
@@ -371,7 +396,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
                             className={`w-full h-full p-2 border-none focus:ring-2 focus:ring-inset focus:ring-blue-500 outline-none transition-colors ${bgColorClass.replace(/bg-[a-z0-9/-]+/, '').replace(/dark:bg-[a-z0-9/-]+/, '')} bg-transparent`}
                           >
                             <option value=""></option>
-                            {col.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                            {(col.key === 'reclutador' ? reclutadorOptions : col.options).map(opt => <option key={opt} value={opt}>{opt}</option>)}
                           </select>
                         ) : (
                           <input

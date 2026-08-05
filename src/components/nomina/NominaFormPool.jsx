@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { fetchGoogleFormsPool } from '../../lib/dataService'
 import { supabase } from '../../lib/supabase'
-import { Loader2, Search, CheckSquare, Square, DownloadCloud, AlertTriangle } from 'lucide-react'
+import { Loader2, Search, CheckSquare, Square, DownloadCloud, AlertTriangle, Trash2 } from 'lucide-react'
 
 const GOOGLE_FORM_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQNqbcgwWaeZiPwDaetDMft_rwv6BWFM-wNdA10VIKVWLo5uvnPFcbHgHvrDIiUyyWa08pDWN_VNX0e/pub?output=csv'
 
@@ -39,7 +39,7 @@ export default function NominaFormPool({
       let hMap = new Map()
       if (uniqueDnis.length > 0) {
         // We split the query into chunks if there are too many, but up to 800 is fine for 'in'
-        const { data: existing } = await supabase.from('nominas').select('documento, marca_temporal, campana, grupo_codigo, reclutador').in('documento', uniqueDnis)
+        const { data: existing } = await supabase.from('nominas').select('id, documento, marca_temporal, campana, grupo_codigo, reclutador').in('documento', uniqueDnis)
         docMap = new Map((existing || []).map(r => [getExistingKey(r.documento, r.marca_temporal), true]))
         
         ;(existing || []).forEach(r => {
@@ -149,12 +149,9 @@ export default function NominaFormPool({
       if (dbErr) throw dbErr
 
       setSuccess(`Se adjudicaron ${toInsert.length} postulantes correctamente.`)
-      
-      // Remove from available view using the composite key
-      const nextExisting = new Map(existingDocs)
-      toInsert.forEach(d => nextExisting.set(getExistingKey(d.documento, d.marca_temporal), true))
-      setExistingDocs(nextExisting)
+      setTimeout(() => setSuccess(null), 4000)
       setSelectedDocs(new Set())
+      await loadPool()
 
     } catch (err) {
       setError(err.message)
@@ -162,6 +159,36 @@ export default function NominaFormPool({
       setLoading(false)
     }
   }
+
+  const handleDesadjudicar = async (assignment, candidate) => {
+    const confirmMsg = `¿Estás seguro de desadjudicar a ${candidate.nombres} ${candidate.apellido_paterno} (DNI: ${candidate.documento}) del grupo "${assignment.grupo_codigo || 'Sin Grupo'}" en la campaña "${assignment.campana || 'Sin Campaña'}"?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      let query = supabase.from('nominas').delete();
+      if (assignment.id) {
+        query = query.eq('id', assignment.id);
+      } else {
+        query = query.eq('documento', assignment.documento);
+        if (assignment.grupo_codigo) query = query.eq('grupo_codigo', assignment.grupo_codigo);
+      }
+
+      const { error: delErr } = await query;
+      if (delErr) throw delErr;
+
+      setSuccess(`Postulante desadjudicado correctamente del grupo ${assignment.grupo_codigo || ''}`);
+      setTimeout(() => setSuccess(null), 4000);
+      
+      await loadPool();
+    } catch (err) {
+      setError(`Error al desadjudicar: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden flex flex-col" style={{ minHeight: '600px' }}>
@@ -237,25 +264,41 @@ export default function NominaFormPool({
                 return (
                 <tr 
                   key={`${d.documento}-${idx}`} 
-                  className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 ${isExisting ? 'opacity-50 cursor-not-allowed bg-slate-50 dark:bg-slate-800/80' : 'cursor-pointer'} ${selectedDocs.has(key) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                  className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 ${isExisting ? 'opacity-85 cursor-not-allowed bg-slate-50 dark:bg-slate-800/80' : 'cursor-pointer'} ${selectedDocs.has(key) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
                   onClick={() => toggleSelect(d.documento, d.marca_temporal)}
                 >
                   <td className="p-3 text-blue-500">
                     {selectedDocs.has(key) ? <CheckSquare size={18} /> : <Square className="text-slate-300" size={18} />}
                   </td>
                   <td className="p-3 text-slate-700 dark:text-slate-300 font-medium">
-                    {d.documento}
-                    {existingDocs.has(getExistingKey(d.documento, d.marca_temporal)) && (
-                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                        Ingresado
-                      </span>
-                    )}
-                    {!existingDocs.has(getExistingKey(d.documento, d.marca_temporal)) && historyDocs.has(d.documento) && (
-                      <div className="mt-1 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span>{d.documento}</span>
+                      {existingDocs.has(getExistingKey(d.documento, d.marca_temporal)) && !historyDocs.has(d.documento) && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                          Ingresado
+                        </span>
+                      )}
+                    </div>
+                    {historyDocs.has(d.documento) && (
+                      <div className="mt-1.5 flex flex-col gap-1.5 w-fit">
                         {historyDocs.get(d.documento).map((h, i) => (
-                          <span key={i} className="px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800 inline-block w-fit">
-                            Asignado a: {h.campana} - {h.grupo_codigo}
-                          </span>
+                          <div key={i} className="px-2 py-1 rounded-md text-[11px] font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 border border-amber-200/80 dark:border-amber-700/50 flex items-center justify-between gap-2 shadow-2xs">
+                            <span className="truncate max-w-[280px]" title={`Asignado a: ${h.campana} - ${h.grupo_codigo}`}>
+                              Asignado a: <strong className="font-bold">{h.campana || 'Sin Campaña'} — {h.grupo_codigo || 'Sin Grupo'}</strong>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDesadjudicar(h, d);
+                              }}
+                              className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:hover:bg-red-800/80 dark:text-red-300 rounded text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0 cursor-pointer shadow-2xs"
+                              title="Desadjudicar (Retirar de este grupo)"
+                            >
+                              <Trash2 size={12} className="text-red-600 dark:text-red-400" />
+                              <span>Desadjudicar</span>
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}

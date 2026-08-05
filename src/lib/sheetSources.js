@@ -49,6 +49,7 @@ export function sheetCsvUrl(source) {
 
 export function inferSegmento(campanaName) {
   const c = campanaName?.toUpperCase() || ''
+  if (c.includes('LIPIGAS')) return 'LIPIGAS'
   if (c.includes('CONTACTADOS') || c.includes('RETENCIONES INBOUND')) return 'CLARO PERU RETENCIONES'
   if (c.includes('CLARO POSTPAGO') || c.includes('CLARO PREPAGO') || c.includes('CLARO PREMIUM') || c.includes('CLARO ROAMING')) return 'CLARO PERU'
   if (c.includes('POSTPAGO') || c.includes('VTR') || c.includes('RETENCIONES CHILE')) return 'CLARO CHILE'

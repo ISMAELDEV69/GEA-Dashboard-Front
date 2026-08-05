@@ -16,8 +16,9 @@ export default function NominaCompletar({ grupos = [] }) {
   }, [grupos])
 
   const bulkSegmentos = useMemo(() => {
-    return SEGMENTOS_SIU
-  }, [])
+    const fromGrupos = grupos.map(g => (g.segmento || inferSegmento(g.campana)) ? String(g.segmento || inferSegmento(g.campana)).trim().toUpperCase() : null).filter(Boolean);
+    return [...new Set([...SEGMENTOS_SIU, ...fromGrupos])].sort();
+  }, [grupos])
 
   const bulkCampanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)

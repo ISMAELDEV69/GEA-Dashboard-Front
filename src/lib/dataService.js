@@ -2650,11 +2650,29 @@ export function getEquipoReclutamiento() {
   });
 }
 
+function cleanReclutamientoPayload(payload) {
+  const allowed = ['documento', 'alias', 'apellido_paterno', 'apellido_materno', 'nombres_completos', 'cargo', 'estado', 'fecha_ingreso', 'fecha_cese', 'bono', 'pct_efectivo', 'pct_sodexo', 'alix'];
+  const res = {};
+  allowed.forEach(k => {
+    if (payload[k] !== undefined) {
+      if ((k === 'fecha_ingreso' || k === 'fecha_cese') && payload[k] === '') {
+        res[k] = null;
+      } else if (k === 'documento' || k === 'alias' || k === 'apellido_paterno' || k === 'apellido_materno' || k === 'nombres_completos' || k === 'cargo' || k === 'alix') {
+        res[k] = payload[k] ? String(payload[k]).trim() : null;
+      } else {
+        res[k] = payload[k];
+      }
+    }
+  });
+  return res;
+}
+
 export async function updateEquipoReclutamiento(documento, payload) {
   if (DB_MODE === 'supabase') {
+    const cleaned = cleanReclutamientoPayload(payload);
     const { data, error } = await supabase
       .from('equipo_reclutamiento')
-      .update({ ...payload, updated_at: new Date().toISOString() })
+      .update({ ...cleaned, updated_at: new Date().toISOString() })
       .eq('documento', documento)
       .select()
       .single();
@@ -2663,6 +2681,7 @@ export async function updateEquipoReclutamiento(documento, payload) {
       throw error;
     }
     invalidateCache('equipo_reclutamiento');
+    invalidateCache('reclutadores');
     return data;
   }
   return null;
@@ -2670,9 +2689,10 @@ export async function updateEquipoReclutamiento(documento, payload) {
 
 export async function addEquipoReclutamiento(payload) {
   if (DB_MODE === 'supabase') {
+    const cleaned = cleanReclutamientoPayload(payload);
     const { data, error } = await supabase
       .from('equipo_reclutamiento')
-      .insert([{ ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
+      .upsert([{ ...cleaned, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }], { onConflict: 'documento' })
       .select()
       .single();
     if (error) {
@@ -2680,10 +2700,12 @@ export async function addEquipoReclutamiento(payload) {
       throw error;
     }
     invalidateCache('equipo_reclutamiento');
+    invalidateCache('reclutadores');
     return data;
   }
   return null;
 }
+
 
 // ==========================================
 // EQUIPO DE FORMACION
