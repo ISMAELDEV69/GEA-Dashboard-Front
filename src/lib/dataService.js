@@ -588,7 +588,7 @@ export async function fetchPostulantes() {
     const { data, error } = await supabase
       .from('v_nominas_consolidado')
       .select('*')
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: true })
     if (error) throw error
     
     return (data || []).map(row => ({

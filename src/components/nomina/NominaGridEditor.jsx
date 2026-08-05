@@ -111,7 +111,7 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
       let query = supabase
         .from('nominas')
         .select('*')
-        .order('nombres')
+        .order('created_at', { ascending: true })
         .limit(5000)
 
       if (grupoCodigo !== 'ALL') {

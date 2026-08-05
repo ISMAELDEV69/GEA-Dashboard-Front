@@ -81,7 +81,7 @@ export default function NominaFullPreview({ grupoCodigo, campana }) {
       const query = supabase
         .from('nominas')
         .select('*')
-        .order('documento', { ascending: false })
+        .order('created_at', { ascending: true })
         .limit(2000)
 
       if (grupoCodigo && grupoCodigo !== 'ALL') {
