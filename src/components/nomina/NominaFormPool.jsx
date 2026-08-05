@@ -136,8 +136,8 @@ export default function NominaFormPool({
         .filter(d => selectedDocs.has(`${d.documento}|${d.marca_temporal}`))
         .map(d => ({
           ...d,
-          periodo_reclutado: (grupos.find(g => g.grupo_codigo === bulkGrupo)?.periodo) || bulkPeriodo,
-          semana_trabajo: parseInt((grupos.find(g => g.grupo_codigo === bulkGrupo)?.semana_label || '').replace(/\D/g, '')) || null, // Best effort
+          periodo_reclutado: (grupos.find(g => (g.grupo_codigo === bulkGrupo || g.codigo === bulkGrupo) && (!bulkCampana || String(g.campana).trim() === String(bulkCampana).trim()))?.periodo) || bulkPeriodo,
+          semana_trabajo: parseInt((grupos.find(g => (g.grupo_codigo === bulkGrupo || g.codigo === bulkGrupo) && (!bulkCampana || String(g.campana).trim() === String(bulkCampana).trim()))?.semana_label || '').replace(/\D/g, '')) || null, // Best effort
           reclutador: reclutador || 'SISTEMA',
           campana: bulkCampana,
           grupo_codigo: bulkGrupo,

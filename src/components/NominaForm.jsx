@@ -1456,7 +1456,7 @@ export default function NominaForm({
                     onChange={e => {
                       const cod = e.target.value;
                       setBulkGrupo(cod);
-                      const match = grupos.find(g => g.codigo === cod);
+                      const match = bulkGruposList.find(g => g.codigo === cod) || grupos.find(g => g.codigo === cod && (!bulkCampana || String(g.campana).trim() === String(bulkCampana).trim())) || grupos.find(g => g.codigo === cod);
                       if (match) {
                         setBulkCampana(match.campana);
                         setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(match.campana));

@@ -22,12 +22,13 @@ export function findGrupoPlan(grupos = [], { codigo, campana, semana, periodo } 
   if (!grupos.length) return null
 
   const cod = normalizeKey(codigo)
+  const camp = normalizeKey(campana)
   if (cod) {
-    const exact = grupos.find(g => normalizeKey(g.codigo) === cod)
+    const exactWithCamp = camp ? grupos.find(g => normalizeKey(g.codigo) === cod && normalizeKey(g.campana) === camp) : null
+    const exact = exactWithCamp || grupos.find(g => normalizeKey(g.codigo) === cod)
     if (exact) return exact
   }
 
-  const camp = normalizeKey(campana)
   const sem = Number(semana)
   const per = String(periodo || '').trim()
 
