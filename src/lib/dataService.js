@@ -1424,7 +1424,7 @@ export async function fetchGruposConMetas() {
     const [gruposRes, relRes, nominasRes, equipoRes] = await Promise.all([
       supabase
         .from('capacidad_rys')
-        .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
+        .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op, sede')
         .order('codigo'),
       supabase
         .from('grupo_reclutadores')
@@ -1474,9 +1474,9 @@ export async function fetchGruposConMetas() {
       // Filter nominas for this specific group + campaign
       const nominasGrupo = nominas.filter(n => n.grupo_codigo === gCodigo && n.campana === gCampana)
 
-      // Get most frequent sede
-      let sede = '-'
-      if (nominasGrupo.length > 0) {
+      // Get sede from capacidad_rys or fallback to most frequent sede in nominas
+      let sede = (g.sede && g.sede.trim() && g.sede.trim() !== '-') ? g.sede.trim() : '-'
+      if (sede === '-' && nominasGrupo.length > 0) {
         const sedeCounts = {}
         let maxCount = 0
         nominasGrupo.forEach(n => {
@@ -2778,6 +2778,23 @@ export async function updateGrupoFormador(grupo_codigo, campana, formador_docume
     // Auditar
     mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { formador_documento });
     
+    return true;
+  }
+  return false;
+}
+
+export async function updateGrupoCapacidadField(grupo_codigo, campana, field, value) {
+  if (DB_MODE === 'supabase') {
+    const query = supabase.from('capacidad_rys').update({ [field]: value || null }).eq('codigo', grupo_codigo);
+    if (campana && campana !== 'Sin Campaña') query.eq('campana', campana);
+    const { error } = await query;
+      
+    if (error) {
+      console.error(`Error actualizando ${field} del grupo:`, error);
+      throw error;
+    }
+    
+    mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { [field]: value });
     return true;
   }
   return false;

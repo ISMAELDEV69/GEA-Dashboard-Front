@@ -4,7 +4,7 @@ import {
   Target, Users, Check, X,
   Loader2, AlertCircle, Edit, Save, HelpCircle, Search
 } from 'lucide-react'
-import { fetchGruposConMetas, fetchReclutadoresFull, saveGrupoMetas } from '../lib/dataService'
+import { fetchGruposConMetas, fetchReclutadoresFull, saveGrupoMetas, updateGrupoCapacidadField } from '../lib/dataService'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
@@ -342,14 +342,52 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                     <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] font-bold truncate max-w-[120px]" title={g.campana_nombre}>
                       {g.campana_nombre}
                     </td>
-                    <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-secondary)]">
-                      {g.sede || '-'}
+                    <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] p-1 text-center text-[var(--text-secondary)]">
+                      <input
+                        key={`sede-${g.grupo_codigo}-${g.sede}`}
+                        type="text"
+                        defaultValue={g.sede && g.sede !== '-' ? g.sede : ''}
+                        placeholder="Ingresar..."
+                        onBlur={async (e) => {
+                          const val = e.target.value.trim() || '-';
+                          if (val !== g.sede) {
+                            try {
+                              await updateGrupoCapacidadField(g.grupo_codigo, g.campana_nombre, 'sede', val === '-' ? null : val);
+                              setGrupos(prev => prev.map(item => item.grupo_codigo === g.grupo_codigo && item.campana_nombre === g.campana_nombre ? { ...item, sede: val } : item));
+                            } catch (err) {
+                              console.error('Error al guardar sede:', err);
+                            }
+                          }
+                        }}
+                        onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+                        className="w-20 text-center bg-transparent hover:bg-black/5 dark:hover:bg-white/5 focus:bg-black/10 dark:focus:bg-white/10 border border-transparent hover:border-[var(--border-normal)] focus:border-[var(--accent)] rounded px-1 py-1 text-xs outline-none font-semibold text-[var(--text-primary)] transition-all placeholder:text-[var(--text-muted)] placeholder:font-normal placeholder:italic"
+                        title="Haz clic para escribir la Sede y presiona Enter para guardar"
+                      />
                     </td>
                     <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-secondary)] truncate max-w-[80px]" title={g.modalidad}>
                       {g.modalidad || '-'}
                     </td>
-                    <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-secondary)] font-mono">
-                      {g.horario || '-'}
+                    <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] p-1 text-center text-[var(--text-secondary)] font-mono">
+                      <input
+                        key={`horario-${g.grupo_codigo}-${g.horario}`}
+                        type="text"
+                        defaultValue={g.horario && g.horario !== '-' ? g.horario : ''}
+                        placeholder="Ingresar..."
+                        onBlur={async (e) => {
+                          const val = e.target.value.trim() || '-';
+                          if (val !== g.horario) {
+                            try {
+                              await updateGrupoCapacidadField(g.grupo_codigo, g.campana_nombre, 'rango_horario', val === '-' ? null : val);
+                              setGrupos(prev => prev.map(item => item.grupo_codigo === g.grupo_codigo && item.campana_nombre === g.campana_nombre ? { ...item, horario: val } : item));
+                            } catch (err) {
+                              console.error('Error al guardar horario:', err);
+                            }
+                          }
+                        }}
+                        onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+                        className="w-24 text-center bg-transparent hover:bg-black/5 dark:hover:bg-white/5 focus:bg-black/10 dark:focus:bg-white/10 border border-transparent hover:border-[var(--border-normal)] focus:border-[var(--accent)] rounded px-1 py-1 text-xs font-mono outline-none text-[var(--text-primary)] transition-all placeholder:text-[var(--text-muted)] placeholder:font-normal placeholder:italic"
+                        title="Haz clic para escribir el Horario y presiona Enter para guardar"
+                      />
                     </td>
                     <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-secondary)]">
                       {g.fecha_inicio ? new Date(g.fecha_inicio).toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
