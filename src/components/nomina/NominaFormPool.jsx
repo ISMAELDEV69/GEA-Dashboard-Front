@@ -269,8 +269,26 @@ export default function NominaFormPool({
 
       const data = await parseSheetMatrixCandidates(matrix)
 
+      // Deduplicar postulantes por DNI (conservando la respuesta más reciente del formulario)
+      const deduplicatedMap = new Map()
+      data.forEach(item => {
+        const doc = String(item.documento || '').trim()
+        if (!doc) return
+        if (!deduplicatedMap.has(doc)) {
+          deduplicatedMap.set(doc, item)
+        } else {
+          const existing = deduplicatedMap.get(doc)
+          const tExisting = new Date(existing.marca_temporal || 0).getTime()
+          const tItem = new Date(item.marca_temporal || 0).getTime()
+          if (tItem >= tExisting) {
+            deduplicatedMap.set(doc, item)
+          }
+        }
+      })
+      const uniqueData = Array.from(deduplicatedMap.values())
+
       // Consultar historial de asignaciones de todos los postulantes en la base de datos
-      const uniqueDnis = [...new Set(data.map(d => String(d.documento || '').trim()).filter(Boolean))]
+      const uniqueDnis = uniqueData.map(d => String(d.documento || '').trim()).filter(Boolean)
       const historyMap = new Map()
 
       if (uniqueDnis.length > 0) {
@@ -279,7 +297,7 @@ export default function NominaFormPool({
           const chunk = uniqueDnis.slice(i, i + chunkSize)
           const { data: existing, error: fetchErr } = await supabase
             .from('nominas')
-            .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, dia_0, dia_1, created_at')
+            .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, motivo_baja, dia_0, dia_1, created_at')
             .in('documento', chunk)
             .order('created_at', { ascending: false })
 
@@ -305,7 +323,7 @@ export default function NominaFormPool({
         }
       })
 
-      setPoolData(data)
+      setPoolData(uniqueData)
       setLatestAssignedDocs(latestMap)
       setSelectedDocs(new Set())
     } catch (err) {
