@@ -63,31 +63,99 @@ export function atribucionLabel(atrib) {
 export function resolveReclutadorId(userProfile, reclutadores = []) {
   if (!userProfile) return null
   if (userProfile.reclutador_id) return Number(userProfile.reclutador_id)
-  const match = reclutadores.find(r => nameMatches(r.nombre_completo, userProfile.nombre))
-  return match?.id ?? null
+
+  // 1. Multi-factor match by DNI / Documento de Identidad (Indestructible)
+  const userDni = String(userProfile.documento || userProfile.dni || userProfile.dni_reclutador || '').trim()
+  if (userDni) {
+    const matchByDni = reclutadores.find(r => 
+      String(r.documento || r.dni || '').trim() === userDni
+    )
+    if (matchByDni) return Number(matchByDni.id)
+  }
+
+  // 2. Multi-factor match by Email
+  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  if (userEmail) {
+    const matchByEmail = reclutadores.find(r => 
+      String(r.email || r.correo || '').toLowerCase().trim() === userEmail
+    )
+    if (matchByEmail) return Number(matchByEmail.id)
+  }
+
+  // 3. Fallback match by Name
+  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+  if (nombre) {
+    const match = reclutadores.find(r => nameMatches(r.nombre_completo, nombre))
+    if (match) return Number(match.id)
+  }
+
+  return null
 }
 
 export function resolveFormadorDocumento(userProfile, formadores = []) {
   if (!userProfile) return null
-  if (userProfile.formador_documento) return userProfile.formador_documento
-  const match = formadores.find(f => nameMatches(f.nombre_completo, userProfile.nombre))
-  return match?.documento ?? null
+  if (userProfile.formador_documento) return String(userProfile.formador_documento).trim()
+
+  // 1. Multi-factor match by DNI / Documento de Identidad (Indestructible)
+  const userDni = String(userProfile.documento || userProfile.dni || '').trim()
+  if (userDni) {
+    const matchByDni = formadores.find(f => String(f.documento || f.dni || '').trim() === userDni)
+    if (matchByDni) return String(matchByDni.documento).trim()
+  }
+
+  // 2. Multi-factor match by Email
+  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  if (userEmail) {
+    const matchByEmail = formadores.find(f => String(f.email || f.correo || '').toLowerCase().trim() === userEmail)
+    if (matchByEmail) return String(matchByEmail.documento).trim()
+  }
+
+  // 3. Fallback by Name
+  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+  if (nombre) {
+    const match = formadores.find(f => nameMatches(f.nombre_completo || f.datos_completos, nombre))
+    if (match) return String(match.documento).trim()
+  }
+
+  return null
 }
 
 export function filterPostulantesReclutador(postulantes, userProfile, reclutadores = []) {
+  if (!userProfile) return []
   const recId = resolveReclutadorId(userProfile, reclutadores)
-  const nombre = userProfile?.nombre || ''
-  return postulantes.filter(p =>
-    (recId && Number(p.reclutador_id) === recId) || nameMatches(p.reclutador, nombre)
-  )
+  const userDni = String(userProfile.documento || userProfile.dni || userProfile.dni_reclutador || '').trim()
+  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  const nombre = userProfile?.nombre_completo || userProfile?.nombre || ''
+
+  const recObj = recId ? reclutadores.find(r => Number(r.id) === recId) : null
+  const recDni = recObj ? String(recObj.documento || recObj.dni || '').trim() : ''
+  const recNombre = recObj?.nombre_completo || ''
+
+  return postulantes.filter(p => {
+    // 1. Match by Recruiter ID
+    if (recId && Number(p.reclutador_id) === recId) return true
+
+    // 2. Match by Recruiter DNI
+    if (userDni && (String(p.reclutador_dni || p.dni_reclutador || p.reclutador_documento || '').trim() === userDni)) return true
+    if (recDni && (String(p.reclutador_dni || p.dni_reclutador || p.reclutador_documento || '').trim() === recDni)) return true
+
+    // 3. Match by Recruiter Email
+    if (userEmail && String(p.reclutador_email || '').toLowerCase().trim() === userEmail) return true
+
+    // 4. Match by Recruiter Name / Alias
+    if (nombre && nameMatches(p.reclutador, nombre)) return true
+    if (recNombre && nameMatches(p.reclutador, recNombre)) return true
+
+    return false
+  })
 }
 
 export function filterGruposFormador(grupos, userProfile, formadores = []) {
   const doc = resolveFormadorDocumento(userProfile, formadores)
-  const nombre = userProfile?.nombre || ''
+  const nombre = userProfile?.nombre_completo || userProfile?.nombre || ''
   if (!doc && !nombre) return grupos
   return grupos.filter(g =>
-    (doc && g.formador_documento === doc) ||
+    (doc && String(g.formador_documento).trim() === doc) ||
     nameMatches(g.formador_nombre, nombre)
   )
 }
@@ -103,13 +171,18 @@ export function filterBajasImputablesReclutador(asistencias, postulantes, userPr
 
 export function computeMetasReclutador(campanasMetas = [], userProfile, reclutadores = [], postulantes = [], semana = null) {
   const recId = resolveReclutadorId(userProfile, reclutadores)
-  const nombre = userProfile?.nombre || ''
+  const nombre = userProfile?.nombre_completo || userProfile?.nombre || ''
+  const recObj = recId ? reclutadores.find(r => Number(r.id) === recId) : null
+  const recNombre = recObj?.nombre_completo || ''
+
   let metaSemanal = 0
   const campanasAsignadas = []
 
   for (const c of campanasMetas) {
     const rm = (c.reclutadores_metas || []).find(r =>
-      (recId && Number(r.reclutador_id) === recId) || nameMatches(r.nombre_completo, nombre)
+      (recId && Number(r.reclutador_id) === recId) ||
+      nameMatches(r.nombre_completo, nombre) ||
+      (recNombre && nameMatches(r.nombre_completo, recNombre))
     )
     if (rm) {
       metaSemanal += Number(rm.meta_individual) || 0

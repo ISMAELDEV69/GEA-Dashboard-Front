@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { checkCalibracionDia1, fetchReclutadoresFull } from '../../lib/dataService'
-import { Loader2, Save, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
@@ -9,18 +9,18 @@ function getHeaderColor(key, isSelected = false) {
   const group3 = ['validacion_reingreso', 'fecha_validacion', 'observacion_reingreso'];
   
   if (isSelected) {
-    return 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 shadow-inner';
+    return 'bg-cyan-500/20 text-cyan-300 shadow-inner border-b-2 border-cyan-400';
   }
   
   if (group2.includes(key)) {
-    return 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300';
+    return 'bg-amber-500/10 text-amber-300';
   }
   
   if (group3.includes(key)) {
-    return 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300';
+    return 'bg-emerald-500/10 text-emerald-300';
   }
   
-  return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
+  return 'bg-[var(--table-head-bg)] text-[var(--text-secondary)]';
 }
 
 // The editable columns for Phase B
@@ -69,34 +69,50 @@ const EDITABLE_COLUMNS = [
   { key: 'observacion_reingreso', label: 'OBSERVACIÓN REINGRESO', width: 200 }
 ]
 
-export default function NominaGridEditor({ grupoCodigo, campana }) {
+import { nameMatches } from '../../lib/dashboardAnalytics'
+
+export default function NominaGridEditor({
+  grupoCodigo,
+  campana,
+  onSaveComplete,
+  userProfile = null,
+  currentRole = null,
+  reclutadores = []
+}) {
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
-  const [savingRow, setSavingRow] = useState(null)
+  const [savingStatus, setSavingStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
   const [filters, setFilters] = useState({})
-  const [reclutadores, setReclutadores] = useState([])
+  const [reclutadoresList, setReclutadoresList] = useState([])
+  const [externalChangeDetected, setExternalChangeDetected] = useState(false)
+  const [showMissingDetails, setShowMissingDetails] = useState(false)
+
+  // Debounce ref to store pending updates grouped by rowId
+  const pendingUpdatesRef = useRef(new Map())
+  const debounceTimersRef = useRef(new Map())
+  const lastLoadedAtRef = useRef(null)
 
   useEffect(() => {
     fetchReclutadoresFull()
-      .then(res => setReclutadores((res || []).filter(r => r.activo)))
+      .then(res => setReclutadoresList((res || []).filter(r => r.activo)))
       .catch(err => console.error("Error cargando reclutadores:", err))
   }, [])
 
-  const reclutadorOptions = React.useMemo(() => {
+  const reclutadorOptions = useMemo(() => {
     const names = new Set([
-      ...reclutadores.map(r => r.nombre_completo),
+      ...reclutadoresList.map(r => r.nombre_completo),
       ...data.map(d => d.reclutador).filter(Boolean)
     ]);
     return [...names].sort();
-  }, [reclutadores, data]);
+  }, [reclutadoresList, data]);
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
   }
 
-  const filteredData = React.useMemo(() => {
+  const filteredData = useMemo(() => {
     return data.filter(row => {
       for (const key in filters) {
         const selections = filters[key];
@@ -117,69 +133,146 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
     })
   }, [data, filters])
 
-  useEffect(() => {
-    if (grupoCodigo) loadData()
-  }, [grupoCodigo])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
+    setError(null)
+    setExternalChangeDetected(false)
     try {
       let query = supabase
         .from('nominas')
         .select('*')
-        .order('created_at', { ascending: true })
+        .order('apellido_paterno', { ascending: true })
         .limit(5000)
 
-      if (grupoCodigo !== 'ALL') {
-        query = query.eq('grupo_codigo', grupoCodigo)
+      if (grupoCodigo && grupoCodigo !== 'ALL') {
+        query = query.eq('grupo_codigo', grupoCodigo.trim())
+      } else if (campana) {
+        query = query.ilike('campana', `%${campana.trim()}%`)
       }
-      if (campana) {
-        query = query.eq('campana', campana)
+
+      if (currentRole === 'reclutador') {
+        const myName = userProfile?.nombre_completo || userProfile?.nombre || ''
+        if (myName) {
+          query = query.ilike('reclutador', `%${myName.trim()}%`)
+        }
       }
 
       const { data: rows, error: err } = await query
 
       if (err) throw err
-      setData(rows || [])
+      
+      let finalRows = rows || []
+      if (currentRole === 'reclutador') {
+        const myName = userProfile?.nombre_completo || userProfile?.nombre || ''
+        if (myName) {
+          finalRows = finalRows.filter(r => nameMatches(r.reclutador, myName))
+        }
+      }
+
+      setData(finalRows)
+      lastLoadedAtRef.current = new Date().toISOString()
     } catch (err) {
+      console.error('Error cargando nomina en grid:', err)
       setError(err.message)
     } finally {
       setLoading(false)
     }
+  }, [grupoCodigo, campana, currentRole, userProfile])
+
+  useEffect(() => {
+    if (grupoCodigo) loadData()
+  }, [grupoCodigo, loadData])
+
+  // ── Realtime concurrency detection ─────────────────────────────
+  // Subscribe to changes on nominas rows for this group made by OTHER users.
+  // We compare updated_at to lastLoadedAtRef to ignore our own saves.
+  useEffect(() => {
+    if (!grupoCodigo) return
+    const channel = supabase
+      .channel(`nominas-concurrency-${grupoCodigo}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'nominas', filter: `grupo_codigo=eq.${grupoCodigo}` },
+        (payload) => {
+          const updatedAt = payload.new?.updated_at
+          const loadedAt = lastLoadedAtRef.current
+          // Only flag if the change happened AFTER we loaded (could be from another tab/user)
+          if (updatedAt && loadedAt && updatedAt > loadedAt) {
+            // Small grace window: ignore changes within 3s of our own load (likely our own save)
+            const diffMs = new Date(updatedAt) - new Date(loadedAt)
+            if (diffMs > 3000) {
+              setExternalChangeDetected(true)
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [grupoCodigo])
+
+  // Flush batched updates for a row to database
+  const flushRowUpdate = async (rowId) => {
+    const rowUpdates = pendingUpdatesRef.current.get(rowId)
+    if (!rowUpdates || Object.keys(rowUpdates).length === 0) return
+
+    pendingUpdatesRef.current.delete(rowId)
+    setSavingStatus('saving')
+
+    try {
+      const { error: err } = await supabase
+        .from('nominas')
+        .update(rowUpdates)
+        .eq('id', rowId)
+
+      if (err) throw err
+
+      if (rowUpdates.dia_1) {
+        await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
+      }
+
+      setSavingStatus('saved')
+      setTimeout(() => setSavingStatus('idle'), 2000)
+      onSaveComplete?.()
+    } catch (err) {
+      console.error('Save error', err)
+      setSavingStatus('error')
+    }
   }
 
-  const handleCellChange = async (rowId, key, value) => {
-    // Optimistic update locally
+  // Handle cell edit with 1.2s debounce and row-level batching
+  const handleCellChange = (rowId, key, value, immediate = false) => {
     const updateObj = { [key]: value || null }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
       updateObj.reclutador_id = recObj ? recObj.id : null
     }
+
+    // 1. Optimistic local state update
     setData(prev => prev.map(r => r.id === rowId ? { ...r, ...updateObj } : r))
-    
-    // Save to DB
-    setSavingRow(rowId)
-    try {
-      const { error: err } = await supabase
-        .from('nominas')
-        .update(updateObj)
-        .eq('id', rowId)
-        
-      if (err) throw err
-      
-      // Trigger calibration check if dia_1 was changed
-      if (key === 'dia_1') {
-        await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
-      }
-    } catch (err) {
-      console.error('Save error', err)
-      // We could revert here on failure
-    } finally {
-      setSavingRow(null)
+
+    // 2. Accumulate in batch
+    const currentPending = pendingUpdatesRef.current.get(rowId) || {}
+    pendingUpdatesRef.current.set(rowId, { ...currentPending, ...updateObj })
+
+    // 3. Clear previous debounce timer for this row
+    if (debounceTimersRef.current.has(rowId)) {
+      clearTimeout(debounceTimersRef.current.get(rowId))
+    }
+
+    if (immediate) {
+      flushRowUpdate(rowId)
+    } else {
+      setSavingStatus('saving')
+      const timer = setTimeout(() => {
+        flushRowUpdate(rowId)
+        debounceTimersRef.current.delete(rowId)
+      }, 1200)
+      debounceTimersRef.current.set(rowId, timer)
     }
   }
 
-  
+  // Handle bulk replication of a column to all filtered rows
   const handleBulkUpdate = async () => {
     if (!selectedColumn || filteredData.length < 2) return
     const firstRow = filteredData[0]
@@ -188,44 +281,74 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (firstRow[selectedColumn] || '').trim().toUpperCase())
       updateObj.reclutador_id = recObj ? recObj.id : null
     }
-    const updates = []
-    
+
     const updatedData = data.map(row => {
-      // Find if this row is in the filtered view
       const inFilter = filteredData.some(f => f.id === row.id)
       if (inFilter && row.id !== firstRow.id) {
-        const newRow = { ...row, ...updateObj }
-        updates.push(newRow)
-        return newRow
+        return { ...row, ...updateObj }
       }
       return row
     })
-    
+
     setData(updatedData)
-    setSavingRow('ALL')
-    
+    setSavingStatus('saving')
+
     try {
-      // Usar update masivo por IDs para evitar políticas RLS de INSERT
       const targetIds = filteredData.filter(f => f.id !== firstRow.id).map(f => f.id)
       const { error: err } = await supabase
         .from('nominas')
         .update(updateObj)
         .in('id', targetIds)
-        
+
       if (err) throw err
 
       if (selectedColumn === 'dia_1') {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
       }
+
+      setSavingStatus('saved')
+      setTimeout(() => setSavingStatus('idle'), 2000)
+      onSaveComplete?.()
     } catch (err) {
       console.error('Bulk save error', err)
       setError(err.message)
-    } finally {
-      setSavingRow(null)
+      setSavingStatus('error')
     }
   }
 
-  const missingDataCandidates = React.useMemo(() => {
+  // Fix docsOk: check ALL 7 doc columns per spec
+  const kpis = useMemo(() => {
+    const total = data.length
+    const asistieronD0 = data.filter(d => (d.dia_0 || '').toUpperCase() === 'ASISTIO').length
+    const aptosD1 = data.filter(d => {
+      const s = (d.status_dia_1 || '').toUpperCase()
+      const d1 = (d.dia_1 || '').toUpperCase()
+      return s === 'APTO' || s === 'RECUPERADO' || s === 'AGREGADO' || d1 === 'ASISTIO'
+    }).length
+    const docsOk = data.filter(d => {
+      if ((d.status_final || '').toUpperCase() === 'COMPLETO') return true
+      return (
+        (d.doc_cv || '').toUpperCase() === 'OK' &&
+        (d.doc_dni_adjunto || '').toUpperCase() === 'OK' &&
+        (d.doc_certijoven || '').toUpperCase() === 'OK' &&
+        (d.doc_recibo_servicios || '').toUpperCase() === 'OK' &&
+        (d.doc_ficha_datos || '').toUpperCase() === 'OK' &&
+        (d.doc_autorizacion || '').toUpperCase() === 'OK'
+      )
+    }).length
+
+    return {
+      total,
+      asistieronD0,
+      pctD0: total > 0 ? ((asistieronD0 / total) * 100).toFixed(0) : 0,
+      aptosD1,
+      pctD1: total > 0 ? ((aptosD1 / total) * 100).toFixed(0) : 0,
+      docsOk,
+      pctDocs: total > 0 ? ((docsOk / total) * 100).toFixed(0) : 0,
+    }
+  }, [data])
+
+  const missingDataCandidates = useMemo(() => {
     const invalidList = []
     data.forEach(p => {
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
@@ -236,14 +359,9 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
       
       if (asistioD0 || agregadoD1) {
         const missing = []
-        if (!p.documento) missing.push('DNI')
-        if (!p.nombres) missing.push('Nombres')
-        if (!p.apellido_paterno) missing.push('Apellido Paterno')
-        if (!p.apellido_materno) missing.push('Apellido Materno')
-        if (!p.celular) missing.push('Celular')
+        if (!p.sede) missing.push('Sede')
+        if (!p.modalidad) missing.push('Modalidad')
         if (!p.condicion) missing.push('Condición Laboral')
-        if (!p.campana) missing.push('Campaña')
-        if (!p.grupo_codigo) missing.push('GPE (Campaña y Grupo)')
 
         if (missing.length > 0) {
           invalidList.push({
@@ -256,77 +374,209 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
     return invalidList
   }, [data])
 
-
   if (!grupoCodigo) {
     return (
-      <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+      <div className="p-8 text-center text-[var(--text-muted)] bg-[var(--bg-surface)] rounded-xl border border-[var(--border-subtle)]">
         Selecciona un grupo para empezar a editar su nómina.
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm" style={{ height: '70vh' }}>
-      <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
-        <div>
-          <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg">Completar Datos de Nómina</h3>
-          <p className="text-xs text-slate-500">Editando grupo: <span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">{grupoCodigo}</span> ({data.length} candidatos)</p>
-        </div>
-          <div className="mt-2">
-            <button 
-              onClick={handleBulkUpdate}
-              disabled={data.length < 2 || savingRow || !selectedColumn}
-              className="text-xs px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-semibold rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 flex items-center gap-1"
-            >
-              <CheckCircle2 size={14} /> 
-              {selectedColumn 
-                ? `Replicar "${EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
-                : 'Selecciona el encabezado de una columna para replicar'}
-            </button>
+    <div
+      className="flex flex-col rounded-2xl border border-[var(--border-subtle)] overflow-hidden shadow-2xl space-y-0"
+      style={{
+        background: 'var(--bg-surface)'
+      }}
+    >
+      {/* ── 4 MINI KPIS BAR ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/50">
+        {/* Total Postulantes */}
+        <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-cyan-500/20 shadow-[0_0_12px_rgba(0,245,255,0.08)] flex items-center justify-between">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Total Postulantes</div>
+            <div className="text-xl sm:text-2xl font-black text-cyan-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpis.total}
+            </div>
           </div>
-        <div className="flex items-center gap-2 text-sm text-slate-500">
-          {savingRow ? <span className="flex items-center gap-1 text-blue-500"><Loader2 size={14} className="animate-spin" /> Guardando...</span> : <span className="flex items-center gap-1 text-emerald-500"><CheckCircle2 size={14} /> Todo guardado</span>}
+          <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
+            <Users size={18} />
+          </div>
+        </div>
+
+        {/* Asistieron Día 0 */}
+        <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-emerald-500/20 shadow-[0_0_12px_rgba(57,255,20,0.08)] flex items-center justify-between">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Asistieron Día 0</div>
+            <div className="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpis.asistieronD0} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD0}%)</span>
+            </div>
+          </div>
+          <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+            <UserCheck size={18} />
+          </div>
+        </div>
+
+        {/* Apto Día 1 */}
+        <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-purple-500/20 shadow-[0_0_12px_rgba(191,95,255,0.08)] flex items-center justify-between">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Status Día 1</div>
+            <div className="text-xl sm:text-2xl font-black text-purple-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpis.aptosD1} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD1}%)</span>
+            </div>
+          </div>
+          <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+            <ShieldCheck size={18} />
+          </div>
+        </div>
+
+        {/* Documentación OK */}
+        <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/20 shadow-[0_0_12px_rgba(255,122,0,0.08)] flex items-center justify-between">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Documentos OK</div>
+            <div className="text-xl sm:text-2xl font-black text-orange-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpis.docsOk} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctDocs}%)</span>
+            </div>
+          </div>
+          <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
+            <FileCheck size={18} />
+          </div>
         </div>
       </div>
 
-      {missingDataCandidates.length > 0 && (
-        <div className="m-4 p-4 rounded-xl bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 flex flex-col sm:flex-row gap-4 items-start shadow-sm">
-          <div className="bg-orange-100 dark:bg-orange-900/50 p-2 rounded-lg text-orange-600 dark:text-orange-400 mt-1">
-            <AlertCircle size={20} />
+      {/* ── TOOLBAR: Grupo Info, Replicar, Estado Guardado ── */}
+      <div className="p-3 sm:p-4 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-3 bg-[var(--bg-surface)]">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="font-extrabold text-[var(--text-primary)] text-base">Edición de Nómina</h3>
+            <span className="font-mono text-xs font-black px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+              {grupoCodigo}
+            </span>
           </div>
-          <div className="flex-1">
-            <h3 className="text-sm font-bold text-orange-800 dark:text-orange-300 mb-1">
-              Atención: Candidatos con datos incompletos
-            </h3>
-            <p className="text-sm text-orange-700 dark:text-orange-400 mb-3">
-              Estos candidatos cumplen con la regla de Asistencia (Día 0, Agregado o Recuperado), pero no podrán pasar a la pantalla del Formador porque les faltan datos obligatorios. Completa la información aquí mismo.
-            </p>
-            <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {missingDataCandidates.map((c, idx) => (
-                <li key={idx} className="text-[11px] bg-orange-100/50 dark:bg-orange-900/30 p-2 rounded border border-orange-200/50 dark:border-orange-800/30 text-orange-800 dark:text-orange-300 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-orange-500 rounded-full flex-shrink-0" />
-                  <span><strong>{c.nombre}:</strong> {c.faltantes}</span>
-                </li>
-              ))}
-            </ul>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            {campana ? `${campana} · ` : ''}{data.length} candidatos cargados
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleBulkUpdate}
+            disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn}
+            className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            <CheckCircle2 size={14} /> 
+            {selectedColumn 
+              ? `Replicar "${EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
+              : 'Selecciona columna para replicar'}
+          </button>
+
+          {/* Autosave status pill */}
+          <div className="flex items-center text-xs font-bold px-3 py-1.5 rounded-lg border bg-[var(--bg-elevated)] border-[var(--border-subtle)]">
+            {savingStatus === 'saving' && (
+              <span className="flex items-center gap-1.5 text-cyan-400">
+                <Loader2 size={13} className="animate-spin" /> Guardando cambios...
+              </span>
+            )}
+            {savingStatus === 'saved' && (
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <CheckCircle2 size={13} /> Guardado ✓
+              </span>
+            )}
+            {savingStatus === 'error' && (
+              <span className="flex items-center gap-1.5 text-red-400">
+                <AlertCircle size={13} /> Error al guardar
+              </span>
+            )}
+            {savingStatus === 'idle' && (
+              <span className="text-[var(--text-muted)] flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Sincronizado
+              </span>
+            )}
           </div>
+        </div>
+      </div>
+
+      {/* External concurrency alert */}
+      {externalChangeDetected && (
+        <div className="p-3 mx-4 mt-3 rounded-xl bg-cyan-900/30 border border-cyan-500/30 flex items-center justify-between text-xs text-cyan-200">
+          <span>⚠️ Se han detectado cambios recientes en este grupo por otro usuario.</span>
+          <button onClick={loadData} className="px-2 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 font-bold flex items-center gap-1">
+            <RefreshCw size={12} /> Recargar
+          </button>
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
+      {/* Missing data alert (Collapsible) */}
+      {missingDataCandidates.length > 0 && (
+        <div className="mx-4 my-3 rounded-xl bg-orange-500/10 border border-orange-500/30 overflow-hidden shadow-sm transition-all">
+          <div className="p-3 flex items-center justify-between gap-3 bg-orange-500/5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="bg-orange-500/20 p-1.5 rounded-lg text-orange-400 shrink-0">
+                <AlertCircle size={16} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-black text-orange-300 uppercase tracking-wider">
+                    Atención: Candidatos con datos obligatorios incompletos ({missingDataCandidates.length})
+                  </h4>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-200 border border-orange-500/30">
+                    Sede / Modalidad / Condición
+                  </span>
+                </div>
+                <p className="text-[11px] text-orange-200/80 truncate mt-0.5">
+                  Cumplen regla de asistencia pero faltan datos para que pasen a la pantalla del Formador.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowMissingDetails(prev => !prev)}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 hover:text-orange-100 text-xs font-bold border border-orange-500/30 transition-all cursor-pointer shadow-sm"
+              title={showMissingDetails ? "Ocultar lista de postulantes" : "Ver qué candidatos faltan"}
+            >
+              {showMissingDetails ? (
+                <>
+                  <ChevronUp size={14} />
+                  <span>Ocultar ({missingDataCandidates.length})</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={14} />
+                  <span>Ver faltantes ({missingDataCandidates.length})</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {showMissingDetails && (
+            <div className="p-3 border-t border-orange-500/20 bg-black/20">
+              <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
+                {missingDataCandidates.map((c, idx) => (
+                  <span key={idx} className="text-[10px] bg-orange-950/60 px-2.5 py-1 rounded-md border border-orange-500/30 text-orange-200 font-medium">
+                    <strong className="text-orange-300">{c.nombre}:</strong> {c.faltantes}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── GRID TABLE ── */}
+      <div className="overflow-auto table-scroll" style={{ minHeight: '520px', maxHeight: 'calc(100vh - 280px)' }}>
         {loading ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
-            <Loader2 className="animate-spin mr-2" /> Cargando nómina...
+          <div className="h-64 flex items-center justify-center text-[var(--text-muted)] gap-2">
+            <Loader2 className="animate-spin text-cyan-400" /> Cargando nómina...
           </div>
         ) : data.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-400">
+          <div className="h-64 flex items-center justify-center text-[var(--text-muted)]">
             No hay candidatos asignados a este grupo.
           </div>
         ) : (
           <table className="w-full text-left text-xs whitespace-nowrap">
-            <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 z-10 shadow-sm">
+            <thead className="bg-[var(--table-head-bg)] sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="p-2 font-semibold text-slate-600 dark:text-slate-300 border-r border-slate-200 dark:border-slate-700 sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 shadow-sm align-middle">
+                <th className="p-2.5 font-bold text-[var(--text-secondary)] border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--table-head-bg)] z-20 shadow-sm align-middle uppercase tracking-wider text-[10px]">
                   <div className="flex items-center justify-between gap-2">
                     <span>CANDIDATO (Solo Lectura)</span>
                     <ColumnFilter 
@@ -341,12 +591,12 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
                 {EDITABLE_COLUMNS.map(col => (
                   <th 
                     key={col.key} 
-                    className={`p-2 font-semibold border-r border-slate-200 dark:border-slate-700 select-none align-middle ${getHeaderColor(col.key, selectedColumn === col.key)}`} 
+                    className={`p-2.5 font-bold border-r border-[var(--border-subtle)] select-none align-middle uppercase tracking-wider text-[10px] ${getHeaderColor(col.key, selectedColumn === col.key)}`} 
                     style={{ minWidth: col.width }}
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div 
-                        className="cursor-pointer hover:text-indigo-500 transition-colors flex-1"
+                        className="cursor-pointer hover:text-cyan-400 transition-colors flex-1 truncate"
                         onClick={() => setSelectedColumn(col.key)}
                         title="Haz clic para seleccionar y replicar esta columna"
                       >
@@ -364,49 +614,48 @@ export default function NominaGridEditor({ grupoCodigo, campana }) {
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-[var(--border-subtle)]">
               {filteredData.map(row => (
-                <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                  <td className="p-2 border-r border-slate-200 dark:border-slate-700 sticky left-0 bg-white dark:bg-slate-900 z-10 shadow-sm flex flex-col">
-                    <span className="font-semibold text-slate-700 dark:text-slate-200 uppercase">{row.apellido_paterno} {row.nombres}</span>
-                    <span className="text-[10px] text-slate-400">{row.documento}</span>
+                <tr key={row.id} className="hover:bg-[var(--bg-muted)] transition-colors">
+                  <td className="p-2.5 border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--bg-surface)] z-10 shadow-sm flex flex-col">
+                    <span className="font-bold text-[var(--text-primary)] uppercase">{row.apellido_paterno} {row.nombres}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
                   </td>
                   {EDITABLE_COLUMNS.map(col => {
                     const val = row[col.key] || '';
-                    let bgColorClass = '';
-                    if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO') {
-                      bgColorClass = 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 font-bold';
+                    let badgeClass = 'text-[var(--text-primary)]';
+                    if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO') {
+                      badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
                     } else if (val === 'PENDIENTE' || val === 'FALTA' || val === 'DESAPROBADO' || val === 'CESE' || val === 'OBSERVADO') {
-                      bgColorClass = 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 font-bold';
-                    } else if (!val && col.key.includes('status')) {
-                      bgColorClass = 'bg-red-50/50 dark:bg-red-900/10 text-slate-800 dark:text-slate-100';
-                    } else {
-                      bgColorClass = 'text-slate-800 dark:text-slate-100 bg-transparent';
+                      badgeClass = 'bg-red-500/10 text-red-400 font-bold';
                     }
 
                     return (
-                      <td key={col.key} className={`p-0 border-r border-slate-100 dark:border-slate-800/50 ${['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final'].includes(col.key) ? 'bg-amber-50/50 dark:bg-amber-900/20' : ''} ${bgColorClass.includes('bg-') ? bgColorClass.split(' ').find(c => c.startsWith('bg-')) : ''} ${bgColorClass.includes('dark:bg-') ? bgColorClass.split(' ').find(c => c.startsWith('dark:bg-')) : ''}`}>
+                      <td key={col.key} className={`p-0 border-r border-[var(--border-subtle)] ${badgeClass}`}>
                         {col.type === 'select' ? (
                           <select
                             value={val}
-                            onChange={e => setData(prev => prev.map(r => r.id === row.id ? { ...r, [col.key]: e.target.value } : r))}
-                            onBlur={e => handleCellChange(row.id, col.key, e.target.value)}
+                            onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
+                            onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
                             onFocus={() => setSelectedColumn(col.key)}
-                            onKeyDown={e => e.key === 'Enter' && e.target.blur()}
-                            className={`w-full h-full p-2 border-none focus:ring-2 focus:ring-inset focus:ring-blue-500 outline-none transition-colors ${bgColorClass.replace(/bg-[a-z0-9/-]+/, '').replace(/dark:bg-[a-z0-9/-]+/, '')} bg-transparent`}
+                            className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
                           >
-                            <option value=""></option>
-                            {(col.key === 'reclutador' ? reclutadorOptions : col.options).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                            <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
+                            {(col.key === 'reclutador' ? reclutadorOptions : col.options).map(opt => (
+                              <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                                {opt}
+                              </option>
+                            ))}
                           </select>
                         ) : (
                           <input
                             type={col.type || 'text'}
                             value={val}
-                            onChange={e => setData(prev => prev.map(r => r.id === row.id ? { ...r, [col.key]: e.target.value } : r))}
-                            onBlur={e => handleCellChange(row.id, col.key, e.target.value)}
+                            onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
+                            onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
                             onFocus={() => setSelectedColumn(col.key)}
                             onKeyDown={e => e.key === 'Enter' && e.target.blur()}
-                            className={`w-full h-full p-2 border-none focus:ring-2 focus:ring-inset focus:ring-blue-500 outline-none transition-colors ${bgColorClass.replace(/bg-[a-z0-9/-]+/, '').replace(/dark:bg-[a-z0-9/-]+/, '')} bg-transparent`}
+                            className="w-full h-full p-2 bg-transparent text-xs font-medium outline-none focus:ring-1 focus:ring-cyan-400 transition-colors placeholder:text-[var(--text-muted)]/40"
                             placeholder="..."
                           />
                         )}

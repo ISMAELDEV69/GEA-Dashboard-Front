@@ -1,35 +1,56 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart3, AlertCircle, Link } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { BarChart3, AlertCircle, Link, RefreshCw } from 'lucide-react';
 import { fetchDashboardsLinks } from '../lib/dataService';
 
 export default function LegacyDashboards({ currentRole }) {
   const [links, setLinks] = useState([]);
   const [activeTab, setActiveTab] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadLinks = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await fetchDashboardsLinks();
+      // Filtrar solo los links a los que este rol tiene acceso
+      const allowed = data.filter(d => (d.roles || []).includes(currentRole));
+      setLinks(allowed);
+      if (allowed.length > 0) {
+        setActiveTab(allowed[0].id);
+      }
+    } catch (err) {
+      console.error("Error al cargar dashboards", err);
+      setError(err?.message || "Error al cargar enlaces de dashboards");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentRole]);
 
   useEffect(() => {
-    const loadLinks = async () => {
-      try {
-        const data = await fetchDashboardsLinks();
-        // Filtrar solo los links a los que este rol tiene acceso
-        const allowed = data.filter(d => (d.roles || []).includes(currentRole));
-        setLinks(allowed);
-        if (allowed.length > 0) {
-          setActiveTab(allowed[0].id);
-        }
-      } catch (err) {
-        console.error("Error al cargar dashboards", err);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadLinks();
-  }, [currentRole]);
+  }, [loadLinks]);
 
   const currentDashboard = links.find(d => d.id === activeTab);
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-gray-500">Cargando Dashboards...</div>;
+    return <div className="h-full flex items-center justify-center text-[var(--text-muted)] animate-pulse">Cargando Dashboards...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-rose-400 bg-rose-500/10 rounded-2xl border border-rose-500/20 p-8 max-w-md mx-auto my-12">
+        <AlertCircle size={40} className="mb-3 text-rose-400" />
+        <p className="text-base font-semibold text-rose-400">Error al cargar Dashboards</p>
+        <p className="text-xs mt-1 text-center text-rose-400/80 mb-4">{error}</p>
+        <button
+          onClick={loadLinks}
+          className="btn-primary inline-flex items-center gap-2 text-xs py-2 px-4"
+        >
+          <RefreshCw size={14} /> Reintentar
+        </button>
+      </div>
+    );
   }
 
   if (links.length === 0) {

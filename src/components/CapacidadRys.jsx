@@ -194,11 +194,24 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
       const e = String(g.estado).trim().toUpperCase()
       return e === 'EN CURSO' || e === 'EN_CURSO' || e === 'ACTIVO'
     }).length
+    const proyeccion = filtered.length - activos
     const meta0 = filtered.reduce((s, g) => s + (Number(g.meta_dia_0) || 0), 0)
     const meta1 = filtered.reduce((s, g) => s + (Number(g.meta_dia_1) || 0), 0)
     const rqFtes = filtered.reduce((s, g) => s + (Number(g.rq_ftes_solicitado) || 0), 0)
     const ingresados = filtered.reduce((s, g) => s + (g.postulantes_activos || 0), 0)
-    return { total: filtered.length, activos, meta0, meta1, rqFtes, ingresados }
+    
+    const enRiesgo = filtered.filter(g => {
+      const meta = Number(g.meta_dia_0) || 0
+      if (meta <= 0) return false
+      const act = Number(g.postulantes_activos) || 0
+      const pct = (act / meta) * 100
+      return pct < 75
+    }).length
+
+    const coberturaPct = meta0 > 0 ? ((ingresados / meta0) * 100).toFixed(1) : 0
+    const deficitCupos = Math.max(0, meta0 - ingresados)
+
+    return { total: filtered.length, activos, proyeccion, meta0, meta1, rqFtes, ingresados, enRiesgo, coberturaPct, deficitCupos }
   }, [filtered])
 
   const openEdit = (g) => {
@@ -383,31 +396,114 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
         </div>
       )}
 
-      {/* KPIs */}
+      {/* KPIs Ejecutivos de Capacidad */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {[
-          { label: 'Grupos', value: kpis.total, icon: Layers, color: '#6366f1' },
-          { label: 'Activos / En curso', value: kpis.activos, icon: BarChart3, color: '#10b981' },
-          { label: 'Meta Día 0', value: kpis.meta0, icon: CheckCircle2, color: '#22d3ee' },
-          { label: 'Meta Día 1', value: kpis.meta1, icon: Calendar, color: '#f59e0b' },
-          { label: 'RQ Solicitado', value: kpis.rqFtes, icon: Users, color: '#8b5cf6' },
-        ].map(k => {
-          const Icon = k.icon
-          return (
-            <div
-              key={k.label}
-              className="rounded-xl p-4 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-sm"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Icon size={14} style={{ color: k.color }} />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                  {k.label}
-                </span>
-              </div>
-              <div className="text-2xl font-black text-[var(--text-primary)]">{k.value}</div>
+        {/* CARD 1: COHORTES / GRUPOS */}
+        <div className="rounded-xl p-3.5 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-xs transition-all hover:border-[var(--border-normal)] flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+              TOTAL GRUPOS
+            </span>
+            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              <Layers size={14} />
             </div>
-          )
-        })}
+          </div>
+          <div className="my-1.5">
+            <span className="text-2xl font-black text-indigo-400 tabular-nums">
+              {kpis.total.toLocaleString()}
+            </span>
+          </div>
+          <div className="text-[10px] font-medium text-[var(--text-muted)] pt-1.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+            <span>En curso: <strong className="text-emerald-400">{kpis.activos}</strong></span>
+            <span>Proy: <strong className="text-slate-300">{kpis.proyeccion}</strong></span>
+          </div>
+        </div>
+
+        {/* CARD 2: REQUERIMIENTO FTEs */}
+        <div className="rounded-xl p-3.5 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-xs transition-all hover:border-[var(--border-normal)] flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+              RQ SOLICITADO
+            </span>
+            <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+              <Users size={14} />
+            </div>
+          </div>
+          <div className="my-1.5">
+            <span className="text-2xl font-black text-purple-400 tabular-nums">
+              {kpis.rqFtes.toLocaleString()}
+            </span>
+            <span className="text-xs text-[var(--text-muted)] ml-1 font-bold">FTEs</span>
+          </div>
+          <div className="text-[10px] font-medium text-[var(--text-muted)] pt-1.5 border-t border-[var(--border-subtle)] truncate">
+            Solicitado por Operación / Cliente
+          </div>
+        </div>
+
+        {/* CARD 3: META DÍA 0 & DÍA 1 */}
+        <div className="rounded-xl p-3.5 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-xs transition-all hover:border-[var(--border-normal)] flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+              METAS D0 / D1
+            </span>
+            <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+              <Calendar size={14} />
+            </div>
+          </div>
+          <div className="my-1.5">
+            <span className="text-2xl font-black text-cyan-400 tabular-nums">
+              {kpis.meta0.toLocaleString()}
+            </span>
+            <span className="text-xs text-[var(--text-muted)] ml-1 font-bold">cupos</span>
+          </div>
+          <div className="text-[10px] font-medium text-[var(--text-muted)] pt-1.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+            <span>Meta D1 (Aula):</span>
+            <span className="text-cyan-300 font-bold">{kpis.meta1.toLocaleString()}</span>
+          </div>
+        </div>
+
+        {/* CARD 4: AVANCE DE COBERTURA REAL */}
+        <div className="rounded-xl p-3.5 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-xs transition-all hover:border-[var(--border-normal)] flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+              COBERTURA REAL
+            </span>
+            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <CheckCircle2 size={14} />
+            </div>
+          </div>
+          <div className="my-1.5">
+            <span className="text-2xl font-black text-emerald-400 tabular-nums">
+              {kpis.ingresados.toLocaleString()}
+            </span>
+            <span className="text-xs text-[var(--text-muted)] ml-1 font-mono font-bold">/ {kpis.meta0.toLocaleString()}</span>
+          </div>
+          <div className="text-[10px] font-medium text-[var(--text-muted)] pt-1.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+            <span className="text-emerald-400 font-bold">{kpis.coberturaPct}% cubierto</span>
+            <span>Falta: {kpis.deficitCupos.toLocaleString()}</span>
+          </div>
+        </div>
+
+        {/* CARD 5: GRUPOS EN RIESGO */}
+        <div className="rounded-xl p-3.5 border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-xs transition-all hover:border-[var(--border-normal)] flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+              GRUPOS EN RIESGO
+            </span>
+            <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
+              <AlertCircle size={14} />
+            </div>
+          </div>
+          <div className="my-1.5">
+            <span className="text-2xl font-black text-rose-400 tabular-nums">
+              {kpis.enRiesgo.toLocaleString()}
+            </span>
+            <span className="text-xs text-[var(--text-muted)] ml-1 font-bold">grupos</span>
+          </div>
+          <div className="text-[10px] font-medium text-[var(--text-muted)] pt-1.5 border-t border-[var(--border-subtle)] truncate">
+            {kpis.enRiesgo > 0 ? '⚠️ Déficit <75% de meta' : '✓ Cobertura óptima'}
+          </div>
+        </div>
       </div>
 
       {/* Filtros */}

@@ -28,7 +28,17 @@ if (!rawUrl || !rawKey || rawUrl.includes('tu-proyecto') || rawKey.includes('tu-
   )
 }
 
-export const supabase = createClient(finalUrl, finalKey)
+export const supabase = createClient(finalUrl, finalKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  },
+  global: {
+    headers: { 'x-application-name': 'gea-dashboard-v2' }
+  }
+})
 
 export const isSupabaseConfigured = () => {
   return (
@@ -39,4 +49,3 @@ export const isSupabaseConfigured = () => {
     !rawKey.includes('placeholder')
   )
 }
-

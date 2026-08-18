@@ -73,22 +73,22 @@ export default function NominaFullPreview({ grupoCodigo, campana }) {
 
   useEffect(() => {
     if (grupoCodigo) loadData()
-  }, [grupoCodigo])
+  }, [grupoCodigo, campana])
 
   const loadData = async () => {
     setLoading(true)
+    setError(null)
     try {
-      const query = supabase
+      let query = supabase
         .from('nominas')
         .select('*')
-        .order('created_at', { ascending: true })
-        .limit(2000)
+        .order('apellido_paterno', { ascending: true })
+        .limit(5000)
 
       if (grupoCodigo && grupoCodigo !== 'ALL') {
-        query.eq('grupo_codigo', grupoCodigo)
-      }
-      if (campana) {
-        query.eq('campana', campana)
+        query = query.eq('grupo_codigo', grupoCodigo.trim())
+      } else if (campana) {
+        query = query.ilike('campana', `%${campana.trim()}%`)
       }
 
       const { data: rows, error: err } = await query

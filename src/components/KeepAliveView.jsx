@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, memo } from 'react'
 
 /**
  * Mantiene el componente montado al cambiar de apartado (solo oculta con CSS).
- * Preserva estado de formularios, cargas y pasos en progreso.
+ * Preserva estado de formularios, cargas y pasos en progreso sin re-renderizados innecesarios.
  */
-export default function KeepAliveView({ viewId, activeView, children, className = '' }) {
+function KeepAliveView({ viewId, activeView, children, className = '' }) {
   const [everActive, setEverActive] = useState(activeView === viewId)
 
   useEffect(() => {
@@ -17,11 +17,14 @@ export default function KeepAliveView({ viewId, activeView, children, className 
 
   return (
     <div
-      className={isActive ? className : `hidden ${className}`.trim()}
+      className={isActive ? `h-full w-full flex flex-col min-h-0 overflow-y-auto custom-scrollbar ${className}`.trim() : `hidden ${className}`.trim()}
       aria-hidden={!isActive}
       data-keep-alive={viewId}
+      style={!isActive ? { contentVisibility: 'hidden' } : undefined}
     >
       {children}
     </div>
   )
 }
+
+export default memo(KeepAliveView)

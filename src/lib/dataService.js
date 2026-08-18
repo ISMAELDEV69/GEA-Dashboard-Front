@@ -83,38 +83,85 @@ export async function fetchUserProfile(userId, sessionUser = null) {
     }
   }
 
-  const attachNombreCompleto = async (profile) => {
+  const attachNombreCompleto = async (profile, sessionUser = null) => {
     if (!profile) return profile;
     try {
-      const searchTerm = profile.nombre;
-      const { data: recData } = await supabase
-        .from('equipo_reclutamiento')
-        .select('apellido_paterno, apellido_materno, nombres_completos')
-        .or(`alix.ilike.${searchTerm},nombres_completos.ilike.%${searchTerm}%`)
-        .limit(1)
-        .maybeSingle();
+      const email = String(sessionUser?.email || '').toLowerCase().trim();
+      const userAlix = email.includes('@') ? email.split('@')[0] : '';
+      const searchTerm = String(profile.nombre || '').trim();
 
-      if (recData) {
-        const full = `${recData.apellido_paterno || ''} ${recData.apellido_materno || ''} ${recData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
-        profile.nombre_completo = full;
-        profile.nombre = full;
-        return profile;
+      // 1. Check in equipo_reclutamiento
+      if (userAlix) {
+        const { data: recByAlix } = await supabase
+          .from('equipo_reclutamiento')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix')
+          .eq('alix', userAlix)
+          .maybeSingle();
+
+        if (recByAlix) {
+          const full = `${recByAlix.apellido_paterno || ''} ${recByAlix.apellido_materno || ''} ${recByAlix.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
+          profile.nombre_completo = full;
+          profile.nombre = full;
+          profile.documento = recByAlix.documento;
+          profile.dni = recByAlix.documento;
+          return profile;
+        }
       }
 
-      const { data: formData } = await supabase
-        .from('equipo_formacion')
-        .select('apellido_paterno, apellido_materno, nombres_completos')
-        .or(`usuario_alix.ilike.${searchTerm},nombres_completos.ilike.%${searchTerm}%`)
-        .limit(1)
-        .maybeSingle();
+      if (searchTerm) {
+        const { data: recData } = await supabase
+          .from('equipo_reclutamiento')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix')
+          .or(`alix.eq.${searchTerm},nombres_completos.eq.${searchTerm}`)
+          .maybeSingle();
 
-      if (formData) {
-        const full = `${formData.apellido_paterno || ''} ${formData.apellido_materno || ''} ${formData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
-        profile.nombre_completo = full;
-        profile.nombre = full;
-        return profile;
+        if (recData) {
+          const full = `${recData.apellido_paterno || ''} ${recData.apellido_materno || ''} ${recData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
+          profile.nombre_completo = full;
+          profile.nombre = full;
+          profile.documento = recData.documento;
+          profile.dni = recData.documento;
+          return profile;
+        }
       }
-    } catch(e) {}
+
+      // 2. Check in equipo_formacion
+      if (userAlix) {
+        const { data: formByAlix } = await supabase
+          .from('equipo_formacion')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix')
+          .eq('usuario_alix', userAlix)
+          .maybeSingle();
+
+        if (formByAlix) {
+          const full = `${formByAlix.apellido_paterno || ''} ${formByAlix.apellido_materno || ''} ${formByAlix.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
+          profile.nombre_completo = full;
+          profile.nombre = full;
+          profile.documento = formByAlix.documento;
+          profile.formador_documento = formByAlix.documento;
+          return profile;
+        }
+      }
+
+      if (searchTerm) {
+        const { data: formData } = await supabase
+          .from('equipo_formacion')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix')
+          .or(`usuario_alix.eq.${searchTerm},nombres_completos.eq.${searchTerm}`)
+          .maybeSingle();
+
+        if (formData) {
+          const full = `${formData.apellido_paterno || ''} ${formData.apellido_materno || ''} ${formData.nombres_completos || ''}`.trim().replace(/\s+/g, ' ');
+          profile.nombre_completo = full;
+          profile.nombre = full;
+          profile.documento = formData.documento;
+          profile.formador_documento = formData.documento;
+          return profile;
+        }
+      }
+    } catch(e) {
+      console.warn("attachNombreCompleto error:", e);
+    }
     
     profile.nombre_completo = profile.nombre;
     return profile;
@@ -122,7 +169,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 
   // RPC que crea el perfil si falta (trigger falló o usuario creado manualmente)
   const { data: rpcData, error: rpcErr } = await supabase.rpc('get_my_profile')
-  if (!rpcErr && rpcData) return await attachNombreCompleto(rpcData)
+  if (!rpcErr && rpcData) return await attachNombreCompleto(rpcData, sessionUser)
 
   const { data, error } = await supabase
     .from('perfiles')
@@ -130,7 +177,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
     .eq('id', userId)
     .maybeSingle()
   if (error) throw error
-  if (data) return await attachNombreCompleto(data)
+  if (data) return await attachNombreCompleto(data, sessionUser)
 
   // Perfil ausente: intentar crear desde metadata de la sesión
   if (sessionUser) {
@@ -175,64 +222,73 @@ const makeDescuentoKey = (doc, camp, grupo) => {
   return `${normalizeDNI(doc)}|${normalizeCampana(camp)}|${normalizeGPE(grupo)}`;
 }
 
-export async function getDescuentosSetGlobal() {
-  if (DB_MODE !== 'supabase') return new Set();
-  
-  let allData = [];
-  let from = 0;
-  const step = 1000;
-  let hasMore = true;
-  
-  while(hasMore) {
-    const { data } = await supabase.from('descuentos')
-      .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap')
-      .range(from, from + step - 1);
-      
-    if (data && data.length > 0) {
-      allData = allData.concat(data);
-      if (data.length < step) hasMore = false;
-      else from += step;
-    } else {
-      hasMore = false;
-    }
-  }
-  
-  const procedeData = allData.filter(row => {
-    // Si la BD tiene explícitamente "PROCEDE"
-    if (String(row.procede || '').trim().toUpperCase() === 'PROCEDE') return true;
+export function getDescuentosSetGlobal() {
+  // QW-3: Cachear el cálculo del Set de descuentos autorizados (TTL: 5 min)
+  return withCache('descuentos_set_global', 300000, async () => {
+    if (DB_MODE !== 'supabase') return new Set();
     
-    // Regla de negocio explícita (autoriza_rys = SI y autoriza_cap = SI/Vacio)
-    const rys = String(row.autoriza_rys || '').trim().toUpperCase() === 'SI';
-    const cap = (String(row.autoriza_cap || '').trim().toUpperCase() === 'SI' || !row.autoriza_cap);
-    return rys && cap;
+    let allData = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+    
+    while(hasMore) {
+      const { data } = await supabase.from('descuentos')
+        .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap')
+        .range(from, from + step - 1);
+        
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        if (data.length < step) hasMore = false;
+        else from += step;
+      } else {
+        hasMore = false;
+      }
+    }
+    
+    const procedeData = allData.filter(row => {
+      // Si la BD tiene explícitamente "PROCEDE"
+      if (String(row.procede || '').trim().toUpperCase() === 'PROCEDE') return true;
+      
+      // Regla de negocio explícita (autoriza_rys = SI y autoriza_cap = SI/Vacio)
+      const rys = String(row.autoriza_rys || '').trim().toUpperCase() === 'SI';
+      const cap = (String(row.autoriza_cap || '').trim().toUpperCase() === 'SI' || !row.autoriza_cap);
+      return rys && cap;
+    });
+    
+    return new Set(procedeData.map(d => makeDescuentoKey(d.dni_ce, d.campana, d.grupo_cap)));
   });
-  
-  return new Set(procedeData.map(d => makeDescuentoKey(d.dni_ce, d.campana, d.grupo_cap)));
 }
 
 async function fetchAllConsolidado() {
-  let allData = [];
-  let from = 0;
-  const step = 1000;
-  let hasMore = true;
-  while(hasMore) {
-    const { data, error } = await supabase.from('consolidado_asistencias').select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado').order('created_at', { ascending: true }).range(from, from + step - 1);
-    if(error) throw error;
-    if(data && data.length > 0) {
-      allData = allData.concat(data);
-      if(data.length < step) hasMore = false;
-      else from += step;
-    } else {
-      hasMore = false;
+  return withCache('all_consolidado', 180000, async () => {
+    let allData = [];
+    let from = 0;
+    const step = 2000;
+    let hasMore = true;
+    while(hasMore) {
+      const { data, error } = await supabase
+        .from('consolidado_asistencias')
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado')
+        .order('created_at', { ascending: true })
+        .range(from, from + step - 1);
+      if(error) throw error;
+      if(data && data.length > 0) {
+        allData = allData.concat(data);
+        if(data.length < step) hasMore = false;
+        else from += step;
+      } else {
+        hasMore = false;
+      }
     }
-  }
-  
-  const descSet = await getDescuentosSetGlobal();
-  if (descSet.size > 0) {
-    allData = allData.filter(row => !descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)));
-  }
-  
-  return allData;
+    
+    const descSet = await getDescuentosSetGlobal();
+    if (descSet.size > 0) {
+      allData = allData.filter(row => !descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)));
+    }
+    
+    return allData;
+  });
 }
 export async function getFirstDateFormador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return null;
@@ -267,15 +323,33 @@ export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
   let totalDia0 = 0;
   let countRec = 0;
   
-  if (nominas) {
-     const descSet = await getDescuentosSetGlobal();
-     const validNominas = descSet.size > 0 
-       ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
-       : nominas;
-       
-     totalNomina = validNominas.length;
-     totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
-     countRec = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
+  const descSet = await getDescuentosSetGlobal();
+  const validNominas = nominas && descSet.size > 0 
+    ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
+    : (nominas || []);
+    
+  totalNomina = validNominas.length;
+  totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
+  
+  const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
+    .select('documento, motivo_baja, estado')
+    .eq('codigo_grupo', grupo_codigo)
+    .eq('campana', campana);
+
+  const groupFormAsisRaw = rawFormAsis || [];
+
+  for (const n of validNominas) {
+    if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
+      const records = groupFormAsisRaw.filter(r => r.documento === n.documento);
+      const isBajaDia1 = records.some(r => {
+        const m = String(r.motivo_baja || '').toUpperCase();
+        const e = String(r.estado || '').toUpperCase();
+        return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
+      });
+      if (!isBajaDia1) {
+        countRec++;
+      }
+    }
   }
   
   const { data: config } = await supabase.from('grupos_dia1').select('estado_calibracion, fecha_dia1').eq('grupo_codigo', grupo_codigo).eq('campana', campana).limit(1).maybeSingle();
@@ -285,7 +359,7 @@ export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
   if (!fecha_dia1_ref) {
     fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana);
   }
-  const counts = await getCalibracionCounts(grupo_codigo, campana, fecha_dia1_ref);
+  const counts = await getCalibracionCounts(grupo_codigo, campana);
   const countForm = counts.form;
 
   if (estado_calibracion === 'PENDIENTE' && fecha_dia1_ref) {
@@ -583,12 +657,23 @@ function buildNominaPayload(payload, ids) {
   }
 }
 
-export async function fetchPostulantes() {
+/**
+ * QW-2: Limita la descarga inicial de postulantes a 800 registros para evitar transferencias
+ * masivas y saturación en inicios de turno simultáneos.
+ * Para obtener todo el histórico completo (ej. exportes Excel), pasar { all: true } o usar fetchAllPostulantes().
+ */
+export async function fetchPostulantes({ limit = 5000, all = false } = {}) {
   if (DB_MODE === 'supabase') {
-    const { data, error } = await supabase
+    let query = supabase
       .from('v_nominas_consolidado')
       .select('*')
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
+
+    if (!all && limit) {
+      query = query.limit(limit)
+    }
+
+    const { data, error } = await query
     if (error) throw error
     
     return (data || []).map(row => ({
@@ -598,7 +683,56 @@ export async function fetchPostulantes() {
     }))
   }
   initLocalStorageDb()
-  return getFromStorage('postulantes') || []
+  const list = getFromStorage('postulantes') || []
+  return all ? list : list.slice(0, limit)
+}
+
+/**
+ * Consulta el histórico completo de postulantes/nóminas bajo demanda (para exportes o reportes).
+ */
+export async function fetchAllPostulantes() {
+  return fetchPostulantes({ all: true })
+}
+
+/**
+ * Consulta todos los postulantes de un reclutador específico, sin límite de filas.
+ * Filtra por reclutador_id directamente en Supabase (server-side) para evitar el
+ * límite de QW-2 y garantizar que el reclutador vea el 100% de su cartera.
+ *
+ * @param {number|null} reclutadorId - ID del reclutador de la tabla `reclutadores`
+ * @param {string|null} reclutadorNombre - Nombre completo como fallback si no hay ID
+ */
+export async function fetchPostulantesReclutador(reclutadorId, reclutadorNombre = null) {
+  if (DB_MODE === 'supabase') {
+    let query = supabase
+      .from('v_nominas_consolidado')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (reclutadorId) {
+      query = query.eq('reclutador_id', reclutadorId)
+    } else if (reclutadorNombre) {
+      // Fallback: filtro por nombre si no hay reclutador_id mapeado
+      query = query.ilike('reclutador', `%${reclutadorNombre}%`)
+    } else {
+      // Sin ID ni nombre: retornar vacío para no exponer datos de otros
+      return []
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+    return (data || []).map(row => ({
+      ...row,
+      campaign: row.campana,
+      observacion: row.observacion_reclutamiento,
+    }))
+  }
+  // Demo/localStorage: filtrar localmente por nombre como fallback
+  const list = getFromStorage('postulantes') || []
+  if (!reclutadorNombre) return list
+  return list.filter(p =>
+    p.reclutador?.toLowerCase().includes(reclutadorNombre.toLowerCase())
+  )
 }
 
 export async function insertPostulante(payload) {
@@ -836,11 +970,20 @@ export async function fetchCapacidadRysOperativo() {
 /** Suscripción realtime a cambios de grupos y nóminas */
 export function subscribeOperationalData(onChange) {
   if (DB_MODE !== 'supabase') return () => {}
+
+  const handleChange = () => {
+    // Limpiar caché antes de recargar para garantizar datos frescos de Supabase
+    invalidateCache('all_consolidado');
+    invalidateCache('all_asistencias_bajas');
+    onChange();
+  };
+
   const channel = supabase
     .channel('gea-operational-sync')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'capacidad_rys' }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'nominas' }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'asistencias_capacitacion' }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'capacidad_rys' }, handleChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'nominas' }, handleChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'asistencias_capacitacion' }, handleChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'consolidado_asistencias' }, handleChange)
     .subscribe()
   return () => { supabase.removeChannel(channel) }
 }
@@ -1081,13 +1224,13 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
  * Descarga el sheet como CSV y lo importa en lote.
  */
 const CAPACIDAD_RYS_SHEET_ID = '2PACX-1vR5cIgvA11b8Xczt-fwGREZ9XPWMXxPq5OTpNMXgaiU3jEMWD4FwVjAdFpDX5V3fI5lXEQST8S_vI70'
-const CAPACIDAD_RYS_GID = '0'
+const CAPACIDAD_RYS_GID = '249081259'
 
 export async function syncCapacidadRysFromDrive({ onProgress } = {}) {
   onProgress?.({ phase: 'download', message: 'Descargando hoja de Google Drive…' })
 
-  // Use the published Google Sheets CSV URL
-  const csvUrl = `https://docs.google.com/spreadsheets/d/e/${CAPACIDAD_RYS_SHEET_ID}/pub?output=csv`
+  // Use the published Google Sheets CSV URL pointing directly to CAPA_RYS tab
+  const csvUrl = `https://docs.google.com/spreadsheets/d/e/${CAPACIDAD_RYS_SHEET_ID}/pub?gid=${CAPACIDAD_RYS_GID}&single=true&output=csv`
 
   let csvText
   try {
@@ -1307,6 +1450,9 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
         .eq('estado', 'BAJA')
     }
 
+    // Invalidar caché para que la próxima lectura traiga datos frescos de Supabase
+    invalidateCache('all_consolidado');
+    invalidateCache('all_asistencias_bajas');
     return true
   }
 
@@ -1420,22 +1566,26 @@ export async function fetchReclutadoresFull() {
 
 export async function fetchGruposConMetas() {
   if (DB_MODE === 'supabase') {
-    // 1. Fetch groups and recruiters in parallel
-    const [gruposRes, relRes, nominasRes, equipoRes] = await Promise.all([
+    // 1. Fetch groups and recruiters in parallel (QW-2: consultar solo columnas necesarias de nominas activas)
+    const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
       supabase
         .from('capacidad_rys')
-        .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op, sede')
+        .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
         .order('codigo'),
       supabase
         .from('grupo_reclutadores')
         .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, reclutadores(nombre_completo)'),
       supabase
-        .from('v_nominas_consolidado')
-        .select('grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede'),
+        .from('nominas')
+        .select('documento, grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede')
+        .eq('activo', true),
       supabase
         .from('equipo_reclutamiento')
         .select('documento, alias, apellido_paterno, apellido_materno, nombres_completos')
-        .eq('estado', 'ACTIVO')
+        .eq('estado', 'ACTIVO'),
+      supabase
+        .from('consolidado_asistencias')
+        .select('documento, motivo_baja, estado, codigo_grupo, campana')
     ])
 
     if (gruposRes.error) throw gruposRes.error
@@ -1465,6 +1615,17 @@ export async function fetchGruposConMetas() {
     }
 
     const nominas = nominasRes.data || []
+    const asisData = asisRes.data || []
+    
+    // Group asistencias by group and doc
+    const bajaDia1Set = new Set()
+    for (const a of asisData) {
+      const m = String(a.motivo_baja || '').toUpperCase()
+      const e = String(a.estado || '').toUpperCase()
+      if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1')) {
+        bajaDia1Set.add(`${a.codigo_grupo}|${a.campana}|${a.documento}`)
+      }
+    }
 
     return (gruposRes.data || []).map(g => {
       const gCodigo = g.codigo || ''
@@ -1493,7 +1654,7 @@ export async function fetchGruposConMetas() {
       // Group totals
       const listaActual = nominasGrupo.length
       const conectadosDia0 = nominasGrupo.filter(n => n.dia_0 === 'ASISTIO').length
-      const conectadosDia1 = nominasGrupo.filter(n => n.dia_1 === 'ASISTIO').length
+      const conectadosDia1 = nominasGrupo.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${gCampana}|${n.documento}`)).length
 
       // Map over recruiters to add their individual counts
       const reclutadoresConStats = reclutadoresAsignados.map(r => {
@@ -1501,7 +1662,7 @@ export async function fetchGruposConMetas() {
         return {
           ...r,
           conteo_individual: nominasReclutador.length,
-          conectados_dia_1_individual: nominasReclutador.filter(n => n.dia_1 === 'ASISTIO').length
+          conectados_dia_1_individual: nominasReclutador.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${gCampana}|${n.documento}`)).length
         }
       })
 
@@ -1736,8 +1897,12 @@ export async function insertConsolidado(payloads) {
     .insert(payloads);
   if (error) {
     console.error('Error insertando en consolidado_asistencias:', error);
-    alert('Error guardando en base de datos: ' + error.message);
+    // QW-5: Lanzar error para que el llamador lo maneje sin bloquear el hilo con alert()
+    throw new Error('Error guardando en base de datos: ' + error.message);
   }
+  // Invalidar caché para que la próxima lectura traiga datos frescos de Supabase
+  invalidateCache('all_consolidado');
+  invalidateCache('all_asistencias_bajas');
 }
 
 export async function fetchConsolidado() {
@@ -1778,33 +1943,35 @@ export async function fetchAsistenciaPorRango(startDate, endDate) {
   return data || []
 }
 
-export async function fetchAllAsistenciasBajas() {
-  if (DB_MODE !== 'supabase') return []
-  
-  let allData = [];
-  let from = 0;
-  const step = 1000;
-  let hasMore = true;
-  
-  while(hasMore) {
-    const { data, error } = await supabase
-      .from('consolidado_asistencias')
-      .select('documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres')
-      .eq('sigla', 'B')
-      .range(from, from + step - 1);
-      
-    if (error) throw error;
+export function fetchAllAsistenciasBajas() {
+  return withCache('all_asistencias_bajas', 180000, async () => {
+    if (DB_MODE !== 'supabase') return []
     
-    if (data && data.length > 0) {
-      allData = allData.concat(data);
-      if (data.length < step) hasMore = false;
-      else from += step;
-    } else {
-      hasMore = false;
+    let allData = [];
+    let from = 0;
+    const step = 2000;
+    let hasMore = true;
+    
+    while(hasMore) {
+      const { data, error } = await supabase
+        .from('consolidado_asistencias')
+        .select('documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres')
+        .eq('sigla', 'B')
+        .range(from, from + step - 1);
+        
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        if (data.length < step) hasMore = false;
+        else from += step;
+      } else {
+        hasMore = false;
+      }
     }
-  }
-  
-  return allData;
+    
+    return allData;
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -1922,7 +2089,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   const { data: recAsis } = await supabase.from('nominas').select('documento, dia_1').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
     .eq('campana', campana)
     .order('created_at', { ascending: true })
@@ -1933,6 +2100,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
+      estado: row.estado,
       fecha_asistencia: isoDate
     }
   }).filter(f => f.fecha_asistencia)
@@ -1940,13 +2108,15 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   const mapFormFull = new Map()
   for (const f of formAsis) {
     const doc = f.postulante_documento
+    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1');
     if (!mapFormFull.has(doc)) {
       mapFormFull.set(doc, f)
     } else {
       const existing = mapFormFull.get(doc)
-      if (f.motivo_baja === 'BAJA DIA 1') {
+      const existingIsBaja = String(existing.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(existing.estado || '').toUpperCase().includes('BAJA DIA 1');
+      if (isBaja) {
         mapFormFull.set(doc, f)
-      } else if (existing.motivo_baja !== 'BAJA DIA 1' && f.fecha_asistencia === fecha_dia1_ref) {
+      } else if (!existingIsBaja && f.fecha_asistencia === fecha_dia1_ref) {
         mapFormFull.set(doc, f)
       } else if (f.fecha_asistencia === fecha_dia1_ref) {
         mapFormFull.set(doc, f)
@@ -1971,12 +2141,16 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     if (!recSigla) continue;
 
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
+    const isBajaDia1 = formRecord && (
+      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
+      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
+    )
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
-    // Formador asistencia = A, FI, FJ
+    // Formador asistencia = A, FI, FJ, I-OP
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO'
+    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1
     
     if (isFormAsistencia !== isRecAsistencia) {
       isCalibrated = false
@@ -2001,7 +2175,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     : (rawRecAsis || []);
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
     .eq('campana', campana)
     .order('created_at', { ascending: true })
@@ -2012,6 +2186,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
+      estado: row.estado,
       fecha_asistencia: isoDate
     }
   }).filter(f => f.fecha_asistencia)
@@ -2019,20 +2194,21 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
   const mapFormFull = new Map()
   for (const f of formAsis) {
     const doc = f.postulante_documento
+    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1');
     if (!mapFormFull.has(doc)) {
       mapFormFull.set(doc, f)
     } else {
       const existing = mapFormFull.get(doc)
-      if (f.motivo_baja === 'BAJA DIA 1') {
+      const existingIsBaja = String(existing.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(existing.estado || '').toUpperCase().includes('BAJA DIA 1');
+      if (isBaja) {
         mapFormFull.set(doc, f)
-      } else if (existing.motivo_baja !== 'BAJA DIA 1' && f.fecha_asistencia === fecha_dia1_ref) {
+      } else if (!existingIsBaja && f.fecha_asistencia === fecha_dia1_ref) {
         mapFormFull.set(doc, f)
       } else if (f.fecha_asistencia === fecha_dia1_ref) {
         mapFormFull.set(doc, f)
       }
     }
   }
-
 
   if (!recAsis) return { rec: 0, form: 0 }
 
@@ -2048,17 +2224,22 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     if (!recSigla) continue;
 
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
+    const isBajaDia1 = formRecord && (
+      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
+      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
+    )
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO'
+    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
   }
   return { rec: countRec, form: countForm }
 }
+
 export async function getDetalleCalibracion(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return []
 
@@ -2072,7 +2253,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     : (rawRecAsis || []);
   
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
     .eq('campana', campana)
     .order('created_at', { ascending: true })
@@ -2082,6 +2263,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
       postulante_documento: row.documento,
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
+      estado: row.estado,
       fecha_asistencia: row.fecha_registro_asistencia
     }
   })
@@ -2095,7 +2277,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   
   for (const f of formAsis) {
     const doc = f.postulante_documento;
-    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
     isBajaGlobal.set(doc, isBaja);
     
     if (f.fecha_asistencia === fecha_dia1_ref) {
@@ -2105,14 +2287,14 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   
   for (const f of formAsis) {
     const doc = f.postulante_documento;
-    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
     if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
       mapFormFull.set(doc, f);
     }
   }
   
   for (const [doc, f] of mapFormFull.entries()) {
-    const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
     if (isBaja && !isBajaGlobal.get(doc)) {
       mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
     }
@@ -2128,20 +2310,24 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const recSigla = mapRec.get(doc)
     
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
+    const isBajaDia1 = formRecord && (
+      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
+      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
+    )
     
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     const displayFormSigla = isBajaDia1 ? 'BAJA DÍA 1' : formSigla;
     
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = recSigla ? String(recSigla).toUpperCase().trim() === 'ASISTIO' : false;
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
     
     if (isFormAsistencia !== isRecAsistencia) {
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
         sigla_formador: displayFormSigla,
-        sigla_reclutador: recSigla ? String(recSigla).toUpperCase().trim() : 'SIN REGISTRO'
+        sigla_reclutador: recSigla ? (isBajaDia1 ? 'BAJA DÍA 1' : String(recSigla).toUpperCase().trim()) : 'SIN REGISTRO'
       })
     }
   }
@@ -2200,35 +2386,250 @@ function parseCSV(text) {
   return result;
 }
 
-export async function fetchGoogleFormsPool(url) {
-  try {
-    const response = await fetch(url)
-    if (!response.ok) throw new Error('Error al descargar el archivo: ' + response.statusText)
-    const text = await response.text()
-    const matrix = parseCSV(text)
-    
-    if (matrix.length < 2) return []
-    
-    // Clean headers
-    for (let i = 0; i < Math.min(matrix.length, 10); i++) {
-      if (matrix[i].some(c => String(c).toUpperCase().includes('DNI'))) {
-        const { mapGoogleFormHeaders, parseGoogleFormRow } = await import('./nominaConsolidadoSchema.js')
-        const colIdx = mapGoogleFormHeaders(matrix[i])
-        
-        let rows = []
-        for (let j = i + 1; j < matrix.length; j++) {
-          const row = matrix[j]
-          // Ignore empty rows
-          if (!row.some(c => String(c).trim() !== '')) continue
-          rows.push(parseGoogleFormRow(row, colIdx))
+/**
+ * Convierte cualquier enlace de Google Sheets (normal del navegador o publicado)
+ * en la URL exacta de exportación CSV para la pestaña activa (gid).
+ */
+export function normalizeGoogleSheetCsvUrl(rawUrl) {
+  if (!rawUrl) return ''
+  const url = String(rawUrl).trim()
+
+  // 1. Si ya es una URL CSV directa
+  if (url.includes('output=csv') || url.includes('format=csv')) return url
+
+  // 2. Si es una URL publicada en la web (.../pubhtml...)
+  if (url.includes('/pubhtml')) {
+    return url.replace('/pubhtml', '/pub') + (url.includes('?') ? '&output=csv' : '?output=csv')
+  }
+
+  // 3. Si es una URL estándar de Google Sheets (/spreadsheets/d/DOC_ID/edit...)
+  const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
+  if (docMatch) {
+    const docId = docMatch[1]
+    const gidMatch = url.match(/gid=([0-9]+)/)
+    const gid = gidMatch ? gidMatch[1] : '0'
+    return `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid}`
+  }
+
+  return url
+}
+
+/**
+ * Lee un libro completo de Google Spreadsheet (todas sus hojas/pestañas) vía XLSX o CSV.
+ * Devuelve la lista de nombres de pestañas y el workbook para poder cambiar de hoja al instante.
+ */
+export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
+  const url = String(rawUrl || '').trim()
+  if (!url) throw new Error('Ingresa un enlace de Google Sheets válido.')
+
+  const isPublished = url.includes('/d/e/2PACX-') || url.includes('/pubhtml') || url.includes('/pub')
+
+  // Intento A: Si es una hoja publicada en la web (/pubhtml o /pub)
+  if (isPublished) {
+    const pubHtmlUrl = url.includes('/pubhtml') ? url : url.replace(/\/pub.*/, '/pubhtml')
+    const baseUrl = url.replace(/(\/pubhtml|\/pub).*/, '')
+
+    try {
+      const resp = await fetch(pubHtmlUrl)
+      if (resp.ok) {
+        const html = await resp.text()
+        const regex = /items\.push\(\{\s*name:\s*"([^"]+)",[\s\S]*?gid:\s*"([^"]+)"/g
+        let match
+        const sheetMap = {}
+        const sheetNames = []
+
+        while ((match = regex.exec(html)) !== null) {
+          const name = match[1].replace(/\\x20/g, ' ').replace(/\\'/g, "'").trim()
+          const gid = match[2]
+          sheetMap[name] = gid
+          sheetNames.push(name)
         }
-        
-        // Reverse to show newest first, and limit to top 800 to avoid saturation
-        rows = rows.reverse().slice(0, 800)
-        return rows
+
+        if (sheetNames.length > 0) {
+          // Ordenar para que 'Respuestas de formulario' o similar aparezca de primera
+          sheetNames.sort((a, b) => {
+            const aIsResp = /respuesta|form|postulante/i.test(a) ? -1 : 1
+            const bIsResp = /respuesta|form|postulante/i.test(b) ? -1 : 1
+            return aIsResp - bIsResp
+          })
+
+          const targetName = sheetNames[0]
+          const targetGid = sheetMap[targetName]
+          const csvUrl = `${baseUrl}/pub?gid=${targetGid}&single=true&output=csv`
+          const csvResp = await fetch(csvUrl)
+          if (csvResp.ok) {
+            const csvText = await csvResp.text()
+            const matrix = parseCSV(csvText)
+            return {
+              type: 'published_sheets',
+              baseUrl,
+              sheetMap,
+              sheetNames,
+              matrix,
+              currentSheet: targetName,
+              docId: 'published_form'
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Published HTML scraping failed, fallback a CSV directo:', e)
+    }
+
+    const csvPubUrl = normalizeGoogleSheetCsvUrl(url)
+    try {
+      const response = await fetch(csvPubUrl)
+      if (response.ok) {
+        const text = await response.text()
+        if (text && !text.includes('<!DOCTYPE html>')) {
+          const matrix = parseCSV(text)
+          return {
+            type: 'csv',
+            matrix,
+            sheetNames: ['Respuestas de Formulario']
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Published CSV export failed:', e)
+    }
+  }
+
+  const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
+  const gidMatch = url.match(/gid=([0-9]+)/)
+  const gid = gidMatch ? gidMatch[1] : '0'
+
+  // Intento 1: Descargar libro completo en formato XLSX para extraer todas las pestañas (Google Drive normal)
+  if (docMatch && docMatch[1] !== 'e') {
+    const docId = docMatch[1]
+    const xlsxUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=xlsx`
+    try {
+      const resp = await fetch(xlsxUrl)
+      if (resp.ok) {
+        const buffer = await resp.arrayBuffer()
+        const workbook = XLSX.read(buffer, { type: 'array' })
+        const sheetNames = workbook.SheetNames || []
+        if (sheetNames.length > 0) {
+          return {
+            type: 'workbook',
+            workbook,
+            sheetNames,
+            docId
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('XLSX export failed, intentando fallback CSV:', e)
+    }
+
+    // Fallback 1.2: Google Visualization API CSV (soporta CORS)
+    try {
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid}`
+      const gvizResp = await fetch(gvizUrl)
+      if (gvizResp.ok) {
+        const text = await gvizResp.text()
+        if (text && text.trim().length > 0 && !text.includes('<!DOCTYPE html>')) {
+          const matrix = parseCSV(text)
+          return {
+            type: 'csv',
+            matrix,
+            sheetNames: ['Hoja Seleccionada']
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('GVIZ export failed:', e)
+    }
+  }
+
+  // Intento 2: Exportación directa CSV
+  const csvUrl = normalizeGoogleSheetCsvUrl(url)
+  try {
+    const response = await fetch(csvUrl)
+    if (response.ok) {
+      const text = await response.text()
+      if (text && !text.includes('<!DOCTYPE html>')) {
+        const matrix = parseCSV(text)
+        return {
+          type: 'csv',
+          matrix,
+          sheetNames: ['Hoja Principal']
+        }
       }
     }
-    return []
+  } catch (e) {
+    console.warn('Direct CSV export failed:', e)
+  }
+
+  throw new Error('No se pudo conectar con el documento de Google Sheets. Asegúrate de que el documento tenga permisos de "Cualquier persona con el enlace puede ser lector" en Google Drive.')
+}
+
+/**
+ * Parsea una matriz de filas (de cualquier hoja de Google Spreadsheet o Excel)
+ * mapeando las 68 columnas estándar de GEA y Google Forms.
+ */
+export async function parseSheetMatrixCandidates(matrix) {
+  if (!matrix || matrix.length < 2) return []
+
+  const { mapGoogleFormHeaders, parseGoogleFormRow } = await import('./nominaConsolidadoSchema.js')
+
+  for (let i = 0; i < Math.min(matrix.length, 15); i++) {
+    const headerRow = matrix[i] || []
+    if (headerRow.some(c => {
+      const str = String(c || '').toUpperCase().trim()
+      return str.includes('DNI') || str.includes('DOCUMENTO') || str.includes('NOMBRES') || str.includes('APELLIDO')
+    })) {
+      const colIdx = mapGoogleFormHeaders(headerRow)
+      const rows = []
+
+      for (let j = i + 1; j < matrix.length; j++) {
+        const row = matrix[j]
+        if (!row || !row.some(c => String(c || '').trim() !== '')) continue
+
+        // 1. Detección precisa de corte por encabezado de tabla secundaria (ej. "HORARIO ESPECIAL")
+        const rowCells = row.map(c => String(c || '').toUpperCase().trim()).filter(Boolean)
+        const isSecondaryHeader = rowCells.some(cell => 
+          cell === 'HORARIO ESPECIAL' || 
+          cell.startsWith('HORARIO ESPECIAL') || 
+          cell === 'HORARIOS ESPECIALES' ||
+          cell === 'SOLICITUDES DE HORARIO'
+        )
+        // Si es título de tabla secundaria y no tiene datos de postulante, cortar
+        if (isSecondaryHeader && !rowCells.some(cell => /^\d{8}$/.test(cell))) {
+          break
+        }
+
+        const parsed = parseGoogleFormRow(row, colIdx)
+        if (parsed && parsed.documento) {
+          rows.push(parsed)
+        }
+      }
+
+      // Ordenar los postulantes de los más recientes a los más antiguos
+      rows.sort((a, b) => {
+        const dateA = a.marca_temporal ? new Date(a.marca_temporal).getTime() : 0
+        const dateB = b.marca_temporal ? new Date(b.marca_temporal).getTime() : 0
+        return dateB - dateA
+      })
+
+      return rows
+    }
+  }
+  return []
+}
+
+export async function fetchGoogleFormsPool(url, sheetName = null) {
+  try {
+    const wbData = await fetchGoogleSpreadsheetWorkbookData(url)
+    if (wbData.type === 'workbook') {
+      const targetSheet = sheetName && wbData.sheetNames.includes(sheetName)
+        ? sheetName 
+        : wbData.sheetNames[0]
+      const worksheet = wbData.workbook.Sheets[targetSheet]
+      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
+      return await parseSheetMatrixCandidates(matrix)
+    }
+    return await parseSheetMatrixCandidates(wbData.matrix)
   } catch (err) {
     console.error('fetchGoogleFormsPool error:', err)
     throw err
@@ -2275,30 +2676,32 @@ export async function fetchDescuentosHistorial() {
   return data || [];
 }
 
-export async function fetchAllDescuentosBI() {
-  if (DB_MODE !== 'supabase') return [];
-  
-  let allData = [];
-  let from = 0;
-  const step = 1000;
-  
-  while (true) {
-    const { data, error } = await supabase
-      .from('descuentos')
-      .select('*')
-      .order('fecha_registro', { ascending: false })
-      .range(from, from + step - 1);
+export function fetchAllDescuentosBI() {
+  return withCache('all_descuentos_bi', 180000, async () => {
+    if (DB_MODE !== 'supabase') return [];
+    
+    let allData = [];
+    let from = 0;
+    const step = 2000;
+    
+    while (true) {
+      const { data, error } = await supabase
+        .from('descuentos')
+        .select('*')
+        .order('fecha_registro', { ascending: false })
+        .range(from, from + step - 1);
+        
+      if (error) throw error;
+      if (!data || data.length === 0) break;
       
-    if (error) throw error;
-    if (!data || data.length === 0) break;
+      allData = allData.concat(data);
+      if (data.length < step) break;
+      
+      from += step;
+    }
     
-    allData = allData.concat(data);
-    if (data.length < step) break;
-    
-    from += step;
-  }
-  
-  return allData;
+    return allData;
+  });
 }
 
 export async function insertDescuentosBulk(payloads, userEmail) {
@@ -2342,6 +2745,7 @@ export async function insertDescuentosBulk(payloads, userEmail) {
     mockAuditLog('descuentos', 'INSERT_BULK', row.dni_ce, null, row);
   });
   
+  invalidateCache('descuentos_set_global');
   return { inserted: batch.length };
 }
 
@@ -2368,6 +2772,7 @@ export async function updateDescuentosAutorizacionBulk(ids, estado, comentario) 
     mockAuditLog('descuentos', 'AUTORIZAR_RYS', row.id, null, { estado, comentario });
   });
 
+  invalidateCache('descuentos_set_global');
   return { updated: (data || []).length };
 }
 
@@ -2415,6 +2820,7 @@ export async function updateDescuentosIndividuales(updatesArray) {
     }
   }
 
+  invalidateCache('descuentos_set_global');
   return { updated: successCount };
 }
 
@@ -2859,7 +3265,7 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
   let fHasMore = true;
   while(fHasMore) {
     const { data } = await supabase.from('consolidado_asistencias')
-      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana')
+      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, codigo_grupo, campana')
       .in('codigo_grupo', codigos)
       .in('campana', campanas)
       .range(fFrom, fFrom + fStep - 1);
@@ -2913,13 +3319,26 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       
     totalNomina = validNominas.length;
     totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
-    countRec = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+
+    for (const n of validNominas) {
+      if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
+        const records = groupFormAsisRaw.filter(r => r.documento === n.documento);
+        const isBajaDia1 = records.some(r => {
+          const m = String(r.motivo_baja || '').toUpperCase();
+          const e = String(r.estado || '').toUpperCase();
+          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
+        });
+        if (!isBajaDia1) {
+          countRec++;
+        }
+      }
+    }
 
     const config = configMap.get(groupKey);
     let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
     let fecha_dia1_ref = config?.fecha_dia1 || null;
 
-    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
     if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
        let earliestIso = null;
        let earliestRaw = null;
@@ -2943,6 +3362,7 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
           postulante_documento: row.documento,
           sigla_asistencia: row.sigla,
           motivo_baja: row.motivo_baja,
+          estado: row.estado,
           fecha_asistencia: row.fecha_registro_asistencia
         }
       });
@@ -2952,7 +3372,7 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       
       for (const f of formAsis) {
         const doc = f.postulante_documento;
-        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
         isBajaGlobal.set(doc, isBaja);
         
         if (f.fecha_asistencia === fecha_dia1_ref) {
@@ -2962,14 +3382,14 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       
       for (const f of formAsis) {
         const doc = f.postulante_documento;
-        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
         if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
           mapFormFull.set(doc, f);
         }
       }
       
       for (const [doc, f] of mapFormFull.entries()) {
-        const isBaja = f.motivo_baja === 'BAJA DIA 1' || String(f.sigla_asistencia).toUpperCase() === 'B';
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
         if (isBaja && !isBajaGlobal.get(doc)) {
           mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
         }
@@ -2983,11 +3403,15 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const recSigla = mapRec.get(doc) 
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-        const isBajaDia1 = formRecord && formSigla === 'B' && formRecord.motivo_baja === 'BAJA DIA 1'
+        const isBajaDia1 = formRecord && (
+          String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+          String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
+          (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
+        )
         const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
         
         const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-        const isRecAsistencia = recSigla ? String(recSigla).toUpperCase().trim() === 'ASISTIO' : false;
+        const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
         
         if (isFormAsistencia) countForm++;
 
@@ -3008,6 +3432,9 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
     results.push({
       grupo_codigo: grupo_codigo,
       campana: campana || '',
+      segmento: grupoInfo.segmento || '',
+      periodo: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
+      semana_label: grupoInfo.semana_label ? String(grupoInfo.semana_label).trim() : '',
       fecha_inicio: grupoInfo.fecha_inicio || '',
       fecha_dia1: fecha_dia1_ref || 'No definida',
       estado: estado_calibracion,
@@ -3024,46 +3451,60 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
 export async function getMetricasResumenCapacitacion(gruposInfo) {
   if (DB_MODE !== 'supabase' || !gruposInfo || gruposInfo.length === 0) return [];
   
-  const codigos = [...new Set(gruposInfo.map(g => g.codigo))];
-  const campanas = [...new Set(gruposInfo.map(g => g.campana))];
+  // QW-4: Cache dinámico por conjunto de grupos consultados (TTL: 3 min)
+  const cacheKey = 'resumen_cap_' + [...new Set(gruposInfo.map(g => `${g.campana || ''}_${g.codigo || ''}`))].sort().join(',');
 
-  // Fetch nominas
-  let nominasAll = [];
-  let nFrom = 0;
-  const nStep = 1000;
-  let nHasMore = true;
-  while(nHasMore) {
-    const { data } = await supabase.from('nominas')
-      .select('documento, dia_0, dia_1, activo, grupo_codigo, campana')
-      .in('grupo_codigo', codigos)
-      .in('campana', campanas)
-      .range(nFrom, nFrom + nStep - 1);
-    if(data && data.length > 0) {
-      nominasAll = nominasAll.concat(data);
-      if(data.length < nStep) nHasMore = false;
-      else nFrom += nStep;
-    } else nHasMore = false;
-  }
+  return withCache(cacheKey, 180000, async () => {
+    const codigos = [...new Set(gruposInfo.map(g => g.codigo))];
+    const campanas = [...new Set(gruposInfo.map(g => g.campana))];
 
-  // Fetch consolidado
-  let formAsisAll = [];
-  let fFrom = 0;
-  const fStep = 1000;
-  let fHasMore = true;
-  while(fHasMore) {
-    const { data } = await supabase.from('consolidado_asistencias')
-      .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana, estado')
-      .in('codigo_grupo', codigos)
-      .in('campana', campanas)
-      .range(fFrom, fFrom + fStep - 1);
-    if(data && data.length > 0) {
-      formAsisAll = formAsisAll.concat(data);
-      if(data.length < fStep) fHasMore = false;
-      else fFrom += fStep;
-    } else fHasMore = false;
-  }
+    // Set de pares (campana|codigo) válidos para filtrar combinaciones cartesianas
+    const validPairs = new Set(gruposInfo.map(g => `${g.campana || ''}|${g.codigo || ''}`));
 
-  const descSet = await getDescuentosSetGlobal();
+    // Parallel fetch for ultra-fast response (<500ms instead of 5-6s)
+    const [nominasAll, formAsisAll, descSet] = await Promise.all([
+      (async () => {
+        let all = [];
+        let from = 0;
+        const step = 5000;
+        let hasMore = true;
+        while (hasMore) {
+          const { data } = await supabase.from('nominas')
+            .select('documento, dia_0, dia_1, activo, grupo_codigo, campana')
+            .in('grupo_codigo', codigos)
+            .in('campana', campanas)
+            .range(from, from + step - 1);
+          if (data && data.length > 0) {
+            const filtered = data.filter(n => validPairs.has(`${n.campana || ''}|${n.grupo_codigo || ''}`));
+            all = all.concat(filtered);
+            if (data.length < step) hasMore = false;
+            else from += step;
+          } else hasMore = false;
+        }
+        return all;
+      })(),
+      (async () => {
+        let all = [];
+        let from = 0;
+        const step = 5000;
+        let hasMore = true;
+        while (hasMore) {
+          const { data } = await supabase.from('consolidado_asistencias')
+            .select('documento, fecha_registro_asistencia, sigla, motivo_baja, codigo_grupo, campana, estado')
+            .in('codigo_grupo', codigos)
+            .in('campana', campanas)
+            .range(from, from + step - 1);
+          if (data && data.length > 0) {
+            const filtered = data.filter(f => validPairs.has(`${f.campana || ''}|${f.codigo_grupo || ''}`));
+            all = all.concat(filtered);
+            if (data.length < step) hasMore = false;
+            else from += step;
+          } else hasMore = false;
+        }
+        return all;
+      })(),
+      getDescuentosSetGlobal()
+    ]);
 
   const nominasGrouped = new Map();
   if (nominasAll) {
@@ -3095,10 +3536,29 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       
     const total_nomina = validNominas.length;
     const asistio_dia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
-    const asistio_dia1 = validNominas.filter(n => String(n.dia_1).toUpperCase().trim() === 'ASISTIO').length;
-    let activos_actuales = 0;
-
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+
+    // Asistió Día 1 Efectivo: Marcado como ASISTIO en nómina y NO dado de baja inmediata como BAJA DÍA 1
+    let asistio_dia1 = 0;
+    for (const n of validNominas) {
+      if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
+        const records = groupFormAsisRaw.filter(r => r.documento === n.documento);
+        const isBajaDia1 = records.some(r => {
+          const m = String(r.motivo_baja || '').toUpperCase();
+          const e = String(r.estado || '').toUpperCase();
+          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
+        });
+        if (!isBajaDia1) {
+          asistio_dia1++;
+        }
+      }
+    }
+
+    const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
+    const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
+    const isGrupoCerrado = estadoGrupo === 'CERRADO' || estadoGrupo === 'CANCELADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO' || periodoRys === 'CANCELADO';
+
+    let activos_actuales = 0;
     
     // Activos en OJT y Cantidad de Ingresos (I-OP)
     let activos_ojt = 0;
@@ -3110,13 +3570,6 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
     for (const doc of docs) {
       const records = groupFormAsisRaw.filter(r => r.documento === doc);
       
-      // Tiene I-OP?
-      if (records.some(r => String(r.sigla).toUpperCase().trim() === 'I-OP')) {
-        ingresos_iop++;
-      }
-
-      // Activo Actual?
-      // Usamos la misma lógica del Consolidado BI: estado === 'ACTIVO' y que no sea BAJA DIA 1 en su último registro
       let currentState = '';
       let isBajaDia1 = false;
       if (records.length > 0) {
@@ -3131,9 +3584,17 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
         isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
       }
 
-      // Solo es activo actual si su estado global es ACTIVO, no es Baja Día 1, y tiene registros (asistió alguna vez)
-      if (records.length > 0 && currentState === 'ACTIVO' && !isBajaDia1) {
-        activos_actuales++;
+      // Tiene I-OP?
+      const tieneIngreso = records.some(r => String(r.sigla).toUpperCase().trim() === 'I-OP');
+      if (tieneIngreso) {
+        ingresos_iop++;
+      }
+
+      // Activo Actual? (Solo para grupos en curso/abiertos)
+      if (!isGrupoCerrado) {
+        if (records.length > 0 && currentState === 'ACTIVO' && !isBajaDia1 && !tieneIngreso) {
+          activos_actuales++;
+        }
       }
 
       // Activo en OJT?
@@ -3170,7 +3631,12 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       periodo: grupoInfo.periodo || '',
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || '',
       segmento: grupoInfo.segmento || '',
+      estado: estadoGrupo || 'EN CURSO',
+      is_cerrado: isGrupoCerrado,
+      modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       fecha_inicio_ojt: fecha_inicio_ojt || 'No definida',
+      requerimiento: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || grupoInfo.requerimiento || 0) || total_nomina || 0,
+      rq_solicitado: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || 0) || 0,
       total_nomina,
       asistio_dia0,
       asistio_dia1,
@@ -3181,7 +3647,72 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
     });
   }
 
-  return results;
+    return results;
+  });
+}
+
+/**
+ * Agrupa las métricas calculadas de grupos por modalidad (PRESENCIAL, REMOTO, HIBRIDO).
+ * Reutiliza la misma lógica calibrada de getMetricasResumenCapacitacion.
+ */
+export function agruparMetricasPorModalidad(metricasGrupos) {
+  const map = new Map();
+
+  (metricasGrupos || []).forEach(g => {
+    const mod = (g.modalidad || 'PRESENCIAL').toUpperCase().trim();
+    if (!map.has(mod)) {
+      map.set(mod, {
+        modalidad: mod,
+        label: mod === 'REMOTO' ? 'Remoto' : mod === 'PRESENCIAL' ? 'Presencial' : mod,
+        total_nomina: 0,
+        asistio_dia0: 0,
+        asistio_dia1: 0,
+        activos_ojt: 0,
+        ingresos_iop: 0,
+        activos_actuales: 0,
+        grupos_count: 0
+      });
+    }
+    const acc = map.get(mod);
+    acc.total_nomina += g.total_nomina || 0;
+    acc.asistio_dia0 += g.asistio_dia0 || 0;
+    acc.asistio_dia1 += g.asistio_dia1 || 0;
+    acc.activos_ojt += g.activos_ojt || 0;
+    acc.ingresos_iop += g.ingresos_iop || 0;
+    acc.activos_actuales += g.activos_actuales || 0;
+    acc.grupos_count += 1;
+  });
+
+  return Array.from(map.values()).map(m => {
+    const retencionDia1 = m.asistio_dia0 > 0 ? Math.round((m.asistio_dia1 / m.asistio_dia0) * 1000) / 10 : 0;
+    const conversionIopVsNomina = m.total_nomina > 0 ? Math.round((m.ingresos_iop / m.total_nomina) * 1000) / 10 : 0;
+    const conversionIopVsDia1 = m.asistio_dia1 > 0 ? Math.round((m.ingresos_iop / m.asistio_dia1) * 1000) / 10 : 0;
+    const asistenciaDia0 = m.total_nomina > 0 ? Math.round((m.asistio_dia0 / m.total_nomina) * 1000) / 10 : 0;
+    const retencionActualVsNomina = m.total_nomina > 0 ? Math.round((m.activos_actuales / m.total_nomina) * 1000) / 10 : 0;
+
+    return {
+      ...m,
+      pct_asistencia_dia0: asistenciaDia0,
+      pct_retencion_dia1: retencionDia1,
+      pct_conversion_iop_nomina: conversionIopVsNomina,
+      pct_conversion_iop_dia1: conversionIopVsDia1,
+      pct_retencion_actual: retencionActualVsNomina
+    };
+  });
+}
+
+/**
+ * Retorna las métricas agrupadas por modalidad con caché (TTL: 3 min)
+ */
+export async function getMetricasPorModalidad(gruposInfo) {
+  if (DB_MODE !== 'supabase' || !gruposInfo || gruposInfo.length === 0) return [];
+  
+  const cacheKey = 'metricas_modalidad_' + [...new Set(gruposInfo.map(g => `${g.campana || ''}_${g.codigo || ''}`))].sort().join(',');
+
+  return withCache(cacheKey, 180000, async () => {
+    const metricas = await getMetricasResumenCapacitacion(gruposInfo);
+    return agruparMetricasPorModalidad(metricas);
+  });
 }
 
 export async function fetchModulePermissions() {

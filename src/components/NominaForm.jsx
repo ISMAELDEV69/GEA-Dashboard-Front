@@ -281,39 +281,41 @@ export default function NominaForm({
   }, [grupos])
 
   const bulkSegmentos = useMemo(() => {
-    const fromGrupos = grupos.map(g => (g.segmento || inferSegmento(g.campana)) ? String(g.segmento || inferSegmento(g.campana)).trim().toUpperCase() : null).filter(Boolean);
-    return [...new Set([...SEGMENTOS_SIU, ...fromGrupos])].sort();
-  }, [grupos])
+    let filtered = grupos
+    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
+    const fromGrupos = filtered.map(g => (g.segmento || inferSegmento(g.campana)) ? String(g.segmento || inferSegmento(g.campana)).trim().toUpperCase() : null).filter(Boolean)
+    return [...new Set(fromGrupos)].sort()
+  }, [grupos, bulkPeriodo])
 
   const bulkCampanas = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim())
+    let filtered = grupos
+    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
     if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = g.segmento || inferSegmento(g.campana)
-      return String(seg).trim() === String(bulkSegmento).trim()
+      const seg = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
+      return seg === String(bulkSegmento).trim().toUpperCase()
     })
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
   }, [grupos, bulkPeriodo, bulkSegmento])
 
   const bulkGruposList = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo);
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim());
+    let filtered = grupos
+    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
     if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = g.segmento || inferSegmento(g.campana)
-      return String(seg).trim() === String(bulkSegmento).trim()
-    });
-    if (bulkCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(bulkCampana).trim());
+      const seg = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
+      return seg === String(bulkSegmento).trim().toUpperCase()
+    })
+    if (bulkCampana) filtered = filtered.filter(g => String(g.campana || '').trim().toUpperCase() === String(bulkCampana).trim().toUpperCase())
     
     // Remove duplicates
-    const unique = [];
-    const seen = new Set();
+    const unique = []
+    const seen = new Set()
     for (const g of filtered) {
-      if (!seen.has(g.codigo)) {
-        seen.add(g.codigo);
-        unique.push(g);
+      if (g.codigo && !seen.has(g.codigo)) {
+        seen.add(g.codigo)
+        unique.push(g)
       }
     }
-    return unique.sort((a,b) => String(a.codigo).localeCompare(String(b.codigo)));
+    return unique.sort((a, b) => String(a.codigo).localeCompare(String(b.codigo)))
   }, [grupos, bulkPeriodo, bulkSegmento, bulkCampana])
 
   const {
@@ -841,29 +843,29 @@ export default function NominaForm({
         {activeTab === 'manual' ? (
           <>
             {/* Header info */}
-            <div className="flex items-center justify-between pb-6 border-b border-gray-100 dark:border-slate-800 mb-6">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)] mb-5">
               <div className="flex items-center space-x-3">
-                <div className="p-2.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl">
-                  <UserCheck size={22} />
+                <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-xl border border-blue-500/20">
+                  <UserCheck size={20} />
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">Registro Individual</h2>
-                  <p className="text-gray-500 dark:text-slate-450 text-xs mt-0.5">Ingresa los datos del postulante paso a paso.</p>
+                  <h2 className="text-base font-bold text-[var(--text-primary)]">Registro Individual</h2>
+                  <p className="text-[var(--text-muted)] text-xs mt-0.5">Ingresa los datos del postulante paso a paso.</p>
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Paso {step} de {TOTAL_STEPS}</span>
-                <p className="text-xs font-bold text-blue-600">
+                <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] tracking-wider">Paso {step} de {TOTAL_STEPS}</span>
+                <p className="text-xs font-bold text-blue-400">
                   {STEP_LABELS[step - 1]}
                 </p>
               </div>
             </div>
 
             {/* Stepper Progress bar */}
-            <div className="relative mb-8 px-4">
-              <div className="absolute top-1/2 left-0 w-full h-[2px] bg-gray-100 dark:bg-slate-800 -translate-y-1/2 z-0" />
+            <div className="relative mb-6 px-4">
+              <div className="absolute top-1/2 left-0 w-full h-[2px] bg-[var(--border-subtle)] -translate-y-1/2 z-0" />
               <div
-                className="absolute top-1/2 left-0 h-[2px] bg-blue-600 -translate-y-1/2 transition-all duration-350 z-0"
+                className="absolute top-1/2 left-0 h-[2px] bg-blue-500 -translate-y-1/2 transition-all duration-300 z-0"
                 style={{ width: `${((step - 1) / (TOTAL_STEPS - 1)) * 100}%` }}
               />
               <div className="flex justify-between relative z-10">
@@ -880,17 +882,17 @@ export default function NominaForm({
                       key={num}
                       type="button"
                       onClick={() => goToStep(num)}
-                      className="flex flex-col items-center focus:outline-none"
+                      className="flex flex-col items-center focus:outline-none cursor-pointer"
                     >
                       <div className={`
-                        w-9 h-9 rounded-full flex items-center justify-center border transition-all duration-200
-                        ${isCurrent ? 'bg-blue-600 border-blue-600 text-white shadow-sm scale-105' : ''}
-                        ${isActive && !isCurrent ? 'bg-blue-50 dark:bg-slate-850 border-blue-600 text-blue-600 dark:text-blue-400' : ''}
-                        ${!isActive ? 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-400 dark:text-slate-600' : ''}
+                        w-8 h-8 rounded-full flex items-center justify-center border transition-all duration-200
+                        ${isCurrent ? 'bg-blue-600 border-blue-500 text-white shadow-xs scale-105' : ''}
+                        ${isActive && !isCurrent ? 'bg-blue-500/15 border-blue-500/40 text-blue-400' : ''}
+                        ${!isActive ? 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-muted)]' : ''}
                       `}>
-                        {step > num ? <Check size={14} /> : <Icon size={14} />}
+                        {step > num ? <Check size={13} /> : <Icon size={13} />}
                       </div>
-                      <span className={`text-[10px] font-semibold mt-1.5 uppercase tracking-wider ${isActive ? 'text-gray-900 dark:text-slate-300' : 'text-gray-400'}`}>
+                      <span className={`text-[9.5px] font-bold mt-1 uppercase tracking-wider ${isActive ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}>
                         {label}
                       </span>
                     </button>
@@ -1441,8 +1443,11 @@ export default function NominaForm({
                       const c = e.target.value;
                       setBulkCampana(c); 
                       setBulkGrupo('');
-                      const match = grupos.find(g => g.campana === c);
-                      if (match) setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(c));
+                      const match = grupos.find(g => String(g.campana || '').trim().toUpperCase() === String(c || '').trim().toUpperCase());
+                      if (match) {
+                        if (!bulkSegmento) setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(c));
+                        if (!bulkPeriodo) setBulkPeriodo(String(match.periodo || '').trim());
+                      }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
                   >
@@ -1457,18 +1462,20 @@ export default function NominaForm({
                     onChange={e => {
                       const cod = e.target.value;
                       setBulkGrupo(cod);
-                      const match = bulkGruposList.find(g => g.codigo === cod) || grupos.find(g => g.codigo === cod && (!bulkCampana || String(g.campana).trim() === String(bulkCampana).trim())) || grupos.find(g => g.codigo === cod);
+                      const match = grupos.find(g => String(g.codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
                       if (match) {
                         setBulkCampana(match.campana);
-                        setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(match.campana));
-                        setBulkPeriodo(match.periodo);
+                        setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(match.campana));
+                        setBulkPeriodo(String(match.periodo || '').trim());
                       }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
                   >
                     <option value="" disabled>Seleccione Grupo</option>
                     {bulkGruposList.map(g => (
-                      <option key={g.codigo} value={g.codigo}>{g.codigo}</option>
+                      <option key={g.codigo} value={g.codigo}>
+                        {g.codigo} {g.rq_solicitado ? `(RQ: ${g.rq_solicitado})` : ''} {g.meta_dia_1 ? `(Meta: ${g.meta_dia_1})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1488,6 +1495,15 @@ export default function NominaForm({
                   bulkSegmento={bulkSegmento} 
                   bulkCampana={bulkCampana} 
                   bulkGrupo={bulkGrupo}
+                  onSelectGrupo={(cod) => {
+                    setBulkGrupo(cod);
+                    const match = grupos.find(g => String(g.codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
+                    if (match) {
+                      setBulkCampana(match.campana);
+                      setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(match.campana));
+                      setBulkPeriodo(String(match.periodo || '').trim());
+                    }
+                  }}
                   reclutador={userProfile?.nombre_completo}
                   grupos={grupos}
                 />

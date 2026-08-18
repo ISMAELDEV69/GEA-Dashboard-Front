@@ -1,13 +1,10 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList
 } from 'recharts'
-import { Filter, Search } from 'lucide-react'
+import { Filter, Search, AlertCircle, RefreshCw, Loader2, Sparkles, Layers, Download, X } from 'lucide-react'
 import { fetchAllDescuentosBI } from '../lib/dataService'
-import PageLayout from './ui/PageLayout'
-import PageHeader from './ui/PageHeader'
-import Card from './ui/Card'
 
 const COLORS = {
   bars: 'var(--accent)',
@@ -15,9 +12,14 @@ const COLORS = {
   text: 'var(--text-primary)',
 }
 
+// In-memory module cache for instant switching without re-fetching
+let cachedDescuentos = null
+
 export default function DescuentosBI() {
-  const [data, setData] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState(cachedDescuentos || [])
+  const [loading, setLoading] = useState(!cachedDescuentos)
+  const [error, setError] = useState(null)
+  const [visibleRows, setVisibleRows] = useState(100)
 
   // View Mode
   const [viewMode, setViewMode] = useState('TABLA GENERAL')
@@ -25,8 +27,6 @@ export default function DescuentosBI() {
   // Top Bar Filters
   const [selectedFechaEnvio, setSelectedFechaEnvio] = useState('TODAS')
   const [selectedProcede, setSelectedProcede] = useState('TODAS')
-
-  // Sidebar Filters
   const [selectedSegmento, setSelectedSegmento] = useState('TODAS')
   const [selectedCampana, setSelectedCampana] = useState('TODAS')
   const [selectedGrupo, setSelectedGrupo] = useState('TODAS')
@@ -34,8 +34,16 @@ export default function DescuentosBI() {
   const [selectedMotivo, setSelectedMotivo] = useState('TODAS')
   const [searchDocumento, setSearchDocumento] = useState('')
 
-  useEffect(() => {
-    fetchAllDescuentosBI().then(descRes => {
+  const loadData = useCallback(async (force = false) => {
+    if (!force && cachedDescuentos && cachedDescuentos.length > 0) {
+      setData(cachedDescuentos)
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const descRes = await fetchAllDescuentosBI()
       const enriched = (descRes || []).map(d => {
         let p = 'SIN PERIODO'
         if (d.fecha_baja) {
@@ -52,13 +60,19 @@ export default function DescuentosBI() {
           periodo: p
         }
       })
+      cachedDescuentos = enriched
       setData(enriched)
-      setLoading(false)
-    }).catch(err => {
+    } catch (err) {
       console.error(err)
+      setError(err?.message || 'Error al cargar los datos analíticos de descuentos.')
+    } finally {
       setLoading(false)
-    })
+    }
   }, [])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   // Derived Filter Lists (Hierarchical Cross-filtering)
   const segmentos = useMemo(() => ['TODAS', ...new Set(data.map(d => d.segmento).filter(Boolean))], [data])
@@ -83,7 +97,7 @@ export default function DescuentosBI() {
       (selectedGrupo === 'TODAS' || d.grupo_cap === selectedGrupo)
     )
     const ps = filtered.map(d => d.periodo).filter(Boolean)
-    return ['TODAS', ...new Set(ps)].sort((a, b) => b.localeCompare(a)) // desc
+    return ['TODAS', ...new Set(ps)].sort((a, b) => b.localeCompare(a))
   }, [data, selectedSegmento, selectedCampana, selectedGrupo])
 
   const motivos = useMemo(() => {
@@ -98,7 +112,7 @@ export default function DescuentosBI() {
 
   const fechasEnvio = useMemo(() => {
     const dates = data.map(d => d.fecha_registro ? d.fecha_registro.split('T')[0] : null).filter(Boolean)
-    return ['TODAS', ...new Set(dates)].sort((a, b) => b.localeCompare(a)) // desc
+    return ['TODAS', ...new Set(dates)].sort((a, b) => b.localeCompare(a))
   }, [data])
 
   const procedes = ['TODAS', 'PROCEDE', 'NO PROCEDE', 'PENDIENTE']
@@ -109,28 +123,16 @@ export default function DescuentosBI() {
       if (selectedSegmento !== 'TODAS' && d.segmento !== selectedSegmento) return false
       if (selectedCampana !== 'TODAS' && d.campana !== selectedCampana) return false
       if (selectedGrupo !== 'TODAS' && d.grupo_cap !== selectedGrupo) return false
-      
       if (selectedPeriodo !== 'TODAS' && d.periodo !== selectedPeriodo) return false
-      
-      const mot = d.motivo || 'SIN MOTIVO'
-      if (selectedMotivo !== 'TODAS' && mot !== selectedMotivo) return false
-
-      const pEnvio = d.fecha_registro ? d.fecha_registro.split('T')[0] : 'SIN FECHA'
-      if (selectedFechaEnvio !== 'TODAS' && pEnvio !== selectedFechaEnvio) return false
-
-      const proc = d.procede || 'PENDIENTE'
-      if (selectedProcede !== 'TODAS' && proc !== selectedProcede) return false
-
-      if (searchDocumento) {
-        const doc = (d.dni_ce || d.documento || '').toLowerCase()
-        if (!doc.includes(searchDocumento.toLowerCase())) return false
-      }
-
+      if (selectedMotivo !== 'TODAS' && d.motivo !== selectedMotivo) return false
+      if (selectedProcede !== 'TODAS' && (d.procede || 'PENDIENTE').toUpperCase() !== selectedProcede) return false
+      if (selectedFechaEnvio !== 'TODAS' && (!d.fecha_registro || !d.fecha_registro.startsWith(selectedFechaEnvio))) return false
+      if (searchDocumento && !String(d.dni_ce || '').includes(searchDocumento.trim()) && !String(d.postulante || '').toLowerCase().includes(searchDocumento.trim().toLowerCase())) return false
       return true
     })
-  }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedMotivo, selectedFechaEnvio, selectedProcede, searchDocumento])
+  }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedMotivo, selectedProcede, selectedFechaEnvio, searchDocumento])
 
-  // 1. Descuentos por periodo
+  // 1. Descuentos por Periodo
   const byPeriod = useMemo(() => {
     const counts = {}
     filteredData.forEach(d => {
@@ -139,7 +141,7 @@ export default function DescuentosBI() {
     })
     return Object.entries(counts)
       .map(([period, value]) => ({ period, value }))
-      .sort((a, b) => b.period.localeCompare(a.period)) // Descending
+      .sort((a, b) => b.period.localeCompare(a.period))
   }, [filteredData])
 
   // 2. Ranking de Motivos
@@ -154,7 +156,7 @@ export default function DescuentosBI() {
       .sort((a, b) => b.value - a.value)
   }, [filteredData])
 
-  // 3. Matriz Cruzada (Campaña vs Motivo) para TABLA PORCENTAJES
+  // 3. Matriz Cruzada de Descuentos (Porcentajes)
   const matrixData = useMemo(() => {
     const rowCounts = {}
     const colTotals = {}
@@ -172,7 +174,7 @@ export default function DescuentosBI() {
       grandTotal++
     })
 
-    const topMotivos = byMotivo.map(m => m.motivo).slice(0, 15) // Limit columns to top 15 for table
+    const topMotivos = byMotivo.map(m => m.motivo).slice(0, 12)
     const rows = Object.keys(rowCounts).sort().map(c => {
       const row = { campana: c, total: rowCounts[c].total }
       topMotivos.forEach(m => {
@@ -186,303 +188,324 @@ export default function DescuentosBI() {
 
   if (loading) {
     return (
-      <PageLayout>
-        <div className="flex h-[50vh] items-center justify-center text-[var(--text-muted)] font-medium">
-          <span className="animate-pulse">Cargando datos analíticos...</span>
+      <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 size={32} className="animate-spin text-cyan-400" />
+          <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            Cargando Descuentos BI...
+          </p>
         </div>
-      </PageLayout>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-[var(--bg-base)]">
+        <div className="p-6 rounded-2xl bg-[var(--bg-surface)] border border-rose-500/30 text-center max-w-sm space-y-3 shadow-xl">
+          <AlertCircle size={28} className="text-rose-500 mx-auto" />
+          <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
+          <p className="text-xs text-[var(--text-muted)]">{error}</p>
+          <button onClick={loadData} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
+            Reintentar
+          </button>
+        </div>
+      </div>
     )
   }
 
   return (
-    <PageLayout className="p-4 md:p-6 space-y-6">
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
       
-      {/* TOP HEADER */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-        <PageHeader 
-          title="Descuentos de Formación" 
-          subtitle="Análisis de bajas, retención y descuentos generados"
-        />
+      {/* ── 1. COMPACT HERO HEADER + FILTERS IN 1 ROW (Height ~38px) ── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
         
-        <div className="flex flex-wrap items-center gap-4 bg-[var(--bg-surface)] p-3 rounded-2xl border border-[var(--border-subtle)] shadow-sm shrink-0">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold px-1">Fecha Envío</span>
-            <select
-              className="bg-[var(--input-bg)] border border-[var(--input-border)] text-xs text-[var(--text-primary)] rounded-lg px-2 py-1.5 outline-none focus:border-[var(--accent)] w-32"
-              value={selectedFechaEnvio} onChange={e => setSelectedFechaEnvio(e.target.value)}
-            >
-              {fechasEnvio.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
+        {/* Title + Mode Switcher */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#06B6D4] animate-pulse" />
+            <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
+              Descuentos de Formación <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· auditoría bi</span>
+            </h2>
           </div>
 
-          <div className="flex flex-col">
-            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold px-1">Vista</span>
-            <div className="flex text-[10px] font-bold uppercase rounded-lg border border-[var(--input-border)] overflow-hidden bg-[var(--input-bg)]">
-              <button 
-                onClick={() => setViewMode('TABLA GENERAL')}
-                className={`px-3 py-1.5 transition-colors ${viewMode === 'TABLA GENERAL' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]'}`}
+          <div className="flex items-center bg-[var(--bg-elevated)] p-0.5 rounded-lg border border-[var(--border-subtle)]">
+            <button
+              onClick={() => setViewMode('TABLA GENERAL')}
+              className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                viewMode === 'TABLA GENERAL'
+                  ? 'bg-cyan-500 text-white shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              General ({filteredData.length})
+            </button>
+            <button
+              onClick={() => setViewMode('PORCENTAJES')}
+              className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                viewMode === 'PORCENTAJES'
+                  ? 'bg-cyan-500 text-white shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              Matriz %
+            </button>
+          </div>
+        </div>
+
+        {/* Inline Compact Filter Badges */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {[
+            { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: segmentos },
+            { label: 'Campaña', val: selectedCampana, set: (v) => { setSelectedCampana(v); setSelectedGrupo('TODAS'); }, opts: campanas },
+            { label: 'Grupo', val: selectedGrupo, set: setSelectedGrupo, opts: grupos },
+            { label: 'Periodo', val: selectedPeriodo, set: setSelectedPeriodo, opts: periodos },
+            { label: 'Procede', val: selectedProcede, set: setSelectedProcede, opts: procedes },
+          ].map(({ label, val, set, opts }) => (
+            <div key={label} className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-normal)] rounded-lg px-2 py-1">
+              <span className="text-[8px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                {label}:
+              </span>
+              <select
+                value={val}
+                onChange={(e) => set(e.target.value)}
+                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[110px] truncate"
               >
-                General
-              </button>
-              <button 
-                onClick={() => setViewMode('TABLA PORCENTAJES')}
-                className={`px-3 py-1.5 transition-colors ${viewMode === 'TABLA PORCENTAJES' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]'}`}
-              >
-                Porcentajes
-              </button>
+                {opts.map((opt) => (
+                  <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                    {opt}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
-
-          <div className="flex flex-col">
-            <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold px-1">Procede</span>
-            <select
-              className="bg-[var(--input-bg)] border border-[var(--input-border)] text-xs font-bold text-emerald-500 rounded-lg px-2 py-1.5 outline-none focus:border-[var(--accent)] w-28"
-              value={selectedProcede} onChange={e => setSelectedProcede(e.target.value)}
-            >
-              {procedes.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
+          ))}
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 items-start animate-fadeIn">
-        {/* SIDEBAR FILTERS */}
-        <Card className="w-full lg:w-72 shrink-0 flex flex-col space-y-6">
-          <div className="font-black uppercase tracking-wider flex items-center gap-2 text-[var(--text-primary)] border-b border-[var(--border-subtle)] pb-4">
-            <Filter size={18} className="text-[var(--accent)]" /> FILTROS
+      {/* ── 2. FLUID RESPONSIVE CHARTS ROW (Auto-scales on Large Monitors) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 min-h-[175px] h-[190px] lg:h-[230px] 2xl:h-[280px] shrink-0">
+        
+        {/* Chart 1: Descuentos por Periodo */}
+        <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
+            <span>Descuentos por Periodo</span>
+            <Layers size={12} className="text-cyan-400" />
           </div>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">SEGMENTO</label>
-              <select
-                className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={selectedSegmento} onChange={e => { setSelectedSegmento(e.target.value); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }}
-              >
-                {segmentos.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">CAMPAÑA</label>
-              <select
-                className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={selectedCampana} onChange={e => { setSelectedCampana(e.target.value); setSelectedGrupo('TODAS'); }}
-              >
-                {campanas.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">GRUPO DE CAPA</label>
-              <select
-                className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={selectedGrupo} onChange={e => setSelectedGrupo(e.target.value)}
-              >
-                {grupos.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">PERIODO BAJA</label>
-              <select
-                className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={selectedPeriodo} onChange={e => setSelectedPeriodo(e.target.value)}
-              >
-                {periodos.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">MOTIVO</label>
-              <select
-                className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={selectedMotivo} onChange={e => setSelectedMotivo(e.target.value)}
-              >
-                {motivos.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-
-            <div className="pt-4 border-t border-[var(--border-subtle)]">
-              <label className="text-xs font-bold text-[var(--text-secondary)] uppercase flex items-center gap-1.5 mb-2">
-                <Search size={14} className="text-[var(--accent)]"/> Buscar por Doc.
-              </label>
-              <input 
-                type="text" 
-                placeholder="Ej. 12345678" 
-                className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] placeholder-[var(--text-muted)] rounded-xl p-2.5 text-sm outline-none focus:border-[var(--accent)]"
-                value={searchDocumento}
-                onChange={e => setSearchDocumento(e.target.value)}
-              />
-            </div>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byPeriod} layout="vertical" margin={{ top: 5, right: 30, left: 35, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.3} />
+                <XAxis type="number" hide />
+                <YAxis dataKey="period" type="category" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10, fontWeight: 700}} width={48} />
+                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
+                <Bar dataKey="value" fill="#06B6D4" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="value" position="right" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-        </Card>
-
-        {/* MAIN CONTENT */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0">
-          
-          {/* CHARTS ROW */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">
-            {/* Chart 1: Descuentos por periodo */}
-            <Card noPadding className="flex flex-col h-full">
-              <div className="bg-[var(--table-head-bg)] text-[var(--text-primary)] text-center font-bold text-xs uppercase tracking-wider py-2.5 rounded-t-2xl border-b border-[var(--border-subtle)]">
-                Descuentos por periodo
-              </div>
-              <div className="flex-1 p-4 pb-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={byPeriod} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} />
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="period" type="category" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 11}} width={50} label={{ value: 'PERIODO', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: 'var(--text-muted)', fontSize: 10, fontWeight: 'bold' } }} />
-                    <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px'}} />
-                    <Bar dataKey="value" fill={COLORS.bars} radius={[0, 6, 6, 0]}>
-                      <LabelList dataKey="value" position="right" fill="var(--text-muted)" fontSize={11} fontWeight="bold" />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-
-            {/* Chart 2: Ranking de Motivos */}
-            <Card noPadding className="lg:col-span-2 flex flex-col h-full">
-              <div className="bg-[var(--table-head-bg)] text-[var(--text-primary)] text-center font-bold text-xs uppercase tracking-wider py-2.5 rounded-t-2xl border-b border-[var(--border-subtle)]">
-                Ranking de Motivos
-              </div>
-              <div className="flex-1 p-4 pb-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={byMotivo.slice(0, 20)} margin={{ top: 20, right: 10, left: -10, bottom: 80 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} />
-                    <XAxis 
-                      dataKey="motivo" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{fill: 'var(--text-muted)', fontSize: 10, fontWeight: 500}} 
-                      angle={-45} 
-                      textAnchor="end" 
-                      height={80} 
-                    />
-                    <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 11}} label={{ value: 'Recuento', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fill: 'var(--text-muted)', fontSize: 11, fontWeight: 'bold' } }} />
-                    <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px'}} />
-                    <Bar dataKey="value" fill={COLORS.bars} radius={[6, 6, 0, 0]}>
-                      <LabelList dataKey="value" position="top" fill="var(--text-muted)" fontSize={11} fontWeight="bold" />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          </div>
-
-          {/* DYNAMIC BOTTOM VIEW */}
-          <Card noPadding className="flex-1 flex flex-col min-h-[400px]">
-            <div className="overflow-x-auto overflow-y-auto flex-1 table-scroll">
-              
-              {viewMode === 'TABLA GENERAL' ? (
-                <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 z-10">
-                    <tr>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">SEDE</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">SEGMENTO</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">GPE</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">CAMPAÑA</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">SUPERVISOR</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">FORMADOR</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">DOCUMENTO</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">POSTULANTE</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">FECHA BAJA</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">MOTIVO</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">AUT. RYS</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">AUT. CAPA</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">PROCEDE</th>
-                      <th className="px-3 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">COMENTARIO</th>
-                      <th className="px-3 py-3 font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)]">ENVIO</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {filteredData.map((row, i) => (
-                      <tr key={row.id || i} className="hover:bg-[var(--bg-muted)] transition-colors">
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.sede}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.segmento}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)] font-semibold">{row.grupo_cap}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.campana}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.supervisor}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.formador}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-secondary)] font-mono">{row.dni_ce}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)] font-medium">{row.postulante}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-secondary)]">{row.fecha_baja}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-[var(--text-primary)]">{row.motivo}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-center font-bold text-[var(--text-secondary)]">{(row.autoriza_rys || '')}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-center font-bold text-[var(--text-secondary)]">{(row.autoriza_cap || 'SI')}</td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-center">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            (row.procede || '').toUpperCase() === 'PROCEDE' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
-                            (row.procede || '').toUpperCase() === 'NO PROCEDE' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
-                            'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                          }`}>
-                            {(row.procede || 'PENDIENTE').toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 border-r border-[var(--border-subtle)] text-xs text-[var(--text-muted)] max-w-[200px] truncate" title={row.comentario_rys}>{row.comentario_rys}</td>
-                        <td className="px-3 py-2 font-mono text-[var(--text-muted)] text-[11px]">{row.fecha_registro ? row.fecha_registro.replace('T', ' ').substring(0, 16) : ''}</td>
-                      </tr>
-                    ))}
-                    {filteredData.length === 0 && (
-                      <tr><td colSpan={15} className="p-8 text-center text-[var(--text-muted)] font-medium">No hay registros que coincidan con los filtros.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              ) : (
-                <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="sticky top-0 z-10">
-                    <tr>
-                      <th className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase bg-[var(--table-head-bg)] tracking-wider">CAMPAÑA</th>
-                      {matrixData.topMotivos.map(m => (
-                        <th key={m} className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase text-center max-w-[120px] truncate bg-[var(--table-head-bg)]" title={m}>
-                          {m}
-                        </th>
-                      ))}
-                      <th className="px-4 py-3 font-bold text-[var(--text-secondary)] uppercase text-center bg-[var(--table-head-bg)]">TOTAL</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {matrixData.rows.map((row, i) => (
-                      <tr key={row.campana} className="hover:bg-[var(--bg-muted)] transition-colors">
-                        <td className="px-4 py-2.5 border-r border-[var(--border-subtle)] font-semibold text-[var(--text-primary)] sticky left-0 bg-[var(--bg-surface)]">
-                          {row.campana}
-                        </td>
-                        {matrixData.topMotivos.map(m => {
-                          const val = row[m]
-                          const pct = matrixData.grandTotal > 0 ? ((val / matrixData.grandTotal) * 100).toFixed(2) : 0
-                          const hasVal = val > 0
-                          return (
-                            <td key={m} className="px-4 py-2.5 border-r border-[var(--border-subtle)] text-center relative overflow-hidden">
-                              {hasVal && (
-                                <>
-                                  <div className="absolute inset-y-1.5 left-1 bg-[var(--accent)] opacity-10 rounded" style={{ width: `calc(${pct}% * 2)` }} />
-                                  <span className="relative text-[var(--text-primary)] font-mono z-10 font-medium">{pct}%</span>
-                                </>
-                              )}
-                            </td>
-                          )
-                        })}
-                        <td className="px-4 py-2.5 text-center text-[var(--text-primary)] font-bold font-mono bg-[var(--bg-elevated)]/30">
-                          {row.total}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-[var(--bg-elevated)] sticky bottom-0 border-t border-[var(--border-normal)]">
-                    <tr>
-                      <td className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-primary)]">TOTAL</td>
-                      {matrixData.topMotivos.map(m => (
-                        <td key={m} className="px-4 py-3 border-r border-[var(--border-normal)] text-center font-bold text-[var(--text-secondary)] font-mono">
-                          {matrixData.grandTotal > 0 ? ((matrixData.colTotals[m] / matrixData.grandTotal) * 100).toFixed(2) : 0}%
-                        </td>
-                      ))}
-                      <td className="px-4 py-3 text-center font-black text-[var(--text-primary)]">{matrixData.grandTotal}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              )}
-            </div>
-          </Card>
         </div>
+
+        {/* Chart 2: Ranking de Motivos (2 columns) */}
+        <div className="md:col-span-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
+            <span>Ranking de Motivos de Descuento</span>
+            <span className="text-[10px] font-mono text-cyan-400 font-bold">{filteredData.length} registros</span>
+          </div>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byMotivo.slice(0, 10)} margin={{ top: 10, right: 15, left: -20, bottom: 35 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} opacity={0.3} />
+                <XAxis 
+                  dataKey="motivo" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 600}} 
+                  angle={-25} 
+                  textAnchor="end" 
+                  interval={0}
+                  height={35}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10}} />
+                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
+                <Bar dataKey="value" fill="#8B5CF6" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="value" position="top" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
       </div>
-    </PageLayout>
+
+      {/* ── 3. FULL-HEIGHT DATA TABLE WITH INTERNAL SCROLL ── */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
+        
+        {/* Table Toolbar */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 shrink-0">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input
+              type="text"
+              value={searchDocumento}
+              onChange={(e) => setSearchDocumento(e.target.value)}
+              placeholder="Buscar por DNI o postulante..."
+              className="w-full h-7 pl-7 pr-6 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-cyan-500 transition-colors font-medium"
+            />
+            {searchDocumento && (
+              <button onClick={() => setSearchDocumento('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                <X size={11} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">
+              Mostrando {Math.min(visibleRows, filteredData.length)} de {filteredData.length}
+            </span>
+            {filteredData.length > visibleRows && (
+              <button
+                onClick={() => setVisibleRows(prev => prev + 200)}
+                className="px-2 py-0.5 text-[10px] font-bold rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition-all cursor-pointer"
+              >
+                + Cargar más
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Scrollable Table View */}
+        <div 
+          className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative"
+          onScroll={(e) => {
+            const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
+            if (scrollHeight - scrollTop - clientHeight < 200 && visibleRows < filteredData.length) {
+              setVisibleRows(prev => Math.min(prev + 100, filteredData.length))
+            }
+          }}
+        >
+          {viewMode === 'TABLA GENERAL' ? (
+            <table className="w-full text-left text-xs whitespace-nowrap border-separate border-spacing-0">
+              <thead className="sticky top-0 z-20">
+                <tr>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">SEDE</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">SEGMENTO</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">GPE</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">CAMPAÑA</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">SUPERVISOR</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">FORMADOR</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">DNI/CE</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">POSTULANTE</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">FECHA BAJA</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">MOTIVO</th>
+                  <th className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase text-center bg-[var(--table-head-bg)]">PROCEDE</th>
+                  <th className="px-3 py-2 border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)]">COMENTARIO RYS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredData.slice(0, visibleRows).map((row, i) => (
+                  <tr key={row.id || i} className="hover:bg-[var(--bg-elevated)] transition-colors group">
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">{row.sede}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)]">{row.segmento}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] font-mono font-bold text-[var(--text-primary)]">{row.grupo_cap}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)]">{row.campana}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">{row.supervisor}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)]">{row.formador}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] font-mono font-bold text-[var(--text-primary)]">{row.dni_ce}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] font-medium text-[var(--text-primary)]">{row.postulante}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] font-mono text-[var(--text-muted)]">{row.fecha_baja}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-primary)]">{row.motivo}</td>
+                    <td className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-center">
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                        (row.procede || '').toUpperCase() === 'PROCEDE' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' :
+                        (row.procede || '').toUpperCase() === 'NO PROCEDE' ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30' :
+                        'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                      }`}>
+                        {row.procede || 'PENDIENTE'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)] max-w-xs truncate" title={row.comentario_rys}>
+                      {row.comentario_rys || '—'}
+                    </td>
+                  </tr>
+                ))}
+                {filteredData.length === 0 && (
+                  <tr>
+                    <td colSpan={12} className="px-4 py-16 text-center text-[var(--text-muted)]">
+                      <AlertCircle size={32} className="mx-auto mb-2 text-[var(--text-faint)]" />
+                      <p className="font-bold text-xs">No hay registros de descuentos con los filtros aplicados.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-left text-xs whitespace-nowrap border-separate border-spacing-0">
+              <thead className="sticky top-0 z-20">
+                <tr>
+                  <th className="sticky left-0 z-30 px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)] tracking-wider">
+                    CAMPAÑA
+                  </th>
+                  {matrixData.topMotivos.map(m => (
+                    <th key={m} className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase text-center max-w-[130px] truncate bg-[var(--table-head-bg)]" title={m}>
+                      {m}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-primary)] uppercase text-center bg-[var(--table-head-bg)]">
+                    TOTAL
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrixData.rows.map((row) => (
+                  <tr key={row.campana} className="hover:bg-[var(--bg-elevated)] transition-colors group">
+                    <td className="sticky left-0 z-10 px-3 py-1.5 border-r border-b border-[var(--border-subtle)] font-bold text-[11px] text-[var(--text-primary)] bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)]">
+                      {row.campana}
+                    </td>
+                    {matrixData.topMotivos.map(m => {
+                      const val = row[m]
+                      const pct = matrixData.grandTotal > 0 ? ((val / matrixData.grandTotal) * 100).toFixed(1) : 0
+                      const hasVal = val > 0
+                      return (
+                        <td key={m} className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-center relative">
+                          {hasVal ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[11px] font-mono font-bold text-[var(--text-primary)]">{pct}%</span>
+                              <span className="text-[9px] text-[var(--text-muted)] font-mono">({val})</span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-[var(--text-muted)] opacity-40">—</span>
+                          )}
+                        </td>
+                      )
+                    })}
+                    <td className="px-3 py-1.5 border-b border-[var(--border-subtle)] text-center text-[11px] font-black text-[var(--text-primary)] font-mono bg-[var(--bg-elevated)]/40">
+                      {row.total}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-[var(--table-head-bg)] sticky bottom-0 z-20 border-t-2 border-[var(--border-normal)]">
+                <tr>
+                  <td className="sticky left-0 z-30 px-3 py-2 border-r border-[var(--border-normal)] font-black text-[10px] text-[var(--text-primary)] bg-[var(--table-head-bg)]">
+                    TOTAL GENERAL
+                  </td>
+                  {matrixData.topMotivos.map(m => (
+                    <td key={m} className="px-3 py-2 border-r border-[var(--border-normal)] text-center font-black text-[10px] text-[var(--text-primary)] font-mono">
+                      {matrixData.grandTotal > 0 ? ((matrixData.colTotals[m] / matrixData.grandTotal) * 100).toFixed(1) : 0}%
+                    </td>
+                  ))}
+                  <td className="px-3 py-2 text-center font-black text-xs text-cyan-400 font-mono">
+                    {matrixData.grandTotal}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+      </div>
+
+    </div>
   )
 }

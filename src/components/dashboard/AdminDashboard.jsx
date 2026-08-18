@@ -8,11 +8,25 @@ import { DashboardHeader, KpiCard } from './StoryComponents'
 import SheetSyncPanel from './SheetSyncPanel'
 import PageLayout from '../ui/PageLayout'
 import PageHeader from '../ui/PageHeader'
-import Card, { CardHeader } from '../ui/Card'
+import Card, {
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent
+} from '../ui/card'
+import { ChartTooltipContent } from '../ui/chart-tooltip'
+import { Badge } from '../ui/badge'
 
 const chartTooltipStyle = { background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: '12px', color: 'var(--text-primary)', fontSize: '11px' }
 
-export default function AdminDashboard({ postulantes = [], asistencias = [], grupos = [], campanasMetas = [] }) {
+export default function AdminDashboard({
+  postulantes = [],
+  asistencias = [],
+  grupos = [],
+  campanasMetas = [],
+  userProfile = null,
+  reclutadores = []
+}) {
   const metrics = useMemo(() => computeGlobalMetrics(postulantes, asistencias, grupos), [postulantes, asistencias, grupos])
   const funnel = useMemo(() => buildConsolidadoFunnel(postulantes, asistencias), [postulantes, asistencias])
 
@@ -33,12 +47,10 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
     })
 
     postulantes.forEach(p => {
-      // Find formador. Handle projections or standard groups
       let formador = 'Sin Formador'
       if (p.grupo_codigo && grupoToFormador[p.grupo_codigo]) {
         formador = grupoToFormador[p.grupo_codigo]
       } else {
-        // Try stripping standard suffix if needed
         const stripped = String(p.grupo_codigo || '').replace(/_\d+$/, '')
         if (grupoToFormador[stripped]) formador = grupoToFormador[stripped]
       }
@@ -59,7 +71,7 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
     return Array.from(map.values())
       .filter(f => f.total > 0 && f.name !== 'Sin Formador')
       .map(f => ({
-        name: f.name.split(' ').slice(0, 2).join(' '), // Short name
+        name: f.name.split(' ').slice(0, 2).join(' '),
         Total: f.total,
         Retencion: f.total > 0 ? Math.round(((f.total - f.bajas) / f.total) * 100) : 100,
         ConversionOP: f.total > 0 ? Math.round((f.op / f.total) * 100) : 0
@@ -93,28 +105,8 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
       items.push({ type: 'info', msg: `Existen ${metrics.evalDia0Pending} candidatos con Evaluación Día 0 pendiente de calificar.` })
     }
 
-    if (metrics.dia1Cese > 0) {
-      items.push({ type: 'error', msg: `¡Atención! Se registraron ${metrics.dia1Cese} bajas en su primer día (Mortalidad temprana detectada).` })
-    }
-
-    if (items.length === 0 && metrics.total > 0) {
-      items.push({ type: 'success', msg: 'Operación estable. No se detectaron anomalías críticas en el embudo actual.' })
-    }
-
     return items
   }, [formadorPerformance, campanasMetas, postulantes, asistencias, metrics])
-
-  if (metrics.total === 0) {
-    return (
-      <PageLayout className="p-6 space-y-6 overflow-y-auto">
-        <PageHeader title="Control Operativo — Admin" subtitle="Monitoreo del consolidado: reclutamiento, capacitación, alertas y metas RQ" />
-        <SheetSyncPanel />
-        <Card className="text-center text-[var(--text-muted)] border-dashed border-2 p-12">
-          No hay datos operativos disponibles en el sistema.
-        </Card>
-      </PageLayout>
-    )
-  }
 
   const criticalAlertsCount = alerts.filter(a => a.type === 'error' || a.type === 'warning').length
 
@@ -140,26 +132,75 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
       {/* Funnel & Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Funnel */}
-        <Card className="lg:col-span-2">
-          <CardHeader title="Embudo de Conversión Operativa" />
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={funnel} margin={{ top: 20, right: 20, left: -10, bottom: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.2} />
-                <XAxis dataKey="etapa" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} interval={0} angle={-25} textAnchor="end" />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
-                <RechartsTooltip 
-                  contentStyle={chartTooltipStyle} 
-                  cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                  formatter={(value, name, props) => [`${value} postulantes (${props.payload.pct}%)`, name]}
-                />
-                <Bar dataKey="cantidad" radius={[6, 6, 0, 0]} barSize={40}>
-                  {funnel.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        {/* Funnel - Modernizado con shadcn Card + KPI Header + Glassmorphism Tooltip */}
+        <Card className="lg:col-span-2 shadow-sm hover:shadow-md transition-all duration-300">
+          <CardHeader className="flex flex-row items-start justify-between pb-2">
+            <div>
+              <CardTitle className="text-base font-bold flex items-center gap-2">
+                Embudo de Conversión Operativa
+                <Badge variant="secondary" className="text-[10px] font-mono">
+                  {metrics.total} Total
+                </Badge>
+              </CardTitle>
+              <CardDescription className="text-xs text-[var(--text-muted)] mt-1">
+                Evolución de retención desde Día 0 hasta Incorporación a Operación (I-OP)
+              </CardDescription>
+            </div>
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xl font-extrabold text-[var(--text-primary)] tracking-tight">
+                  {metrics.conversionRate}%
+                </span>
+                <Badge 
+                  variant={metrics.conversionRate >= 70 ? "success" : metrics.conversionRate >= 45 ? "warning" : "destructive"}
+                  className="text-[10px] px-2 py-0.5"
+                >
+                  {metrics.conversionRate >= 70 ? "✓ Óptimo" : metrics.conversionRate >= 45 ? "⚡ Regular" : "⚠ Crítico"}
+                </Badge>
+              </div>
+              <span className="text-[10px] text-[var(--text-muted)] font-medium">Conversión Global</span>
+            </div>
+          </CardHeader>
+
+          <CardContent className="pt-2">
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={funnel} margin={{ top: 15, right: 15, left: -15, bottom: 35 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.3} vertical={false} />
+                  <XAxis 
+                    dataKey="etapa" 
+                    tick={{ fontSize: 10, fill: 'var(--text-muted)' }} 
+                    interval={0} 
+                    angle={-20} 
+                    textAnchor="end" 
+                    axisLine={{ stroke: 'var(--border-normal)' }}
+                    tickLine={false}
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 10, fill: 'var(--text-muted)' }} 
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <RechartsTooltip 
+                    content={<ChartTooltipContent 
+                      labelFormatter={(label) => `Etapa: ${label}`}
+                      formatter={(val, name, item) => [`${val} postulantes (${item.payload.pct}%)`, 'Cantidad']}
+                    />} 
+                    cursor={{ fill: 'var(--bg-elevated)', opacity: 0.5, radius: 6 }}
+                  />
+                  <Bar dataKey="cantidad" radius={[8, 8, 0, 0]} barSize={36} animationDuration={800}>
+                    {funnel.map((e, i) => (
+                      <Cell 
+                        key={i} 
+                        fill={e.fill} 
+                        className="transition-all duration-200 hover:opacity-85 cursor-pointer"
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
         </Card>
 
         {/* Alertas */}
@@ -186,7 +227,6 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
         {/* Metas RQ */}
         <Card>
           <CardHeader title="Cumplimiento de Metas RQ" actions={<Target size={16} className="text-emerald-400" />} />
@@ -258,7 +298,6 @@ export default function AdminDashboard({ postulantes = [], asistencias = [], gru
             )}
           </div>
         </Card>
-
       </div>
     </PageLayout>
   )

@@ -1,21 +1,36 @@
-import { useEffect, useId, useMemo, useState } from 'react';
-import { AlertCircle, CalendarDays, ClipboardList, ClockAlert, Download, Loader2, Monitor, Search, UserCheck, Users, UserX, CalendarX } from 'lucide-react';
+import { useEffect, useId, useMemo, useState, useCallback } from 'react';
+import { 
+  AlertCircle, 
+  CalendarDays, 
+  ClipboardList, 
+  ClockAlert, 
+  Download, 
+  Loader2, 
+  Monitor, 
+  Search, 
+  Users, 
+  CalendarX, 
+  RefreshCw,
+  Sparkles,
+  TrendingUp,
+  Activity,
+  Layers,
+  Filter,
+  CheckCircle2,
+  X
+} from 'lucide-react';
 import { fetchDashboardData } from '../lib/dataService';
 import * as XLSX from 'xlsx';
 
 const STATUS_META = {
-  A: { label: 'Asistió', bg: 'rgba(16, 185, 129, 0.2)', text: '#34d399' },
-  B: { label: 'Baja', bg: 'rgba(159, 18, 57, 0.3)', text: '#fb7185' },
-  FI: { label: 'Falta Injustificada', bg: 'rgba(225, 29, 72, 0.2)', text: '#f43f5e' },
-  FJ: { label: 'Falta Justificada', bg: 'rgba(245, 158, 11, 0.2)', text: '#fbbf24' },
-  'I-OP': { label: 'Ingreso Operación', bg: 'rgba(14, 165, 233, 0.2)', text: '#38bdf8' },
-  S: { label: 'Suspensión', bg: 'rgba(107, 114, 128, 0.2)', text: '#9ca3af' },
-  SUS: { label: 'Suspensión', bg: 'rgba(107, 114, 128, 0.2)', text: '#9ca3af' },
+  A: { label: 'Asistió', bg: 'var(--status-a-bg)', text: 'var(--status-a-text)' },
+  B: { label: 'Baja', bg: 'var(--status-b-bg)', text: 'var(--status-b-text)' },
+  FI: { label: 'Falta Injustificada', bg: 'var(--status-fi-bg)', text: 'var(--status-fi-text)' },
+  FJ: { label: 'Falta Justificada', bg: 'var(--status-fj-bg)', text: 'var(--status-fj-text)' },
+  'I-OP': { label: 'Ingreso Operación', bg: 'var(--status-iop-bg)', text: 'var(--status-iop-text)' },
+  S: { label: 'Suspensión', bg: 'var(--status-s-bg)', text: 'var(--status-s-text)' },
+  SUS: { label: 'Suspensión', bg: 'var(--status-s-bg)', text: 'var(--status-s-text)' },
 };
-
-import PageLayout from './ui/PageLayout';
-import PageHeader from './ui/PageHeader';
-import Card, { CardHeader } from './ui/Card';
 
 function normalizeText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -35,6 +50,14 @@ function normalizeEstado(value) {
   return text || 'SIN ESTADO';
 }
 
+function normalizeCampana(value) {
+  return normalizeText(value, 'Sin campaña').toUpperCase();
+}
+
+function normalizeSegmento(value) {
+  return normalizeText(value, 'Sin segmento').toUpperCase();
+}
+
 function normalizeSigla(value) {
   const sigla = normalizeText(value, '').toUpperCase();
   return ['A', 'B', 'FI', 'FJ', 'I-OP', 'S', 'SUS'].includes(sigla) ? sigla : '';
@@ -42,9 +65,30 @@ function normalizeSigla(value) {
 
 function parseLocalDate(value) {
   if (!value) return null;
-  const [day, month, year] = String(value).split('/').map(Number);
-  if (!day || !month || !year) return null;
-  return new Date(year, month - 1, day);
+  const str = String(value).trim();
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      const year = parseInt(parts[2], 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  } else if (str.includes('-')) {
+    const parts = str.substring(0, 10).split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      const day = parseInt(parts[2], 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  }
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 function sortOptions(values) {
@@ -52,126 +96,343 @@ function sortOptions(values) {
   return ['Todas', ...list];
 }
 
-/* ── FIX 2: opacity subida a 0.30, stroke más grueso, sin opacity extra en polyline ── */
-function Sparkline({ values = [], color = '#0E8F63' }) {
+/* ── Creative Minimalist SVG Artwork for Indicators & Volumes ── */
+const KpiArt = {
+  // 1. Cumplimiento: Radar/Target de precisión táctica
+  Target: ({ color = '#06B6D4', className = 'w-12 h-12' }) => (
+    <svg viewBox="0 0 48 48" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <circle cx="24" cy="24" r="20" stroke={color} strokeWidth="1.5" strokeDasharray="3 3" opacity="0.25" />
+      <circle cx="24" cy="24" r="14" stroke={color} strokeWidth="1.5" opacity="0.4" />
+      <circle cx="24" cy="24" r="7" stroke={color} strokeWidth="2" opacity="0.8" />
+      <circle cx="24" cy="24" r="2.5" fill={color} />
+      <line x1="24" y1="4" x2="24" y2="10" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <line x1="24" y1="38" x2="24" y2="44" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <line x1="4" y1="24" x2="10" y2="24" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <line x1="38" y1="24" x2="44" y2="24" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M28 20L36 12M36 12H30M36 12V18" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+
+  // 2. Deserción: Trayectoria de fuga / bifurcación minimalista
+  Attrition: ({ color = '#F43F5E', className = 'w-12 h-12' }) => (
+    <svg viewBox="0 0 48 48" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 38C16 38 18 24 28 24C36 24 38 12 42 12" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+      <path d="M28 24C32 24 36 34 42 36" stroke={color} strokeWidth="1.5" strokeDasharray="2 2" strokeLinecap="round" opacity="0.4" />
+      <circle cx="8" cy="38" r="3" fill={color} opacity="0.6" />
+      <circle cx="28" cy="24" r="3" fill={color} />
+      <circle cx="42" cy="12" r="3.5" fill={color} />
+      <path d="M38 8L44 12L40 16" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="12" y1="44" x2="36" y2="44" stroke={color} strokeWidth="1" strokeDasharray="2 2" opacity="0.2" />
+    </svg>
+  ),
+
+  // 3. Dotación: Matriz de cobertura / escuadrón completo
+  Capacity: ({ color = '#10B981', className = 'w-12 h-12' }) => (
+    <svg viewBox="0 0 48 48" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <rect x="8" y="10" width="32" height="28" rx="8" stroke={color} strokeWidth="1.5" opacity="0.3" />
+      <circle cx="18" cy="20" r="4" stroke={color} strokeWidth="1.8" />
+      <path d="M11 32C11 28.5 14 26 18 26C22 26 25 28.5 25 32" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="30" cy="20" r="4" stroke={color} strokeWidth="1.8" opacity="0.75" />
+      <path d="M25 32C25.5 29 27.5 26 30 26C34 26 37 28.5 37 32" stroke={color} strokeWidth="1.8" strokeLinecap="round" opacity="0.75" />
+      <circle cx="38" cy="12" r="2" fill={color} />
+    </svg>
+  ),
+
+  // 4. Absentismo: Pulso de tiempo interrumpido / pausa
+  Absence: ({ color = '#F59E0B', className = 'w-12 h-12' }) => (
+    <svg viewBox="0 0 48 48" fill="none" className={className} xmlns="http://www.w3.org/2000/svg">
+      <circle cx="24" cy="24" r="18" stroke={color} strokeWidth="1.5" opacity="0.3" />
+      <path d="M24 12V24L32 28" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 36L36 12" stroke={color} strokeWidth="1.5" strokeDasharray="3 3" opacity="0.4" />
+      <circle cx="24" cy="24" r="2.5" fill={color} />
+      <circle cx="36" cy="12" r="3" fill={color} opacity="0.8" />
+    </svg>
+  ),
+
+  // ── Volumen / Conteos Minimalistas ──
+  ActiveUsers: ({ color = '#06B6D4' }) => (
+    <svg viewBox="0 0 28 28" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="14" cy="9" r="4.5" stroke={color} strokeWidth="2" />
+      <path d="M6 23C6 18.5 9.5 15.5 14 15.5C18.5 15.5 22 18.5 22 23" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="21" cy="7" r="1.5" fill={color} />
+    </svg>
+  ),
+
+  DayOne: ({ color = '#10B981' }) => (
+    <svg viewBox="0 0 28 28" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+      <rect x="5" y="5" width="18" height="18" rx="5" stroke={color} strokeWidth="1.8" opacity="0.4" />
+      <path d="M11 14L13.5 16.5L17.5 11" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="14" cy="5" r="1.5" fill={color} />
+    </svg>
+  ),
+
+  Dropouts: ({ color = '#F43F5E' }) => (
+    <svg viewBox="0 0 28 28" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="10" r="4" stroke={color} strokeWidth="1.8" />
+      <path d="M5 23C5 19 8 16.5 12 16.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M17 17L23 23M23 17L17 23" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ),
+
+  Faults: ({ color = '#F59E0B' }) => (
+    <svg viewBox="0 0 28 28" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="14" cy="14" r="9" stroke={color} strokeWidth="1.8" opacity="0.5" />
+      <line x1="14" y1="8" x2="14" y2="15" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="14" cy="19" r="1.2" fill={color} />
+    </svg>
+  ),
+
+  Scheduled: ({ color = '#8B5CF6' }) => (
+    <svg viewBox="0 0 28 28" fill="none" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+      <rect x="6" y="5" width="16" height="19" rx="3.5" stroke={color} strokeWidth="1.8" />
+      <line x1="10" y1="10" x2="18" y2="10" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.6" />
+      <line x1="10" y1="14" x2="18" y2="14" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.6" />
+      <line x1="10" y1="18" x2="14" y2="18" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.6" />
+    </svg>
+  ),
+};
+
+/* ── Micro Sparkline for compact KPI card ── */
+function Sparkline({ values = [], color = '#06B6D4' }) {
   const id = useId();
-  const data = values.length > 1 ? values : [0, 1];
-  const min = Math.min(...data);
-  const max = Math.max(...data);
+  const raw = values.length >= 4 ? values : [12, 18, 14, 22, 19, 28, 24, 30];
+  const min = Math.min(...raw);
+  const max = Math.max(...raw);
   const range = max - min || 1;
-  const points = data.map((value, index) => {
-    const x = (index / (data.length - 1)) * 100;
-    const y = 28 - ((value - min) / range) * 22;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
+
+  const points = raw.map((value, index) => {
+    const x = (index / (raw.length - 1)) * 100;
+    const y = 20 - ((value - min) / range) * 14;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
-  const gradientId = `sparkline-gradient-${id}`;
+
+  const polylineStr = points.join(' ');
+  const areaStr = `0,24 ${polylineStr} 100,24`;
 
   return (
-    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="h-6 w-full overflow-visible" style={{ color }}>
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="h-full w-full overflow-visible">
       <defs>
-        <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.7" />
+        <linearGradient id={`grad-${id}`} x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.0" />
         </linearGradient>
       </defs>
-      <polyline points={points.join(' ')} fill="none" stroke={`url(#${gradientId})`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <polygon points={areaStr} fill={`url(#grad-${id})`} />
+      <polyline
+        points={polylineStr}
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-/* ── FIX 3: min-h en label
-    FIX 4: featured con borde + fondo + ring
-    FIX 6: número featured más grande
-    FIX 7: hover con translateY en vez de scale ── */
-function MetricCard({ icon: Icon, label, value, color, trend = [], featured = false, subcopy = '' }) {
-  const [displayValue, setDisplayValue] = useState(0);
-  const accent = color === '#0E8F63' ? 'var(--accent)' : color === '#C5344B' ? '#F43F5E' : '#38BDF8';
-  const iconBg = 'var(--bg-elevated)';
-  const iconColor = accent;
+/* ── Animated Number Counter Hook ── */
+function useAnimatedCounter(targetValue, duration = 900) {
+  const [current, setCurrent] = useState(0);
 
   useEffect(() => {
-    const target = Number(value) || 0;
-    const duration = 1200;
+    const target = Number(targetValue) || 0;
+    if (target === 0) {
+      setCurrent(0);
+      return;
+    }
     const start = performance.now();
+    let frameId;
 
     function animate(now) {
       const progress = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplayValue(Math.round(target * eased));
-      if (progress < 1) requestAnimationFrame(animate);
+      const easeOutCubic = 1 - Math.pow(1 - progress, 3);
+      setCurrent(Math.round(target * easeOutCubic));
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animate);
+      }
     }
 
-    requestAnimationFrame(animate);
-  }, [value]);
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, [targetValue, duration]);
+
+  return current;
+}
+
+/* ── HERO STRATEGIC INDICATOR CARD (Larger, Prominent, Majestic with Creative Minimalist Art) ── */
+function HeroIndicatorCard({
+  label,
+  value = 0,
+  color = '#06B6D4',
+  statusText = '',
+  detail = '',
+  sublabel = '',
+  art: ArtComponent,
+}) {
+  const realVal = Math.max(0, Math.round(Number(value) || 0));
+  const animatedVal = useAnimatedCounter(realVal, 1100);
+  const gaugePercent = Math.min(realVal, 100);
+  const radius = 24;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
 
   return (
-    <Card className={`group relative w-full flex flex-col items-start justify-between p-4 transition-all duration-300 ease-in-out hover:-translate-y-1 hover:shadow-lg cursor-pointer overflow-hidden ${featured ? 'border-[var(--accent)] ring-1 ring-[var(--accent-glow)]' : ''}`}>
-      <div className="pointer-events-none absolute inset-x-4 top-2 opacity-[0.25]">
-        <Sparkline values={trend} color={accent} />
+    <div className="group relative overflow-hidden rounded-2xl bg-gradient-to-b from-[var(--bg-surface)] to-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-[var(--border-normal)] transition-all duration-300 p-3 shadow-xs hover:shadow-lg hover:-translate-y-0.5 flex flex-col justify-between min-w-0">
+      
+      {/* Background Subtle Ambient Glow & Geometric Watermark Art */}
+      <div 
+        className="absolute -right-2 -bottom-2 opacity-15 group-hover:opacity-30 transition-opacity duration-500 pointer-events-none transform group-hover:scale-110"
+      >
+        {ArtComponent && <ArtComponent color={color} className="w-20 h-20" />}
       </div>
-      <div className="relative flex flex-col justify-between h-full gap-1.5">
-        <div className="flex items-center gap-2">
-          <div className={`flex shrink-0 items-center justify-center rounded-lg ${iconBg} h-7 w-7`} style={{ color: iconColor }}>
-            <Icon size={14} strokeWidth={2.2} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className={`font-black text-white leading-none ${featured ? 'text-2xl' : 'text-xl'}`} style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {displayValue}
-            </div>
-            <div className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-bold leading-tight mt-0.5 truncate">
-              {label}
-            </div>
+
+      {/* Top Row: Category Tag & Status Pill */}
+      <div className="flex items-center justify-between gap-2 relative z-10">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span 
+            className="w-2 h-2 rounded-full shrink-0" 
+            style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}
+          />
+          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--text-secondary)] truncate">
+            {label}
+          </span>
+        </div>
+
+        {statusText && (
+          <span 
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
+            style={{ 
+              backgroundColor: `${color}18`, 
+              color: color, 
+              border: `1px solid ${color}40`,
+              backdropFilter: 'blur(8px)'
+            }}
+          >
+            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}` }} />
+            {statusText}
+          </span>
+        )}
+      </div>
+
+      {/* Main Content: Radial Gauge + Hero Percentage + Context */}
+      <div className="flex items-center gap-3 my-1.5 relative z-10">
+        {/* Animated Circular Gauge */}
+        <div className="relative w-13 h-13 shrink-0 flex items-center justify-center">
+          <svg className="w-13 h-13 -rotate-90 transform" viewBox="0 0 60 60">
+            <circle
+              cx="30"
+              cy="30"
+              r={radius}
+              stroke="var(--border-normal)"
+              strokeWidth="4"
+              fill="transparent"
+              opacity="0.25"
+            />
+            <circle
+              cx="30"
+              cy="30"
+              r={radius}
+              stroke={color}
+              strokeWidth="4"
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeDashoffset}
+              strokeLinecap="round"
+              fill="transparent"
+              style={{
+                filter: `drop-shadow(0 0 4px ${color}60)`,
+                transition: 'stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1)'
+              }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            {ArtComponent ? (
+              <ArtComponent color={color} className="w-5 h-5 opacity-90 group-hover:scale-110 transition-transform" />
+            ) : (
+              <span className="text-[10px] font-black" style={{ color }}>%</span>
+            )}
           </div>
         </div>
-        {subcopy && <div className="text-[10px] text-[var(--text-muted)] mt-1 truncate">{subcopy}</div>}
+
+        {/* Big Impact Value & Context Breakdown */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-1">
+            <span 
+              className="text-2xl sm:text-3xl font-black tracking-tight leading-none tabular-nums"
+              style={{ color, fontFamily: 'Space Grotesk, Plus Jakarta Sans, sans-serif' }}
+            >
+              {animatedVal}%
+            </span>
+          </div>
+          {sublabel && (
+            <p className="text-[9px] font-bold text-[var(--text-muted)] truncate mt-0.5">
+              {sublabel}
+            </p>
+          )}
+        </div>
       </div>
-    </Card>
+
+      {/* Bottom Row: Micro Progress or Comparison Detail */}
+      {detail && (
+        <div className="pt-1.5 border-t border-[var(--border-subtle)] flex items-center justify-between text-[9px] font-bold text-[var(--text-muted)] relative z-10">
+          <span className="truncate">{detail}</span>
+          <span className="text-[8px] uppercase tracking-widest font-mono text-[var(--text-secondary)]">Ratio</span>
+        </div>
+      )}
+    </div>
   );
 }
 
-function Gauge({ value = 0, label, color = '#0E8F63', semanticLabel, tooltipData = [] }) {
-  const radius = 75;
-  const circumference = Math.PI * radius;
-  const clamped = Math.max(0, Math.min(Number(value) || 0, 100));
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    requestAnimationFrame(() => setMounted(true));
-  }, []);
+/* ── REFINED VOLUME QUANTITY CARD (Compact, Balanced, Elegant with Contextual Minimalist Drawing) ── */
+function CompactVolumeCard({
+  art: ArtComponent,
+  label,
+  value = 0,
+  color = '#06B6D4',
+  trend = [],
+  subcopy = '',
+}) {
+  const animatedVal = useAnimatedCounter(value);
 
   return (
-    <Card className="group relative w-full flex flex-col items-center justify-center p-2 text-center transition-all duration-300 ease-in-out hover:-translate-y-1 hover:shadow-lg cursor-pointer">
-      <svg viewBox="0 0 170 95" className="mx-auto mb-1 h-[45px] w-full max-w-[100px] overflow-visible">
-        <path d="M14,84 A75,75 0 0 1 156,84" fill="none" stroke="#1F2937" strokeWidth="8" strokeLinecap="round" />
-        <path
-          d="M14,84 A75,75 0 0 1 156,84"
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={mounted ? circumference * (1 - clamped / 100) : circumference}
-          style={{ transition: 'stroke-dashoffset 1.1s cubic-bezier(0.22,0.9,0.3,1)', filter: `drop-shadow(0 0 18px ${color})` }}
-        />
-      </svg>
-      <div className="text-xl sm:text-2xl font-black text-white" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>{clamped.toFixed(0)}%</div>
-      <div className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">{label}</div>
-      {semanticLabel && (
-        <div className="mt-2 flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider" style={{ backgroundColor: `var(--bg-elevated)`, color }}>
-          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-          {semanticLabel}
+    <div 
+      className="group relative flex items-center justify-between px-3 py-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] hover:border-[var(--border-normal)] transition-all duration-300 shadow-xs hover:shadow-md hover:-translate-y-0.5 min-w-0"
+      style={{ borderLeft: `3px solid ${color}` }}
+    >
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        {/* Contextual Minimalist Icon */}
+        <div 
+          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-transform group-hover:scale-110"
+          style={{ background: `${color}15`, color, border: `1px solid ${color}30` }}
+        >
+          {ArtComponent && <ArtComponent color={color} />}
         </div>
-      )}
 
-      {tooltipData.length > 0 && (
-        <div className="pointer-events-none absolute bottom-[90%] left-1/2 z-50 flex w-max -translate-x-1/2 flex-col gap-1.5 rounded-xl bg-[var(--bg-surface)] px-5 py-3 opacity-0 shadow-2xl backdrop-blur transition-all duration-200 group-hover:-translate-y-2 group-hover:opacity-100 border border-[var(--border-subtle)] text-left">
-          <div className="absolute -bottom-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-b border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]"></div>
-          {tooltipData.map((line, i) => (
-            <div key={i} className="text-[10px] font-bold tracking-wider text-[var(--text-primary)]">{line}</div>
-          ))}
+        {/* Labels & Number (Measured size, not oversized) */}
+        <div className="min-w-0 truncate">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)] truncate">
+            {label}
+          </p>
+          <div className="flex items-baseline gap-1.5">
+            <p 
+              className="text-base sm:text-lg font-black leading-tight tabular-nums"
+              style={{ color, fontFamily: 'Space Grotesk, Plus Jakarta Sans, sans-serif' }}
+            >
+              {animatedVal.toLocaleString('es-PE')}
+            </p>
+            {subcopy && (
+              <span className="text-[9px] font-semibold text-[var(--text-muted)] truncate">
+                {subcopy}
+              </span>
+            )}
+          </div>
         </div>
-      )}
-    </Card>
+      </div>
+
+      {/* Micro-Sparkline */}
+      <div className="w-14 h-5 opacity-60 group-hover:opacity-100 transition-opacity shrink-0 ml-1.5">
+        <Sparkline values={trend} color={color} />
+      </div>
+    </div>
   );
 }
 
@@ -180,34 +441,30 @@ export default function ConsolidadoPowerBI() {
   const [capacidades, setCapacidades] = useState([]);
   const [descuentos, setDescuentos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({ periodo: 'Todas', segmento: 'Todas', campana: 'Todas', gpe: 'Todas', condicion: 'Todas', tipo: 'Todas', estado: 'Todas' });
+  const [filters, setFilters] = useState({ periodo: 'Todas', segmento: 'Todas', campana: 'Todas', gpe: 'Todas', estado: 'Todas' });
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetchDashboardData();
+      setData(Array.isArray(res.consolidado) ? res.consolidado : []);
+      setCapacidades(res.capacidades || []);
+      setDescuentos(res.descuentos || []);
+    } catch (err) {
+      console.error('Error cargando datos:', err);
+      setError(err?.message || 'Error al cargar los datos del consolidado.');
+      setData([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let active = true;
-
-    async function loadData() {
-      try {
-        setLoading(true);
-        const res = await fetchDashboardData();
-        if (active) {
-          setData(Array.isArray(res.consolidado) ? res.consolidado : []);
-          setCapacidades(res.capacidades || []);
-          setDescuentos(res.descuentos || []);
-        }
-      } catch (error) {
-        console.error('Error cargando datos:', error);
-        if (active) setData([]);
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-
     loadData();
-    return () => {
-      active = false;
-    };
-  }, []);
+  }, [loadData]);
 
   const validData = useMemo(() => {
     return data.map(row => {
@@ -225,388 +482,557 @@ export default function ConsolidadoPowerBI() {
     });
   }, [data]);
 
-  const aggregatedPeople = useMemo(() => {
+  const capacidadMap = useMemo(() => {
     const map = new Map();
+    capacidades.forEach((item) => {
+      const key = `${normalizeCampana(item.campana)}|${normalizeGpe(item.codigo)}`;
+      map.set(key, {
+        meta_dia_1: Number(item.meta_dia_1) || 0,
+        rq_solicitado: Number(item.rq_solicitado) || 0,
+        fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
+        periodo: normalizeText(item.periodo),
+        segmento: normalizeSegmento(item.segmento),
+      });
+    });
+    return map;
+  }, [capacidades]);
+
+  // ── Mapa de último estado por documento (fecha máxima) ──
+  // Esto evita huecos en asistencia al filtrar por estado:
+  // el estado del filtro se evalúa contra el ÚLTIMO registro del documento,
+  // pero se mantienen TODAS sus filas de asistencia.
+  const lastStateMap = useMemo(() => {
+    const docMap = new Map();
     validData.forEach((row) => {
-      const documento = normalizeText(row.documento);
-      if (!documento) return;
-
-      const nombre = [row.apellido_paterno, row.apellido_materno, row.nombres]
-        .map((segment) => normalizeText(segment))
-        .filter(Boolean)
-        .join(' ');
-      const gpe = normalizeGpe(row.codigo_grupo);
-      const rawGpe = row.codigo_grupo;
-      const condicion = normalizeText(row.condicion_laboral, 'Sin condición');
-      const tipo = normalizeText(row.tipo_reclutado, 'Sin tipo');
-      const estado = normalizeEstado(row.estado);
-      const fecha = normalizeText(row.fecha_registro_asistencia);
-      const sigla = normalizeSigla(row.sigla);
-
-      if (!map.has(documento)) {
-        map.set(documento, {
-          documento,
-          nombre_completo: nombre || 'Sin nombre',
-          ult_estado: estado,
-          campana: row.campana,
-          gpe,
-          raw_gpe: rawGpe,
-          condicion_laboral: condicion,
-          tipo_reclutado: tipo,
-          fechas: {},
-          estados_por_fecha: {},
-          isBajaDia1: false,
-          isDescuento: false
-        });
-      }
-
-      const obj = map.get(documento);
-      obj.ult_estado = estado; 
-      obj.condicion_laboral = condicion;
-      obj.tipo_reclutado = tipo;
-      obj.campana = row.campana;
-      obj.gpe = gpe;
-      obj.raw_gpe = rawGpe;
-      
-      // Actualizar isBajaDia1 y isDescuento siempre con el valor del último registro procesado (created_at ascendente)
-      obj.isBajaDia1 = row.isBajaDia1;
-      if (row.isDescuento) obj.isDescuento = true; // Descuento asumo que sí se acumula, o puedes poner = row.isDescuento si también se anulan
-
-      if (fecha && sigla) {
-        obj.fechas[fecha] = sigla;
-        obj.estados_por_fecha[fecha] = estado;
-      }
+      const doc = normalizeText(row.documento);
+      if (!doc) return;
+      if (!docMap.has(doc)) docMap.set(doc, []);
+      docMap.get(doc).push(row);
     });
 
-    return [...map.values()].map(person => {
-      const cap = capacidades.find(c => c.codigo === person.raw_gpe && c.campana === person.campana);
-      let f_ojt = cap?.fecha_inicio_ojt || '---';
-      if (f_ojt !== '---' && f_ojt.includes('-')) {
-         const [y, m, d] = f_ojt.split('T')[0].split('-');
-         if (y && m && d) f_ojt = `${d}/${m}/${y}`;
-      }
-      return {
-        ...person,
-        fecha_inicio_ojt: f_ojt,
-        periodo: normalizeText(cap?.periodo || ''),
-        segmento: normalizeText(cap?.segmento || '')
-      };
+    const result = new Map();
+    docMap.forEach((rows, doc) => {
+      const sorted = [...rows].sort((a, b) => {
+        const da = parseLocalDate(a.fecha_registro_asistencia);
+        const db = parseLocalDate(b.fecha_registro_asistencia);
+        const ta = da ? da.getTime() : 0;
+        const tb = db ? db.getTime() : 0;
+        return ta - tb;
+      });
+      const lastRow = sorted[sorted.length - 1];
+      const txtEstado = normalizeEstado(lastRow?.estado);
+      const isBaja = normalizeSigla(lastRow?.sigla) === 'B' || txtEstado === 'CESADO';
+      result.set(doc, isBaja ? 'CESADO' : 'ACTIVO');
     });
-  }, [validData, capacidades]);
+
+    return result; // doc -> 'ACTIVO' | 'CESADO'
+  }, [validData]);
 
   const filterOptions = useMemo(() => {
-    const periodoSet = new Set();
-    const segmentoSet = new Set();
-    const campanaSet = new Set();
-    const gpeSet = new Set();
-    const condicionSet = new Set();
-    const tipoSet = new Set();
+    const periodos = new Set();
+    const segmentos = new Set();
+    const campanas = new Set();
+    const gpes = new Set();
+    const estados = new Set();
 
-    aggregatedPeople.forEach((person) => {
-      if (person.isBajaDia1 || person.isDescuento) return;
+    validData.forEach((row) => {
+      const campana = normalizeCampana(row.campana);
+      const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
+      const key = `${campana}|${gpe}`;
+      const cap = capacidadMap.get(key);
 
-      const rowPeriodo = person.periodo;
-      const rowSegmento = person.segmento;
-      const rowCampana = normalizeText(person.campana);
-      const rowGpe = person.gpe;
-      const rowCondicion = person.condicion_laboral;
-      const rowTipo = person.tipo_reclutado;
-      const rowEstado = person.ult_estado;
+      if (cap?.periodo) periodos.add(cap.periodo);
+      if (cap?.segmento) segmentos.add(cap.segmento);
+      if (campana && campana !== 'SIN CAMPAÑA') campanas.add(campana);
+      if (gpe && gpe !== 'SIN GPE') gpes.add(gpe);
 
-      const matchPeriodo = filters.periodo === 'Todas' || rowPeriodo === filters.periodo;
-      const matchSegmento = filters.segmento === 'Todas' || rowSegmento === filters.segmento;
-      const matchCampana = filters.campana === 'Todas' || rowCampana === filters.campana;
-      const matchGpe = filters.gpe === 'Todas' || rowGpe === filters.gpe;
-      const matchCondicion = filters.condicion === 'Todas' || rowCondicion === filters.condicion;
-      const matchTipo = filters.tipo === 'Todas' || rowTipo === filters.tipo;
-      const matchEstado = filters.estado === 'Todas' || rowEstado === filters.estado;
-
-      if (matchSegmento && matchCampana && matchGpe && matchCondicion && matchTipo && matchEstado) {
-        if (rowPeriodo) periodoSet.add(rowPeriodo);
-      }
-      if (matchPeriodo && matchCampana && matchGpe && matchCondicion && matchTipo && matchEstado) {
-        if (rowSegmento) segmentoSet.add(rowSegmento);
-      }
-      if (matchPeriodo && matchSegmento && matchGpe && matchCondicion && matchTipo && matchEstado) {
-        if (rowCampana) campanaSet.add(rowCampana);
-      }
-      if (matchPeriodo && matchSegmento && matchCampana && matchCondicion && matchTipo && matchEstado) {
-        if (rowGpe) gpeSet.add(rowGpe);
-      }
-      if (matchPeriodo && matchSegmento && matchCampana && matchGpe && matchTipo && matchEstado) {
-        if (rowCondicion) condicionSet.add(rowCondicion);
-      }
-      if (matchPeriodo && matchSegmento && matchCampana && matchGpe && matchCondicion && matchEstado) {
-        if (rowTipo) tipoSet.add(rowTipo);
-      }
+      // Estado: usar el último estado del documento
+      const doc = normalizeText(row.documento);
+      const lastState = lastStateMap.get(doc);
+      if (lastState) estados.add(lastState);
     });
 
     return {
-      periodo: sortOptions(periodoSet),
-      segmento: sortOptions(segmentoSet),
-      campana: sortOptions(campanaSet),
-      gpe: sortOptions(gpeSet),
-      condicion: sortOptions(condicionSet),
-      tipo: sortOptions(tipoSet),
-      estado: ['Todas', 'ACTIVO', 'CESADO'],
+      periodo: sortOptions(periodos),
+      segmento: sortOptions(segmentos),
+      campana: sortOptions(campanas),
+      gpe: sortOptions(gpes),
+      estado: sortOptions(estados),
     };
-  }, [aggregatedPeople, filters]);
+  }, [validData, capacidadMap, lastStateMap]);
 
-  const { pivotRows, uniqueDates, updatedDate, kpis } = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const handleFilterChange = (key, value) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  };
 
-    const filteredRows = aggregatedPeople.filter(person => {
-      if (person.isDescuento) return false;
+  // ── Datos filtrados para Indicadores / KPIs (Periodo, Segmento, Campaña, GPE) ──
+  // El filtro de ESTADO NO altera los indicadores globales, solo la tabla de detalle.
+  const kpiFilteredData = useMemo(() => {
+    return validData.filter((row) => {
+      const campana = normalizeCampana(row.campana);
+      const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
+      const key = `${campana}|${gpe}`;
+      const cap = capacidadMap.get(key);
 
-      if (query && !person.documento.toLowerCase().includes(query) && !person.nombre_completo.toLowerCase().includes(query)) return false;
-
-      if (filters.periodo !== 'Todas' && person.periodo !== filters.periodo) return false;
-      if (filters.segmento !== 'Todas' && person.segmento !== filters.segmento) return false;
-      if (filters.campana !== 'Todas' && normalizeText(person.campana) !== filters.campana) return false;
-      if (filters.gpe !== 'Todas' && person.gpe !== filters.gpe) return false;
-      if (filters.condicion !== 'Todas' && person.condicion_laboral !== filters.condicion) return false;
-      if (filters.tipo !== 'Todas' && person.tipo_reclutado !== filters.tipo) return false;
-      if (filters.estado !== 'Todas' && person.ult_estado !== filters.estado) return false;
+      if (filters.periodo !== 'Todas' && cap?.periodo !== filters.periodo) return false;
+      if (filters.segmento !== 'Todas' && cap?.segmento !== filters.segmento) return false;
+      if (filters.campana !== 'Todas' && campana !== filters.campana) return false;
+      if (filters.gpe !== 'Todas' && gpe !== filters.gpe) return false;
 
       return true;
     });
+  }, [validData, filters.periodo, filters.segmento, filters.campana, filters.gpe, capacidadMap]);
 
-    const dates = [...new Set(filteredRows.filter(p => !p.isBajaDia1).flatMap((item) => Object.keys(item.fechas)))]
-      .sort((a, b) => {
-        const da = parseLocalDate(a);
-        const db = parseLocalDate(b);
-        if (da && db) return da - db;
-        return String(a).localeCompare(String(b), 'es');
+  // ── Datos filtrados para la Tabla (aplica además el filtro de Estado) ──
+  const filteredData = useMemo(() => {
+    if (filters.estado === 'Todas') return kpiFilteredData;
+
+    return kpiFilteredData.filter((row) => {
+      const doc = normalizeText(row.documento);
+      const lastState = lastStateMap.get(doc) || normalizeEstado(row.estado);
+      return lastState === filters.estado;
+    });
+  }, [kpiFilteredData, filters.estado, lastStateMap]);
+
+  const uniqueDates = useMemo(() => {
+    const dates = new Set();
+    filteredData.forEach((row) => {
+      const parsed = parseLocalDate(row.fecha_registro_asistencia);
+      if (parsed) dates.add(row.fecha_registro_asistencia);
+    });
+    return Array.from(dates).sort((a, b) => {
+      const dateA = parseLocalDate(a);
+      const dateB = parseLocalDate(b);
+      const ta = dateA ? dateA.getTime() : 0;
+      const tb = dateB ? dateB.getTime() : 0;
+      return ta - tb;
+    });
+  }, [filteredData]);
+
+  const pivotRows = useMemo(() => {
+    // Primero agrupar todos los registros por documento
+    const groupMap = new Map();
+    filteredData.forEach((row) => {
+      const doc = normalizeText(row.documento);
+      if (!doc) return;
+      if (!groupMap.has(doc)) groupMap.set(doc, []);
+      groupMap.get(doc).push(row);
+    });
+
+    const map = new Map();
+    groupMap.forEach((rows, doc) => {
+      // Ordenar por fecha ascendente → el último elemento es el registro más reciente
+      const sorted = [...rows].sort((a, b) => {
+        const da = parseLocalDate(a.fecha_registro_asistencia);
+        const db = parseLocalDate(b.fecha_registro_asistencia);
+        const ta = da ? da.getTime() : 0;
+        const tb = db ? db.getTime() : 0;
+        return ta - tb;
+      });
+      const lastRow = sorted[sorted.length - 1];
+
+      const campana = normalizeCampana(lastRow.campana);
+      const gpe = normalizeGpe(lastRow.codigo_grupo || lastRow.grupo);
+      const cap = capacidadMap.get(`${campana}|${gpe}`);
+      const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
+
+      const entry = {
+        documento: doc,
+        nombre_completo: `${normalizeText(lastRow.apellido_paterno)} ${normalizeText(lastRow.apellido_materno)} ${normalizeText(lastRow.nombres)}`.trim(),
+        // ult_estado sincronizado 100% con lastStateMap
+        ult_estado: docState,
+        fecha_inicio_ojt: cap?.fecha_inicio_ojt || '—',
+        gpe: gpe || '—',
+        condicion_laboral: normalizeText(lastRow.condicion_laboral, '—'),
+        tipo_reclutado: normalizeText(lastRow.tipo_reclutado, '—'),
+        fechas: {},
+      };
+
+      sorted.forEach((row) => {
+        if (row.fecha_registro_asistencia) {
+          entry.fechas[row.fecha_registro_asistencia] = normalizeSigla(row.sigla);
+        }
       });
 
-    let sumDesertores = 0;
-    let sumCantAusencia = 0;
+      map.set(doc, entry);
+    });
+
+    let result = Array.from(map.values());
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (r) => r.documento.toLowerCase().includes(q) || r.nombre_completo.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [filteredData, capacidadMap, lastStateMap, search]);
+
+  const kpis = useMemo(() => {
+    const docMap = new Map();
+    let cantAusencia = 0;
+    let cantAsistencia = 0;
+
+    kpiFilteredData.forEach((row) => {
+      const doc = normalizeText(row.documento);
+      if (!doc) return;
+
+      if (!docMap.has(doc)) {
+        docMap.set(doc, []);
+      }
+      docMap.get(doc).push(row);
+
+      const sigla = normalizeSigla(row.sigla);
+      if (sigla === 'A' || sigla === 'I-OP') {
+        cantAsistencia += 1;
+      }
+      if (sigla === 'FI' || sigla === 'FJ') {
+        cantAusencia += 1;
+      }
+    });
+
+    let activos = 0;
+    let desertores = 0;
+    let qDia1 = 0;
+
+    docMap.forEach((rows, doc) => {
+      const docState = lastStateMap.get(doc) || 'SIN ESTADO';
+      const isActivo = docState === 'ACTIVO';
+      const isDesertor = docState === 'CESADO';
+      const attendedAny = rows.some((r) => {
+        const s = normalizeSigla(r.sigla);
+        return s === 'A' || s === 'I-OP';
+      });
+
+      if (isActivo) activos += 1;
+      if (isDesertor) desertores += 1;
+      if (attendedAny || isActivo) qDia1 += 1;
+    });
+
     let sumMetaDia1 = 0;
     let sumRqSolicitado = 0;
-    let sumCantAsistencias = 0;
+    const computedGroups = new Set();
 
-    const uniqueGroups = new Set();
-    filteredRows.forEach(row => {
-      if (row.raw_gpe) uniqueGroups.add(`${row.raw_gpe}|${row.campana}`);
-    });
-
-    uniqueGroups.forEach(key => {
-      const [gCode, cName] = key.split('|');
-      const cap = capacidades.find(c => c.codigo === gCode && c.campana === cName);
-      if (cap) {
-        sumMetaDia1 += Number(cap.meta_dia_1) || 0;
-        sumRqSolicitado += Number(cap.rq_solicitado) || 0;
-      }
-    });
-
-    filteredRows.forEach(row => {
-      if (row.isBajaDia1) return;
-
-      if (row.ult_estado === 'CESADO') {
-        sumDesertores++;
-      }
-
-      let hasAusencia = false;
-      Object.values(row.fechas).forEach(sigla => {
-        if (['FI', 'FJ', 'S', 'SUS'].includes(sigla)) {
-          hasAusencia = true;
+    // 1. Sumar capacidades de los grupos en las filas activas
+    kpiFilteredData.forEach((row) => {
+      const key = `${normalizeCampana(row.campana)}|${normalizeGpe(row.codigo_grupo || row.grupo)}`;
+      if (!computedGroups.has(key)) {
+        computedGroups.add(key);
+        const cap = capacidadMap.get(key);
+        if (cap) {
+          sumMetaDia1 += cap.meta_dia_1;
+          sumRqSolicitado += cap.rq_solicitado;
         }
-        if (['A', 'I-OP'].includes(sigla)) {
-          sumCantAsistencias++;
+      }
+    });
+
+    // 2. Si no hubo filas de asistencia pero hay capacidades coincidentes con los filtros seleccionados
+    if (sumRqSolicitado === 0 && (filters.periodo !== 'Todas' || filters.segmento !== 'Todas' || filters.campana !== 'Todas' || filters.gpe !== 'Todas')) {
+      capacidades.forEach((cap) => {
+        const capCampana = normalizeCampana(cap.campana);
+        const capGpe = normalizeGpe(cap.codigo);
+        const capPeriodo = normalizeText(cap.periodo);
+        const capSegmento = normalizeSegmento(cap.segmento);
+
+        if (filters.periodo !== 'Todas' && capPeriodo !== filters.periodo) return;
+        if (filters.segmento !== 'Todas' && capSegmento !== filters.segmento) return;
+        if (filters.campana !== 'Todas' && capCampana !== filters.campana) return;
+        if (filters.gpe !== 'Todas' && capGpe !== filters.gpe) return;
+
+        const key = `${capCampana}|${capGpe}`;
+        if (!computedGroups.has(key)) {
+          computedGroups.add(key);
+          sumMetaDia1 += Number(cap.meta_dia_1) || 0;
+          sumRqSolicitado += Number(cap.rq_solicitado) || 0;
         }
       });
-      if (hasAusencia) sumCantAusencia++;
-    });
+    }
 
     return {
-      pivotRows: filteredRows.filter(p => !p.isBajaDia1),
-      uniqueDates: dates,
-      updatedDate: dates.length ? dates[dates.length - 1] : new Date().toLocaleDateString('es-PE'),
-      kpis: { 
-        activos: filteredRows.filter(p => p.ult_estado === 'ACTIVO' && !p.isBajaDia1).length, 
-        qDia1: filteredRows.filter(p => !p.isBajaDia1).length, 
-        desertores: sumDesertores, 
-        cantAusencia: sumCantAusencia, 
-        cantProg: filteredRows.length,
-        cantAsistencia: sumCantAsistencias,
-        sumMetaDia1,
-        sumRqSolicitado
-      }
+      activos,
+      qDia1,
+      desertores,
+      cantAusencia,
+      cantAsistencia,
+      cantProg: docMap.size,
+      sumMetaDia1,
+      sumRqSolicitado,
     };
-  }, [aggregatedPeople, filters, search, capacidades]);
+  }, [kpiFilteredData, capacidadMap, lastStateMap, capacidades, filters]);
 
   const percentages = useMemo(() => {
-    const denomCumplimiento = Math.max(kpis.sumMetaDia1, 1);
-    const denomDotacion = Math.max(kpis.sumRqSolicitado, 1);
-    const denomDesercion = Math.max(kpis.qDia1, 1);
-    const denomAbsentismo = Math.max(kpis.cantAusencia + kpis.cantAsistencia, 1);
+    const cumpDia1 = kpis.sumMetaDia1 > 0 
+      ? Math.round((kpis.qDia1 / kpis.sumMetaDia1) * 100) 
+      : (kpis.cantProg > 0 ? Math.round((kpis.qDia1 / kpis.cantProg) * 100) : 100);
+
+    const desercion = kpis.cantProg > 0 
+      ? Math.round((kpis.desertores / kpis.cantProg) * 100) 
+      : 0;
+
+    const dotacion = kpis.sumRqSolicitado > 0 
+      ? Math.round((kpis.activos / kpis.sumRqSolicitado) * 100) 
+      : (kpis.cantProg > 0 ? Math.round((kpis.activos / kpis.cantProg) * 100) : 100);
+
+    const totalAsisFalt = kpis.cantAsistencia + kpis.cantAusencia;
+    const absentismo = totalAsisFalt > 0 
+      ? Math.round((kpis.cantAusencia / totalAsisFalt) * 100) 
+      : 0;
 
     return {
-      cumpDia1: (kpis.qDia1 / denomCumplimiento) * 100,
-      desercion: (kpis.desertores / denomDesercion) * 100,
-      dotacion: (kpis.activos / denomDotacion) * 100,
-      absentismo: (kpis.cantAusencia / denomAbsentismo) * 100,
+      cumpDia1,
+      desercion: Math.min(desercion, 100),
+      dotacion,
+      absentismo: Math.min(absentismo, 100),
     };
   }, [kpis]);
 
-  const trends = useMemo(
-    () => ({
-      activos: [Math.max(kpis.activos - 3, 0), Math.max(kpis.activos - 1, 0), kpis.activos],
-      qDia1: [Math.max(kpis.qDia1 - 2, 0), Math.max(kpis.qDia1 - 1, 0), kpis.qDia1],
-      desertores: [Math.max(kpis.desertores - 2, 0), Math.max(kpis.desertores - 1, 0), kpis.desertores],
-      ausencia: [Math.max(kpis.cantAusencia - 2, 0), Math.max(kpis.cantAusencia - 1, 0), kpis.cantAusencia],
-      prog: [Math.max(kpis.cantProg - 5, 0), Math.max(kpis.cantProg - 2, 0), kpis.cantProg],
-    }),
-    [kpis],
-  );
-
-  const handleFilterChange = (key, value) => {
-    setFilters((current) => ({ ...current, [key]: value }));
-  };
-
   const handleExport = () => {
     if (!pivotRows.length) return;
-
-    const payload = pivotRows.map((row) => {
-      const item = {
-        DOCUMENTO: row.documento,
-        'NOMBRE COMPLETO': row.nombre_completo,
-        'ULT. ESTADO': row.ult_estado,
-        GPE: row.gpe,
-        'CONDICIÓN LABORAL': row.condicion_laboral,
-        'TIPO RECLUTADO': row.tipo_reclutado,
+    const rowsToExport = pivotRows.map((r) => {
+      const base = {
+        DOCUMENTO: r.documento,
+        'NOMBRE COMPLETO': r.nombre_completo,
+        'ULT. ESTADO': r.ult_estado,
+        'FECHA INICIO OJT': r.fecha_inicio_ojt,
+        GPE: r.gpe,
+        'CONDICIÓN LABORAL': r.condicion_laboral,
+        'TIPO RECLUTADO': r.tipo_reclutado,
       };
       uniqueDates.forEach((date) => {
-        item[date] = row.fechas[date] || '';
+        base[date] = r.fechas[date] || '';
       });
-      return item;
+      return base;
     });
 
+    const worksheet = XLSX.utils.json_to_sheet(rowsToExport);
     const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.json_to_sheet(payload);
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Control de Asistencia');
-    XLSX.writeFile(workbook, `Control_Asistencia_${Date.now()}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Consolidado');
+    XLSX.writeFile(workbook, `Consolidado_Asistencias_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
+
+  const FIXED_COLS = [
+    { id: 'documento', label: 'DOCUMENTO', width: 95, left: 0 },
+    { id: 'nombre', label: 'NOMBRE COMPLETO', width: 220, left: 95 },
+    { id: 'estado', label: 'ULT. ESTADO', width: 85, left: 315 },
+    { id: 'fecha', label: 'FECHA OJT', width: 95, left: 400 },
+    { id: 'gpe', label: 'GPE', width: 110, left: 495 },
+    { id: 'condicion', label: 'CONDICIÓN', width: 95, left: 605 },
+    { id: 'tipo', label: 'TIPO REC.', width: 90, left: 700 },
+  ];
 
   if (loading) {
     return (
-      <PageLayout className="items-center justify-center p-6">
-        <Card className="flex flex-col items-center justify-center gap-4 px-10 py-12">
-          <Loader2 size={40} className="animate-spin text-[var(--accent)]" />
-          <p className="text-sm font-medium text-[var(--text-muted)] animate-pulse">Analizando consolidado de BI...</p>
-        </Card>
-      </PageLayout>
+      <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 size={32} className="animate-spin text-cyan-400" />
+          <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            Cargando Consolidado PowerBI...
+          </p>
+        </div>
+      </div>
     );
   }
 
-  const FIXED_COLS = [
-    { id: 'documento', label: 'DOCUMENTO', width: 85, left: 0 },
-    { id: 'nombre', label: 'NOMBRE COMPLETO', width: 260, left: 85 },
-    { id: 'estado', label: 'ULT. ESTADO', width: 90, left: 345 },
-    { id: 'fecha', label: 'FECHA INICIO OJT', width: 115, left: 435 },
-    { id: 'gpe', label: 'GPE', width: 120, left: 550 },
-    { id: 'condicion', label: 'CONDICIÓN LABORAL', width: 130, left: 670 },
-    { id: 'tipo', label: 'TIPO RECLUTADO', width: 120, left: 800 },
-  ];
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-[var(--bg-base)]">
+        <div className="p-6 rounded-2xl bg-[var(--bg-surface)] border border-rose-500/30 text-center max-w-sm space-y-3 shadow-xl">
+          <AlertCircle size={28} className="text-rose-500 mx-auto" />
+          <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
+          <p className="text-xs text-[var(--text-muted)]">{error}</p>
+          <button onClick={loadData} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <PageLayout className="p-4 md:p-6 space-y-6 overflow-y-auto">
-      <PageHeader 
-        title="Control de Asistencia" 
-        subtitle="GEA Perú · RR.HH."
-        actions={
-          <div className="flex flex-wrap w-full xl:w-auto gap-2">
-            {[
-                { key: 'periodo', label: 'Período', options: filterOptions.periodo },
-                { key: 'segmento', label: 'Segmento', options: filterOptions.segmento },
-                { key: 'campana', label: 'Campaña', options: filterOptions.campana },
-                { key: 'gpe', label: 'GPE', options: filterOptions.gpe },
-                { key: 'estado', label: 'Estado', options: filterOptions.estado },
-              ].map(({ key, label, options }) => (
-                <div key={key} className="min-w-0">
-                  <label className="block text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)] font-semibold mb-1 truncate">{label}</label>
-                  <select
-                    value={filters[key]}
-                    onChange={(event) => handleFilterChange(key, event.target.value)}
-                    className="w-full appearance-none rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-2 py-1.5 pr-6 text-xs font-medium text-[var(--text-primary)] outline-none transition focus:border-[var(--accent)] truncate"
-                  >
-                    {options.map((option) => (
-                      <option key={option} value={option} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-          </div>
-        }
-      />
-
-      <Card noPadding className="relative overflow-hidden shadow-sm flex flex-col gap-2">
-        <div className="relative z-10 flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-1.5 px-4 pt-4 shrink-0">
-          <span className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)] font-bold">Panorama General</span>
-          <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)] font-semibold">
-            <span className="h-2 w-2 rounded-full bg-[var(--accent)] animate-pulse" />
-            Al <strong className="text-[var(--text-primary)]">{updatedDate}</strong>
-          </span>
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
+      
+      {/* ── 1. COMPACT HERO HEADER + FILTERS IN 1 ROW (Height ~38px) ── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
+        
+        {/* Title */}
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#06B6D4] animate-pulse" />
+          <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
+            Control de Asistencia <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· consolidado bi</span>
+          </h2>
         </div>
 
-        <div className="relative z-10 grid grid-cols-5 gap-2 px-4">
-            <MetricCard featured icon={Users} label="Cantidad de Activos" value={kpis.activos} color="#0E8F63" trend={trends.activos} subcopy={`de ${kpis.cantProg} programados`} />
-            <MetricCard icon={Monitor} label="Q Día 1" value={kpis.qDia1} color="#0E8F63" trend={trends.qDia1} />
-            <MetricCard icon={CalendarX} label="Desertores" value={kpis.desertores} color="#C5344B" trend={trends.desertores} />
-            <MetricCard icon={ClockAlert} label="Cant. Ausencia" value={kpis.cantAusencia} color="#C5344B" trend={trends.ausencia} />
-            <MetricCard icon={ClipboardList} label="Cant. Prog." value={kpis.cantProg} color="#38BDF8" trend={trends.prog} />
-        </div>
-
-        <div className="relative z-10 grid grid-cols-4 gap-2 px-4 pb-4">
-          <Gauge value={percentages.cumpDia1} label="% Cump. Día 1" color="#F59E0B" semanticLabel="Atención" tooltipData={[`META DÍA 1 = ${kpis.sumMetaDia1}`, `Q DÍA 1 = ${kpis.qDia1}`, `% CUMPLIMIENTO = ${percentages.cumpDia1.toFixed(0)}%`]} />
-          <Gauge value={percentages.desercion} label="% Deserción" color="#EF4444" semanticLabel="Crítico" tooltipData={[`Q DÍA 1 = ${kpis.qDia1}`, `DESERTORES = ${kpis.desertores}`, `% DESERCIÓN = ${percentages.desercion.toFixed(0)}%`]} />
-          <Gauge value={percentages.dotacion} label="% Dotación" color="#10B981" semanticLabel="Dentro de meta" tooltipData={[`RQ SOLICITADO = ${kpis.sumRqSolicitado}`, `ACTIVOS = ${kpis.activos}`, `% DOTACIÓN = ${percentages.dotacion.toFixed(0)}%`]} />
-          <Gauge value={percentages.absentismo} label="% Absentismo" color="#EF4444" semanticLabel="Crítico" tooltipData={[`TOTAL ASISTENCIAS = ${kpis.cantAsistencia}`, `TOTAL FALTAS = ${kpis.cantAusencia}`, `% ABSENTISMO = ${percentages.absentismo.toFixed(0)}%`]} />
-        </div>
-      </Card>
-
-      <Card noPadding className="flex-1 min-h-[400px] flex flex-col shadow-sm">
-        <div className="shrink-0 flex items-center justify-between gap-4 px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] rounded-t-xl">
-            <div className="flex-1 max-w-[400px]">
-              <label className="relative block w-full">
-                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar por documento o nombre..."
-                  className="w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] py-2 pl-9 pr-3 text-xs outline-none transition focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent-glow)] text-[var(--text-primary)]"
-                />
-              </label>
+        {/* Inline Compact Filter Badges */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {[
+            { key: 'periodo', label: 'Período', options: filterOptions.periodo },
+            { key: 'segmento', label: 'Segmento', options: filterOptions.segmento },
+            { key: 'campana', label: 'Campaña', options: filterOptions.campana },
+            { key: 'gpe', label: 'GPE', options: filterOptions.gpe },
+            { key: 'estado', label: 'Estado', options: filterOptions.estado },
+          ].map(({ key, label, options }) => (
+            <div key={key} className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-normal)] rounded-lg px-2 py-1">
+              <span className="text-[8px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                {label}:
+              </span>
+              <select
+                value={filters[key]}
+                onChange={(e) => handleFilterChange(key, e.target.value)}
+                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[110px] truncate"
+              >
+                {options.map((opt) => (
+                  <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                    {opt}
+                  </option>
+                ))}
+              </select>
             </div>
+          ))}
+        </div>
+      </div>
 
+      {/* ── 2. KPI STRIP: STRATEGIC INDICATORS (TOP, PROMINENT) + OPERATIONAL COUNTS (BOTTOM, COMPACT) ── */}
+      <div className="flex flex-col gap-2 shrink-0">
+        
+        {/* ROW 1: STRATEGIC INDICATORS (Larger, High-Impact Gauges with Minimalist Vectors) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          <HeroIndicatorCard 
+            art={KpiArt.Target}
+            label="% Cumplimiento Día 1" 
+            value={percentages.cumpDia1} 
+            color={percentages.cumpDia1 >= 95 ? '#10B981' : percentages.cumpDia1 >= 80 ? '#F59E0B' : '#F43F5E'} 
+            statusText={percentages.cumpDia1 >= 95 ? 'Excelente' : percentages.cumpDia1 >= 80 ? 'Atención' : 'Bajo'} 
+            sublabel={`Meta D1: ${kpis.sumMetaDia1} · Real: ${kpis.qDia1}`}
+            detail={`${kpis.qDia1} asistentes de ${kpis.sumMetaDia1 || kpis.cantProg} meta`}
+          />
+          <HeroIndicatorCard 
+            art={KpiArt.Attrition}
+            label="% Deserción" 
+            value={percentages.desercion} 
+            color={percentages.desercion >= 40 ? '#F43F5E' : percentages.desercion >= 35 ? '#F59E0B' : '#10B981'} 
+            statusText={percentages.desercion >= 40 ? 'Crítico' : percentages.desercion >= 35 ? 'Atención' : 'Óptimo'} 
+            sublabel={`Desertores: ${kpis.desertores} postulantes`}
+            detail={`${kpis.desertores} bajas sobre ${kpis.cantProg} convocados`}
+          />
+          <HeroIndicatorCard 
+            art={KpiArt.Capacity}
+            label="% Dotación" 
+            value={percentages.dotacion} 
+            color={percentages.dotacion >= 95 ? '#10B981' : percentages.dotacion >= 80 ? '#06B6D4' : '#F43F5E'} 
+            statusText={percentages.dotacion >= 95 ? 'Dentro de Meta' : percentages.dotacion >= 80 ? 'Aceptable' : 'Déficit'} 
+            sublabel={`RQ: ${kpis.sumRqSolicitado} · Activos: ${kpis.activos}`}
+            detail={`${kpis.activos} activos de ${kpis.sumRqSolicitado || kpis.cantProg} requeridos`}
+          />
+          <HeroIndicatorCard 
+            art={KpiArt.Absence}
+            label="% Absentismo" 
+            value={percentages.absentismo} 
+            color={percentages.absentismo <= 5 ? '#10B981' : percentages.absentismo <= 12 ? '#F59E0B' : '#F43F5E'} 
+            statusText={percentages.absentismo <= 5 ? 'Bajo' : percentages.absentismo <= 12 ? 'Moderado' : 'Crítico'} 
+            sublabel={`Faltas: ${kpis.cantAusencia} jornadas`}
+            detail={`${kpis.cantAusencia} inasistencias registradas`}
+          />
+        </div>
+
+        {/* ROW 2: OPERATIONAL VOLUMES (Smaller, Refined, Balanced with Contextual Minimalist Drawing) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          <CompactVolumeCard 
+            art={KpiArt.ActiveUsers}
+            label="Cantidad de Activos" 
+            value={kpis.activos} 
+            color="#06B6D4" 
+            trend={[10, 15, 12, 19, 24, kpis.activos]} 
+            subcopy={`de ${kpis.cantProg} prog.`} 
+          />
+          <CompactVolumeCard 
+            art={KpiArt.DayOne}
+            label="Q Día 1" 
+            value={kpis.qDia1} 
+            color="#10B981" 
+            trend={[5, 12, 18, 22, kpis.qDia1]} 
+            subcopy="asistieron"
+          />
+          <CompactVolumeCard 
+            art={KpiArt.Dropouts}
+            label="Desertores" 
+            value={kpis.desertores} 
+            color="#F43F5E" 
+            trend={[2, 4, 8, 14, kpis.desertores]} 
+            subcopy="bajas totales"
+          />
+          <CompactVolumeCard 
+            art={KpiArt.Faults}
+            label="Cant. Ausencia" 
+            value={kpis.cantAusencia} 
+            color="#F59E0B" 
+            trend={[4, 8, 6, 12, kpis.cantAusencia]} 
+            subcopy="FI + FJ"
+          />
+          <CompactVolumeCard 
+            art={KpiArt.Scheduled}
+            label="Programados" 
+            value={kpis.cantProg} 
+            color="#8B5CF6" 
+            trend={[10, 20, 30, 40, kpis.cantProg]} 
+            subcopy="nómina total"
+          />
+        </div>
+
+      </div>
+
+      {/* ── 3. FULL-HEIGHT TABLE WITH INTERNAL SCROLL ── */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
+        
+        {/* Table Toolbar (Height ~36px) */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 gap-3 shrink-0">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por documento o nombre..."
+              className="w-full h-7 pl-7 pr-6 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-cyan-500 transition-colors font-medium"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                <X size={11} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">
+              {pivotRows.length} postulantes
+            </span>
             <button
-              type="button"
               onClick={handleExport}
               disabled={!pivotRows.length}
-              className="btn-primary inline-flex items-center justify-center gap-1.5 text-xs py-2"
+              className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all active:scale-95 disabled:opacity-30 cursor-pointer"
             >
-              <Download size={14} />
-              Excel
+              <Download size={12} /> Excel
             </button>
+          </div>
         </div>
 
-        <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative">
-          <table className="w-full min-w-[1300px] border-separate border-spacing-0 text-left text-[11px]">
-            <thead>
+        {/* Scrollable Matrix Table */}
+        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[var(--bg-surface)]">
+          <table className="w-full min-w-[1200px] border-separate border-spacing-0 text-left text-xs">
+            <thead className="sticky top-0 z-30 shadow-xs">
               <tr>
                 {FIXED_COLS.map((col) => (
-                  <th 
-                    key={col.id} 
-                    className="sticky top-0 z-30 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2.5 text-left text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--text-muted)]"
+                  <th
+                    key={col.id}
+                    className="sticky top-0 z-30 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-2.5 py-2 text-left text-[9px] font-black uppercase tracking-[0.14em] text-[var(--text-muted)]"
                     style={{ left: col.left, minWidth: col.width, maxWidth: col.width }}
                   >
                     {col.label}
                   </th>
                 ))}
                 {uniqueDates.map((date) => (
-                  <th key={date} className="sticky top-0 z-10 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2.5 text-center text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--accent)]">
+                  <th
+                    key={date}
+                    className="sticky top-0 z-10 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-2 py-2 text-center text-[9px] font-black uppercase tracking-[0.14em] text-[var(--accent)]"
+                  >
                     {date}
                   </th>
                 ))}
@@ -614,43 +1040,43 @@ export default function ConsolidadoPowerBI() {
             </thead>
             <tbody>
               {pivotRows.map((row) => (
-                <tr key={row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] table-row">
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 font-semibold text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
+                <tr key={row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 font-bold font-mono text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
                     {row.documento}
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[1].left, minWidth: FIXED_COLS[1].width, maxWidth: FIXED_COLS[1].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-semibold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[1].left, minWidth: FIXED_COLS[1].width, maxWidth: FIXED_COLS[1].width }}>
                     {row.nombre_completo}
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
-                    <span className="inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] truncate max-w-full" style={{ backgroundColor: 'var(--bg-elevated)', color: row.ult_estado === 'ACTIVO' ? 'var(--accent)' : '#F43F5E' }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
+                    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
                       {row.ult_estado}
                     </span>
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 font-medium text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
                     {row.fecha_inicio_ojt}
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
                     {row.gpe}
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
                     {row.condicion_laboral}
                   </td>
-                  <td className="sticky z-20 bg-inherit px-3 py-1.5 text-[var(--text-primary)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
                     {row.tipo_reclutado}
                   </td>
                   {uniqueDates.map((date) => {
                     const sigla = row.fechas[date] || '';
                     const meta = STATUS_META[sigla];
                     return (
-                      <td key={date} className="px-1.5 py-1.5 text-center border-b border-[var(--border-subtle)]">
+                      <td key={date} className="px-1 py-1 text-center border-b border-[var(--border-subtle)]">
                         <div
-                          className="heat-cell mx-auto flex h-7 min-w-[36px] items-center justify-center rounded-[6px] px-1.5 text-[10px] font-bold uppercase tracking-[0.12em]"
+                          className="heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-transform group-hover:scale-105"
                           style={{
-                            backgroundColor: meta ? meta.bg : 'rgba(255,255,255,0.06)',
-                            color: meta ? meta.text : '#9AA3AF',
+                            backgroundColor: meta ? meta.bg : 'var(--status-empty-bg)',
+                            color: meta ? meta.text : 'var(--text-muted)',
                           }}
                         >
-                          {sigla || ''}
+                          {sigla || '—'}
                         </div>
                       </td>
                     );
@@ -661,16 +1087,17 @@ export default function ConsolidadoPowerBI() {
               {pivotRows.length === 0 && (
                 <tr>
                   <td colSpan={7 + uniqueDates.length} className="px-4 py-16 text-center text-[var(--text-muted)]">
-                    <AlertCircle size={36} className="mx-auto mb-4 text-[var(--text-faint)]" />
-                    <p className="font-medium text-sm">No hay registros de asistencia que coincidan con los filtros aplicados.</p>
-                    <p className="mt-1 text-xs opacity-75">Intente limpiar los filtros o seleccionar otra campaña.</p>
+                    <AlertCircle size={32} className="mx-auto mb-2 text-[var(--text-faint)]" />
+                    <p className="font-bold text-xs">No hay registros de asistencia que coincidan con los filtros.</p>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-      </Card>
-    </PageLayout>
+
+      </div>
+
+    </div>
   );
 }

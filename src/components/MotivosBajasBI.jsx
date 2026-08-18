@@ -1,13 +1,10 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList
 } from 'recharts'
-import { Filter } from 'lucide-react'
+import { Filter, AlertCircle, RefreshCw, Loader2, Sparkles, TrendingDown, Layers } from 'lucide-react'
 import { fetchGrupos, fetchAllAsistenciasBajas, fetchPostulantes } from '../lib/dataService'
-import PageLayout from './ui/PageLayout'
-import PageHeader from './ui/PageHeader'
-import Card from './ui/Card'
 
 const COLORS = {
   bars: 'var(--accent)',
@@ -16,19 +13,39 @@ const COLORS = {
   bg: 'var(--bg-elevated)'
 }
 
-export default function MotivosBajasBI() {
-  const [data, setData] = useState([])
-  const [loading, setLoading] = useState(true)
+// In-memory cache to make tab switching instant
+let cachedMotivosBajas = null
 
-  // Sidebar Filters
+export default function MotivosBajasBI({ grupos: propGrupos = [], postulantes: propPostulantes = [] }) {
+  const [data, setData] = useState(cachedMotivosBajas || [])
+  const [loading, setLoading] = useState(!cachedMotivosBajas)
+  const [error, setError] = useState(null)
+
+  // Top Bar Filters
   const [selectedSegmento, setSelectedSegmento] = useState('TODAS')
   const [selectedCampana, setSelectedCampana] = useState('TODAS')
   const [selectedGrupo, setSelectedGrupo] = useState('TODAS')
   const [selectedPeriodo, setSelectedPeriodo] = useState('TODAS')
   const [selectedSemana, setSelectedSemana] = useState('TODAS')
 
-  useEffect(() => {
-    Promise.all([fetchGrupos(), fetchAllAsistenciasBajas(), fetchPostulantes()]).then(([grupos, asistenciasBajas, postulantes]) => {
+  const loadData = useCallback(async (force = false) => {
+    if (!force && cachedMotivosBajas && cachedMotivosBajas.length > 0) {
+      setData(cachedMotivosBajas)
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const gruposPromise = (propGrupos && propGrupos.length > 0) ? Promise.resolve(propGrupos) : fetchGrupos()
+      const postulantesPromise = (propPostulantes && propPostulantes.length > 0) ? Promise.resolve(propPostulantes) : fetchPostulantes()
+      
+      const [grupos, asistenciasBajas, postulantes] = await Promise.all([
+        gruposPromise,
+        fetchAllAsistenciasBajas(),
+        postulantesPromise
+      ])
+
       // Create a map for fast lookup of group info (periodo)
       const groupMap = new Map()
       grupos.forEach(g => {
@@ -66,13 +83,19 @@ export default function MotivosBajasBI() {
         }
       })
 
+      cachedMotivosBajas = bajas
       setData(bajas)
-      setLoading(false)
-    }).catch(err => {
+    } catch (err) {
       console.error(err)
+      setError(err?.message || 'Error al cargar los datos de motivos de bajas.')
+    } finally {
       setLoading(false)
-    })
-  }, [])
+    }
+  }, [propGrupos, propPostulantes])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   // Derived Filter Lists (Hierarchical Cross-filtering)
   const segmentos = useMemo(() => ['TODAS', ...new Set(data.map(d => d.segmento).filter(Boolean))], [data])
@@ -81,7 +104,7 @@ export default function MotivosBajasBI() {
     const filtered = data.filter(d => selectedSegmento === 'TODAS' || d.segmento === selectedSegmento)
     return ['TODAS', ...new Set(filtered.map(d => d.campana || d.campaign).filter(Boolean))]
   }, [data, selectedSegmento])
-  
+
   const grupos = useMemo(() => {
     const filtered = data.filter(d => 
       (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
@@ -89,15 +112,14 @@ export default function MotivosBajasBI() {
     )
     return ['TODAS', ...new Set(filtered.map(d => d.grupo_cap).filter(Boolean))]
   }, [data, selectedSegmento, selectedCampana])
-  
+
   const periodos = useMemo(() => {
     const filtered = data.filter(d => 
       (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
       (selectedCampana === 'TODAS' || (d.campana || d.campaign) === selectedCampana) &&
       (selectedGrupo === 'TODAS' || d.grupo_cap === selectedGrupo)
     )
-    const ps = filtered.map(d => d.periodo_ingreso).filter(Boolean)
-    return ['TODAS', ...new Set(ps)].sort((a, b) => b.localeCompare(a)) // desc
+    return ['TODAS', ...new Set(filtered.map(d => d.periodo_ingreso).filter(Boolean))].sort()
   }, [data, selectedSegmento, selectedCampana, selectedGrupo])
 
   const semanas = useMemo(() => {
@@ -110,17 +132,6 @@ export default function MotivosBajasBI() {
     const sems = filtered.map(d => d.semana).filter(Boolean)
     return ['TODAS', ...new Set(sems)].sort()
   }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo])
-
-  const motivos = useMemo(() => {
-    const filtered = data.filter(d => 
-      (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
-      (selectedCampana === 'TODAS' || (d.campana || d.campaign) === selectedCampana) &&
-      (selectedGrupo === 'TODAS' || d.grupo_cap === selectedGrupo) &&
-      (selectedPeriodo === 'TODAS' || d.periodo_ingreso === selectedPeriodo) &&
-      (selectedSemana === 'TODAS' || d.semana === selectedSemana)
-    )
-    return ['TODAS', ...new Set(filtered.map(d => d.motivo_baja || 'SIN MOTIVO'))].sort()
-  }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana])
 
   // Apply filters
   const filteredData = useMemo(() => {
@@ -143,7 +154,7 @@ export default function MotivosBajasBI() {
     })
     return Object.entries(counts)
       .map(([period, value]) => ({ period, value }))
-      .sort((a, b) => b.period.localeCompare(a.period)) // Descending
+      .sort((a, b) => b.period.localeCompare(a.period))
   }, [filteredData])
 
   // 2. Ranking de Motivos
@@ -176,7 +187,7 @@ export default function MotivosBajasBI() {
       grandTotal++
     })
 
-    const topMotivos = byMotivo.map(m => m.motivo).slice(0, 15) // Limit columns to top 15 for table
+    const topMotivos = byMotivo.map(m => m.motivo).slice(0, 15)
     const rows = Object.keys(rowCounts).sort().map(c => {
       const row = { campana: c, total: rowCounts[c].total }
       topMotivos.forEach(m => {
@@ -190,211 +201,240 @@ export default function MotivosBajasBI() {
 
   if (loading) {
     return (
-      <PageLayout>
-        <div className="flex h-[50vh] items-center justify-center text-[var(--text-muted)] font-medium">
-          <span className="animate-pulse">Cargando datos de bajas...</span>
+      <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 size={32} className="animate-spin text-cyan-400" />
+          <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            Cargando Análisis de Bajas...
+          </p>
         </div>
-      </PageLayout>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-[var(--bg-base)]">
+        <div className="p-6 rounded-2xl bg-[var(--bg-surface)] border border-rose-500/30 text-center max-w-sm space-y-3 shadow-xl">
+          <AlertCircle size={28} className="text-rose-500 mx-auto" />
+          <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
+          <p className="text-xs text-[var(--text-muted)]">{error}</p>
+          <button onClick={loadData} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
+            Reintentar
+          </button>
+        </div>
+      </div>
     )
   }
 
   return (
-    <PageLayout className="p-4 md:p-6 space-y-6">
-      <PageHeader 
-        title="Análisis de Bajas" 
-        subtitle="Reporte de motivos y deserción por periodo y campaña"
-      />
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
       
-      <div className="flex flex-col lg:flex-row gap-6 items-start animate-fadeIn">
-        {/* SIDEBAR FILTERS */}
-        <Card className="w-full lg:w-72 shrink-0 flex flex-col space-y-6">
-          <div className="font-black uppercase tracking-wider flex items-center gap-2 text-[var(--text-primary)] border-b border-[var(--border-subtle)] pb-4">
-            <Filter size={18} className="text-[var(--accent)]" /> FILTROS
-          </div>
+      {/* ── 1. COMPACT HERO HEADER + FILTERS IN 1 ROW (Height ~38px) ── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
         
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">Segmento</label>
-            <select
-              className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
-              value={selectedSegmento} onChange={e => { setSelectedSegmento(e.target.value); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }}
-            >
-              {segmentos.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+        {/* Title + Total Badge */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_#F43F5E] animate-pulse" />
+          <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
+            Análisis de Bajas <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· motivos & deserción</span>
+          </h2>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-500 border border-rose-500/30">
+            Total: {filteredData.length} bajas
+          </span>
+        </div>
+
+        {/* Inline Compact Filter Badges */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {[
+            { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: segmentos },
+            { label: 'Campaña', val: selectedCampana, set: (v) => { setSelectedCampana(v); setSelectedGrupo('TODAS'); }, opts: campanas },
+            { label: 'Grupo', val: selectedGrupo, set: setSelectedGrupo, opts: grupos },
+            { label: 'Periodo', val: selectedPeriodo, set: (v) => { setSelectedPeriodo(v); setSelectedSemana('TODAS'); }, opts: periodos },
+            { label: 'Semana', val: selectedSemana, set: setSelectedSemana, opts: semanas },
+          ].map(({ label, val, set, opts }) => (
+            <div key={label} className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-normal)] rounded-lg px-2 py-1">
+              <span className="text-[8px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                {label}:
+              </span>
+              <select
+                value={val}
+                onChange={(e) => set(e.target.value)}
+                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[110px] truncate"
+              >
+                {opts.map((opt) => (
+                  <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 2. FLUID RESPONSIVE CHARTS ROW (Auto-scales on Large Monitors) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-2 min-h-[175px] h-[190px] lg:h-[230px] 2xl:h-[280px] shrink-0">
+        
+        {/* Chart 1: Bajas por Periodo */}
+        <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
+            <span>Bajas por Periodo</span>
+            <Layers size={12} className="text-cyan-400" />
           </div>
-          <div>
-            <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">Campaña</label>
-            <select
-              className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
-              value={selectedCampana} onChange={e => { setSelectedCampana(e.target.value); setSelectedGrupo('TODAS'); }}
-            >
-              {campanas.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">Código de Grupo</label>
-            <select
-              className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
-              value={selectedGrupo} onChange={e => setSelectedGrupo(e.target.value)}
-            >
-              {grupos.map(g => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">PERIODO</label>
-            <select
-              className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
-              value={selectedPeriodo} onChange={e => { setSelectedPeriodo(e.target.value); setSelectedSemana('TODAS'); }}
-            >
-              {periodos.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-bold text-[var(--text-secondary)] uppercase">SEMANA</label>
-            <select
-              className="w-full mt-1.5 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)] transition-colors"
-              value={selectedSemana} onChange={e => setSelectedSemana(e.target.value)}
-            >
-              {semanas.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byPeriod} layout="vertical" margin={{ top: 5, right: 30, left: 35, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.3} />
+                <XAxis type="number" hide />
+                <YAxis dataKey="period" type="category" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10, fontWeight: 700}} width={48} />
+                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
+                <Bar dataKey="value" fill="#06B6D4" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="value" position="right" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="pt-4 border-t border-[var(--border-subtle)]">
-          <h3 className="text-xs font-bold text-[var(--text-secondary)] uppercase mb-3">Top 5 Motivos</h3>
-          <div className="space-y-3">
-            {byMotivo.slice(0, 5).map(m => (
-              <div key={m.motivo}>
-                <div className="text-[10px] text-[var(--text-muted)] font-semibold truncate uppercase tracking-wider" title={m.motivo}>{m.motivo}</div>
-                <div className="text-lg font-black text-[var(--text-primary)]">{m.value}</div>
+        {/* Chart 2: Ranking de Motivos (2 columns) */}
+        <div className="md:col-span-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
+            <span>Ranking de Motivos de Deserción</span>
+            <TrendingDown size={12} className="text-rose-500" />
+          </div>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={byMotivo.slice(0, 10)} margin={{ top: 10, right: 15, left: -20, bottom: 35 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} opacity={0.3} />
+                <XAxis 
+                  dataKey="motivo" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 600}} 
+                  angle={-25} 
+                  textAnchor="end" 
+                  interval={0}
+                  height={35}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10}} />
+                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
+                <Bar dataKey="value" fill="#F43F5E" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                  <LabelList dataKey="value" position="top" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Top 3 Motivos Quick Cards */}
+        <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col justify-between min-w-0 shadow-xs">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+            Top Motivos
+          </div>
+          <div className="space-y-1.5 my-auto">
+            {byMotivo.slice(0, 3).map((m, idx) => (
+              <div key={m.motivo} className="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
+                <div className="min-w-0 flex-1 truncate pr-2">
+                  <p className="text-[9.5px] font-bold text-[var(--text-muted)] truncate uppercase">
+                    #{idx + 1} {m.motivo}
+                  </p>
+                </div>
+                <span className="text-sm font-black text-rose-500 font-mono">
+                  {m.value}
+                </span>
               </div>
             ))}
           </div>
         </div>
-        </Card>
 
-      {/* MAIN CONTENT */}
-      <div className="flex-1 flex flex-col gap-6 min-w-0">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-[var(--text-primary)] uppercase tracking-wider flex items-center gap-2">
-            Desglose Analítico
-          </h1>
-          <div className="badge badge-indigo text-sm">
-            Total Bajas: <span className="ml-1.5 font-bold">{filteredData.length}</span>
+      </div>
+
+      {/* ── 3. FULL-HEIGHT MATRIX TABLE WITH INTERNAL SCROLL ── */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
+        
+        {/* Matrix Header Toolbar */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-black text-[var(--text-primary)] uppercase tracking-tight">
+              Matriz Cruzada: Campaña vs Motivo
+            </span>
+            <span className="text-[9px] text-[var(--text-muted)] font-bold">
+              ({matrixData.rows.length} campañas analizadas)
+            </span>
           </div>
+          <span className="text-[10px] font-mono font-bold text-cyan-400">
+            Total General: {matrixData.grandTotal}
+          </span>
         </div>
 
-        {/* CHARTS ROW */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">
-          
-          {/* Chart 1: Bajas por periodo */}
-          <Card noPadding className="flex flex-col h-full">
-            <div className="bg-[var(--table-head-bg)] text-[var(--text-primary)] text-center font-bold text-xs uppercase tracking-wider py-2.5 rounded-t-2xl border-b border-[var(--border-subtle)]">
-              Bajas por periodo
-            </div>
-            <div className="flex-1 p-4 pb-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={byPeriod} layout="vertical" margin={{ top: 10, right: 30, left: 50, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} />
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="period" type="category" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 11}} width={60} />
-                  <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px'}} />
-                  <Bar dataKey="value" fill={COLORS.bars} radius={[0, 6, 6, 0]}>
-                    <LabelList dataKey="value" position="right" fill="var(--text-muted)" fontSize={11} fontWeight="bold" />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          {/* Chart 2: Ranking de Motivos */}
-          <Card noPadding className="lg:col-span-2 flex flex-col h-full">
-            <div className="bg-[var(--table-head-bg)] text-[var(--text-primary)] text-center font-bold text-xs uppercase tracking-wider py-2.5 rounded-t-2xl border-b border-[var(--border-subtle)]">
-              Ranking de Motivos
-            </div>
-            <div className="flex-1 p-4 pb-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={byMotivo.slice(0, 20)} margin={{ top: 20, right: 10, left: -20, bottom: 80 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} />
-                  <XAxis 
-                    dataKey="motivo" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: 'var(--text-muted)', fontSize: 10, fontWeight: 500}} 
-                    angle={-45} 
-                    textAnchor="end" 
-                    height={80} 
-                  />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 11}} />
-                  <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px'}} />
-                  <Bar dataKey="value" fill={COLORS.bars} radius={[6, 6, 0, 0]}>
-                    <LabelList dataKey="value" position="top" fill="var(--text-muted)" fontSize={11} fontWeight="bold" />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-        </div>
-
-        {/* MATRIX TABLE */}
-        <Card noPadding className="flex-1 flex flex-col min-h-[350px]">
-          <div className="overflow-x-auto overflow-y-auto flex-1 table-scroll">
-            <table className="w-full text-left text-xs whitespace-nowrap">
-              <thead className="sticky top-0 z-10">
-                <tr>
-                  <th className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase tracking-wider">CAMPAÑA</th>
-                  {matrixData.topMotivos.map(m => (
-                    <th key={m} className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-secondary)] uppercase text-center max-w-[120px] truncate" title={m}>
-                      {m}
-                    </th>
-                  ))}
-                  <th className="px-4 py-3 font-bold text-[var(--text-secondary)] uppercase text-center bg-[var(--table-head-bg)]">TOTAL</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)]">
-                {matrixData.rows.map((row, i) => (
-                  <tr key={row.campana} className="hover:bg-[var(--bg-muted)] transition-colors">
-                    <td className="px-4 py-2.5 border-r border-[var(--border-subtle)] font-semibold text-[var(--text-primary)] sticky left-0 bg-[var(--bg-surface)]">
-                      {row.campana}
-                    </td>
-                    {matrixData.topMotivos.map(m => {
-                      const val = row[m]
-                      const pct = matrixData.grandTotal > 0 ? ((val / matrixData.grandTotal) * 100).toFixed(2) : 0
-                      const hasVal = val > 0
-                      return (
-                        <td key={m} className="px-4 py-2.5 border-r border-[var(--border-subtle)] text-center relative">
-                          {hasVal && (
-                            <>
-                              <div className="absolute inset-y-1.5 left-1 bg-[var(--accent)] opacity-10 rounded" style={{ width: `calc(${pct}% * 2)` }} />
-                              <span className="relative text-[var(--text-primary)] font-mono z-10 font-medium">{pct}%</span>
-                            </>
-                          )}
-                        </td>
-                      )
-                    })}
-                    <td className="px-4 py-2.5 text-center text-[var(--text-primary)] font-bold font-mono bg-[var(--bg-elevated)]/30">
-                      {row.total}
-                    </td>
-                  </tr>
+        {/* Scrollable Matrix Table */}
+        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative">
+          <table className="w-full text-left text-xs whitespace-nowrap border-separate border-spacing-0">
+            <thead className="sticky top-0 z-20">
+              <tr>
+                <th className="sticky left-0 z-30 px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)] tracking-wider">
+                  CAMPAÑA
+                </th>
+                {matrixData.topMotivos.map(m => (
+                  <th key={m} className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase text-center max-w-[130px] truncate bg-[var(--table-head-bg)]" title={m}>
+                    {m}
+                  </th>
                 ))}
-              </tbody>
-              <tfoot className="bg-[var(--bg-elevated)] sticky bottom-0 border-t border-[var(--border-normal)]">
-                <tr>
-                  <td className="px-4 py-3 border-r border-[var(--border-normal)] font-bold text-[var(--text-primary)]">TOTAL</td>
-                  {matrixData.topMotivos.map(m => (
-                    <td key={m} className="px-4 py-3 border-r border-[var(--border-normal)] text-center font-bold text-[var(--text-secondary)] font-mono">
-                      {matrixData.grandTotal > 0 ? ((matrixData.colTotals[m] / matrixData.grandTotal) * 100).toFixed(2) : 0}%
-                    </td>
-                  ))}
-                  <td className="px-4 py-3 text-center font-black text-[var(--text-primary)]">{matrixData.grandTotal}</td>
+                <th className="px-3 py-2 border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-primary)] uppercase text-center bg-[var(--table-head-bg)]">
+                  TOTAL
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {matrixData.rows.map((row) => (
+                <tr key={row.campana} className="hover:bg-[var(--bg-elevated)] transition-colors group">
+                  <td className="sticky left-0 z-10 px-3 py-1.5 border-r border-b border-[var(--border-subtle)] font-bold text-[11px] text-[var(--text-primary)] bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)]">
+                    {row.campana}
+                  </td>
+                  {matrixData.topMotivos.map(m => {
+                    const val = row[m]
+                    const pct = matrixData.grandTotal > 0 ? ((val / matrixData.grandTotal) * 100).toFixed(1) : 0
+                    const hasVal = val > 0
+                    return (
+                      <td key={m} className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-center relative">
+                        {hasVal ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="text-[11px] font-mono font-bold text-[var(--text-primary)]">{pct}%</span>
+                            <span className="text-[9px] text-[var(--text-muted)] font-mono">({val})</span>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-[var(--text-muted)] opacity-40">—</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                  <td className="px-3 py-1.5 border-b border-[var(--border-subtle)] text-center text-[11px] font-black text-[var(--text-primary)] font-mono bg-[var(--bg-elevated)]/40">
+                    {row.total}
+                  </td>
                 </tr>
-              </tfoot>
-            </table>
-          </div>
-        </Card>
+              ))}
+            </tbody>
+            <tfoot className="bg-[var(--table-head-bg)] sticky bottom-0 z-20 border-t-2 border-[var(--border-normal)]">
+              <tr>
+                <td className="sticky left-0 z-30 px-3 py-2 border-r border-[var(--border-normal)] font-black text-[10px] text-[var(--text-primary)] bg-[var(--table-head-bg)]">
+                  TOTAL GENERAL
+                </td>
+                {matrixData.topMotivos.map(m => (
+                  <td key={m} className="px-3 py-2 border-r border-[var(--border-normal)] text-center font-black text-[10px] text-[var(--text-primary)] font-mono">
+                    {matrixData.grandTotal > 0 ? ((matrixData.colTotals[m] / matrixData.grandTotal) * 100).toFixed(1) : 0}%
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-center font-black text-xs text-rose-500 font-mono">
+                  {matrixData.grandTotal}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
 
       </div>
-      </div>
-    </PageLayout>
+
+    </div>
   )
 }

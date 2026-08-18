@@ -24,6 +24,25 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border-normal); border-radius: 9999px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+  select {
+    color-scheme: light dark;
+  }
+  [data-theme="dark"] select,
+  .dark select,
+  html.dark select {
+    color-scheme: dark;
+  }
+  [data-theme="light"] select,
+  .light select,
+  html.light select {
+    color-scheme: light;
+  }
+  select option,
+  select optgroup {
+    background-color: var(--bg-surface, #0F172A);
+    color: var(--text-primary, #F8FAFC);
+  }
 }
 
 @layer components {
@@ -182,6 +201,48 @@
   --accent-soft:   rgba(3,105,161,0.1);
   --accent-glow:   rgba(3,105,161,0.2);
   --accent-gradient: linear-gradient(135deg, #0369A1, #0EA5E9);
+
+  /* shadcn/ui compatibility tokens */
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent);
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-muted);
+  --border: var(--border-normal);
+  --input: var(--input-border);
+  --ring: var(--accent);
+  --radius: 0.75rem;
+
+  /* Status Cell Variables */
+  --status-a-bg: rgba(16, 185, 129, 0.15);
+  --status-a-text: #047857;
+  --status-b-bg: rgba(225, 29, 72, 0.15);
+  --status-b-text: #be123c;
+  --status-fi-bg: rgba(249, 115, 22, 0.15);
+  --status-fi-text: #c2410c;
+  --status-fj-bg: rgba(147, 51, 234, 0.15);
+  --status-fj-text: #7e22ce;
+  --status-iop-bg: rgba(37, 99, 235, 0.15);
+  --status-iop-text: #1d4ed8;
+  --status-s-bg: rgba(107, 114, 128, 0.15);
+  --status-s-text: #4b5563;
+  --status-empty-bg: rgba(0, 0, 0, 0.04);
+
+  /* ── Neon KPI Palette (light: toned-down) ── */
+  --neon-cyan:   #0891B2;
+  --neon-green:  #16A34A;
+  --neon-red:    #E11D48;
+  --neon-orange: #EA580C;
+  --neon-violet: #7C3AED;
+  --neon-amber:  #D97706;
+  --neon-glow-strength: 6px;
 }
 
 /* Tema Oscuro (Dark) - Deep Professional Navy */
@@ -209,6 +270,30 @@
   --accent-soft:   rgba(56,189,248,0.15);
   --accent-glow:   rgba(56,189,248,0.3);
   --accent-gradient: linear-gradient(135deg, #38BDF8, #818CF8);
+
+  /* Status Cell Variables */
+  --status-a-bg: rgba(16, 185, 129, 0.25);
+  --status-a-text: #34d399;
+  --status-b-bg: rgba(159, 18, 57, 0.35);
+  --status-b-text: #fb7185;
+  --status-fi-bg: rgba(249, 115, 22, 0.25);
+  --status-fi-text: #fb923c;
+  --status-fj-bg: rgba(168, 85, 247, 0.25);
+  --status-fj-text: #c084fc;
+  --status-iop-bg: rgba(59, 130, 246, 0.25);
+  --status-iop-text: #60a5fa;
+  --status-s-bg: rgba(107, 114, 128, 0.25);
+  --status-s-text: #9ca3af;
+  --status-empty-bg: rgba(255, 255, 255, 0.06);
+
+  /* ── Neon KPI Palette (dark: full vivid neon) ── */
+  --neon-cyan:   #00F5FF;
+  --neon-green:  #39FF14;
+  --neon-red:    #FF2D55;
+  --neon-orange: #FF7A00;
+  --neon-violet: #BF5FFF;
+  --neon-amber:  #F59E0B;
+  --neon-glow-strength: 14px;
 }
 
 /* Tema Cómodo (Comfortable) - Soft Indigo / Eye-Care */
@@ -236,6 +321,30 @@
   --accent-soft:   rgba(129,140,248,0.15);
   --accent-glow:   rgba(129,140,248,0.3);
   --accent-gradient: linear-gradient(135deg, #818CF8, #A78BFA);
+
+  /* Status Cell Variables */
+  --status-a-bg: rgba(16, 185, 129, 0.25);
+  --status-a-text: #34d399;
+  --status-b-bg: rgba(159, 18, 57, 0.35);
+  --status-b-text: #fb7185;
+  --status-fi-bg: rgba(249, 115, 22, 0.25);
+  --status-fi-text: #fb923c;
+  --status-fj-bg: rgba(168, 85, 247, 0.25);
+  --status-fj-text: #c084fc;
+  --status-iop-bg: rgba(59, 130, 246, 0.25);
+  --status-iop-text: #60a5fa;
+  --status-s-bg: rgba(107, 114, 128, 0.25);
+  --status-s-text: #9ca3af;
+  --status-empty-bg: rgba(255, 255, 255, 0.08);
+
+  /* ── Neon KPI Palette (comfortable: medium-vivid) ── */
+  --neon-cyan:   #06B6D4;
+  --neon-green:  #22C55E;
+  --neon-red:    #F43F5E;
+  --neon-orange: #F97316;
+  --neon-violet: #A855F7;
+  --neon-amber:  #EAB308;
+  --neon-glow-strength: 10px;
 }
 
 /* Aplicar variables al body de forma suave */

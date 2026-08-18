@@ -1,26 +1,141 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { AlertTriangle, Save, CheckCircle, Filter, Undo2, Calendar as CalendarIcon, Clock, Download, EyeOff, LayoutPanelLeft, Copy } from 'lucide-react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { 
+  AlertTriangle, 
+  Save, 
+  Filter, 
+  Calendar as CalendarIcon, 
+  Download, 
+  Copy, 
+  CheckCheck, 
+  Loader2, 
+  Users, 
+  UserCheck, 
+  UserX, 
+  ClockAlert,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle,
+  Search,
+  X,
+  Layers,
+  Radio,
+  Building2
+} from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { insertConsolidado, fetchGruposDia1 } from '../lib/dataService'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
-import Card, { CardHeader } from './ui/Card'
-const SIGLAS = [
-  { value: 'A', label: 'A - Asistencia', bgColor: '#dcfce7', color: '#166534' },
-  { value: 'I-OP', label: 'I-OP - Ingreso Operación', bgColor: '#059669', color: '#ffffff' },
-  { value: 'FI', label: 'FI - Falta Injustificada', bgColor: '#dc2626', color: '#ffffff' },
-  { value: 'FJ', label: 'FJ - Falta Justificada', bgColor: '#d97706', color: '#ffffff' },
-  { value: 'B', label: 'B - Baja', bgColor: '#451a03', color: '#ffffff' }
-]
+import { useToast } from '../context/ToastContext'
 
-const selectCls = 'bg-white border border-gray-300 focus:border-indigo-500 rounded p-1 text-xs text-gray-900 outline-none w-full'
-const labelCls = 'text-[10px] text-gray-500 font-bold uppercase block mb-0.5'
+const SIGLAS = [
+  { value: 'A', label: 'A - Asistencia', bgVar: 'var(--status-a-bg)', textVar: 'var(--status-a-text)' },
+  { value: 'I-OP', label: 'I-OP - Ingreso Operación', bgVar: 'var(--status-iop-bg)', textVar: 'var(--status-iop-text)' },
+  { value: 'FI', label: 'FI - Falta Injustificada', bgVar: 'var(--status-fi-bg)', textVar: 'var(--status-fi-text)' },
+  { value: 'FJ', label: 'FJ - Falta Justificada', bgVar: 'var(--status-fj-bg)', textVar: 'var(--status-fj-text)' },
+  { value: 'B', label: 'B - Baja', bgVar: 'var(--status-b-bg)', textVar: 'var(--status-b-text)' }
+]
 
 function formatSpreadsheetDate(dateStr) {
   if (!dateStr) return ''
   const [year, month, day] = dateStr.split('-')
   return `${parseInt(day)}/${parseInt(month)}/${year}`
 }
+
+// Memoized Row Component to optimize mobile & large tables rendering performance
+const AttendanceRow = React.memo(function AttendanceRow({
+  item,
+  fecha,
+  onStatusChange,
+  onMotiveChange,
+  motivosBaja
+}) {
+  const isBaja = item.sigla === 'B'
+  const estadoLabel = isBaja ? 'CESADO' : 'ACTIVO'
+  const siglaOpt = SIGLAS.find(s => s.value === item.sigla)
+
+  return (
+    <tr className="hover:bg-[var(--bg-elevated)] transition-colors group">
+      <td className="px-3 py-2 font-mono text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">{item.documento}</td>
+      <td className="px-3 py-2 uppercase text-[var(--text-secondary)] font-semibold text-xs whitespace-nowrap">{item.apellido_paterno}</td>
+      <td className="px-3 py-2 uppercase text-[var(--text-secondary)] font-semibold text-xs whitespace-nowrap">{item.apellido_materno}</td>
+      <td className="px-3 py-2 uppercase text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">{item.nombres}</td>
+      <td className="px-3 py-2 text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{item.celular}</td>
+      <td className="px-3 py-2 text-center text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{formatSpreadsheetDate(fecha)}</td>
+      <td className="px-3 py-2 text-center whitespace-nowrap">
+        <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wide ${
+          item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
+          item.tipoReclutado === 'RECUPERADO' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30' :
+          'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'
+        }`}>
+          {item.tipoReclutado}
+        </span>
+      </td>
+      <td className="px-3 py-2 text-center whitespace-nowrap">
+        <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black border uppercase tracking-wider ${
+          isBaja ? 'bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400' : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+        }`}>
+          {estadoLabel}
+        </span>
+      </td>
+      <td className="px-3 py-2 text-center whitespace-nowrap">
+        {item.isLateInclusion ? (
+          <span className="text-[var(--text-muted)] font-bold text-xs bg-[var(--bg-elevated)] px-2 py-0.5 rounded-md border border-[var(--border-subtle)]">N/A</span>
+        ) : (
+          <div className="relative inline-block w-full min-w-[65px]">
+            <select
+              value={item.sigla}
+              onChange={(e) => onStatusChange(item.documento, e.target.value)}
+              disabled={item.isLockedBaja}
+              className={`w-full rounded-md py-1 px-1.5 font-black text-center text-xs outline-none shadow-xs cursor-pointer transition-all border border-[var(--border-normal)] ${
+                item.isLockedBaja ? 'cursor-not-allowed opacity-70' : 'hover:scale-105 active:scale-95'
+              }`}
+              style={{
+                backgroundColor: siglaOpt?.bgVar || 'var(--bg-elevated)',
+                color: siglaOpt?.textVar || 'var(--text-primary)',
+              }}
+            >
+              {SIGLAS.map(s => (
+                <option key={s.value} value={s.value} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                  {s.value}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-2 whitespace-nowrap">
+        {!item.isLateInclusion && isBaja ? (
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle size={13} className="text-rose-500 dark:text-rose-400 flex-shrink-0" />
+            <select
+              value={item.motivo_baja}
+              onChange={e => onMotiveChange(item.documento, e.target.value)}
+              disabled={item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1')}
+              className={`w-full max-w-[200px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
+                item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1') ? 'opacity-70 cursor-not-allowed' : ''
+              }`}
+            >
+              {item.isFirstRecordGroup ? (
+                <option value="BAJA DIA 1">BAJA DIA 1</option>
+              ) : (
+                <>
+                  <option value="">-- Seleccionar Motivo --</option>
+                  {motivosBaja.map(m => (
+                    <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                      {m.motivo}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
+        ) : (
+          <span className="text-[var(--text-muted)] text-xs">—</span>
+        )}
+      </td>
+    </tr>
+  )
+})
 
 export default function AsistenciaForm({
   grupos = [],
@@ -32,30 +147,33 @@ export default function AsistenciaForm({
   userRole = 'admin',
   onSave,
 }) {
-  const [selectedPeriodo, setSelectedPeriodo] = useState('')
-  const [selectedSegmento, setSelectedSegmento] = useState('')
-  const [selectedCampana, setSelectedCampana] = useState('')
-  const [selectedGrupo, setSelectedGrupo] = useState('')
+  const toast = useToast()
+  const [selectedPeriodo, setSelectedPeriodo] = useState(() => localStorage.getItem('wfm_asis_periodo') || '')
+  const [selectedSegmento, setSelectedSegmento] = useState(() => localStorage.getItem('wfm_asis_segmento') || '')
+  const [selectedCampana, setSelectedCampana] = useState(() => localStorage.getItem('wfm_asis_campana') || '')
+  const [selectedGrupo, setSelectedGrupo] = useState(() => localStorage.getItem('wfm_asis_grupo') || '')
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+  const [searchTerm, setSearchTerm] = useState('')
   
   const [attendanceList, setAttendanceList] = useState([])
   const [missingDataCandidates, setMissingDataCandidates] = useState([])
   const [filterActivos, setFilterActivos] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [savedSuccess, setSavedSuccess] = useState(false)
+  const [copyFeedback, setCopyFeedback] = useState(false)
   const [showCalendarModal, setShowCalendarModal] = useState(false)
   const [calendarMonthIndex, setCalendarMonthIndex] = useState(-1)
   
   const [dia1Calibrado, setDia1Calibrado] = useState(false)
 
-  const [successInfo, setSuccessInfo] = useState(null)
-  
-  // Agrupación de columnas estilo Google Sheets
-  const [hiddenGroupInfo, setHiddenGroupInfo] = useState(false)
+  // Persist filter selections
+  useEffect(() => {
+    if (selectedPeriodo) localStorage.setItem('wfm_asis_periodo', selectedPeriodo)
+    if (selectedSegmento) localStorage.setItem('wfm_asis_segmento', selectedSegmento)
+    if (selectedCampana) localStorage.setItem('wfm_asis_campana', selectedCampana)
+    if (selectedGrupo) localStorage.setItem('wfm_asis_grupo', selectedGrupo)
+  }, [selectedPeriodo, selectedSegmento, selectedCampana, selectedGrupo])
 
-  const dateInputRef = useRef(null)
   const datePickerRef = useRef(null)
-
   const [showDatePickerPopup, setShowDatePickerPopup] = useState(false)
   const [pickerMonth, setPickerMonth] = useState(new Date().getMonth())
   const [pickerYear, setPickerYear] = useState(new Date().getFullYear())
@@ -156,7 +274,6 @@ export default function AsistenciaForm({
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     
-    // Remove duplicates
     const unique = [];
     const seen = new Set();
     for (const g of filtered) {
@@ -179,9 +296,6 @@ export default function AsistenciaForm({
   useEffect(() => { setSelectedCampana(''); setSelectedGrupo('') }, [selectedSegmento])
   useEffect(() => { setSelectedGrupo('') }, [selectedCampana])
   useEffect(() => {
-    if (!selectedGrupo || !selectedCampana) lastSetGrupo.current = null;
-  }, [selectedGrupo, selectedCampana])
-  useEffect(() => {
     if (gruposFiltrados.length === 1 && !selectedGrupo) setSelectedGrupo(gruposFiltrados[0].id || gruposFiltrados[0].codigo)
   }, [gruposFiltrados, selectedGrupo])
 
@@ -200,30 +314,23 @@ export default function AsistenciaForm({
   }, [selectedGrupo, activeGrupoObj])
 
   const lastSetGrupo = useRef(null);
-  const lastRenderedFecha = useRef(null);
 
   // Auto-set Date based on Group
   useEffect(() => {
-    // Si no hay grupo activo, no hacer nada
     if (!activeGrupoObj) return;
 
-    // Solo actualizar si cambiamos de grupo real
     const groupKey = activeGrupoObj.codigo;
     if (lastSetGrupo.current === groupKey) return;
 
-    // Buscar las fechas donde este grupo ya tiene asistencia, 
-    // recordando que un grupo se compone de CAMPAÑA y GRUPO
     const groupDates = asistencias
       .filter(a => (a.grupo_codigo === activeGrupoObj.codigo || a.grupo_codigo === selectedGrupo) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
       .map(a => a.fecha_asistencia)
       .sort();
 
     if (groupDates.length > 0) {
-      // Tiene registros -> preseleccionar la ULTIMA fecha de registro
       setFecha(groupDates[groupDates.length - 1]);
       lastSetGrupo.current = groupKey;
     } else if (activeGrupoObj.fecha_inicio || activeGrupoObj.fecha_registro) {
-      // No tiene registros -> tomar fecha de inicio del grupo
       const fechaInicio = activeGrupoObj.fecha_inicio || activeGrupoObj.fecha_registro;
       setFecha(fechaInicio.split('T')[0]);
       lastSetGrupo.current = groupKey;
@@ -238,38 +345,70 @@ export default function AsistenciaForm({
       setAttendanceList([])
       return
     }
-    const mappedDocs = new Set(asistencias.filter(a => {
-        const matchGrupo = a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo);
-        const matchCampana = !activeGrupoObj || a.campana === activeGrupoObj.campana;
-        return matchGrupo && matchCampana;
-    }).map(a => a.postulante_documento))
-    // Lógica DÍA 0: Solo incluir a quienes asistieron al día 0 (dia_0 = 'ASISTIO'),
-    // o fueron agregados/recuperados en el día 1 (status_dia_1 = 'AGREGADO' o 'RECUPERADO')
-    // Si dia_0 es null (datos sin valor), incluir todos para no perder registros
+
+    // 1. Pre-filter group asistencias in O(M) once
+    const targetGroup = selectedGrupo
+    const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo
+    const targetCampana = activeGrupoObj?.campana
+
+    const groupRecordsAll = []
+    const mappedDocs = new Set()
+    const recordsByDocOnDate = new Map()
+    const previousRecordsByDoc = new Map()
+
+    for (let i = 0; i < asistencias.length; i++) {
+      const a = asistencias[i]
+      const matchGrupo = a.grupo_codigo === targetGroup || a.grupo_codigo === targetGrupoCodigo
+      const matchCampana = !targetCampana || a.campana === targetCampana
+      if (!matchGrupo || !matchCampana) continue
+
+      groupRecordsAll.push(a)
+      mappedDocs.add(a.postulante_documento)
+
+      if (a.fecha_asistencia === fecha) {
+        recordsByDocOnDate.set(a.postulante_documento, a)
+      } else if (a.fecha_asistencia < fecha) {
+        let arr = previousRecordsByDoc.get(a.postulante_documento)
+        if (!arr) {
+          arr = []
+          previousRecordsByDoc.set(a.postulante_documento, arr)
+        }
+        arr.push(a)
+      }
+    }
+
+    // Sort previous records for each doc by date descending
+    for (const [doc, arr] of previousRecordsByDoc.entries()) {
+      if (arr.length > 1) {
+        arr.sort((a, b) => (b.fecha_asistencia > a.fecha_asistencia ? 1 : -1))
+      }
+    }
+
     const invalidList = []
     const filteredPostulantes = postulantes.filter(p => {
-      const isGrupoMatch = p.grupo_codigo === selectedGrupo || (activeGrupoObj && p.grupo_codigo === activeGrupoObj.codigo);
-      const isCampanaMatch = !activeGrupoObj || p.campana === activeGrupoObj.campana;
+      const isGrupoMatch = p.grupo_codigo === targetGroup || p.grupo_codigo === targetGrupoCodigo
+      const isCampanaMatch = !targetCampana || p.campana === targetCampana
       
-      const inGroup = (isGrupoMatch && isCampanaMatch) || mappedDocs.has(p.documento);
-      if (!inGroup) return false;
+      const inGroup = (isGrupoMatch && isCampanaMatch) || mappedDocs.has(p.documento)
+      if (!inGroup) return false
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const asistioD0 = dia0Val === 'ASISTIO'
+      const pendienteD0 = dia0Val === '' || dia0Val === 'NULL' || dia0Val === 'PENDIENTE'
       const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1
       
-      if (!(asistioD0 || agregadoD1)) return false
+      if (rechazadoD0) return false
+      if (!(asistioD0 || pendienteD0 || agregadoD1)) return false
 
-      // Validar datos requeridos para consolidado
       const missing = []
       if (!p.documento) missing.push('DNI')
       if (!p.nombres) missing.push('Nombres')
       if (!p.apellido_paterno) missing.push('Apellido Paterno')
-      if (!p.apellido_materno) missing.push('Apellido Materno')
-      if (!p.celular) missing.push('Celular')
-      const cond = p.condicion || activeGrupoObj?.condicion || ''
+      if (!p.celular && !p.telefono) missing.push('Celular')
+      const cond = p.condicion || activeGrupoObj?.condicion || 'FULL TIME'
       if (!cond) missing.push('Condición Laboral')
       const camp = p.campana || activeGrupoObj?.campana || ''
       if (!camp) missing.push('Campaña')
@@ -279,7 +418,7 @@ export default function AsistenciaForm({
           nombre: `${p.apellido_paterno || ''} ${p.nombres || ''}`.trim() || p.documento || 'Sin nombre',
           faltantes: missing.join(', ')
         })
-        return false // Rechazado de la tabla
+        return false
       }
       
       return true
@@ -287,64 +426,71 @@ export default function AsistenciaForm({
     
     setMissingDataCandidates(invalidList)
 
-    const groupRecordsAll = asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana));
-    const firstDateOfGroup = groupRecordsAll.length > 0 ? groupRecordsAll.map(a => a.fecha_asistencia).sort()[0] : null;
-    const isFirstRecordGroup = groupRecordsAll.length === 0 || fecha <= firstDateOfGroup;
+    let firstDateOfGroup = null
+    if (groupRecordsAll.length > 0) {
+      firstDateOfGroup = groupRecordsAll[0].fecha_asistencia
+      for (let i = 1; i < groupRecordsAll.length; i++) {
+        if (groupRecordsAll[i].fecha_asistencia < firstDateOfGroup) {
+          firstDateOfGroup = groupRecordsAll[i].fecha_asistencia
+        }
+      }
+    }
+    const isFirstRecordGroup = groupRecordsAll.length === 0 || fecha <= firstDateOfGroup
 
-    const uniquePostulantes = [];
-    const seenDocs = new Set();
+    const uniquePostulantes = []
+    const seenDocs = new Set()
     const sortedPostulantes = [...filteredPostulantes].sort((a, b) => {
-       const aMatch = (a.grupo_codigo === activeGrupoObj?.codigo || a.grupo_codigo === selectedGrupo) && a.campana === activeGrupoObj?.campana ? 1 : 0;
-       const bMatch = (b.grupo_codigo === activeGrupoObj?.codigo || b.grupo_codigo === selectedGrupo) && b.campana === activeGrupoObj?.campana ? 1 : 0;
-       return bMatch - aMatch;
-    });
-    for (const p of sortedPostulantes) {
+       const aMatch = (a.grupo_codigo === targetGrupoCodigo || a.grupo_codigo === targetGroup) && a.campana === targetCampana ? 1 : 0
+       const bMatch = (b.grupo_codigo === targetGrupoCodigo || b.grupo_codigo === targetGroup) && b.campana === targetCampana ? 1 : 0
+       return bMatch - aMatch
+    })
+    for (let i = 0; i < sortedPostulantes.length; i++) {
+       const p = sortedPostulantes[i]
        if (!seenDocs.has(p.documento)) {
-           seenDocs.add(p.documento);
-           uniquePostulantes.push(p);
+           seenDocs.add(p.documento)
+           uniquePostulantes.push(p)
        }
     }
 
+    // Formadores lookup map for O(1) name resolution
+    const formadoresMap = new Map(formadores.map(f => [f.documento, f.nombre_completo]))
+
     const list = uniquePostulantes.map(p => {
-      // Eliminar el bloqueo "N/A" por created_at para permitir a los formadores hacer backfills de asistencias antiguas
-      const isLateInclusion = false;
-      const existing = asistencias.find(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia === fecha)
+      const isLateInclusion = false
+      const existing = recordsByDocOnDate.get(p.documento)
       const tipoReclutado = (p.status_dia_1 || '').toString().toUpperCase().trim() || 'APTO'
 
-      let docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
-      let nombreFormador = formadores.find(f => f.documento === docFormador)?.nombre_completo || activeGrupoObj?.formador_nombre || ''
+      const docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
+      const nombreFormador = formadoresMap.get(docFormador) || activeGrupoObj?.formador_nombre || ''
 
-      let inheritedSigla = 'A';
-      let inheritedMotivo = '';
+      let inheritedSigla = 'A'
+      let inheritedMotivo = ''
 
       if (existing) {
-        inheritedSigla = existing.sigla_asistencia;
-        inheritedMotivo = existing.motivo_baja || '';
-      } else if (!isLateInclusion) {
-        // Buscar el último registro anterior
-        const previousRecords = asistencias
-          .filter(a => a.postulante_documento === p.documento && (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia < fecha)
-          .sort((a, b) => (b.fecha_asistencia > a.fecha_asistencia ? 1 : -1));
-        
-        if (previousRecords.length > 0) {
-          inheritedSigla = previousRecords[0].sigla_asistencia;
-          inheritedMotivo = previousRecords[0].motivo_baja || '';
+        inheritedSigla = existing.sigla_asistencia
+        inheritedMotivo = existing.motivo_baja || ''
+      } else {
+        const prevList = previousRecordsByDoc.get(p.documento)
+        if (prevList && prevList.length > 0) {
+          inheritedSigla = prevList[0].sigla_asistencia
+          inheritedMotivo = prevList[0].motivo_baja || ''
         } else if (p.estado === 'CESADO') {
-          // Si no hay registros previos pero el estado ya es CESADO (por ej. Reclutador Día 1 lo marcó con F)
-          inheritedSigla = 'B';
-          inheritedMotivo = 'BAJA DIA 1';
+          inheritedSigla = 'B'
+          inheritedMotivo = 'BAJA DIA 1'
+        } else if (tipoReclutado === 'AGREGADO' && isFirstRecordGroup) {
+          inheritedSigla = 'FI'
         }
       }
       
-      const sigla = isLateInclusion ? 'N/A' : inheritedSigla;
-      let motivo_baja = isLateInclusion ? '' : inheritedMotivo;
+      const sigla = inheritedSigla
+      let motivo_baja = inheritedMotivo
       
       if (isFirstRecordGroup && sigla === 'B') {
-        motivo_baja = 'BAJA DIA 1';
+        motivo_baja = 'BAJA DIA 1'
       }
 
-      const isHistoricalBaja = (existing && existing.sigla_asistencia === 'B') || (!existing && inheritedSigla === 'B');
-      const isLockedBaja = false;
+      const isHistoricalBaja = (existing && existing.sigla_asistencia === 'B') || (!existing && inheritedSigla === 'B')
+      const isLockedBaja = false
 
       return {
         documento: p.documento,
@@ -354,7 +500,7 @@ export default function AsistenciaForm({
         celular: p.celular || '',
         condicion_laboral: p.condicion || activeGrupoObj?.condicion || '',
         campana: p.campana || activeGrupoObj?.campana || '',
-        grupo: activeGrupoObj?.codigo || selectedGrupo,
+        grupo: targetGrupoCodigo,
         docFormador,
         nombreFormador,
         tipoReclutado,
@@ -367,30 +513,12 @@ export default function AsistenciaForm({
       }
     })
 
-    const isNewContext = lastSetGrupo.current !== selectedGrupo || lastRenderedFecha.current !== fecha;
-    lastSetGrupo.current = selectedGrupo;
-    lastRenderedFecha.current = fecha;
-
-    if (isNewContext) {
-      setAttendanceList(list)
-    } else {
-      setAttendanceList(prev => {
-        if (prev.length === 0) return list;
-        return list.map(newItem => {
-          const old = prev.find(p => p.documento === newItem.documento);
-          if (old) {
-            return { ...newItem, sigla: old.sigla, motivo_baja: old.motivo_baja };
-          }
-          return newItem;
-        });
-      });
-    }
+    setAttendanceList(list)
   }, [selectedGrupo, fecha, asistencias, postulantes, activeGrupoObj, formadores, dia1Calibrado])
 
-  const handleStatusChange = (doc, newSigla) => {
+  const handleStatusChange = useCallback((doc, newSigla) => {
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
-      
       let newMotivo = item.motivo_baja
       if (newSigla !== 'B') {
         newMotivo = ''
@@ -399,19 +527,26 @@ export default function AsistenciaForm({
       }
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }
     }))
-  }
+  }, [])
 
-  const handleMotiveChange = (doc, newMotivo) => {
+  const handleMotiveChange = useCallback((doc, newMotivo) => {
     setAttendanceList(prev => prev.map(item => 
       item.documento === doc ? { ...item, motivo_baja: newMotivo } : item
     ))
+  }, [])
+
+  // Fast 1-click bulk mark as attended
+  const handleMarkAllAttended = () => {
+    setAttendanceList(prev => prev.map(item => {
+      if (item.isLateInclusion || item.isLockedBaja) return item;
+      return { ...item, sigla: 'A', motivo_baja: '' }
+    }))
   }
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();
     if (!selectedGrupo) return alert('Selecciona un grupo.')
     
-    // Add validation for formador
     const currentDoc = activeGrupoObj?.formador_documento;
     const currentNombre = formadores.find(f => f.documento === currentDoc)?.nombre_completo;
     if (!currentDoc || !currentNombre) {
@@ -431,7 +566,6 @@ export default function AsistenciaForm({
     }))
     setSaving(true)
     try {
-      // 1. Guardar primero en Consolidado Supabase (la nueva tabla maestra)
       const targetGroup = activeGrupoObj?.codigo || selectedGrupo;
       const weekNum = String(activeGrupoObj?.semana_trabajo || '');
       const nowStr = new Date().toLocaleString('es-PE');
@@ -468,17 +602,15 @@ export default function AsistenciaForm({
           codigo_grupo: targetGroup
         });
 
-        // Auto-backfill (FI) para fechas anteriores si fue agregado tardíamente
-        // Y Restauración de Bajas: Si hoy asiste (!== 'B'), cambiar Bajas pasadas a FI (INCLUSO BAJA DIA 1)
         pastDates.forEach(pastDate => {
           const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (a.grupo_codigo === targetGroup || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia === pastDate);
           
           let shouldBackfillFI = false;
           
           if (!pastRecord) {
-             shouldBackfillFI = true; // Late inclusion missing
+             shouldBackfillFI = true;
           } else if (r.sigla !== 'B' && pastRecord.sigla_asistencia === 'B') {
-             shouldBackfillFI = true; // Auto-restore ANY Baja to FI (incluyendo BAJA DIA 1)
+             shouldBackfillFI = true;
           }
 
           if (shouldBackfillFI) {
@@ -512,7 +644,6 @@ export default function AsistenciaForm({
         console.error('Consolidado Supabase error:', dbErr);
       }
 
-      // 2. Ejecutar onSave que ahora solo actualizará las bajas en 'nominas' y refrescará el UI
       await onSave({
         grupoMeta: {
           codigo: activeGrupoObj?.codigo || selectedGrupo,
@@ -521,24 +652,13 @@ export default function AsistenciaForm({
           fecha_registro: activeGrupoObj?.fecha_registro || fecha,
         },
         grupo_codigo: activeGrupoObj?.codigo || selectedGrupo,
-        grupoMeta: activeGrupoObj,
         fecha_asistencia: fecha,
         records: recordsToSave,
       })
 
-      alert('¡Asistencia guardada correctamente en el consolidado!')
-      const now = new Date()
-
-      setSuccessInfo({
-        timestamp: `${now.toLocaleDateString('es-PE')} ${now.toLocaleTimeString('es-PE')}`,
-        presentes: recordsToSave.filter(r => r.sigla === 'A' || r.sigla === 'I-OP').length,
-        ausentes: recordsToSave.filter(r => r.sigla === 'FI' || r.sigla === 'FJ').length,
-        bajas: recordsToSave.filter(r => r.sigla === 'B').length,
-        grupo: activeGrupoObj?.codigo || selectedGrupo,
-      })
-      setSavedSuccess(true)
+      toast.success('¡Asistencia guardada!', 'Los registros se sincronizaron con el consolidado en tiempo real.')
     } catch (err) {
-      alert(err.message || 'Error al guardar.')
+      toast.error('Error al guardar', err.message || 'No se pudo guardar la asistencia.')
     } finally {
       setSaving(false)
     }
@@ -553,7 +673,7 @@ export default function AsistenciaForm({
       NOMBRES: item.nombres,
       CELULAR: item.celular,
       'CONDICION LABORAL': item.condicion_laboral,
-      CAMPAÑA: item.campana,
+      'CAMPAÑA': item.campana,
       'GRUPO(GPE-000)': item.grupo,
       'DOCUMENTO FORMADOR': item.docFormador,
       'NOMBRE FORMADOR': item.nombreFormador,
@@ -567,10 +687,11 @@ export default function AsistenciaForm({
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Asistencia')
     XLSX.writeFile(wb, `Asistencia_${activeGrupoObj?.codigo || selectedGrupo}_${fecha}.xlsx`)
+    toast.success('Excel exportado', `Se descargó la asistencia del grupo ${activeGrupoObj?.codigo || selectedGrupo}.`)
   }
 
   const handleCopySummary = async () => {
-    if (displayedList.length === 0) return alert('No hay datos para copiar.')
+    if (displayedList.length === 0) return toast.warning('Sin datos', 'No hay postulantes cargados para copiar.')
     
     const campana = activeGrupoObj?.campana || selectedCampana || 'SIN CAMPAÑA'
     const docFormador = activeGrupoObj?.formador_documento || ''
@@ -583,7 +704,6 @@ export default function AsistenciaForm({
       .map(a => a.fecha_asistencia))]
       .sort();
       
-    // Determinar dia de capacitacion basandose en las fechas registradas hasta hoy
     const allDatesUntilNow = new Set([...groupDates, fecha].filter(d => d <= fecha));
     const diaCapacitacion = allDatesUntilNow.size;
     
@@ -602,344 +722,371 @@ export default function AsistenciaForm({
 
     try {
       await navigator.clipboard.writeText(text);
-      alert('Resumen copiado al portapapeles. Puede pegarlo en WhatsApp u otra aplicación.');
+      setCopyFeedback(true)
+      toast.success('¡Copiado para WhatsApp!', 'El resumen del grupo se copió al portapapeles con formato listo para enviar.')
+      setTimeout(() => setCopyFeedback(false), 2500)
     } catch (err) {
-      alert('Error al copiar el texto. Su navegador podría no tener los permisos necesarios.');
+      toast.error('Error al copiar', 'No se pudo acceder al portapapeles.')
     }
   }
 
-  
-  // Helper for Calendar
+  // Micro-KPIs calculations in real time with quick search support
+  const displayedList = useMemo(() => {
+    let list = filterActivos ? attendanceList.filter(item => !item.isHistoricalBaja) : attendanceList
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase()
+      list = list.filter(item => 
+        String(item.documento || '').toLowerCase().includes(q) ||
+        String(item.nombres || '').toLowerCase().includes(q) ||
+        String(item.apellido_paterno || '').toLowerCase().includes(q) ||
+        String(item.apellido_materno || '').toLowerCase().includes(q) ||
+        String(item.celular || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [filterActivos, attendanceList, searchTerm])
+
+  const kpis = useMemo(() => {
+    const total = displayedList.length
+    const asistieron = displayedList.filter(item => item.sigla === 'A' || item.sigla === 'I-OP').length
+    const bajas = displayedList.filter(item => item.sigla === 'B').length
+    const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
+    const pctAsistencia = total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0'
+
+    return {
+      total,
+      asistieron,
+      bajas,
+      faltas,
+      pctAsistencia
+    }
+  }, [displayedList])
+
+  // Calendar Modal View
   const renderCalendar = () => {
-     if (!activeGrupoObj) return null;
-     const rawStartStr = activeGrupoObj.fecha_registro;
-     if (!rawStartStr) return null;
-     
-     const start = new Date(rawStartStr + 'T12:00:00Z');
-     if (String(selectedGrupo).startsWith('GPE')) {
-       start.setUTCDate(start.getUTCDate() + 1);
-     }
-     const effectiveStartStr = start.toISOString().split('T')[0];
-     
-     // Force start of month of the effective start date
-     const calendarStart = new Date(start.getUTCFullYear(), start.getUTCMonth(), 1, 12, 0, 0);
-     // Set of registered dates
-     const registeredDates = new Set(
-       asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana)).map(a => a.fecha_asistencia)
-     );
+    if (!activeGrupoObj) return null;
+    const rawStartStr = activeGrupoObj.fecha_registro;
+    if (!rawStartStr) return null;
+    
+    const start = new Date(rawStartStr + 'T12:00:00Z');
+    if (String(selectedGrupo).startsWith('GPE')) {
+      start.setUTCDate(start.getUTCDate() + 1);
+    }
+    const effectiveStartStr = start.toISOString().split('T')[0];
+    
+    const registeredDates = new Set(
+      asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana)).map(a => a.fecha_asistencia)
+    );
 
-     const todayStr = new Date().toISOString().split('T')[0];
-     
-     // El límite base para pintar de rojo los días faltantes es HOY, 
-     // pero si el grupo ya tiene fecha de ingreso a OJT (operación) y es menor a hoy, se usa esa fecha.
-     let baseLimitStr = todayStr;
-     if (activeGrupoObj?.fecha_inicio_ojt && activeGrupoObj.fecha_inicio_ojt < todayStr) {
-       baseLimitStr = activeGrupoObj.fecha_inicio_ojt;
-     }
+    const todayStr = new Date().toISOString().split('T')[0];
+    let baseLimitStr = todayStr;
+    if (activeGrupoObj?.fecha_inicio_ojt && activeGrupoObj.fecha_inicio_ojt < todayStr) {
+      baseLimitStr = activeGrupoObj.fecha_inicio_ojt;
+    }
 
-     let maxLimitStr = baseLimitStr;
-     // Si hay registros de asistencia en fechas posteriores, el límite se extiende hasta el último registro (para pintar de rojo los huecos intermedios)
-     registeredDates.forEach(d => { if (d > maxLimitStr) maxLimitStr = d; });
-     
-     // Determinar el rango de meses a renderizar
-     let minStr = effectiveStartStr;
-     registeredDates.forEach(d => { if (d < minStr) minStr = d; });
-     
-     let maxStr = maxLimitStr;
-     
-     if (maxStr < effectiveStartStr) {
-       maxStr = effectiveStartStr;
-     }
-     
-     const startRender = new Date(minStr + 'T12:00:00Z');
-     const endRender = new Date(maxStr + 'T12:00:00Z');
-     
-     const monthsToRender = [];
-     let iter = new Date(startRender.getUTCFullYear(), startRender.getUTCMonth(), 1, 12, 0, 0);
-     const endLimit = new Date(endRender.getUTCFullYear(), endRender.getUTCMonth(), 1, 12, 0, 0);
-     
-     // Prevent infinite loops if dates are bad
-     let safety = 0;
-     while (iter <= endLimit && safety < 24) {
-       monthsToRender.push(new Date(iter));
-       iter.setUTCMonth(iter.getUTCMonth() + 1);
-       safety++;
-     }
-     
-     // Chronological order
-     const maxIndex = monthsToRender.length - 1;
-     let currentIndex = calendarMonthIndex === -1 ? maxIndex : calendarMonthIndex;
-     // Safety clamp
-     if (currentIndex < 0) currentIndex = 0;
-     if (currentIndex > maxIndex) currentIndex = maxIndex;
-     
-     const monthStart = monthsToRender[currentIndex];
-     
-     const monthNames = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
+    let maxLimitStr = baseLimitStr;
+    registeredDates.forEach(d => { if (d > maxLimitStr) maxLimitStr = d; });
+    
+    let minStr = effectiveStartStr;
+    registeredDates.forEach(d => { if (d < minStr) minStr = d; });
+    
+    let maxStr = maxLimitStr;
+    if (maxStr < effectiveStartStr) maxStr = effectiveStartStr;
+    
+    const startRender = new Date(minStr + 'T12:00:00Z');
+    const endRender = new Date(maxStr + 'T12:00:00Z');
+    
+    const monthsToRender = [];
+    let iter = new Date(startRender.getUTCFullYear(), startRender.getUTCMonth(), 1, 12, 0, 0);
+    const endLimit = new Date(endRender.getUTCFullYear(), endRender.getUTCMonth(), 1, 12, 0, 0);
+    
+    let safety = 0;
+    while (iter <= endLimit && safety < 24) {
+      monthsToRender.push(new Date(iter));
+      iter.setUTCMonth(iter.getUTCMonth() + 1);
+      safety++;
+    }
+    
+    const maxIndex = monthsToRender.length - 1;
+    let currentIndex = calendarMonthIndex === -1 ? maxIndex : calendarMonthIndex;
+    if (currentIndex < 0) currentIndex = 0;
+    if (currentIndex > maxIndex) currentIndex = maxIndex;
+    
+    const monthStart = monthsToRender[currentIndex] || new Date();
+    const monthNames = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
 
-     const days = [];
-     const currentMonth = monthStart.getUTCMonth();
-     const currentYear = monthStart.getUTCFullYear();
-     
-     let curr = new Date(monthStart);
-     while (curr.getUTCDay() !== 0) {
-       curr.setUTCDate(curr.getUTCDate() - 1);
-     }
-     
-     // Stop generating rows if we've filled the month
-     for (let i = 0; i < 42; i++) {
-        const dStr = curr.toISOString().split('T')[0];
-        const isCurrentMonth = curr.getUTCMonth() === currentMonth;
-        const isSunday = curr.getUTCDay() === 0;
-        const isRegistered = registeredDates.has(dStr);
-        const isFuture = dStr > maxLimitStr;
-        const isBeforeStart = dStr < minStr;
+    const days = [];
+    const currentMonth = monthStart.getUTCMonth();
+    const currentYear = monthStart.getUTCFullYear();
+    
+    let curr = new Date(monthStart);
+    while (curr.getUTCDay() !== 0) {
+      curr.setUTCDate(curr.getUTCDate() - 1);
+    }
+    
+    for (let i = 0; i < 42; i++) {
+      const dStr = curr.toISOString().split('T')[0];
+      const isCurrentMonth = curr.getUTCMonth() === currentMonth;
+      const isSunday = curr.getUTCDay() === 0;
+      const isRegistered = registeredDates.has(dStr);
+      const isFuture = dStr > maxLimitStr;
+      const isBeforeStart = dStr < minStr;
+      
+      let badgeStyle = {
+        background: 'var(--bg-elevated)',
+        color: 'var(--text-muted)',
+        border: '1px solid var(--border-subtle)'
+      };
+      
+      if (!isCurrentMonth) {
+        badgeStyle = { background: 'transparent', color: 'var(--text-muted)', opacity: 0.3 };
+      } else if (isRegistered) {
+        badgeStyle = { background: 'var(--status-a-bg)', color: 'var(--status-a-text)', border: '1px solid rgba(16,185,129,0.4)' };
+      } else if (isSunday || isBeforeStart || isFuture) {
+        badgeStyle = { background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' };
+      } else {
+        badgeStyle = { background: 'var(--status-fi-bg)', color: 'var(--status-fi-text)', border: '1px solid rgba(239,68,68,0.4)' };
+      }
+      
+      days.push(
+        <div key={dStr} className="h-10 flex flex-col items-center justify-center font-bold text-xs rounded-md m-0.5" style={badgeStyle}>
+          {curr.getUTCDate()}
+        </div>
+      );
+      curr.setUTCDate(curr.getUTCDate() + 1);
+      
+      if (!isCurrentMonth && i >= 28 && curr.getUTCDay() === 0) {
+        break;
+      }
+    }
+    
+    return (
+      <div className="mt-4 pt-4 border-t border-[var(--border-subtle)] text-left relative">
+        <p className="text-xs font-bold text-[var(--text-muted)] mb-3 text-center uppercase tracking-widest">Calendario de Avance</p>
         
-        let bgColor = "#ffffff";
-        let textCol = "#333333";
-        let borderCol = "#e0e0e0";
-        
-        if (!isCurrentMonth) {
-           bgColor = "#fafafa"; textCol = "#cccccc";
-        } else if (isRegistered) {
-           bgColor = "#c8e6c9"; textCol = "#1b5e20"; // Registrado
-        } else if (isSunday || isBeforeStart || isFuture) {
-           bgColor = "#eeeeee"; textCol = "#888888"; // Domingo / No prog
-        } else {
-           bgColor = "#ffcdd2"; textCol = "#b71c1c"; // No registrado
-        }
-        
-        days.push(
-          <div key={dStr} className="h-10 flex flex-col items-center justify-center border font-bold text-sm" style={{ backgroundColor: bgColor, color: textCol, borderColor: borderCol }}>
-            {curr.getUTCDate()}
+        <div className="mb-4">
+          <div className="bg-[var(--bg-elevated)] text-[var(--text-primary)] text-xs font-bold flex items-center justify-between px-4 py-2 rounded-t-xl tracking-widest border border-[var(--border-subtle)]">
+            <button 
+              type="button"
+              onClick={() => setCalendarMonthIndex(currentIndex - 1)}
+              disabled={currentIndex === 0}
+              className="text-[var(--text-primary)] hover:text-cyan-400 disabled:opacity-30 px-2 text-lg leading-none transition-colors"
+            >
+              &#9664;
+            </button>
+            <span className="font-black text-sm">{monthNames[currentMonth]} {currentYear}</span>
+            <button 
+              type="button"
+              onClick={() => setCalendarMonthIndex(currentIndex + 1)}
+              disabled={currentIndex === maxIndex}
+              className="text-[var(--text-primary)] hover:text-cyan-400 disabled:opacity-30 px-2 text-lg leading-none transition-colors"
+            >
+              &#9654;
+            </button>
           </div>
-        );
-        curr.setUTCDate(curr.getUTCDate() + 1);
-        
-        if (!isCurrentMonth && i >= 28 && curr.getUTCDay() === 0) {
-          break;
-        }
-     }
-     
-     return (
-       <div className="mt-4 pt-4 border-t border-gray-200 text-left relative">
-         <p className="text-sm font-bold text-gray-500 mb-2 text-center uppercase tracking-widest">Calendario de Avance</p>
-         
-         <div className="mb-4">
-           {/* HEADER WITH ARROWS */}
-           <div className="bg-blue-900 text-white text-xs font-bold flex items-center justify-between px-4 py-1.5 rounded-t tracking-widest border border-blue-900">
-             <button 
-                type="button"
-                onClick={() => setCalendarMonthIndex(currentIndex - 1)}
-                disabled={currentIndex === 0}
-                className="text-white hover:text-amber-400 disabled:opacity-30 disabled:hover:text-white px-2 text-lg leading-none"
-             >
-               &#9664;
-             </button>
-             <span>{monthNames[currentMonth]} {currentYear}</span>
-             <button 
-                type="button"
-                onClick={() => setCalendarMonthIndex(currentIndex + 1)}
-                disabled={currentIndex === maxIndex}
-                className="text-white hover:text-amber-400 disabled:opacity-30 disabled:hover:text-white px-2 text-lg leading-none"
-             >
-               &#9654;
-             </button>
-           </div>
-           
-           <div className="grid grid-cols-7 gap-0 border border-gray-300 rounded-b overflow-hidden shadow-sm">
-             {['DO','LU','MA','MI','JU','VI','SA'].map(d => <div key={d} className="bg-white border-b border-gray-200 text-[11px] font-black text-gray-500 text-center py-2">{d}</div>)}
-             {days}
-           </div>
-         </div>
+          
+          <div className="grid grid-cols-7 gap-1 p-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-b-xl shadow-lg">
+            {['DO','LU','MA','MI','JU','VI','SA'].map(d => (
+              <div key={d} className="text-[10px] font-black text-[var(--text-muted)] text-center py-1.5">{d}</div>
+            ))}
+            {days}
+          </div>
+        </div>
 
-         {/* LEYENDA (matching the user's HTML) */}
-         <div className="mt-4 p-3 rounded-lg bg-white border border-gray-200 shadow-sm text-[11px] text-center">
-           <b className="text-gray-700 block mb-2">📌 Leyenda:</b>
-           <div className="flex flex-wrap justify-center gap-3">
-             <span className="px-3 py-1.5 rounded-md font-medium text-green-900" style={{backgroundColor: '#c8e6c9'}}>✔ Registrado</span>
-             <span className="px-3 py-1.5 rounded-md font-medium text-red-900" style={{backgroundColor: '#ffcdd2'}}>✖ No registrado</span>
-             <span className="px-3 py-1.5 rounded-md font-medium text-gray-700" style={{backgroundColor: '#eeeeee'}}>Domingo / Feriado / No prog.</span>
-           </div>
-         </div>
-       </div>
-     );
+        <div className="mt-3 p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[11px] text-center">
+          <span className="text-[var(--text-muted)] font-bold block mb-2 uppercase tracking-wider">📌 Leyenda</span>
+          <div className="flex flex-wrap justify-center gap-2">
+            <span className="px-2.5 py-1 rounded-md font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">✔ Registrado</span>
+            <span className="px-2.5 py-1 rounded-md font-bold bg-red-500/15 text-red-400 border border-red-500/30">✖ No registrado</span>
+            <span className="px-2.5 py-1 rounded-md font-bold bg-[var(--bg-surface)] text-[var(--text-muted)] border border-[var(--border-subtle)]">Domingo / Feriado / No prog.</span>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const displayedList = filterActivos ? attendanceList.filter(item => !item.isHistoricalBaja) : attendanceList
-
   return (
-    <PageLayout className="p-4 md:p-6 space-y-6 overflow-y-auto">
-      <PageHeader
-        title="Asistencia de Capacitación"
-        subtitle="Registro y monitoreo de asistencia diaria por grupo"
-        actions={
-          <>
-            {/* Guardar */}
-            <button
-              onClick={handleSave}
-              disabled={saving || !selectedGrupo}
-              className="flex items-center gap-2 bg-[var(--accent)] hover:opacity-90 active:scale-95 text-white font-bold text-sm py-2 px-5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-            >
-              <Save size={15} /> {saving ? 'Guardando...' : 'Guardar'}
-            </button>
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
+      
+      {/* ── 1. COMPACT HEADER & ACTIONS TOOLBAR (Height ~38px) ── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
+        
+        {/* Title */}
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#06B6D4] animate-pulse" />
+          <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
+            Control y Marcación de Asistencia <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase hidden sm:inline">· registro operativo por grupo</span>
+          </h2>
+        </div>
 
-            {/* Calendario */}
-            <button
-              onClick={() => { setCalendarMonthIndex(-1); setShowCalendarModal(true); }}
-              className="flex items-center gap-2 bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-semibold text-sm py-2 px-4 rounded-lg transition-all active:scale-95"
-            >
-              <CalendarIcon size={15} /> Calendario
-            </button>
+        {/* Action Controls */}
+        <div className="flex items-center gap-1.5">
+          {/* Guardar Cambios */}
+          <button
+            onClick={handleSave}
+            disabled={saving || !selectedGrupo}
+            className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs h-7 px-3.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+            <span>{saving ? 'Guardando...' : 'Guardar Cambios'}</span>
+          </button>
 
-            {/* Filtrar activos */}
-            <button
-              onClick={() => setFilterActivos(true)}
-              className={`flex items-center gap-2 font-semibold text-sm py-2 px-4 rounded-lg border transition-all active:scale-95 ${filterActivos ? 'bg-[var(--accent)] text-white border-[var(--accent)]' : 'bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)]'}`}
-            >
-              <Filter size={15} /> Activos
-            </button>
+          {/* Calendario */}
+          <button
+            onClick={() => { setCalendarMonthIndex(-1); setShowCalendarModal(true); }}
+            className="flex items-center gap-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--bg-muted)] border border-[var(--border-normal)] text-[var(--text-primary)] font-bold text-xs h-7 px-2.5 rounded-lg transition-all active:scale-95 cursor-pointer"
+            title="Ver calendario de avance"
+          >
+            <CalendarIcon size={13} className="text-cyan-500 dark:text-cyan-400" />
+            <span className="hidden sm:inline">Calendario</span>
+          </button>
 
-            {/* Desfiltrar */}
-            <button
-              onClick={() => setFilterActivos(false)}
-              className="flex items-center gap-2 bg-[var(--bg-surface)] hover:bg-rose-500/10 border border-[var(--border-subtle)] hover:border-rose-500/30 text-rose-500 font-semibold text-sm py-2 px-4 rounded-lg transition-all active:scale-95"
-            >
-              <Undo2 size={15} /> Todo
-            </button>
+          {/* Filtrar activos */}
+          <button
+            onClick={() => setFilterActivos(!filterActivos)}
+            className={`flex items-center gap-1.5 font-bold text-xs h-7 px-2.5 rounded-lg border transition-all active:scale-95 cursor-pointer ${
+              filterActivos 
+                ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.2)]' 
+                : 'bg-[var(--bg-elevated)] hover:bg-[var(--bg-muted)] border-[var(--border-normal)] text-[var(--text-secondary)]'
+            }`}
+          >
+            <Filter size={12} />
+            <span>{filterActivos ? 'Solo Activos' : 'Todos'}</span>
+          </button>
 
-            {/* Leyenda */}
-            <div className="relative group">
-              <button className="flex items-center gap-2 bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-semibold text-sm py-2 px-4 rounded-lg transition-all">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
-                Leyenda <span className="opacity-50 text-xs">▾</span>
-              </button>
-              {/* Dropdown leyenda custom dark style */}
-              <div className="hidden group-hover:block absolute top-full right-0 mt-1.5 z-40 bg-[var(--bg-elevated)] backdrop-blur-md border border-[var(--border-subtle)] rounded-xl shadow-2xl overflow-hidden w-60 select-none animate-fadeIn text-[var(--text-primary)]">
-                <div className="text-[10px] font-bold text-[var(--text-muted)] tracking-wider px-4 py-2.5 uppercase border-b border-[var(--border-subtle)]">
-                  ESTADOS DE ASISTENCIA
-                </div>
-                <div className="py-1">
-                  {SIGLAS.map(s => (
-                    <div key={s.value} className="flex items-center gap-3 px-4 py-2 hover:bg-[var(--bg-base)] transition-colors">
-                      <span className="font-bold text-[9px] w-10 text-center rounded py-0.5" style={{ backgroundColor: `${s.color}25`, color: s.color, border: `1px solid ${s.color}40` }}>
-                        {s.value}
-                      </span>
-                      <span className="text-xs text-[var(--text-secondary)] font-medium">{s.label.split(' - ')[1] || s.label}</span>
-                    </div>
-                  ))}
-                </div>
+          {/* Leyenda dropdown */}
+          <div className="relative group">
+            <button className="flex items-center gap-1 bg-[var(--bg-elevated)] hover:bg-[var(--bg-muted)] border border-[var(--border-normal)] text-[var(--text-secondary)] font-bold text-xs h-7 px-2 rounded-lg transition-all cursor-pointer">
+              <span>Leyenda</span>
+              <span className="opacity-50 text-[9px]">▾</span>
+            </button>
+            <div className="hidden group-hover:block absolute top-full right-0 mt-1.5 z-50 bg-[var(--bg-surface)] backdrop-blur-xl border border-[var(--border-subtle)] rounded-xl shadow-2xl overflow-hidden w-64 select-none animate-fadeIn text-[var(--text-primary)]">
+              <div className="text-[9px] font-black text-[var(--text-muted)] tracking-widest px-3 py-2 uppercase border-b border-[var(--border-subtle)]">
+                ESTADOS DE ASISTENCIA
+              </div>
+              <div className="p-1 space-y-1">
+                {SIGLAS.map(s => (
+                  <div key={s.value} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-elevated)] transition-colors">
+                    <span
+                      className="font-black text-[9px] w-11 text-center rounded py-0.5 border"
+                      style={{ backgroundColor: s.bgVar, color: s.textVar, borderColor: `${s.textVar}40` }}
+                    >
+                      {s.value}
+                    </span>
+                    <span className="text-xs text-[var(--text-secondary)] font-semibold">{s.label.split(' - ')[1] || s.label}</span>
+                  </div>
+                ))}
               </div>
             </div>
-          </>
-        }
-      />
+          </div>
+        </div>
+      </div>
 
-      {/* ── FILTERS — single row, flat ── */}
-      <Card className="mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4 items-end">
+      {/* ── 2. HIGH-DENSITY CASCADE FILTERS RIBBON (Height ~50px) ── */}
+      <div className="p-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-xs shrink-0">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 items-center">
+          
           {/* PERIODO */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">PERIODO</span>
-            <div className="relative w-full">
-              <select
-                value={selectedPeriodo}
-                onChange={e => setSelectedPeriodo(e.target.value)}
-                className="form-input w-full appearance-none pr-8"
-              >
-                <option value="">Todos</option>
-                {periodos.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
-            </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <CalendarIcon size={10} className="text-cyan-500 shrink-0" /> PERÍODO
+            </span>
+            <select
+              value={selectedPeriodo}
+              onChange={e => setSelectedPeriodo(e.target.value)}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
+            >
+              <option value="">Todos los Períodos</option>
+              {periodos.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
 
           {/* SEGMENTO */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">SEGMENTO</span>
-            <div className="relative w-full">
-              <select
-                value={selectedSegmento}
-                onChange={e => setSelectedSegmento(e.target.value)}
-                disabled={!selectedPeriodo && periodos.length > 0}
-                className="form-input w-full appearance-none pr-8 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="">Todos</option>
-                {segmentos.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
-            </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <Layers size={10} className="text-indigo-500 shrink-0" /> SEGMENTO
+            </span>
+            <select
+              value={selectedSegmento}
+              onChange={e => setSelectedSegmento(e.target.value)}
+              disabled={!selectedPeriodo && periodos.length > 0}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+            >
+              <option value="">Todos los Segmentos</option>
+              {segmentos.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
           </div>
 
           {/* CAMPAÑA */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">CAMPAÑA</span>
-            <div className="relative w-full">
-              <select
-                value={selectedCampana}
-                onChange={e => setSelectedCampana(e.target.value)}
-                disabled={!selectedSegmento && segmentos.length > 0}
-                className="form-input w-full appearance-none pr-8 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="">Todas</option>
-                {campanas.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
-            </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <Radio size={10} className="text-purple-500 shrink-0" /> CAMPAÑA
+            </span>
+            <select
+              value={selectedCampana}
+              onChange={e => setSelectedCampana(e.target.value)}
+              disabled={!selectedSegmento && segmentos.length > 0}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+            >
+              <option value="">Todas las Campañas</option>
+              {campanas.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
 
           {/* GRUPO */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">GRUPO</span>
-            <div className="relative w-full">
-              <select
-                value={selectedGrupo}
-                onChange={e => setSelectedGrupo(e.target.value)}
-                disabled={!selectedCampana && campanas.length > 0}
-                className="form-input w-full appearance-none pr-8 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <option value="">Seleccionar</option>
-                {gruposFiltrados.map(g => (
-                  <option key={g.id || g.codigo} value={g.codigo}>
-                    {String(g.codigo).startsWith('PROY-') ? '—' : (String(g.codigo).replace(/_\d+$/, '') || 'SIN CÓDIGO')}
-                  </option>
-                ))}
-              </select>
-              <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7"/></svg>
-            </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <Building2 size={10} className="text-blue-500 shrink-0" /> GRUPO
+            </span>
+            <select
+              value={selectedGrupo}
+              onChange={e => setSelectedGrupo(e.target.value)}
+              disabled={!selectedCampana && campanas.length > 0}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+            >
+              <option value="">Seleccionar Grupo</option>
+              {gruposFiltrados.map((g, idx) => (
+                <option key={`${g.id || g.codigo}_${idx}`} value={g.codigo}>
+                  {String(g.codigo).startsWith('PROY-') ? '—' : (String(g.codigo).replace(/_\d+$/, '') || 'SIN CÓDIGO')}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* FORMADOR */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">FORMADOR</span>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <Users size={10} className="text-emerald-500 shrink-0" /> FORMADOR
+            </span>
             <input
               type="text"
               readOnly
               value={activeGrupoObj ? (formadores.find(f => f.documento === activeGrupoObj.formador_documento)?.nombre_completo || 'SIN ASIGNAR') : ''}
-              placeholder="Buscar formador"
-              className="form-input w-full cursor-not-allowed uppercase"
+              placeholder="Formador asignado"
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-secondary)] px-2 outline-none cursor-not-allowed uppercase truncate"
             />
           </div>
 
-          {/* FECHA REGISTRO */}
-          <div className="flex flex-col gap-1.5 w-full">
-            <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">FECHA ASISTENCIA</span>
+          {/* FECHA ASISTENCIA */}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <ClockAlert size={10} className="text-amber-500 shrink-0" /> FECHA ASISTENCIA
+            </span>
             <div className="relative w-full" ref={datePickerRef}>
               <div 
                 onClick={() => setShowDatePickerPopup(!showDatePickerPopup)} 
-                className="form-input w-full flex items-center justify-between cursor-pointer select-none py-[9px]"
+                className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 flex items-center justify-between cursor-pointer select-none hover:border-cyan-500 transition-colors shadow-xs"
               >
                 <span className="truncate">{formatDisplayDate(fecha)}</span>
-                <CalendarIcon size={14} className="text-[var(--accent)] shrink-0" />
+                <CalendarIcon size={12} className="text-cyan-500 dark:text-cyan-400 shrink-0 ml-1" />
               </div>
               
               {showDatePickerPopup && (
                 <div 
-                  className="absolute top-full right-0 mt-2.5 z-50 bg-[#111827] border border-slate-800 rounded-xl shadow-2xl p-4 w-64 select-none animate-fadeIn text-slate-200"
+                  className="absolute top-full right-0 mt-1.5 z-50 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl shadow-2xl p-3 w-60 select-none animate-fadeIn text-[var(--text-primary)] backdrop-blur-xl"
                   onClick={e => e.stopPropagation()}
                 >
-                  {/* Header month & arrows */}
-                  <div className="flex items-center justify-between mb-3.5">
+                  <div className="flex items-center justify-between mb-2">
                     <button 
                       type="button" 
                       onClick={(e) => {
@@ -951,11 +1098,11 @@ export default function AsistenciaForm({
                           setPickerMonth(prev => prev - 1);
                         }
                       }}
-                      className="text-slate-400 hover:text-white p-1 font-bold text-sm"
+                      className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 font-bold text-sm cursor-pointer"
                     >
-                      &lt;
+                      <ChevronLeft size={15} />
                     </button>
-                    <span className="font-bold text-sm text-slate-100 uppercase tracking-wide">
+                    <span className="font-extrabold text-xs uppercase tracking-wide">
                       {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"][pickerMonth]} {pickerYear}
                     </span>
                     <button 
@@ -969,22 +1116,18 @@ export default function AsistenciaForm({
                           setPickerMonth(prev => prev + 1);
                         }
                       }}
-                      className="text-slate-400 hover:text-white p-1 font-bold text-sm"
+                      className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 font-bold text-sm cursor-pointer"
                     >
-                      &gt;
+                      <ChevronRight size={15} />
                     </button>
                   </div>
                   
-                  {/* Weekdays */}
-                  <div className="grid grid-cols-7 gap-1 text-center mb-2">
+                  <div className="grid grid-cols-7 gap-1 text-center mb-1">
                     {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((w, idx) => (
-                      <span key={idx} className="text-[10px] font-black text-slate-500 uppercase">
-                        {w}
-                      </span>
+                      <span key={idx} className="text-[8px] font-black text-[var(--text-muted)] uppercase">{w}</span>
                     ))}
                   </div>
                   
-                  {/* Days grid */}
                   <div className="grid grid-cols-7 gap-1">
                     {getDaysInMonth(pickerYear, pickerMonth).map((d) => {
                       const isSelected = d.dateStr === fecha;
@@ -997,12 +1140,12 @@ export default function AsistenciaForm({
                             setFecha(d.dateStr);
                             setShowDatePickerPopup(false);
                           }}
-                          className={`h-8 w-8 text-xs font-semibold rounded-full flex items-center justify-center transition-all ${
+                          className={`h-6 w-6 text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer ${
                             isSelected 
-                              ? 'bg-blue-600 text-white font-bold' 
+                              ? 'bg-cyan-500 text-slate-950 font-black shadow-[0_0_8px_rgba(6,182,212,0.4)]' 
                               : d.isCurrentMonth 
-                                ? 'text-slate-200 hover:bg-slate-800' 
-                                : 'text-slate-600 hover:bg-slate-850'
+                                ? 'text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]' 
+                                : 'text-[var(--text-muted)] opacity-30'
                           }`}
                         >
                           {d.day}
@@ -1011,7 +1154,6 @@ export default function AsistenciaForm({
                     })}
                   </div>
 
-                  {/* Hoy Button */}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1020,7 +1162,7 @@ export default function AsistenciaForm({
                       setFecha(todayStr);
                       setShowDatePickerPopup(false);
                     }}
-                    className="mt-3.5 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 rounded-lg text-xs transition-colors"
+                    className="mt-2 w-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 font-bold py-1 rounded-lg text-xs transition-colors border border-cyan-500/30 cursor-pointer"
                   >
                     Hoy
                   </button>
@@ -1030,206 +1172,236 @@ export default function AsistenciaForm({
           </div>
 
         </div>
-        <p className="text-[10px] text-[var(--text-muted)] italic mt-4">*Nota: en Fecha Registro, da clic para colocar la fecha.</p>
-      </Card>
+      </div>
 
+      {/* ── 3. COMPACT MICRO-KPIS STRIP (Height ~54px) ── */}
+      {selectedGrupo && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 shrink-0 animate-fadeIn">
+          
+          {/* Total Postulantes */}
+          <div className="p-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #06B6D4' }}>
+            <div className="min-w-0 truncate">
+              <div className="text-[9px] font-black uppercase tracking-wider text-[var(--text-muted)] truncate">Postulantes</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-base sm:text-lg font-black text-cyan-600 dark:text-cyan-400 leading-tight font-mono tabular-nums">
+                  {kpis.total}
+                </span>
+                <span className="text-[9px] text-[var(--text-muted)] font-semibold truncate">convocados</span>
+              </div>
+            </div>
+            <div className="h-7 w-7 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center border border-cyan-500/20 shrink-0 ml-1">
+              <Users size={14} />
+            </div>
+          </div>
 
-      <Card noPadding className="mt-2">
-        
-        <div className="flex justify-between items-center p-4 border-b border-[var(--border-subtle)]">
-          <div className="flex flex-col space-y-1">
-            <h2 className="text-lg font-black text-[var(--text-primary)]">Resultados</h2>
-            <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider">
-              {displayedList.length} postulantes encontrados
+          {/* Asistieron [A] */}
+          <div className="p-2 rounded-xl bg-[var(--bg-surface)] border border-emerald-500/25 shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #10B981' }}>
+            <div className="min-w-0 truncate">
+              <div className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 truncate">Asistieron [A]</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 leading-tight font-mono tabular-nums">
+                  {kpis.asistieron}
+                </span>
+                <span className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80 font-semibold truncate">en sala / activos</span>
+              </div>
+            </div>
+            <div className="h-7 w-7 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0 ml-1">
+              <UserCheck size={14} />
+            </div>
+          </div>
+
+          {/* Bajas [B] */}
+          <div className="p-2 rounded-xl bg-[var(--bg-surface)] border border-rose-500/25 shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #F43F5E' }}>
+            <div className="min-w-0 truncate">
+              <div className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 truncate">Bajas [B]</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 leading-tight font-mono tabular-nums">
+                  {kpis.bajas}
+                </span>
+                <span className="text-[9px] text-rose-600/80 dark:text-rose-400/80 font-semibold truncate">deserciones</span>
+              </div>
+            </div>
+            <div className="h-7 w-7 rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400 flex items-center justify-center border border-rose-500/30 shrink-0 ml-1">
+              <UserX size={14} />
+            </div>
+          </div>
+
+          {/* Faltas [FI / FJ] */}
+          <div className="p-2 rounded-xl bg-[var(--bg-surface)] border border-amber-500/25 shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #F59E0B' }}>
+            <div className="min-w-0 truncate">
+              <div className="text-[9px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">Faltas [FI/FJ]</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-400 leading-tight font-mono tabular-nums">
+                  {kpis.faltas}
+                </span>
+                <span className="text-[9px] text-amber-600/80 dark:text-amber-400/80 font-semibold truncate">inasistencias</span>
+              </div>
+            </div>
+            <div className="h-7 w-7 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0 ml-1">
+              <ClockAlert size={14} />
+            </div>
+          </div>
+
+          {/* % Asistencia Diaria */}
+          <div className="col-span-2 sm:col-span-1 p-2 rounded-xl bg-[var(--bg-surface)] border border-purple-500/25 shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #8B5CF6' }}>
+            <div className="min-w-0 truncate">
+              <div className="text-[9px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400 truncate">% Asistencia</div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-base sm:text-lg font-black text-purple-600 dark:text-purple-400 leading-tight font-mono tabular-nums">
+                  {kpis.pctAsistencia}%
+                </span>
+                <span className="text-[9px] text-purple-600/80 dark:text-purple-400/80 font-semibold truncate">efectividad</span>
+              </div>
+            </div>
+            <div className="h-7 w-7 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400 flex items-center justify-center border border-purple-500/30 font-black text-xs shrink-0 ml-1">
+              %
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Missing Candidates Alert */}
+      {missingDataCandidates.length > 0 && (
+        <div className="px-3 py-2 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center gap-3 shadow-xs shrink-0">
+          <AlertTriangle size={16} className="text-orange-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold text-orange-700 dark:text-orange-300 truncate">
+              {missingDataCandidates.length} candidatos tienen datos obligatorios incompletos y no aparecen en la tabla.
             </p>
           </div>
-          <div className="flex items-center gap-6">
+        </div>
+      )}
+
+      {/* ── 4. MAX-HEIGHT POSTULANTES TABLE CONTAINER (Fills Remaining Space) ── */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
+        
+        {/* Table Toolbar (Height ~38px) */}
+        <div className="flex flex-wrap justify-between items-center px-3 py-1.5 border-b border-[var(--border-subtle)] gap-2 bg-[var(--bg-elevated)]/40 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <h3 className="text-xs font-black text-[var(--text-primary)] uppercase tracking-wide">
+              Postulantes del Grupo
+            </h3>
+            <span className="text-[10px] bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-muted)] font-mono font-bold px-2 py-0.5 rounded-md">
+              {displayedList.length} cargados
+            </span>
+            {displayedList.length > 0 && (
+              <button
+                onClick={handleMarkAllAttended}
+                className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all active:scale-95 shadow-xs cursor-pointer"
+                title="Marcar a todos como Asistió [A]"
+              >
+                <CheckCheck size={13} /> Marcar Todos como Asistió (A)
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Quick Candidate Search */}
+            <div className="relative w-48 sm:w-60">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="Filtrar por DNI o nombre..."
+                className="w-full h-7 pl-7 pr-6 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-cyan-500 transition-colors font-medium"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+
             <button 
               onClick={handleCopySummary} 
               disabled={displayedList.length === 0} 
-              className="flex flex-col items-center gap-1 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-30"
-              title="Copiar Resumen WhatsApp"
+              className="flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 text-xs font-bold transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shadow-xs"
+              title="Copiar Resumen para WhatsApp"
             >
-              <div className="w-8 h-8 rounded bg-[#25D366] flex items-center justify-center text-white shadow-sm">
-                <Copy size={16} />
-              </div>
-              <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
-                Copiar
-              </span>
+              <Copy size={12} />
+              <span className="hidden sm:inline">{copyFeedback ? '¡Copiado!' : 'WhatsApp Copy'}</span>
             </button>
+            
             <button 
               onClick={exportToExcel} 
               disabled={displayedList.length === 0} 
-              className="flex flex-col items-center gap-1 hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-30"
+              className="flex items-center gap-1 h-7 px-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shadow-xs"
               title="Exportar a Excel"
             >
-              <svg viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" className="block h-8 w-8 overflow-visible">
-                <path fill="#1F7A3F" d="M33 7h14c1.3 0 2.4 1.1 2.4 2.4v37.2c0 1.3-1.1 2.4-2.4 2.4H33z"/>
-                <path fill="#2E9D55" d="M33 12h12v6H33zm0 8h12v6H33zm0 8h12v6H33zm0 8h12v6H33z"/>
-                <path fill="#185C37" d="M8.4 13.4 33 8.6v38.8L8.4 42.6c-.7-.1-1.2-.7-1.2-1.4V14.8c0-.7.5-1.3 1.2-1.4z"/>
-                <path fill="#FFFFFF" d="m16 20.3 3.8 6.3 4-6.3h4.6l-6.2 8.9 6.4 8.9h-4.8l-4.2-6.6-4.2 6.6h-4.5l6.4-8.9-6-8.9z"/>
-              </svg>
-              <span className="text-[10px] font-semibold text-[var(--text-secondary)]">
-                Excel
-              </span>
+              <Download size={12} /> Excel
             </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto table-scroll">
-          <table className="w-full text-left border-collapse text-[11px]">
-            <thead className="bg-[var(--table-head-bg)] text-[var(--text-primary)] border-b border-[var(--border-subtle)]">
-              <tr>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">DOCUMENTO</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">APELLIDO PATERNO</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">APELLIDO MATERNO</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">NOMBRES</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">CELULAR</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-center text-[var(--text-secondary)] whitespace-nowrap">FECHA ASISTENCIA</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-center text-[var(--text-secondary)] whitespace-nowrap">TIPO RECLUTADO</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-center text-[var(--text-secondary)] whitespace-nowrap">ESTADO</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-center text-[var(--text-secondary)] whitespace-nowrap">SIGLA</th>
-                <th className="px-4 py-3 font-bold uppercase tracking-wide text-[var(--text-secondary)] whitespace-nowrap">MOTIVO DE BAJA</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-subtle)]">
-              {displayedList.length > 0 ? displayedList.map((item, index) => {
-                const isBaja = item.sigla === 'B'
-                const estadoLabel = isBaja ? 'CESADO' : 'ACTIVO'
-                
-                let siglaOpt = SIGLAS.find(s => s.value === item.sigla)
-                let siglaStyle = siglaOpt ? { backgroundColor: siglaOpt.bgColor, color: siglaOpt.color, border: `2px solid ${siglaOpt.color}` } : {}
-
-                return (
-                  <tr key={item.documento} className="hover:bg-[var(--bg-muted)] transition-colors group">
-                    <td className="px-4 py-3 font-mono text-[var(--text-primary)] whitespace-nowrap">{item.documento}</td>
-                    <td className="px-4 py-3 uppercase text-[var(--text-secondary)] whitespace-nowrap">{item.apellido_paterno}</td>
-                    <td className="px-4 py-3 uppercase text-[var(--text-secondary)] whitespace-nowrap">{item.apellido_materno}</td>
-                    <td className="px-4 py-3 uppercase text-[var(--text-primary)] font-semibold whitespace-nowrap">{item.nombres}</td>
-                    <td className="px-4 py-3 text-[var(--text-secondary)] font-mono whitespace-nowrap">{item.celular}</td>
-                    <td className="px-4 py-3 text-center text-[var(--text-secondary)] font-mono whitespace-nowrap">{formatSpreadsheetDate(fecha)}</td>
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
-                      <span className={`inline-block px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wide ${item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : item.tipoReclutado === 'RECUPERADO' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'}`}>
-                         {item.tipoReclutado}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
-                      <span className={`inline-block px-2 py-1 rounded-md text-[9px] font-black border uppercase tracking-wide shadow-sm ${isBaja ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500'}`}>
-                        {estadoLabel}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
-                      {item.isLateInclusion ? (
-                         <span className="text-[var(--text-muted)] font-bold bg-[var(--bg-elevated)] px-2 py-1 rounded-md border border-[var(--border-subtle)]">N/A</span>
-                      ) : (
-                         <div className="relative inline-block w-full">
-                           <select value={item.sigla} onChange={(e) => handleStatusChange(item.documento, e.target.value)}
-                             disabled={item.isLockedBaja}
-                             className={`w-full rounded-md py-1 px-1 font-black text-center outline-none shadow-sm appearance-none ${item.isLockedBaja ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:opacity-90 transition-opacity'}`}
-                             style={siglaStyle}>
-                             {SIGLAS.map(s => <option key={s.value} value={s.value} style={{backgroundColor: '#fff', color: '#000'}}>{s.value}</option>)}
-                           </select>
-                         </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {!item.isLateInclusion && isBaja ? (
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
-                          <select value={item.motivo_baja} onChange={e => handleMotiveChange(item.documento, e.target.value)}
-                            disabled={item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1')}
-                            className={`w-full max-w-[200px] border border-red-500/30 rounded p-1.5 text-[10px] font-semibold text-red-400 bg-red-500/10 focus:border-red-500 outline-none ${item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1') ? 'opacity-70 cursor-not-allowed' : ''}`}>
-                            {item.isFirstRecordGroup ? (
-                              <option value="BAJA DIA 1">BAJA DIA 1</option>
-                            ) : (
-                              <>
-                                <option value="" disabled>Seleccione motivo</option>
-                                {item.motivo_baja === 'BAJA DIA 1' && <option value="BAJA DIA 1">BAJA DIA 1</option>}
-                                {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => <option key={m.motivo} value={m.motivo}>{m.motivo}</option>)}
-                              </>
-                            )}
-                          </select>
-                        </div>
-                      ) : (
-                         <span className="text-[var(--text-muted)]">—</span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              }) : (
-                <tr>
-                  <td colSpan="10" className="p-16 text-center text-[var(--text-muted)]">
-                    <div className="flex flex-col items-center justify-center space-y-4">
-                      <div className="relative w-16 h-16 rounded-full border-4 border-dashed border-[var(--border-normal)] animate-spin flex items-center justify-center" style={{ animationDuration: '8s' }}>
-                        <div className="w-8 h-8 rounded-full bg-[var(--bg-elevated)] flex items-center justify-center animate-none">
-                          <span className="text-xs">🔍</span>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-base font-bold text-[var(--text-primary)]">No hay postulantes para mostrar</p>
-                        <p className="text-xs text-[var(--text-muted)] mt-1">Ajusta los filtros o el rango de fechas para ver resultados.</p>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {savedSuccess && successInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center space-y-4">
-             <div className="w-16 h-16 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto border border-emerald-500/20">
-                <CheckCircle size={36} />
-             </div>
-             <h3 className="text-xl font-bold text-[var(--text-primary)]">¡Asistencia Guardada!</h3>
-             <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] p-4 rounded-xl text-left space-y-2 text-sm text-[var(--text-secondary)]">
-                <p><strong>Grupo:</strong> {successInfo.grupo}</p>
-                <p><strong>Presentes:</strong> {successInfo.presentes}</p>
-                <p><strong>Bajas:</strong> {successInfo.bajas}</p>
-                <p><strong>Ausentes:</strong> {successInfo.ausentes}</p>
-             </div>
-             {renderCalendar()}
-             <button onClick={() => setSavedSuccess(false)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl transition-all">Cerrar</button>
-          </div>
-        </div>
-      )}
-
-      {showCalendarModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-2xl shadow-2xl p-6 max-w-md w-full text-center space-y-4">
-             <div className="flex items-center justify-center gap-2 text-amber-500 mb-2">
-                <CalendarIcon size={28} />
-                <h3 className="text-xl font-black uppercase tracking-wide">Avance de Asistencia</h3>
-             </div>
-             {renderCalendar()}
-             <button onClick={() => setShowCalendarModal(false)} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 rounded-xl uppercase tracking-wider mt-4 transition-all">
-               Cerrar Calendario
-             </button>
-          </div>
-        </div>
-      )}
-
-      {successInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center relative overflow-hidden">
-            <div className="w-16 h-16 mx-auto mb-4 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center">
-              <CheckCircle size={32} />
+        {/* Scrollable Table Area */}
+        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[var(--bg-surface)]">
+          {displayedList.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-[var(--text-muted)] p-6 space-y-2">
+              <Users size={32} className="opacity-30 mb-1" />
+              <p className="text-xs font-bold text-[var(--text-primary)]">No hay postulantes para mostrar</p>
+              <p className="text-[11px] max-w-xs text-center text-[var(--text-muted)]">
+                Selecciona un Período, Campaña y Grupo arriba para cargar la nómina.
+              </p>
             </div>
-            <h3 className="text-xl font-bold mb-2 text-[var(--text-primary)]">¡Guardado Exitoso!</h3>
-            <p className="text-[var(--text-secondary)] mb-6 text-sm">{successInfo.count} registros de asistencia almacenados correctamente.</p>
-            <button
-              onClick={() => setSuccessInfo(null)}
-              className="w-full bg-[var(--accent)] hover:bg-[var(--accent-glow)] text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg active:scale-95"
-            >
-              Aceptar
-            </button>
+          ) : (
+            <table className="w-full min-w-[1050px] border-separate border-spacing-0 text-left text-xs">
+              <thead className="sticky top-0 z-20 shadow-xs">
+                <tr>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">DOCUMENTO</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">APELLIDO PATERNO</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">APELLIDO MATERNO</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">NOMBRES</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">CELULAR</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-center text-[var(--text-muted)] text-[9px] whitespace-nowrap">FECHA ASISTENCIA</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-center text-[var(--text-muted)] text-[9px] whitespace-nowrap">TIPO RECLUTADO</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-center text-[var(--text-muted)] text-[9px] whitespace-nowrap">ESTADO</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-center text-[var(--text-muted)] text-[9px] whitespace-nowrap">SIGLA</th>
+                  <th className="sticky top-0 z-20 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] px-3 py-2 font-black uppercase tracking-[0.14em] text-[var(--text-muted)] text-[9px] whitespace-nowrap">MOTIVO DE BAJA</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
+                {displayedList.map(item => (
+                  <AttendanceRow
+                    key={item.documento}
+                    item={item}
+                    fecha={fecha}
+                    onStatusChange={handleStatusChange}
+                    onMotiveChange={handleMotiveChange}
+                    motivosBaja={motivosBaja}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* ── CALENDAR MODAL ── */}
+      {showCalendarModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-xl rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--border-subtle)] bg-[var(--bg-surface)] animate-slideUp">
+            <div className="px-5 py-3.5 border-b border-[var(--border-subtle)] flex justify-between items-center bg-[var(--bg-elevated)]">
+              <h2 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
+                <CalendarIcon size={16} className="text-cyan-400" /> Calendario de Avance de Asistencia
+              </h2>
+              <button
+                onClick={() => setShowCalendarModal(false)}
+                className="px-2.5 py-1 text-xs font-bold text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="p-5 max-h-[80vh] overflow-y-auto">
+              {renderCalendar()}
+            </div>
           </div>
         </div>
       )}
-
-    </PageLayout>
+    </div>
   )
 }
