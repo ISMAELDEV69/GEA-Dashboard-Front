@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
   VITE_SUPABASE_URL = "https://ujqehcpglfhnytzsyedp.supabase.co"
   VITE_SUPABASE_ANON_KEY = "sb_publishable_wt_Muu3dmb0GjulWMDYpqg_NKRYqKNE"
 
