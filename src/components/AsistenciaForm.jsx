@@ -174,9 +174,15 @@ export default function AsistenciaForm({
   }, [selectedPeriodo, selectedSegmento, selectedCampana, selectedGrupo])
 
   const datePickerRef = useRef(null)
+  const userEditsRef = useRef(new Map())
   const [showDatePickerPopup, setShowDatePickerPopup] = useState(false)
   const [pickerMonth, setPickerMonth] = useState(new Date().getMonth())
   const [pickerYear, setPickerYear] = useState(new Date().getFullYear())
+
+  // Limpiar ediciones pendientes al cambiar de grupo o fecha
+  useEffect(() => {
+    userEditsRef.current.clear()
+  }, [selectedGrupo, fecha])
 
   useEffect(() => {
     if (fecha) {
@@ -482,10 +488,15 @@ export default function AsistenciaForm({
         }
       }
       
-      const sigla = inheritedSigla
+      let sigla = inheritedSigla
       let motivo_baja = inheritedMotivo
-      
-      if (isFirstRecordGroup && sigla === 'B') {
+
+      // Priorizar ediciones manuales pendientes del usuario antes de que se guarden
+      if (userEditsRef.current.has(p.documento)) {
+        const localEdit = userEditsRef.current.get(p.documento)
+        sigla = localEdit.sigla
+        motivo_baja = localEdit.motivo_baja
+      } else if (isFirstRecordGroup && sigla === 'B' && !motivo_baja) {
         motivo_baja = 'BAJA DIA 1'
       }
 
@@ -525,20 +536,24 @@ export default function AsistenciaForm({
       } else if (!newMotivo && item.isFirstRecordGroup) {
         newMotivo = 'BAJA DIA 1'
       }
+      userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }
     }))
   }, [])
 
   const handleMotiveChange = useCallback((doc, newMotivo) => {
-    setAttendanceList(prev => prev.map(item => 
-      item.documento === doc ? { ...item, motivo_baja: newMotivo } : item
-    ))
+    setAttendanceList(prev => prev.map(item => {
+      if (item.documento !== doc) return item
+      userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: newMotivo })
+      return { ...item, motivo_baja: newMotivo }
+    }))
   }, [])
 
   // Fast 1-click bulk mark as attended
   const handleMarkAllAttended = () => {
     setAttendanceList(prev => prev.map(item => {
       if (item.isLateInclusion || item.isLockedBaja) return item;
+      userEditsRef.current.set(item.documento, { sigla: 'A', motivo_baja: '' })
       return { ...item, sigla: 'A', motivo_baja: '' }
     }))
   }
@@ -655,6 +670,8 @@ export default function AsistenciaForm({
         fecha_asistencia: fecha,
         records: recordsToSave,
       })
+
+      userEditsRef.current.clear()
 
       toast.success('¡Asistencia guardada!', 'Los registros se sincronizaron con el consolidado en tiempo real.')
     } catch (err) {
