@@ -13,7 +13,7 @@ import Card, {
   CardTitle,
   CardDescription,
   CardContent
-} from '../ui/card'
+} from '../ui/Card'
 import { ChartTooltipContent } from '../ui/chart-tooltip'
 import { Badge } from '../ui/badge'
 

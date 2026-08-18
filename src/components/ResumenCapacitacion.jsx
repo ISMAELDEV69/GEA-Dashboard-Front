@@ -36,7 +36,7 @@ import {
   Area 
 } from 'recharts';
 
-import Card, { CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from './ui/Card';
 import { Badge } from './ui/badge';
 import { ChartTooltipContent } from './ui/chart-tooltip';
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogContent } from './ui/dialog';
