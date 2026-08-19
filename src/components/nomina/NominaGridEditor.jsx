@@ -133,8 +133,10 @@ export default function NominaGridEditor({
     })
   }, [data, filters])
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
+  const userFullName = userProfile?.nombre_completo || userProfile?.nombre || ''
+
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     setError(null)
     setExternalChangeDetected(false)
     try {
@@ -151,9 +153,8 @@ export default function NominaGridEditor({
       }
 
       if (currentRole === 'reclutador') {
-        const myName = userProfile?.nombre_completo || userProfile?.nombre || ''
-        if (myName) {
-          query = query.ilike('reclutador', `%${myName.trim()}%`)
+        if (userFullName) {
+          query = query.ilike('reclutador', `%${userFullName.trim()}%`)
         }
       }
 
@@ -163,9 +164,8 @@ export default function NominaGridEditor({
       
       let finalRows = rows || []
       if (currentRole === 'reclutador') {
-        const myName = userProfile?.nombre_completo || userProfile?.nombre || ''
-        if (myName) {
-          finalRows = finalRows.filter(r => nameMatches(r.reclutador, myName))
+        if (userFullName) {
+          finalRows = finalRows.filter(r => nameMatches(r.reclutador, userFullName))
         }
       }
 
@@ -177,11 +177,11 @@ export default function NominaGridEditor({
     } finally {
       setLoading(false)
     }
-  }, [grupoCodigo, campana, currentRole, userProfile])
+  }, [grupoCodigo, campana, currentRole, userFullName])
 
   useEffect(() => {
-    if (grupoCodigo) loadData()
-  }, [grupoCodigo, loadData])
+    if (grupoCodigo) loadData(false)
+  }, [grupoCodigo, campana, currentRole, userFullName])
 
   // ── Realtime concurrency detection ─────────────────────────────
   // Subscribe to changes on nominas rows for this group made by OTHER users.
@@ -198,9 +198,9 @@ export default function NominaGridEditor({
           const loadedAt = lastLoadedAtRef.current
           // Only flag if the change happened AFTER we loaded (could be from another tab/user)
           if (updatedAt && loadedAt && updatedAt > loadedAt) {
-            // Small grace window: ignore changes within 3s of our own load (likely our own save)
+            // Small grace window: ignore changes within 4s of our own load (likely our own save)
             const diffMs = new Date(updatedAt) - new Date(loadedAt)
-            if (diffMs > 3000) {
+            if (diffMs > 4000) {
               setExternalChangeDetected(true)
             }
           }
@@ -226,6 +226,8 @@ export default function NominaGridEditor({
         .eq('id', rowId)
 
       if (err) throw err
+
+      lastLoadedAtRef.current = new Date().toISOString()
 
       if (rowUpdates.dia_1) {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
@@ -564,7 +566,7 @@ export default function NominaGridEditor({
 
       {/* ── GRID TABLE ── */}
       <div className="overflow-auto table-scroll" style={{ minHeight: '520px', maxHeight: 'calc(100vh - 280px)' }}>
-        {loading ? (
+        {loading && data.length === 0 ? (
           <div className="h-64 flex items-center justify-center text-[var(--text-muted)] gap-2">
             <Loader2 className="animate-spin text-cyan-400" /> Cargando nómina...
           </div>
@@ -618,7 +620,9 @@ export default function NominaGridEditor({
               {filteredData.map(row => (
                 <tr key={row.id} className="hover:bg-[var(--bg-muted)] transition-colors">
                   <td className="p-2.5 border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--bg-surface)] z-10 shadow-sm flex flex-col">
-                    <span className="font-bold text-[var(--text-primary)] uppercase">{row.apellido_paterno} {row.nombres}</span>
+                    <span className="font-bold text-[var(--text-primary)] uppercase">
+                      {[row.apellido_paterno, row.apellido_materno, row.nombres].filter(Boolean).join(' ') || row.nombre_completo || 'SIN NOMBRE'}
+                    </span>
                     <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
                   </td>
                   {EDITABLE_COLUMNS.map(col => {

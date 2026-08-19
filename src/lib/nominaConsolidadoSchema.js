@@ -90,7 +90,8 @@ export function mapGoogleFormHeaders(headerRow = []) {
   const colIdx = {}
 
   headers.forEach((h, i) => {
-    const clean = h.replace(/\s+/g, ' ')
+    // Normalizar texto eliminando saltos de línea y espacios extra
+    const clean = h.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
 
     if (clean.includes('MARCA TEMPORAL') || clean.includes('TIMESTAMP') || clean === 'HORA DE REGISTRO') colIdx['marca_temporal'] = i
     else if (clean.includes('PERIODO RECLUTADO') || clean === 'PERIODO' || clean.includes('PERÍODO')) colIdx['periodo_reclutado'] = i
@@ -99,12 +100,12 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('CAMPAÑA') || clean.includes('CAMPANA') || clean.includes('A QUE CAMPAÑA') || clean.includes('A QUÉ CAMPAÑA')) colIdx['campana'] = i
     else if (clean.includes('SEDE')) colIdx['sede'] = i
     else if (clean.includes('TIPO DE DOCUMENTO') || clean === 'TIPO DOC') colIdx['tipo_documento'] = i
-    else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean === 'NRO DE IDENTIFICACION' || clean === 'NUMERO DE IDENTIFICACION') {
+    else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean.includes('IDENTIFICACION') || clean.includes('IDENTIFICACIÓN')) {
       if (colIdx['documento'] === undefined) colIdx['documento'] = i
     }
     else if (clean.includes('APELLIDO PATERNO') || clean === 'PATERNO') colIdx['apellido_paterno'] = i
     else if (clean.includes('APELLIDO MATERNO') || clean === 'MATERNO') colIdx['apellido_materno'] = i
-    else if (clean.includes('APELLIDOS') && colIdx['apellido_paterno'] === undefined) colIdx['apellido_paterno'] = i
+    else if ((clean === 'APELLIDOS' || clean.includes('APELLIDOS Y NOMBRES') || clean.includes('APELLIDO(S)')) && colIdx['apellido_paterno'] === undefined) colIdx['apellido_paterno'] = i
     else if (clean.includes('NOMBRES') || clean.includes('NOMBRE COMPLETO') || clean === 'NOMBRE') {
       if (colIdx['nombres'] === undefined) colIdx['nombres'] = i
     }
@@ -132,23 +133,35 @@ export function mapGoogleFormHeaders(headerRow = []) {
     }
     else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
     else if (clean.includes('OFERTA') || clean.includes('ENTERASTE') || clean.includes('FUENTE')) colIdx['fuente_oferta'] = i
-    else if (clean.includes('CARGO CONTRACTUAL') || clean.includes('CARGO')) colIdx['cargo_contractual'] = i
+    else if (clean.includes('CARGO CONTRACTUAL') || clean.includes('CARGO') || clean.includes('PUESTO')) colIdx['cargo_contractual'] = i
+    else if (clean.includes('BONO ASIST') || clean.includes('ONO ASIST')) colIdx['bono_asistencia_perfecta'] = i
+    
+    // Status Día 1
     else if (clean.includes('STATUS DIA 1') || clean.includes('STATUS DÍA 1') || clean.includes('STATUS DIA1') || clean.includes('STATUS DÍA1') || clean === 'STATUS' || clean === 'ESTADO DIA 1' || clean === 'ESTADO DÍA 1') colIdx['status_dia_1'] = i
-    else if ((clean.includes('DIA 0') || clean.includes('DÍA 0') || clean.includes('DIA0') || clean.includes('DÍA0')) && !clean.includes('OBS') && !clean.includes('ASISTI')) colIdx['dia_0'] = i
-    else if ((clean.includes('DIA 1') || clean.includes('DÍA 1') || clean.includes('DIA1') || clean.includes('DÍA1')) && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('ASISTI')) colIdx['dia_1'] = i
-    else if (clean.includes('NO ASISTIÓ DÍA 0') || clean.includes('NO ASISTIO DIA 0') || clean.includes('ASISTE DÍA1') || clean.includes('ASISTE DIA1') || (clean.includes('OBS') && (clean.includes('DIA 1') || clean.includes('DÍA 1')))) colIdx['dia_1_obs'] = i
-    else if (clean.includes('OBS') && (clean.includes('DIA 0') || clean.includes('DÍA 0'))) colIdx['dia_0_obs'] = i
+    
+    // Día 0 (Asistencia)
+    else if (clean === 'DIA 0' || clean === 'DÍA 0' || clean === 'DIA0' || clean === 'DÍA0' || clean === 'D0' || clean.includes('ASISTENCIA DÍA 0') || clean.includes('ASISTENCIA DIA 0') || (clean.includes('DIA 0') && !clean.includes('OBS') && !clean.includes('MOTIVO')) || (clean.includes('DÍA 0') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_0'] = i
+    
+    // Observaciones Día 0
+    else if ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 0') || clean.includes('DÍA 0') || clean.includes('DIA0') || clean.includes('DÍA0') || clean.includes('D0'))) colIdx['dia_0_obs'] = i
+    
+    // Día 1 (Asistencia)
+    else if (clean === 'DIA 1' || clean === 'DÍA 1' || clean === 'DIA1' || clean === 'DÍA1' || clean === 'D1' || clean.includes('ASISTENCIA DÍA 1') || clean.includes('ASISTENCIA DIA 1') || (clean.includes('DIA 1') && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('MOTIVO')) || (clean.includes('DÍA 1') && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_1'] = i
+    
+    // Observaciones Día 1
+    else if (clean.includes('NO ASISTIÓ DÍA 0') || clean.includes('NO ASISTIO DIA 0') || clean.includes('ASISTE DÍA1') || clean.includes('ASISTE DIA1') || clean.includes('ASISTE DÍA 1') || clean.includes('ASISTE DIA 1') || ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 1') || clean.includes('DÍA 1') || clean.includes('DIA1') || clean.includes('DÍA1') || clean.includes('D1')))) colIdx['dia_1_obs'] = i
+    
     else if (clean.includes('OBS') && clean.includes('EVALUAR')) colIdx['obs_evaluar'] = i
     else if (clean.includes('EVALUAR')) colIdx['evaluar'] = i
   })
 
   // Segunda pasada contextual para columnas genéricas "OBSERVACIONES" o "OBS"
   headers.forEach((h, i) => {
-    const clean = h.replace(/\s+/g, ' ')
-    if (clean === 'OBSERVACION' || clean === 'OBSERVACIONES' || clean === 'OBS') {
-      if (colIdx['dia_0'] !== undefined && i === colIdx['dia_0'] + 1 && colIdx['dia_0_obs'] === undefined) {
+    const clean = h.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (clean === 'OBSERVACION' || clean === 'OBSERVACIONES' || clean === 'OBS' || clean === 'OBS.') {
+      if (colIdx['dia_0'] !== undefined && (i === colIdx['dia_0'] + 1 || i === colIdx['dia_0'] + 2) && colIdx['dia_0_obs'] === undefined) {
         colIdx['dia_0_obs'] = i
-      } else if (colIdx['dia_1'] !== undefined && i === colIdx['dia_1'] + 1 && colIdx['dia_1_obs'] === undefined) {
+      } else if (colIdx['dia_1'] !== undefined && (i === colIdx['dia_1'] + 1 || i === colIdx['dia_1'] + 2) && colIdx['dia_1_obs'] === undefined) {
         colIdx['dia_1_obs'] = i
       } else if (colIdx['observacion_reclutamiento'] === undefined) {
         colIdx['observacion_reclutamiento'] = i
@@ -185,10 +198,10 @@ export function isValidDocumento(val) {
 function normalizeAsistencia(val) {
   if (!val) return null
   const s = String(val).trim().toUpperCase()
-  if (!s || s === '-' || s === '0' || s === 'NULL' || s === '--') return null
-  if (s.includes('ASIST') || s === 'A' || s === 'SI' || s === 'SÍ') return 'ASISTIO'
-  if (s.includes('FALT') || s === 'F' || s === 'FI' || s === 'FJ' || s === 'NO') return 'FALTA'
-  if (s.includes('DESERT') || s.includes('BAJA') || s === 'B') return 'DESERTO'
+  if (!s || s === '-' || s === '0' || s === 'NULL' || s === '--' || s === '...') return null
+  if (s.includes('ASIST') || s === 'A' || s === 'SI' || s === 'SÍ' || s === 'OK' || s === 'PRESENTE') return 'ASISTIO'
+  if (s.includes('FALT') || s === 'F' || s === 'FI' || s === 'FJ' || s === 'NO' || s === 'DESAPROBADO') return 'FALTA'
+  if (s.includes('DESERT') || s.includes('BAJA') || s.includes('DESIST') || s === 'B' || s === 'CESE') return 'DESERTO'
   return s
 }
 
@@ -206,12 +219,32 @@ export function parseGoogleFormRow(row, colIdx) {
     return null
   }
 
-  const rawNombres = str('nombres')
-  const rawApPaterno = str('apellido_paterno')
+  let rawNombres = str('nombres')
+  let rawApPaterno = str('apellido_paterno')
+  let rawApMaterno = str('apellido_materno')
   
   // Si tampoco tiene nombres ni apellido, es una fila basura
   if (!rawNombres && !rawApPaterno) {
     return null
+  }
+
+  // Descomposición inteligente de apellidos y nombres si vienen combinados
+  if (rawApPaterno && !rawApMaterno && !rawNombres) {
+    const parts = rawApPaterno.trim().split(/\s+/)
+    if (parts.length >= 3) {
+      rawApPaterno = parts[0]
+      rawApMaterno = parts[1]
+      rawNombres = parts.slice(2).join(' ')
+    } else if (parts.length === 2) {
+      rawApPaterno = parts[0]
+      rawNombres = parts[1]
+    }
+  } else if (rawApPaterno && !rawApMaterno && rawNombres) {
+    const apParts = rawApPaterno.trim().split(/\s+/)
+    if (apParts.length === 2) {
+      rawApPaterno = apParts[0]
+      rawApMaterno = apParts[1]
+    }
   }
 
   let rawStatusDia1 = str('status_dia_1')
@@ -253,7 +286,7 @@ export function parseGoogleFormRow(row, colIdx) {
     tipo_documento: str('tipo_documento') || 'DNI',
     documento: rawDoc,
     apellido_paterno: rawApPaterno,
-    apellido_materno: str('apellido_materno'),
+    apellido_materno: rawApMaterno,
     nombres: rawNombres,
     celular: str('celular'),
     celular_referencia: str('celular_referencia'),
@@ -277,6 +310,7 @@ export function parseGoogleFormRow(row, colIdx) {
     fuente_oferta: str('fuente_oferta'),
     observacion_reclutamiento: rawObs,
     cargo_contractual: str('cargo_contractual'),
+    bono_asistencia_perfecta: str('bono_asistencia_perfecta'),
     status_dia_1: rawStatusDia1 || 'APTO',
     dia_0: rawDia0 || null,
     dia_0_obs: rawDia0Obs || null,
