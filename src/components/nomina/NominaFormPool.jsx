@@ -417,22 +417,32 @@ export default function NominaFormPool({
     return availableData.slice(start, start + pageSize)
   }, [availableData, page, pageSize])
 
-  // Solo se pueden seleccionar postulantes NUEVOS (que no hayan sido asignados a ningún grupo)
+  // Postulantes seleccionables: Nuevos disponibles O ya asignados al grupo actual (para actualizar sus datos operativos)
   const selectableData = useMemo(() =>
-    availableData.filter(d => !latestAssignedDocs.has(String(d.documento || '').trim()))
-  , [availableData, latestAssignedDocs])
+    availableData.filter(d => {
+      const cleanDoc = String(d.documento || '').trim()
+      const assignment = latestAssignedDocs.get(cleanDoc)
+      if (!assignment) return true
+      return assignment.grupo_codigo === bulkGrupo
+    })
+  , [availableData, latestAssignedDocs, bulkGrupo])
 
   const poolStats = useMemo(() => ({
     total: poolData.length,
     disponibles: selectableData.length,
-    yaIngresados: poolData.filter(d => latestAssignedDocs.has(String(d.documento || '').trim())).length,
+    yaIngresados: poolData.filter(d => {
+      const cleanDoc = String(d.documento || '').trim()
+      const assignment = latestAssignedDocs.get(cleanDoc)
+      return assignment && assignment.grupo_codigo !== bulkGrupo
+    }).length,
     seleccionados: selectedDocs.size,
-  }), [poolData, selectableData, latestAssignedDocs, selectedDocs])
+  }), [poolData, selectableData, latestAssignedDocs, selectedDocs, bulkGrupo])
 
   const toggleSelect = (doc, marca) => {
     const cleanDoc = String(doc || '').trim()
-    // Si ya está adjudicado, no permitir seleccionar
-    if (latestAssignedDocs.has(cleanDoc)) return
+    const assignment = latestAssignedDocs.get(cleanDoc)
+    // Bloquear solo si está asignado a OTRO grupo diferente al destino seleccionado
+    if (assignment && assignment.grupo_codigo !== bulkGrupo && bulkGrupo) return
     const key = `${cleanDoc}|${marca}`
     const next = new Set(selectedDocs)
     if (next.has(key)) next.delete(key)
@@ -449,7 +459,11 @@ export default function NominaFormPool({
   }
 
   const selectCurrentPage = () => {
-    const pageSelectable = paginatedData.filter(d => !latestAssignedDocs.has(String(d.documento || '').trim()))
+    const pageSelectable = paginatedData.filter(d => {
+      const cleanDoc = String(d.documento || '').trim()
+      const assignment = latestAssignedDocs.get(cleanDoc)
+      return !assignment || (bulkGrupo && assignment.grupo_codigo === bulkGrupo)
+    })
     const next = new Set(selectedDocs)
     pageSelectable.forEach(d => next.add(`${String(d.documento || '').trim()}|${d.marca_temporal}`))
     setSelectedDocs(next)
@@ -461,7 +475,7 @@ export default function NominaFormPool({
       return
     }
     if (selectedDocs.size === 0) {
-      setError('Selecciona al menos un postulante nuevo disponible para importar.')
+      setError('Selecciona al menos un postulante disponible para importar o actualizar.')
       return
     }
     executeSave()
@@ -483,60 +497,88 @@ export default function NominaFormPool({
       const validFieldsSet = new Set(NOMINA_DB_FIELDS)
       validFieldsSet.add('activo')
 
-      // Filtra solo los seleccionados que no estén previamente registrados
-      const toInsert = poolData
-        .filter(d => selectedDocs.has(`${String(d.documento || '').trim()}|${d.marca_temporal}`))
-        .filter(d => !latestAssignedDocs.has(String(d.documento || '').trim()))
-        .map(d => {
-          const safeMarcaTemporal = (d.marca_temporal && !isNaN(new Date(d.marca_temporal).getTime()) && new Date(d.marca_temporal).getFullYear() >= 1990)
-            ? new Date(d.marca_temporal).toISOString()
-            : new Date().toISOString()
+      const selectedPoolItems = poolData.filter(d =>
+        selectedDocs.has(`${String(d.documento || '').trim()}|${d.marca_temporal}`)
+      )
 
-          const rawPayload = {
-            ...d,
-            marca_temporal: safeMarcaTemporal,
-            periodo_reclutado: matchedGrupoObj?.periodo || bulkPeriodo,
-            semana_trabajo: semanaNum,
-            reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',
-            campana: bulkCampana,
-            segmento: bulkSegmento,
-            grupo_codigo: bulkGrupo,
-            status_dia_1: d.status_dia_1 || 'APTO',
-            dia_0: d.dia_0 || null,
-            dia_0_obs: d.dia_0_obs || null,
-            dia_1: d.dia_1 || null,
-            dia_1_obs: d.dia_1_obs || null,
-            evaluar: d.evaluar || null,
-            obs_evaluar: d.obs_evaluar || null,
-            activo: true
+      const toInsert = []
+      const toUpdate = []
+
+      selectedPoolItems.forEach(d => {
+        const cleanDoc = String(d.documento || '').trim()
+        const existingAssignment = latestAssignedDocs.get(cleanDoc)
+
+        const safeMarcaTemporal = (d.marca_temporal && !isNaN(new Date(d.marca_temporal).getTime()) && new Date(d.marca_temporal).getFullYear() >= 1990)
+          ? new Date(d.marca_temporal).toISOString()
+          : new Date().toISOString()
+
+        const rawPayload = {
+          ...d,
+          marca_temporal: safeMarcaTemporal,
+          periodo_reclutado: matchedGrupoObj?.periodo || bulkPeriodo,
+          semana_trabajo: semanaNum,
+          reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',
+          campana: bulkCampana,
+          segmento: bulkSegmento,
+          grupo_codigo: bulkGrupo,
+          status_dia_1: d.status_dia_1 || 'APTO',
+          dia_0: d.dia_0 || null,
+          dia_0_obs: d.dia_0_obs || null,
+          dia_1: d.dia_1 || null,
+          dia_1_obs: d.dia_1_obs || null,
+          evaluar: d.evaluar || null,
+          obs_evaluar: d.obs_evaluar || null,
+          activo: true
+        }
+
+        const cleanRow = {}
+        for (const key of Object.keys(rawPayload)) {
+          if (validFieldsSet.has(key)) {
+            cleanRow[key] = rawPayload[key]
           }
+        }
 
-          const cleanRow = {}
-          for (const key of Object.keys(rawPayload)) {
-            if (validFieldsSet.has(key)) {
-              cleanRow[key] = rawPayload[key]
-            }
-          }
-          return cleanRow
-        })
+        if (existingAssignment && existingAssignment.grupo_codigo === bulkGrupo) {
+          toUpdate.push({ doc: cleanDoc, row: cleanRow })
+        } else if (!existingAssignment) {
+          toInsert.push(cleanRow)
+        }
+      })
 
-      if (toInsert.length === 0) {
-        setError('No hay postulantes válidos o nuevos para adjudicar.')
+      if (toInsert.length === 0 && toUpdate.length === 0) {
+        setError('No hay postulantes válidos para guardar o actualizar.')
         return
       }
 
-      // Simulated smooth progress
       const progressInterval = setInterval(() => {
         setImportProgress(p => Math.min(p + 20, 90))
       }, 150)
 
-      const { error: dbErr } = await supabase.from('nominas').insert(toInsert)
+      // 1. Insert new candidates
+      if (toInsert.length > 0) {
+        const { error: dbErr } = await supabase.from('nominas').insert(toInsert)
+        if (dbErr) throw dbErr
+      }
+
+      // 2. Update existing candidates in current group
+      if (toUpdate.length > 0) {
+        for (const item of toUpdate) {
+          const { error: updErr } = await supabase
+            .from('nominas')
+            .update(item.row)
+            .eq('documento', item.doc)
+            .eq('grupo_codigo', bulkGrupo)
+          if (updErr) console.warn('Error updating candidate:', item.doc, updErr)
+        }
+      }
+
       clearInterval(progressInterval)
       setImportProgress(100)
 
-      if (dbErr) throw dbErr
-
-      setSuccess(`🎉 ¡${toInsert.length} postulante${toInsert.length !== 1 ? 's' : ''} asignado${toInsert.length !== 1 ? 's' : ''} con éxito al grupo ${bulkGrupo} (${bulkCampana})!`)
+      const msgParts = []
+      if (toInsert.length > 0) msgParts.push(`${toInsert.length} asignado${toInsert.length !== 1 ? 's' : ''}`)
+      if (toUpdate.length > 0) msgParts.push(`${toUpdate.length} actualizado${toUpdate.length !== 1 ? 's' : ''}`)
+      setSuccess(`🎉 ¡${msgParts.join(' y ')} con éxito en el grupo ${bulkGrupo} (${bulkCampana})!`)
       setTimeout(() => setSuccess(null), 6000)
       setSelectedDocs(new Set())
       await loadSheetCandidates(workbookData, selectedSheet)
@@ -817,26 +859,30 @@ export default function NominaFormPool({
                 const key = `${cleanDoc}|${d.marca_temporal}`
                 const latestAssignment = latestAssignedDocs.get(cleanDoc)
                 const isAssigned = Boolean(latestAssignment)
+                const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
+                const isOtherGroup = isAssigned && !isCurrentGroup
                 const isSelected = selectedDocs.has(key)
 
                 return (
                   <tr
                     key={`${cleanDoc}-${idx}`}
                     onClick={() => {
-                      if (!isAssigned) toggleSelect(cleanDoc, d.marca_temporal)
+                      if (!isOtherGroup) toggleSelect(cleanDoc, d.marca_temporal)
                     }}
                     className={`transition-colors ${
-                      isAssigned
+                      isOtherGroup
                         ? 'bg-slate-100/50 dark:bg-slate-900/35 opacity-75'
                         : isSelected
                           ? 'bg-cyan-500/10 cursor-pointer'
-                          : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
+                          : isCurrentGroup
+                            ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
+                            : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
                     }`}
                   >
                     {/* Selection Checkbox */}
                     <td className="p-3 text-center align-top" onClick={e => e.stopPropagation()}>
-                      {isAssigned ? (
-                        <div className="flex items-center justify-center pt-1" title="Postulante ya asignado a un grupo">
+                      {isOtherGroup ? (
+                        <div className="flex items-center justify-center pt-1" title={`Postulante ya asignado a ${latestAssignment.grupo_codigo}`}>
                           <span className="p-1 rounded-md bg-slate-200/80 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
                             <Lock size={13} />
                           </span>
@@ -854,7 +900,7 @@ export default function NominaFormPool({
                     {/* DNI / Assignment Details */}
                     <td className="p-3 align-top min-w-[220px]">
                       <div className={`font-mono text-xs font-black tracking-wider ${
-                        isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'
+                        isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'
                       }`}>
                         {cleanDoc}
                       </div>
@@ -866,8 +912,15 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Si ya está registrado en algún grupo (último grupo histórico) */}
-                      {isAssigned && (
+                      {/* Si ya pertenece a este mismo grupo (puede actualizar datos operativos) */}
+                      {isCurrentGroup && (
+                        <span className="inline-flex items-center gap-1 text-[8.5px] font-bold px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 mt-1">
+                          <CheckCircle2 size={10} /> En este grupo (Listo para actualizar)
+                        </span>
+                      )}
+
+                      {/* Si ya está registrado en OTRO grupo diferente */}
+                      {isOtherGroup && (
                         <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 text-amber-600 dark:text-amber-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
                             <span className="truncate max-w-[150px]" title={latestAssignment.campana || 'Sin Campaña'}>
