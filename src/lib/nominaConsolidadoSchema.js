@@ -82,7 +82,10 @@ const HEADER_ALIASES = {
   exp_otra: ['DETALLANOS OTRA EXPERIENCIA LABORAL'],
   exp_tiempo_otra: ['TIEMPO DE EXPERIENCIA2'], // We'll handle duplicate manually
   fuente_oferta: ['¿CÓMO TE ENTERASTE DE LA OFERTA LABORAL?'],
-  observacion_reclutamiento: ['OBSERVACION'], // First occexport function mapGoogleFormHeaders(headerRow = []) {
+  observacion_reclutamiento: ['OBSERVACION'], // First occurrence
+}
+
+export function mapGoogleFormHeaders(headerRow = []) {
   const headers = headerRow.map(h => String(h || '').toUpperCase().trim())
   const colIdx = {}
 
