@@ -14,11 +14,25 @@ export default class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     console.error('ErrorBoundary capturó un error:', error, errorInfo)
     this.setState({ errorInfo })
+
+    // Si es un error de versión antigua/despliegue en Netlify, forzar recarga limpia automáticamente
+    const errorMsg = String(error?.message || error || '')
+    if (
+      errorMsg.includes('Failed to fetch dynamically imported module') ||
+      errorMsg.includes('Loading chunk') ||
+      errorMsg.includes('Strict MIME type')
+    ) {
+      if (!sessionStorage.getItem('gea-auto-reload-chunk')) {
+        sessionStorage.setItem('gea-auto-reload-chunk', 'true')
+        window.location.reload()
+      }
+    }
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null })
-    window.location.href = window.location.origin + window.location.pathname
+    sessionStorage.removeItem('gea-auto-reload-chunk')
+    sessionStorage.removeItem('gea-page-force-refreshed')
+    window.location.reload()
   }
 
   render() {
