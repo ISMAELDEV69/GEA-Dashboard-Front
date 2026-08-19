@@ -1513,12 +1513,6 @@ export default function NominaForm({
                       const c = e.target.value;
                       setBulkCampana(c); 
                       setBulkGrupo('');
-                      const match = grupos.find(g => getCampanaVal(g) === String(c || '').trim().toUpperCase());
-                      if (match) {
-                        if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
-                        if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
-                        if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
-                      }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
                   >
@@ -1535,13 +1529,14 @@ export default function NominaForm({
                     onChange={e => {
                       const cod = e.target.value;
                       setBulkGrupo(cod);
-                      const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase())
-                        || grupos.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
-                      if (match) {
-                        if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
-                        if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
-                        if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
-                        if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
+                      if (cod) {
+                        const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
+                        if (match) {
+                          if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                          if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+                          if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                          if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
+                        }
                       }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"

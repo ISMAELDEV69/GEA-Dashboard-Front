@@ -74,6 +74,9 @@ import { nameMatches } from '../../lib/dashboardAnalytics'
 export default function NominaGridEditor({
   grupoCodigo,
   campana,
+  periodo,
+  semana,
+  segmento,
   onSaveComplete,
   userProfile = null,
   currentRole = null,
@@ -147,9 +150,28 @@ export default function NominaGridEditor({
         .limit(5000)
 
       if (grupoCodigo && grupoCodigo !== 'ALL') {
-        query = query.eq('grupo_codigo', grupoCodigo.trim())
-      } else if (campana) {
-        query = query.ilike('campana', `%${campana.trim()}%`)
+        const cleanCod = String(grupoCodigo).split(' - ')[0].trim()
+        query = query.or(`grupo_codigo.eq.${cleanCod},grupo_codigo.ilike.%${cleanCod}%`)
+      }
+
+      if (periodo) {
+        const rawP = String(periodo).replace(/\D/g, '')
+        if (rawP) {
+          query = query.or(`periodo_reclutado.eq.${periodo},periodo_reclutado.ilike.%${rawP}%`)
+        } else {
+          query = query.eq('periodo_reclutado', String(periodo).trim())
+        }
+      }
+
+      if (semana) {
+        const semanaNum = parseInt(String(semana).replace(/\D/g, ''), 10)
+        if (!isNaN(semanaNum)) {
+          query = query.eq('semana_trabajo', semanaNum)
+        }
+      }
+
+      if (campana) {
+        query = query.ilike('campana', `%${String(campana).trim()}%`)
       }
 
       if (currentRole === 'reclutador') {
@@ -177,39 +199,34 @@ export default function NominaGridEditor({
     } finally {
       setLoading(false)
     }
-  }, [grupoCodigo, campana, currentRole, userFullName])
+  }, [grupoCodigo, campana, periodo, semana, segmento, currentRole, userFullName])
 
   useEffect(() => {
     if (grupoCodigo) loadData(false)
-  }, [grupoCodigo, campana, currentRole, userFullName])
+  }, [grupoCodigo, campana, periodo, semana, segmento, currentRole, userFullName])
 
   // ── Realtime concurrency detection ─────────────────────────────
-  // Subscribe to changes on nominas rows for this group made by OTHER users.
-  // We compare updated_at to lastLoadedAtRef to ignore our own saves.
   useEffect(() => {
     if (!grupoCodigo) return
     const channel = supabase
-      .channel(`nominas-concurrency-${grupoCodigo}`)
+      .channel(`nominas-concurrency-${grupoCodigo}-${periodo || 'all'}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'nominas', filter: `grupo_codigo=eq.${grupoCodigo}` },
         (payload) => {
           const updatedAt = payload.new?.updated_at
           const loadedAt = lastLoadedAtRef.current
-          // Only flag if the change happened AFTER we loaded (could be from another tab/user)
           if (updatedAt && loadedAt && updatedAt > loadedAt) {
-            // Small grace window: ignore changes within 4s of our own load (likely our own save)
-            const diffMs = new Date(updatedAt) - new Date(loadedAt)
-            if (diffMs > 4000) {
-              setExternalChangeDetected(true)
-            }
+            setExternalChangeDetected(true)
           }
         }
       )
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
-  }, [grupoCodigo])
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [grupoCodigo, periodo])
 
   // Flush batched updates for a row to database
   const flushRowUpdate = async (rowId) => {
@@ -456,7 +473,9 @@ export default function NominaGridEditor({
             </span>
           </div>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">
-            {campana ? `${campana} · ` : ''}{data.length} candidatos cargados
+            {[periodo, semana ? (semana.toUpperCase().startsWith('SEM') ? semana : `Sem ${semana}`) : '', segmento, campana].filter(Boolean).join(' · ')}
+            {([periodo, semana, segmento, campana].some(Boolean) ? ' · ' : '')}
+            {data.length} candidatos cargados
           </p>
         </div>
 

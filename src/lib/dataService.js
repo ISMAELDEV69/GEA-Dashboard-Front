@@ -436,6 +436,25 @@ export async function createUserAccount({ email, password, nombre, rol }) {
   )
 
   if (!rpcMissing) {
+    if (rpcMsg.includes('Ya existe') || rpcMsg.includes('already')) {
+      const { data: existingProfile } = await supabase
+        .from('perfiles')
+        .select('id, nombre, rol')
+        .or(`nombre.ilike.%${displayName}%,nombre.ilike.%${cleanEmail.split('@')[0]}%`)
+        .limit(1)
+        .maybeSingle()
+
+      if (existingProfile?.id) {
+        await adminResetUserPassword(existingProfile.id, password)
+        await updateUserRole(existingProfile.id, safeRol)
+        return {
+          id: existingProfile.id,
+          email: cleanEmail,
+          nombre: displayName,
+          rol: safeRol
+        }
+      }
+    }
     throw new Error(rpcMsg || 'No se pudo crear el usuario')
   }
 
@@ -2605,7 +2624,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
  * Parsea una matriz de filas (de cualquier hoja de Google Spreadsheet o Excel)
  * mapeando las 68 columnas estándar de GEA y Google Forms.
  */
-export async function parseSheetMatrixCandidates(matrix) {
+export async function parseSheetMatrixCandidates(matrix, options = {}) {
   if (!matrix || matrix.length < 2) return []
 
   const { mapGoogleFormHeaders, parseGoogleFormRow } = await import('./nominaConsolidadoSchema.js')
@@ -2638,6 +2657,40 @@ export async function parseSheetMatrixCandidates(matrix) {
 
         const parsed = parseGoogleFormRow(row, colIdx)
         if (parsed && parsed.documento) {
+          // Filtrado y optimización: solo traer registros con máximo 2 meses de antigüedad
+          if (options.limitLast2Months !== false) {
+            const now = new Date()
+            const cutoffDate = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0)
+            const cutoffTime = cutoffDate.getTime()
+
+            let isRecent = false
+            if (parsed.marca_temporal) {
+              const dt = new Date(parsed.marca_temporal)
+              if (!isNaN(dt.getTime())) {
+                if (dt.getTime() >= cutoffTime) {
+                  isRecent = true
+                }
+              }
+            } else if (parsed.periodo_reclutado) {
+              const pStr = String(parsed.periodo_reclutado).trim()
+              const pYear = parseInt(pStr.substring(0, 4), 10)
+              const pMonth = parseInt(pStr.substring(4, 6), 10)
+              if (!isNaN(pYear) && !isNaN(pMonth)) {
+                const pDate = new Date(pYear, pMonth - 1, 1)
+                if (pDate.getTime() >= cutoffTime) {
+                  isRecent = true
+                }
+              }
+            } else {
+              // Si no tiene fecha explícita, se mantiene
+              isRecent = true
+            }
+
+            if (!isRecent) {
+              continue
+            }
+          }
+
           rows.push(parsed)
         }
       }

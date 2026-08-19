@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
-const DEFAULT_GOOGLE_FORM_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQNqbcgwWaeZiPwDaetDMft_rwv6BWFM-wNdA10VIKVWLo5uvnPFcbHgHvrDIiUyyWa08pDWN_VNX0e/pubhtml'
+const DEFAULT_GOOGLE_FORM_URL = 'https://docs.google.com/spreadsheets/d/1eP1knjS4Dt2jT-HI6CAZlURw9LB215Go6QVlbbKaniU/edit?resourcekey=&gid=641275674#gid=641275674'
 
 function getRecordTimestamp(r) {
   const d = r.fecha_inicio_capacitacion || r.created_at || r.marca_temporal
@@ -221,9 +221,6 @@ export default function NominaFormPool({
   const fileInputRef                        = React.useRef(null)
   const [sheetUrl, setSheetUrl]             = useState(() => {
     const saved = localStorage.getItem('gea_pool_sheet_url')
-    if (saved && (saved.includes('1eP1knjS4Dt2jT-HI6CAZlURw9LB215Go6QVlbbKaniU') || !saved.includes('2PACX-'))) {
-      return DEFAULT_GOOGLE_FORM_URL
-    }
     return saved || DEFAULT_GOOGLE_FORM_URL
   })
   const [workbookData, setWorkbookData]     = useState(null)
@@ -397,20 +394,28 @@ export default function NominaFormPool({
       })
       const uniqueData = Array.from(deduplicatedMap.values())
 
-      // Consultar historial de asignaciones de todos los postulantes en la base de datos
+      // Consultar historial de asignaciones de todos los postulantes en la base de datos en paralelo
       const uniqueDnis = uniqueData.map(d => String(d.documento || '').trim()).filter(Boolean)
       const historyMap = new Map()
 
       if (uniqueDnis.length > 0) {
-        const chunkSize = 200
+        const chunkSize = 400
+        const chunks = []
         for (let i = 0; i < uniqueDnis.length; i += chunkSize) {
-          const chunk = uniqueDnis.slice(i, i + chunkSize)
-          const { data: existing, error: fetchErr } = await supabase
-            .from('nominas')
-            .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, motivo_baja, dia_0, dia_1, created_at')
-            .in('documento', chunk)
-            .order('created_at', { ascending: false })
+          chunks.push(uniqueDnis.slice(i, i + chunkSize))
+        }
 
+        const responses = await Promise.all(
+          chunks.map(chunk =>
+            supabase
+              .from('nominas')
+              .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, motivo_baja, dia_0, dia_1, created_at')
+              .in('documento', chunk)
+              .order('created_at', { ascending: false })
+          )
+        )
+
+        responses.forEach(({ data: existing, error: fetchErr }) => {
           if (!fetchErr && existing) {
             existing.forEach(r => {
               const doc = String(r.documento || '').trim()
@@ -421,7 +426,7 @@ export default function NominaFormPool({
               historyMap.get(doc).push(r)
             })
           }
-        }
+        })
       }
 
       // Tomar siempre el ÚLTIMO grupo en el que el postulante haya estado
@@ -590,6 +595,8 @@ export default function NominaFormPool({
       const toInsert = []
       const toUpdate = []
 
+      const cleanTargetGrupo = String(bulkGrupo || '').split(' - ')[0].trim()
+
       selectedPoolItems.forEach(d => {
         const cleanDoc = String(d.documento || '').trim()
         const existingAssignment = latestAssignedDocs.get(cleanDoc)
@@ -602,12 +609,12 @@ export default function NominaFormPool({
           ...d,
           marca_temporal: safeMarcaTemporal,
           fecha_nacimiento: parseExcelDate(d.fecha_nacimiento),
-          periodo_reclutado: matchedGrupoObj?.periodo || bulkPeriodo,
+          periodo_reclutado: bulkPeriodo ? String(bulkPeriodo).trim() : (matchedGrupoObj?.periodo || null),
           semana_trabajo: semanaNum,
           reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',
-          campana: bulkCampana,
-          segmento: bulkSegmento,
-          grupo_codigo: bulkGrupo,
+          campana: bulkCampana ? bulkCampana.trim().toUpperCase() : (matchedGrupoObj?.campana || null),
+          segmento: bulkSegmento ? bulkSegmento.trim().toUpperCase() : (matchedGrupoObj?.segmento || null),
+          grupo_codigo: cleanTargetGrupo,
           status_dia_1: d.status_dia_1 || 'APTO',
           dia_0: d.dia_0 || null,
           dia_0_obs: d.dia_0_obs || null,
@@ -625,7 +632,7 @@ export default function NominaFormPool({
           }
         }
 
-        if (existingAssignment && existingAssignment.grupo_codigo === bulkGrupo) {
+        if (existingAssignment && existingAssignment.grupo_codigo === cleanTargetGrupo) {
           toUpdate.push({ doc: cleanDoc, row: cleanRow })
         } else if (!existingAssignment) {
           toInsert.push(cleanRow)
@@ -804,11 +811,14 @@ export default function NominaFormPool({
       {/* ── 2. Mini KPIs & Search Bar ── */}
       <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex gap-2.5 flex-wrap flex-1">
-            <PoolStat label="En la Hoja"        value={poolStats.total}        color="var(--accent, #06b6d4)" icon={Users} />
-            <PoolStat label="Disponibles"       value={poolStats.disponibles}  color="#10b981" icon={CheckCircle2} />
-            <PoolStat label="Ya Adjudicados"    value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
-            <PoolStat label="Seleccionados"     value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
+          <div className="flex gap-2.5 flex-wrap flex-1 items-center">
+            <PoolStat label="En la Hoja (2 Meses)" value={poolStats.total}        color="var(--accent, #06b6d4)" icon={Users} />
+            <PoolStat label="Disponibles"          value={poolStats.disponibles}  color="#10b981" icon={CheckCircle2} />
+            <PoolStat label="Ya Adjudicados"       value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
+            <PoolStat label="Seleccionados"        value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-[11px] font-bold">
+              <Calendar size={13} /> Últimos 2 Meses
+            </span>
           </div>
 
           {/* Target Group Badge */}
@@ -930,16 +940,42 @@ export default function NominaFormPool({
             <p className="text-[11px] opacity-60">Revisa la pestaña seleccionada o escribe en el buscador.</p>
           </div>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-10 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] select-none">
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 z-10 bg-[var(--table-head-bg)] border-b border-[var(--border-subtle)] select-none shadow-sm">
               <tr>
-                <th className="p-3 w-10 text-center">
+                <th className="p-3 w-10 text-center sticky left-0 z-20 bg-[var(--table-head-bg)] border-r border-[var(--border-subtle)]">
                   <button onClick={toggleAll} className="text-[var(--text-muted)] hover:text-cyan-400 transition-colors cursor-pointer" title="Seleccionar todos los disponibles">
                     {allSelected ? <CheckSquare size={16} className="text-cyan-400" /> : <Square size={16} />}
                   </button>
                 </th>
-                {['DNI / Estado', 'Nombre Completo', 'Celular', 'Exp. Call Center', 'Fuente de Oferta', 'Marca Temporal'].map(h => (
-                  <th key={h} className="p-3 text-left text-[10px] font-black text-[var(--text-muted)] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                {[
+                  { label: 'DNI / Estado', minW: 'min-w-[210px]' },
+                  { label: 'Nombre Completo', minW: 'min-w-[220px]' },
+                  { label: 'Celular', minW: 'min-w-[110px]' },
+                  { label: 'Cel. Ref.', minW: 'min-w-[110px]' },
+                  { label: 'Correo', minW: 'min-w-[180px]' },
+                  { label: 'Género', minW: 'min-w-[90px]' },
+                  { label: 'F. Nacimiento', minW: 'min-w-[110px]' },
+                  { label: 'Edad', minW: 'min-w-[65px]' },
+                  { label: 'Estado Civil', minW: 'min-w-[110px]' },
+                  { label: 'Hijos', minW: 'min-w-[65px]' },
+                  { label: 'Nivel Académico', minW: 'min-w-[140px]' },
+                  { label: 'Carrera', minW: 'min-w-[150px]' },
+                  { label: 'Nacionalidad', minW: 'min-w-[110px]' },
+                  { label: 'Lugar Residencia', minW: 'min-w-[130px]' },
+                  { label: 'Distrito', minW: 'min-w-[130px]' },
+                  { label: 'Dirección', minW: 'min-w-[200px]' },
+                  { label: 'Exp. Call Center', minW: 'min-w-[120px]' },
+                  { label: 'Tipo Experiencia', minW: 'min-w-[130px]' },
+                  { label: 'Tiempo Exp.', minW: 'min-w-[110px]' },
+                  { label: 'Otra Experiencia', minW: 'min-w-[130px]' },
+                  { label: 'Tiempo Otra Exp.', minW: 'min-w-[120px]' },
+                  { label: 'Fuente de Oferta', minW: 'min-w-[140px]' },
+                  { label: 'Marca Temporal', minW: 'min-w-[140px]' },
+                ].map(h => (
+                  <th key={h.label} className={`p-3 text-left text-[10px] font-black text-[var(--text-muted)] uppercase tracking-wider whitespace-nowrap ${h.minW}`}>
+                    {h.label}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -952,6 +988,7 @@ export default function NominaFormPool({
                 const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
                 const isOtherGroup = isAssigned && !isCurrentGroup
                 const isSelected = selectedDocs.has(key)
+                const strikeClass = isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'
 
                 return (
                   <tr
@@ -970,7 +1007,7 @@ export default function NominaFormPool({
                     }`}
                   >
                     {/* Selection Checkbox */}
-                    <td className="p-3 text-center align-top" onClick={e => e.stopPropagation()}>
+                    <td className="p-3 text-center align-top sticky left-0 z-10 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)]" onClick={e => e.stopPropagation()}>
                       {isOtherGroup ? (
                         <div className="flex items-center justify-center pt-1" title={`Postulante ya asignado a ${latestAssignment.grupo_codigo}`}>
                           <span className="p-1 rounded-md bg-slate-200/80 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
@@ -988,7 +1025,7 @@ export default function NominaFormPool({
                     </td>
 
                     {/* DNI / Assignment Details */}
-                    <td className="p-3 align-top min-w-[220px]">
+                    <td className="p-3 align-top min-w-[210px]">
                       <div className={`font-mono text-xs font-black tracking-wider ${
                         isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'
                       }`}>
@@ -1002,10 +1039,10 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Si ya pertenece a este mismo grupo (puede actualizar datos operativos) */}
+                      {/* Si ya pertenece a este mismo grupo */}
                       {isCurrentGroup && (
                         <span className="inline-flex items-center gap-1 text-[8.5px] font-bold px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 mt-1">
-                          <CheckCircle2 size={10} /> En este grupo (Listo para actualizar)
+                          <CheckCircle2 size={10} /> En este grupo
                         </span>
                       )}
 
@@ -1013,7 +1050,7 @@ export default function NominaFormPool({
                       {isOtherGroup && (
                         <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 text-amber-600 dark:text-amber-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
-                            <span className="truncate max-w-[150px]" title={latestAssignment.campana || 'Sin Campaña'}>
+                            <span className="truncate max-w-[140px]" title={latestAssignment.campana || 'Sin Campaña'}>
                               🏷️ {latestAssignment.campana || 'Sin Campaña'}
                             </span>
                             <button
@@ -1057,37 +1094,116 @@ export default function NominaFormPool({
                     </td>
 
                     {/* Nombre Completo */}
-                    <td className="p-3 text-xs font-bold whitespace-nowrap align-top">
+                    <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[220px]">
                       <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'}>
-                        {d.apellido_paterno} {d.apellido_materno} {d.nombres}
+                        {[d.apellido_paterno, d.apellido_materno, d.nombres].filter(Boolean).join(' ') || d.documento}
                       </span>
                     </td>
 
                     {/* Celular */}
-                    <td className="p-3 font-mono text-xs whitespace-nowrap align-top">
-                      <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'}>
-                        {d.celular || '—'}
-                      </span>
+                    <td className="p-3 font-mono text-xs whitespace-nowrap align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.celular || '—'}</span>
+                    </td>
+
+                    {/* Celular Referencia */}
+                    <td className="p-3 font-mono text-xs whitespace-nowrap align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.celular_referencia || '—'}</span>
+                    </td>
+
+                    {/* Correo Electrónico */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top lowercase min-w-[180px]">
+                      <span className={strikeClass}>{d.correo || '—'}</span>
+                    </td>
+
+                    {/* Género */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[90px]">
+                      <span className={strikeClass}>{d.genero || '—'}</span>
+                    </td>
+
+                    {/* F. Nacimiento */}
+                    <td className="p-3 text-xs whitespace-nowrap font-mono align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.fecha_nacimiento || '—'}</span>
+                    </td>
+
+                    {/* Edad */}
+                    <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[65px]">
+                      <span className={strikeClass}>{d.edad ? `${d.edad} años` : '—'}</span>
+                    </td>
+
+                    {/* Estado Civil */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.estado_civil || '—'}</span>
+                    </td>
+
+                    {/* Hijos */}
+                    <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[65px]">
+                      <span className={strikeClass}>{d.n_hijos !== null && d.n_hijos !== undefined ? d.n_hijos : '—'}</span>
+                    </td>
+
+                    {/* Nivel Académico */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[140px]">
+                      <span className={strikeClass}>{d.nivel_academico || '—'}</span>
+                    </td>
+
+                    {/* Carrera */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[150px]">
+                      <span className={strikeClass}>{d.carrera || '—'}</span>
+                    </td>
+
+                    {/* Nacionalidad */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.nacionalidad || 'PERUANA'}</span>
+                    </td>
+
+                    {/* Lugar Residencia */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
+                      <span className={strikeClass}>{d.lugar_residencia || '—'}</span>
+                    </td>
+
+                    {/* Distrito */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
+                      <span className={strikeClass}>{d.distrito_residencia || '—'}</span>
+                    </td>
+
+                    {/* Dirección */}
+                    <td className="p-3 text-xs max-w-[240px] truncate align-top min-w-[200px]" title={d.direccion_domicilio || ''}>
+                      <span className={strikeClass}>{d.direccion_domicilio || '—'}</span>
                     </td>
 
                     {/* Exp. Call Center */}
-                    <td className="p-3 text-xs align-top">
-                      <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'}>
-                        {d.exp_call_center || '—'}
-                      </span>
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[120px]">
+                      <span className={strikeClass}>{d.exp_call_center || '—'}</span>
+                    </td>
+
+                    {/* Tipo Exp. */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
+                      <span className={strikeClass}>{d.exp_tipo_campana || '—'}</span>
+                    </td>
+
+                    {/* Tiempo Exp. Call */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[110px]">
+                      <span className={strikeClass}>{d.exp_tiempo_call || '—'}</span>
+                    </td>
+
+                    {/* Otra Exp. */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
+                      <span className={strikeClass}>{d.exp_otra || '—'}</span>
+                    </td>
+
+                    {/* Tiempo Otra Exp. */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[120px]">
+                      <span className={strikeClass}>{d.exp_tiempo_otra || '—'}</span>
                     </td>
 
                     {/* Fuente de Oferta */}
-                    <td className="p-3 text-xs max-w-[140px] truncate align-top" title={d.fuente_oferta}>
-                      <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'}>
-                        {d.fuente_oferta || '—'}
-                      </span>
+                    <td className="p-3 text-xs max-w-[160px] truncate align-top min-w-[140px]" title={d.fuente_oferta || ''}>
+                      <span className={strikeClass}>{d.fuente_oferta || '—'}</span>
                     </td>
 
                     {/* Marca Temporal */}
-                    <td className="p-3 text-xs whitespace-nowrap font-mono text-[10px] align-top">
-                      <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-muted)]'}>
-                        {d.marca_temporal || '—'}
+                    <td className="p-3 text-xs whitespace-nowrap font-mono text-[10px] align-top min-w-[140px]">
+                      <span className={strikeClass}>
+                        {d.marca_temporal ? d.marca_temporal.replace('T', ' ') : '—'}
                       </span>
                     </td>
                   </tr>

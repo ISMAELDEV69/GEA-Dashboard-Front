@@ -64,29 +64,42 @@ export function resolveReclutadorId(userProfile, reclutadores = []) {
   if (!userProfile) return null
   if (userProfile.reclutador_id) return Number(userProfile.reclutador_id)
 
-  // 1. Multi-factor match by DNI / Documento de Identidad (Indestructible)
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  const userAlix = normalize(userProfile.nombre || userProfile.usuario_alix || userProfile.alix || '')
+  const userEmailPrefix = normalize(String(userProfile.email || '').split('@')[0])
   const userDni = String(userProfile.documento || userProfile.dni || userProfile.dni_reclutador || '').trim()
+  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+
+  // 1. Multi-factor match by ALIX username (ej. pe_carazacc)
+  if (userAlix || userEmailPrefix) {
+    const matchByAlix = reclutadores.find(r => {
+      const rAlix = normalize(r.alix || r.usuario_alix || '')
+      return (userAlix && rAlix === userAlix) || (userEmailPrefix && rAlix === userEmailPrefix)
+    })
+    if (matchByAlix) return Number(matchByAlix.id || matchByAlix.documento)
+  }
+
+  // 2. Multi-factor match by DNI / Documento de Identidad
   if (userDni) {
     const matchByDni = reclutadores.find(r => 
       String(r.documento || r.dni || '').trim() === userDni
     )
-    if (matchByDni) return Number(matchByDni.id)
+    if (matchByDni) return Number(matchByDni.id || matchByDni.documento)
   }
 
-  // 2. Multi-factor match by Email
-  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  // 3. Multi-factor match by Email
   if (userEmail) {
     const matchByEmail = reclutadores.find(r => 
       String(r.email || r.correo || '').toLowerCase().trim() === userEmail
     )
-    if (matchByEmail) return Number(matchByEmail.id)
+    if (matchByEmail) return Number(matchByEmail.id || matchByEmail.documento)
   }
 
-  // 3. Fallback match by Name
-  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+  // 4. Fallback match by Name
   if (nombre) {
     const match = reclutadores.find(r => nameMatches(r.nombre_completo, nombre))
-    if (match) return Number(match.id)
+    if (match) return Number(match.id || match.documento)
   }
 
   return null
@@ -96,22 +109,35 @@ export function resolveFormadorDocumento(userProfile, formadores = []) {
   if (!userProfile) return null
   if (userProfile.formador_documento) return String(userProfile.formador_documento).trim()
 
-  // 1. Multi-factor match by DNI / Documento de Identidad (Indestructible)
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  const userAlix = normalize(userProfile.nombre || userProfile.usuario_alix || userProfile.alix || '')
+  const userEmailPrefix = normalize(String(userProfile.email || '').split('@')[0])
   const userDni = String(userProfile.documento || userProfile.dni || '').trim()
+  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+
+  // 1. Multi-factor match by ALIX username
+  if (userAlix || userEmailPrefix) {
+    const matchByAlix = formadores.find(f => {
+      const fAlix = normalize(f.usuario_alix || f.alix || '')
+      return (userAlix && fAlix === userAlix) || (userEmailPrefix && fAlix === userEmailPrefix)
+    })
+    if (matchByAlix) return String(matchByAlix.documento).trim()
+  }
+
+  // 2. Multi-factor match by DNI
   if (userDni) {
     const matchByDni = formadores.find(f => String(f.documento || f.dni || '').trim() === userDni)
     if (matchByDni) return String(matchByDni.documento).trim()
   }
 
-  // 2. Multi-factor match by Email
-  const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
+  // 3. Multi-factor match by Email
   if (userEmail) {
     const matchByEmail = formadores.find(f => String(f.email || f.correo || '').toLowerCase().trim() === userEmail)
     if (matchByEmail) return String(matchByEmail.documento).trim()
   }
 
-  // 3. Fallback by Name
-  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+  // 4. Fallback by Name
   if (nombre) {
     const match = formadores.find(f => nameMatches(f.nombre_completo || f.datos_completos, nombre))
     if (match) return String(match.documento).trim()
@@ -122,29 +148,52 @@ export function resolveFormadorDocumento(userProfile, formadores = []) {
 
 export function filterPostulantesReclutador(postulantes, userProfile, reclutadores = []) {
   if (!userProfile) return []
-  const recId = resolveReclutadorId(userProfile, reclutadores)
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  const userAlix = normalize(userProfile.nombre || userProfile.usuario_alix || userProfile.alix || '')
+  const userEmailPrefix = normalize(String(userProfile.email || '').split('@')[0])
   const userDni = String(userProfile.documento || userProfile.dni || userProfile.dni_reclutador || '').trim()
   const userEmail = String(userProfile.email || userProfile.correo || '').toLowerCase().trim()
   const nombre = userProfile?.nombre_completo || userProfile?.nombre || ''
 
-  const recObj = recId ? reclutadores.find(r => Number(r.id) === recId) : null
-  const recDni = recObj ? String(recObj.documento || recObj.dni || '').trim() : ''
+  // Buscar la ficha completa del reclutador en la tabla equipo_reclutamiento
+  const recObj = reclutadores.find(r => {
+    const rAlix = normalize(r.alix || r.usuario_alix || '')
+    const rDni = String(r.documento || r.dni || '').trim()
+    const rEmail = String(r.email || r.correo || '').toLowerCase().trim()
+    return (
+      (userAlix && rAlix === userAlix) ||
+      (userEmailPrefix && rAlix === userEmailPrefix) ||
+      (userDni && rDni === userDni) ||
+      (userEmail && rEmail === userEmail) ||
+      (nombre && nameMatches(r.nombre_completo, nombre))
+    )
+  })
+
+  const recId = recObj?.id ? Number(recObj.id) : resolveReclutadorId(userProfile, reclutadores)
+  const recDni = recObj ? String(recObj.documento || recObj.dni || '').trim() : userDni
   const recNombre = recObj?.nombre_completo || ''
+  const recAlias = recObj?.alias || ''
+  const recAlix = recObj?.alix || ''
 
   return postulantes.filter(p => {
     // 1. Match by Recruiter ID
     if (recId && Number(p.reclutador_id) === recId) return true
 
     // 2. Match by Recruiter DNI
-    if (userDni && (String(p.reclutador_dni || p.dni_reclutador || p.reclutador_documento || '').trim() === userDni)) return true
     if (recDni && (String(p.reclutador_dni || p.dni_reclutador || p.reclutador_documento || '').trim() === recDni)) return true
+    if (userDni && (String(p.reclutador_dni || p.dni_reclutador || p.reclutador_documento || '').trim() === userDni)) return true
 
     // 3. Match by Recruiter Email
     if (userEmail && String(p.reclutador_email || '').toLowerCase().trim() === userEmail) return true
 
-    // 4. Match by Recruiter Name / Alias
-    if (nombre && nameMatches(p.reclutador, nombre)) return true
+    // 4. Match by ALIX username
+    if (recAlix && nameMatches(p.reclutador, recAlix)) return true
+    if (userAlix && nameMatches(p.reclutador, userAlix)) return true
+
+    // 5. Match by Recruiter Full Name / Alias
     if (recNombre && nameMatches(p.reclutador, recNombre)) return true
+    if (recAlias && nameMatches(p.reclutador, recAlias)) return true
+    if (nombre && nameMatches(p.reclutador, nombre)) return true
 
     return false
   })

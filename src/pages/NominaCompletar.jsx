@@ -132,6 +132,12 @@ export default function NominaCompletar({
     return unique.sort((a, b) => String(a.codigo || a.grupo_codigo || '').localeCompare(String(b.codigo || b.grupo_codigo || '')))
   }, [effectiveGrupos, bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana])
 
+  // Clear group card stats cache when parent hierarchy changes
+  useEffect(() => {
+    fetchedCodesRef.current.clear()
+    setStatsMap({})
+  }, [bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana])
+
   // ── Batch-fetch completeness for visible group cards ──────────
   useEffect(() => {
     const visibleCodes = bulkGruposList.slice(0, 16).map(g => g.codigo)
@@ -148,10 +154,22 @@ export default function NominaCompletar({
 
     const batchFetch = async (codes) => {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('nominas')
-          .select(`grupo_codigo, ${DOC_COLS.join(', ')}`)
+          .select(`grupo_codigo, campana, periodo_reclutado, semana_trabajo, ${DOC_COLS.join(', ')}`)
           .in('grupo_codigo', codes)
+        if (bulkPeriodo) {
+          const rawP = String(bulkPeriodo).replace(/\D/g, '')
+          if (rawP) query = query.or(`periodo_reclutado.eq.${bulkPeriodo},periodo_reclutado.ilike.%${rawP}%`)
+        }
+        if (bulkSemana) {
+          const semanaNum = parseInt(String(bulkSemana).replace(/\D/g, ''), 10)
+          if (!isNaN(semanaNum)) query = query.eq('semana_trabajo', semanaNum)
+        }
+        if (bulkCampana) {
+          query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)
+        }
+        const { data, error } = await query
         if (error) throw error
         const grouped = {}
         for (const row of (data || [])) {
@@ -174,29 +192,51 @@ export default function NominaCompletar({
     }
     // Split into batches of 8 to avoid overly large IN clauses
     for (let i = 0; i < newCodes.length; i += 8) batchFetch(newCodes.slice(i, i + 8))
-  }, [bulkGruposList])
+  }, [bulkGruposList, bulkPeriodo, bulkSemana, bulkCampana])
 
   // Refresh a single group's stat (called after save in editor)
   const refreshGroupStat = async (codigo) => {
     if (!codigo) return
     try {
-      const { data } = await supabase
+      let query = supabase
         .from('nominas')
         .select(`grupo_codigo, ${DOC_COLS.join(', ')}`)
         .eq('grupo_codigo', codigo)
-      setStatsMap(prev => ({ ...prev, [codigo]: { ...calcCompleteness(data || []), loading: false } }))
-    } catch (_) { /* silent */ }
+      if (bulkPeriodo) {
+        const rawP = String(bulkPeriodo).replace(/\D/g, '')
+        if (rawP) query = query.or(`periodo_reclutado.eq.${bulkPeriodo},periodo_reclutado.ilike.%${rawP}%`)
+      }
+      if (bulkSemana) {
+        const semanaNum = parseInt(String(bulkSemana).replace(/\D/g, ''), 10)
+        if (!isNaN(semanaNum)) query = query.eq('semana_trabajo', semanaNum)
+      }
+      if (bulkCampana) {
+        query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)
+      }
+      const { data, error } = await query
+      if (error) throw error
+      setStatsMap(prev => ({
+        ...prev,
+        [codigo]: { ...calcCompleteness(data || []), loading: false }
+      }))
+    } catch (err) {
+      console.error('Single stat refresh error:', err)
+    }
   }
 
   const handleSelectGrupoDirect = (grupo) => {
-    setBulkGrupo(grupo.codigo)
-    setBulkCampana(grupo.campana || '')
-    setBulkSegmento(grupo.segmento ? String(grupo.segmento).trim() : inferSegmento(grupo.campana))
-    if (grupo.periodo) setBulkPeriodo(grupo.periodo)
+    if (!grupo) return
+    const cod = grupo.codigo || grupo.grupo_codigo || ''
+    setBulkGrupo(cod)
+    if (grupo.campana) setBulkCampana(getCampanaVal(grupo))
+    if (grupo.segmento || grupo.campana) setBulkSegmento(getSegmentoVal(grupo))
+    if (grupo.periodo) setBulkPeriodo(getPeriodoVal(grupo))
+    if (getSemanaVal(grupo)) setBulkSemana(getSemanaVal(grupo))
   }
 
   const handleResetFilters = () => {
     setBulkPeriodo('')
+    setBulkSemana('')
     setBulkSegmento('')
     setBulkCampana('')
     setBulkGrupo('')
@@ -343,12 +383,6 @@ export default function NominaCompletar({
               const c = e.target.value;
               setBulkCampana(c);
               setBulkGrupo('');
-              const match = effectiveGrupos.find(g => getCampanaVal(g) === String(c || '').trim().toUpperCase());
-              if (match) {
-                if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
-                if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
-                if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
-              }
             }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-orange-400 transition-colors"
           >
@@ -376,13 +410,14 @@ export default function NominaCompletar({
             onChange={e => {
               const cod = e.target.value;
               setBulkGrupo(cod);
-              const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase())
-                || effectiveGrupos.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
-              if (match) {
-                if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
-                if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
-                if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
-                if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
+              if (cod) {
+                const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
+                if (match) {
+                  if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                  if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+                  if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                  if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
+                }
               }
             }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-emerald-400 transition-colors"
@@ -403,6 +438,9 @@ export default function NominaCompletar({
           <NominaGridEditor
             grupoCodigo={bulkGrupo}
             campana={bulkCampana}
+            periodo={bulkPeriodo}
+            semana={bulkSemana}
+            segmento={bulkSegmento}
             userProfile={userProfile}
             currentRole={currentRole}
             reclutadores={reclutadores}
@@ -520,7 +558,13 @@ export default function NominaCompletar({
               </button>
             </div>
             <div className="flex-1 overflow-hidden p-0">
-              <NominaFullPreview grupoCodigo={bulkGrupo} campana={bulkCampana} />
+              <NominaFullPreview 
+                grupoCodigo={bulkGrupo} 
+                campana={bulkCampana} 
+                periodo={bulkPeriodo} 
+                semana={bulkSemana} 
+                segmento={bulkSegmento} 
+              />
             </div>
           </div>
         </div>

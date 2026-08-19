@@ -3,7 +3,8 @@ function parseTimestamp(val) {
   if (!val) return null
   const s = String(val).trim()
   if (!s || s === '-' || s === '0') return null
-  // If DD/MM/YYYY HH:MM:SS or DD/MM/YYYY
+  
+  // If DD/MM/YYYY HH:MM:SS or D/M/YYYY H:M:S
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
   if (m) {
     const yyyy = m[3]
@@ -14,6 +15,19 @@ function parseTimestamp(val) {
     const ss = (m[6] || '00').padStart(2, '0')
     return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`
   }
+
+  // If YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS
+  const mIso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
+  if (mIso) {
+    const yyyy = mIso[1]
+    const mm = mIso[2].padStart(2, '0')
+    const dd = mIso[3].padStart(2, '0')
+    const hh = (mIso[4] || '00').padStart(2, '0')
+    const min = (mIso[5] || '00').padStart(2, '0')
+    const ss = (mIso[6] || '00').padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`
+  }
+
   // Try Excel serial datetime (e.g. 45000.418)
   if (/^\d{5}(?:\.\d+)?$/.test(s)) {
     const serial = parseFloat(s)
@@ -22,6 +36,7 @@ function parseTimestamp(val) {
       if (!isNaN(d.getTime())) return d.toISOString()
     }
   }
+
   // Try direct Date parse if looks like a date format (contains / or - or T)
   if (s.includes('/') || s.includes('-') || s.includes('T')) {
     const parsedDate = new Date(s)
@@ -29,7 +44,7 @@ function parseTimestamp(val) {
       return parsedDate.toISOString()
     }
   }
-  return null
+  return s
 }
 
 import { parseExcelDate } from './capacidadRysSchema.js'
@@ -133,6 +148,7 @@ export function mapGoogleFormHeaders(headerRow = []) {
     }
     else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
     else if (clean.includes('OFERTA') || clean.includes('ENTERASTE') || clean.includes('FUENTE')) colIdx['fuente_oferta'] = i
+    else if (clean.includes('WTSP') || clean.includes('WHATSAPP')) colIdx['usuario_whatsapp'] = i
     else if (clean.includes('CARGO CONTRACTUAL') || clean.includes('CARGO') || clean.includes('PUESTO')) colIdx['cargo_contractual'] = i
     else if (clean.includes('BONO ASIST') || clean.includes('ONO ASIST')) colIdx['bono_asistencia_perfecta'] = i
     
@@ -252,7 +268,7 @@ export function parseGoogleFormRow(row, colIdx) {
   let rawDia1 = normalizeAsistencia(get('dia_1'))
   let rawDia0Obs = str('dia_0_obs')
   let rawDia1Obs = str('dia_1_obs')
-  let rawObs = str('observacion_reclutamiento')
+  let rawObs = str('observacion_reclutamiento') || str('usuario_whatsapp')
 
   // Normalizar detección de AGREGADO / AGREGADO A DÍA X
   const allRowText = [rawStatusDia1, rawDia0, rawDia1, rawDia0Obs, rawDia1Obs, rawObs]
@@ -277,47 +293,61 @@ export function parseGoogleFormRow(row, colIdx) {
     }
   }
 
+  const normUpper = (k) => {
+    const val = str(k)
+    return val ? val.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null
+  }
+  const normLower = (k) => {
+    const val = str(k)
+    return val ? val.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase() : null
+  }
+  const normPhone = (k) => {
+    const val = str(k)
+    if (!val) return null
+    return val.replace(/[^\d+]/g, '').trim() || null
+  }
+
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
-    periodo_reclutado: str('periodo_reclutado'),
+    periodo_reclutado: normUpper('periodo_reclutado'),
     semana_trabajo: parseInt(get('semana_trabajo')) || null,
-    reclutador: str('reclutador'),
-    sede: str('sede'),
-    tipo_documento: str('tipo_documento') || 'DNI',
+    reclutador: normUpper('reclutador'),
+    sede: normUpper('sede'),
+    tipo_documento: normUpper('tipo_documento') || 'DNI',
     documento: rawDoc,
-    apellido_paterno: rawApPaterno,
-    apellido_materno: rawApMaterno,
-    nombres: rawNombres,
-    celular: str('celular'),
-    celular_referencia: str('celular_referencia'),
-    correo: str('correo'),
-    genero: str('genero'),
+    apellido_paterno: rawApPaterno ? rawApPaterno.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
+    apellido_materno: rawApMaterno ? rawApMaterno.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
+    nombres: rawNombres ? rawNombres.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
+    celular: normPhone('celular') || normPhone('celular_referencia'),
+    celular_referencia: normPhone('celular_referencia'),
+    correo: normLower('correo'),
+    genero: normUpper('genero'),
     fecha_nacimiento: parseExcelDate(get('fecha_nacimiento')),
     edad: parseInt(get('edad')) || null,
-    estado_civil: str('estado_civil'),
-    n_hijos: parseInt(get('n_hijos')) || null,
-    nivel_academico: str('nivel_academico'),
-    carrera: str('carrera'),
-    nacionalidad: str('nacionalidad'),
-    lugar_residencia: str('lugar_residencia'),
-    distrito_residencia: str('distrito_residencia'),
-    direccion_domicilio: str('direccion_domicilio'),
-    exp_call_center: str('exp_call_center'),
-    exp_tipo_campana: str('exp_tipo_campana'),
-    exp_tiempo_call: str('exp_tiempo_call'),
-    exp_otra: str('exp_otra'),
-    exp_tiempo_otra: str('exp_tiempo_otra'),
-    fuente_oferta: str('fuente_oferta'),
-    observacion_reclutamiento: rawObs,
-    cargo_contractual: str('cargo_contractual'),
-    bono_asistencia_perfecta: str('bono_asistencia_perfecta'),
+    estado_civil: normUpper('estado_civil'),
+    n_hijos: parseInt(get('n_hijos')) || 0,
+    nivel_academico: normUpper('nivel_academico'),
+    carrera: normUpper('carrera'),
+    nacionalidad: normUpper('nacionalidad') || 'PERUANA',
+    lugar_residencia: normUpper('lugar_residencia'),
+    distrito_residencia: normUpper('distrito_residencia'),
+    direccion_domicilio: normUpper('direccion_domicilio'),
+    exp_call_center: normUpper('exp_call_center'),
+    exp_tipo_campana: normUpper('exp_tipo_campana'),
+    exp_tiempo_call: normUpper('exp_tiempo_call'),
+    exp_otra: normUpper('exp_otra'),
+    exp_tiempo_otra: normUpper('exp_tiempo_otra'),
+    fuente_oferta: normUpper('fuente_oferta'),
+    observacion_reclutamiento: rawObs ? rawObs.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
+    cargo_contractual: normUpper('cargo_contractual'),
+    bono_asistencia_perfecta: normUpper('bono_asistencia_perfecta'),
     status_dia_1: rawStatusDia1 || 'APTO',
     dia_0: rawDia0 || null,
     dia_0_obs: rawDia0Obs || null,
     dia_1: rawDia1 || null,
     dia_1_obs: rawDia1Obs || null,
-    evaluar: str('evaluar') || null,
-    obs_evaluar: str('obs_evaluar') || null,
+    evaluar: normUpper('evaluar') || null,
+    obs_evaluar: normUpper('obs_evaluar') || null,
   }
 }
 
@@ -375,30 +405,58 @@ export function parseNominaRows(matrix = [], defaults = {}) {
 }
 
 /**
- * Parsea un texto CSV simple a matriz 2D
+ * Parsea un texto CSV respetando comillas multilínea y caracteres de escape RFC 4180
  */
 export function parseCsvToMatrix(text) {
   if (!text) return []
-  const lines = text.split(/\r?\n/)
-  return lines.map(line => {
-    // Regex básico para CSV con comillas
-    const row = []
-    let inQuotes = false
-    let current = ''
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i]
-      if (char === '"' || char === "'") {
-        inQuotes = !inQuotes
-      } else if (char === ',' && !inQuotes) {
-        row.push(current.trim())
-        current = ''
+  const result = []
+  let row = []
+  let currentVal = ''
+  let inQuotes = false
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    const nextChar = text[i + 1]
+
+    if (inQuotes) {
+      if (char === '"' && nextChar === '"') {
+        currentVal += '"'
+        i++
+      } else if (char === '"') {
+        inQuotes = false
       } else {
-        current += char
+        currentVal += char
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true
+      } else if (char === ',') {
+        row.push(currentVal.trim())
+        currentVal = ''
+      } else if (char === '\n' || char === '\r') {
+        if (char === '\r' && nextChar === '\n') {
+          i++
+        }
+        row.push(currentVal.trim())
+        if (row.some(v => v !== '')) {
+          result.push(row)
+        }
+        row = []
+        currentVal = ''
+      } else {
+        currentVal += char
       }
     }
-    row.push(current.trim())
-    return row
-  }).filter(r => r.some(c => c !== ''))
+  }
+
+  if (currentVal || row.length > 0) {
+    row.push(currentVal.trim())
+    if (row.some(v => v !== '')) {
+      result.push(row)
+    }
+  }
+
+  return result
 }
 
 // Dummy exports to satisfy legacy imports

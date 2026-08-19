@@ -46,8 +46,29 @@ BEGIN
 
   v_display_name := coalesce(nullif(trim(p_nombre), ''), split_part(v_clean_email, '@', 1));
 
+  -- Si el usuario ya existe en auth.users, actualizar su contraseña, metadata y perfil (re-asignación)
   IF EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = v_clean_email) THEN
-    RAISE EXCEPTION 'Ya existe un usuario con ese correo';
+    SELECT id INTO v_uid FROM auth.users WHERE lower(email) = v_clean_email LIMIT 1;
+    
+    UPDATE auth.users
+    SET encrypted_password = extensions.crypt(p_password, extensions.gen_salt('bf')),
+        updated_at = NOW(),
+        raw_user_meta_data = jsonb_build_object('nombre', v_display_name, 'rol', v_safe_rol::text)
+    WHERE id = v_uid;
+
+    INSERT INTO public.perfiles (id, nombre, rol, must_change_password)
+    VALUES (v_uid, v_display_name, v_safe_rol, false)
+    ON CONFLICT (id) DO UPDATE
+      SET nombre = EXCLUDED.nombre,
+          rol = EXCLUDED.rol,
+          must_change_password = false;
+
+    RETURN jsonb_build_object(
+      'id', v_uid,
+      'email', v_clean_email,
+      'nombre', v_display_name,
+      'rol', v_safe_rol::text
+    );
   END IF;
 
   SELECT coalesce(

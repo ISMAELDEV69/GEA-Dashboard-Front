@@ -19,7 +19,7 @@ function getHeaderColor(key) {
   return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
 }
 
-export default function NominaFullPreview({ grupoCodigo, campana }) {
+export default function NominaFullPreview({ grupoCodigo, campana, periodo, semana, segmento }) {
   const [data, setData] = useState([])
   const [columns, setColumns] = useState([])
   const [loading, setLoading] = useState(false)
@@ -73,7 +73,7 @@ export default function NominaFullPreview({ grupoCodigo, campana }) {
 
   useEffect(() => {
     if (grupoCodigo) loadData()
-  }, [grupoCodigo, campana])
+  }, [grupoCodigo, campana, periodo, semana, segmento])
 
   const loadData = async () => {
     setLoading(true)
@@ -86,9 +86,28 @@ export default function NominaFullPreview({ grupoCodigo, campana }) {
         .limit(5000)
 
       if (grupoCodigo && grupoCodigo !== 'ALL') {
-        query = query.eq('grupo_codigo', grupoCodigo.trim())
-      } else if (campana) {
-        query = query.ilike('campana', `%${campana.trim()}%`)
+        const cleanCod = String(grupoCodigo).split(' - ')[0].trim()
+        query = query.or(`grupo_codigo.eq.${cleanCod},grupo_codigo.ilike.%${cleanCod}%`)
+      }
+
+      if (periodo) {
+        const rawP = String(periodo).replace(/\D/g, '')
+        if (rawP) {
+          query = query.or(`periodo_reclutado.eq.${periodo},periodo_reclutado.ilike.%${rawP}%`)
+        } else {
+          query = query.eq('periodo_reclutado', String(periodo).trim())
+        }
+      }
+
+      if (semana) {
+        const semanaNum = parseInt(String(semana).replace(/\D/g, ''), 10)
+        if (!isNaN(semanaNum)) {
+          query = query.eq('semana_trabajo', semanaNum)
+        }
+      }
+
+      if (campana) {
+        query = query.ilike('campana', `%${String(campana).trim()}%`)
       }
 
       const { data: rows, error: err } = await query
