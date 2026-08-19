@@ -109,6 +109,7 @@ function PoolStat({ label, value, color, icon: Icon }) {
 
 export default function NominaFormPool({
   bulkPeriodo,
+  bulkSemana,
   bulkSegmento,
   bulkCampana,
   bulkGrupo,
@@ -489,10 +490,14 @@ export default function NominaFormPool({
 
       const matchedGrupoObj = grupos.find(g =>
         (g.grupo_codigo === bulkGrupo || g.codigo === bulkGrupo) &&
-        (!bulkCampana || String(g.campana).trim() === String(bulkCampana).trim())
+        (!bulkCampana || String(g.campana || '').trim().toUpperCase() === String(bulkCampana).trim().toUpperCase()) &&
+        (!bulkPeriodo || String(g.periodo || '').trim() === String(bulkPeriodo).trim())
+      ) || grupos.find(g =>
+        g.grupo_codigo === bulkGrupo || g.codigo === bulkGrupo
       )
 
-      const semanaNum = parseInt(String(matchedGrupoObj?.semana_label || matchedGrupoObj?.semana || '').replace(/\D/g, '')) || null
+      const rawSemana = bulkSemana || matchedGrupoObj?.semana_label || matchedGrupoObj?.semana_trabajo || matchedGrupoObj?.semana || ''
+      const semanaNum = parseInt(String(rawSemana).replace(/\D/g, '')) || null
 
       const validFieldsSet = new Set(NOMINA_DB_FIELDS)
       validFieldsSet.add('activo')

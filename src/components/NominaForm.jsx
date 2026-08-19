@@ -269,54 +269,79 @@ export default function NominaForm({
   const [googleError, setGoogleError] = useState(null)
   const fileInputRef = useRef(null)
 
+  // Helpers de homologación y jerarquía desde CAPACIDAD_RYS
+  const getPeriodoVal = useCallback((g) => g?.periodo ? String(g.periodo).trim() : '', [])
+  const getSemanaVal = useCallback((g) => g ? String(g.semana_label || g.semana_trabajo || g.semana || '').trim() : '', [])
+  const getSegmentoVal = useCallback((g) => {
+    if (!g) return ''
+    const seg = g.segmento || inferSegmento(g.campana || '')
+    return String(seg || '').trim().toUpperCase()
+  }, [])
+  const getCampanaVal = useCallback((g) => g ? String(g.campana || g.campana_nombre || '').trim().toUpperCase() : '', [])
+
   // Bulk Destination Overrides
   const [bulkPeriodo, setBulkPeriodo] = useState('')
+  const [bulkSemana, setBulkSemana] = useState('')
   const [bulkSegmento, setBulkSegmento] = useState('')
   const [bulkCampana, setBulkCampana] = useState('')
   const [bulkGrupo, setBulkGrupo] = useState('')
   const googleFileRef = useRef(null)
 
+  // 1. Periodos disponibles desde Capacidad RYS
   const bulkPeriodos = useMemo(() => {
-    return [...new Set(grupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort()
-  }, [grupos])
+    return [...new Set(grupos.map(g => getPeriodoVal(g)).filter(Boolean))].sort().reverse()
+  }, [grupos, getPeriodoVal])
 
+  // 2. Semanas disponibles según Periodo
+  const bulkSemanas = useMemo(() => {
+    let filtered = grupos
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    const unique = [...new Set(filtered.map(g => getSemanaVal(g)).filter(Boolean))]
+    return unique.sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, '')) || 0
+      const numB = parseInt(String(b).replace(/\D/g, '')) || 0
+      return numA - numB
+    })
+  }, [grupos, bulkPeriodo, getPeriodoVal, getSemanaVal])
+
+  // 3. Segmentos disponibles según Periodo y Semana
   const bulkSegmentos = useMemo(() => {
     let filtered = grupos
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
-    const fromGrupos = filtered.map(g => (g.segmento || inferSegmento(g.campana)) ? String(g.segmento || inferSegmento(g.campana)).trim().toUpperCase() : null).filter(Boolean)
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    const fromGrupos = filtered.map(g => getSegmentoVal(g)).filter(Boolean)
     return [...new Set(fromGrupos)].sort()
-  }, [grupos, bulkPeriodo])
+  }, [grupos, bulkPeriodo, bulkSemana, getPeriodoVal, getSemanaVal, getSegmentoVal])
 
+  // 4. Campañas disponibles según Periodo, Semana y Segmento
   const bulkCampanas = useMemo(() => {
     let filtered = grupos
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
-    if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
-      return seg === String(bulkSegmento).trim().toUpperCase()
-    })
-    return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
-  }, [grupos, bulkPeriodo, bulkSegmento])
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
+    return [...new Set(filtered.map(g => getCampanaVal(g)).filter(Boolean))].sort()
+  }, [grupos, bulkPeriodo, bulkSemana, bulkSegmento, getPeriodoVal, getSemanaVal, getSegmentoVal, getCampanaVal])
 
+  // 5. Grupos disponibles según Periodo, Semana, Segmento y Campaña
   const bulkGruposList = useMemo(() => {
     let filtered = grupos
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo || '').trim() === String(bulkPeriodo).trim())
-    if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
-      return seg === String(bulkSegmento).trim().toUpperCase()
-    })
-    if (bulkCampana) filtered = filtered.filter(g => String(g.campana || '').trim().toUpperCase() === String(bulkCampana).trim().toUpperCase())
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
+    if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
     // Remove duplicates
     const unique = []
     const seen = new Set()
     for (const g of filtered) {
-      if (g.codigo && !seen.has(g.codigo)) {
-        seen.add(g.codigo)
+      const cod = String(g.codigo || g.grupo_codigo || '').trim()
+      if (cod && !seen.has(cod)) {
+        seen.add(cod)
         unique.push(g)
       }
     }
-    return unique.sort((a, b) => String(a.codigo).localeCompare(String(b.codigo)))
-  }, [grupos, bulkPeriodo, bulkSegmento, bulkCampana])
+    return unique.sort((a, b) => String(a.codigo || a.grupo_codigo || '').localeCompare(String(b.codigo || b.grupo_codigo || '')))
+  }, [grupos, bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana, getPeriodoVal, getSemanaVal, getSegmentoVal, getCampanaVal])
 
   const {
     register,
@@ -1419,22 +1444,67 @@ export default function NominaForm({
                 </div>
               </div>
 
-              {/* ── SELECCIÓN DE DESTINO ── */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 dark:bg-slate-800/50 rounded-2xl border border-gray-100 dark:border-slate-800">
+              {/* ── SELECCIÓN DE DESTINO (Jerarquía: Periodo -> Semana -> Segmento -> Campaña -> Grupo) ── */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6 p-4 bg-gray-50 dark:bg-slate-800/50 rounded-2xl border border-gray-100 dark:border-slate-800">
+                {/* 1. PERIODO */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Periodo</label>
-                  <select value={bulkPeriodo} onChange={e => { setBulkPeriodo(e.target.value); setBulkSegmento(''); setBulkCampana(''); setBulkGrupo('') }} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500">
-                    <option value="" disabled>Seleccione Período</option>
+                  <select 
+                    value={bulkPeriodo} 
+                    onChange={e => { 
+                      setBulkPeriodo(e.target.value); 
+                      setBulkSemana(''); 
+                      setBulkSegmento(''); 
+                      setBulkCampana(''); 
+                      setBulkGrupo('') 
+                    }} 
+                    className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
+                  >
+                    <option value="">Seleccione Periodo</option>
                     {bulkPeriodos.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
+
+                {/* 2. SEMANA */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Semana</label>
+                  <select 
+                    value={bulkSemana} 
+                    onChange={e => { 
+                      setBulkSemana(e.target.value); 
+                      setBulkSegmento(''); 
+                      setBulkCampana(''); 
+                      setBulkGrupo('') 
+                    }} 
+                    className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
+                  >
+                    <option value="">Todas las Semanas</option>
+                    {bulkSemanas.map(s => (
+                      <option key={s} value={s}>
+                        {s.toUpperCase().startsWith('SEM') ? s : `Semana ${s}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 3. SEGMENTO */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Segmento</label>
-                  <select value={bulkSegmento} onChange={e => { setBulkSegmento(e.target.value); setBulkCampana(''); setBulkGrupo('') }} className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500">
-                    <option value="" disabled>Seleccione Segmento</option>
+                  <select 
+                    value={bulkSegmento} 
+                    onChange={e => { 
+                      setBulkSegmento(e.target.value); 
+                      setBulkCampana(''); 
+                      setBulkGrupo('') 
+                    }} 
+                    className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
+                  >
+                    <option value="">Seleccione Segmento</option>
                     {bulkSegmentos.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
+
+                {/* 4. CAMPAÑA */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Campaña</label>
                   <select 
@@ -1443,18 +1513,21 @@ export default function NominaForm({
                       const c = e.target.value;
                       setBulkCampana(c); 
                       setBulkGrupo('');
-                      const match = grupos.find(g => String(g.campana || '').trim().toUpperCase() === String(c || '').trim().toUpperCase());
+                      const match = grupos.find(g => getCampanaVal(g) === String(c || '').trim().toUpperCase());
                       if (match) {
-                        if (!bulkSegmento) setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(c));
-                        if (!bulkPeriodo) setBulkPeriodo(String(match.periodo || '').trim());
+                        if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                        if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                        if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
                       }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
                   >
-                    <option value="" disabled>Seleccione Campaña</option>
+                    <option value="">Seleccione Campaña</option>
                     {bulkCampanas.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
+
+                {/* 5. GRUPO (GPE) */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Grupo (GPE)</label>
                   <select 
@@ -1462,19 +1535,21 @@ export default function NominaForm({
                     onChange={e => {
                       const cod = e.target.value;
                       setBulkGrupo(cod);
-                      const match = grupos.find(g => String(g.codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
+                      const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase())
+                        || grupos.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
                       if (match) {
-                        setBulkCampana(match.campana);
-                        setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(match.campana));
-                        setBulkPeriodo(String(match.periodo || '').trim());
+                        if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                        if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+                        if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                        if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
                       }
                     }} 
                     className="w-full text-sm border-gray-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-medium focus:ring-blue-500/20 focus:border-blue-500"
                   >
-                    <option value="" disabled>Seleccione Grupo</option>
+                    <option value="">Seleccione Grupo ({bulkGruposList.length} disponibles)</option>
                     {bulkGruposList.map(g => (
-                      <option key={g.codigo} value={g.codigo}>
-                        {g.codigo} {g.rq_solicitado ? `(RQ: ${g.rq_solicitado})` : ''} {g.meta_dia_1 ? `(Meta: ${g.meta_dia_1})` : ''}
+                      <option key={g.codigo || g.grupo_codigo} value={g.codigo || g.grupo_codigo}>
+                        {g.codigo || g.grupo_codigo} {g.rq_solicitado ? `(RQ: ${g.rq_solicitado})` : ''} {g.meta_dia_1 ? `(Meta: ${g.meta_dia_1})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1492,16 +1567,19 @@ export default function NominaForm({
               {/* ONLY GOOGLE FORMS POOL */}
                 <NominaFormPool 
                   bulkPeriodo={bulkPeriodo} 
+                  bulkSemana={bulkSemana}
                   bulkSegmento={bulkSegmento} 
                   bulkCampana={bulkCampana} 
                   bulkGrupo={bulkGrupo}
                   onSelectGrupo={(cod) => {
                     setBulkGrupo(cod);
-                    const match = grupos.find(g => String(g.codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
+                    const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase())
+                      || grupos.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
                     if (match) {
-                      setBulkCampana(match.campana);
-                      setBulkSegmento(match.segmento ? String(match.segmento).trim().toUpperCase() : inferSegmento(match.campana));
-                      setBulkPeriodo(String(match.periodo || '').trim());
+                      if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                      if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+                      if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                      if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
                     }
                   }}
                   reclutador={userProfile?.nombre_completo}

@@ -62,7 +62,17 @@ export default function NominaCompletar({
     return filtered.length > 0 ? filtered : grupos.slice(0, 10)
   }, [grupos, isReclutador, postulantes, userProfile, reclutadores])
 
+  const getPeriodoVal = (g) => g?.periodo ? String(g.periodo).trim() : ''
+  const getSemanaVal = (g) => g ? String(g.semana_label || g.semana_trabajo || g.semana || '').trim() : ''
+  const getSegmentoVal = (g) => {
+    if (!g) return ''
+    const seg = g.segmento || inferSegmento(g.campana || '')
+    return String(seg || '').trim().toUpperCase()
+  }
+  const getCampanaVal = (g) => g ? String(g.campana || g.campana_nombre || '').trim().toUpperCase() : ''
+
   const [bulkPeriodo, setBulkPeriodo] = useState('')
+  const [bulkSemana, setBulkSemana] = useState('')
   const [bulkSegmento, setBulkSegmento] = useState('')
   const [bulkCampana, setBulkCampana] = useState('')
   const [bulkGrupo, setBulkGrupo] = useState('')
@@ -72,44 +82,55 @@ export default function NominaCompletar({
   const fetchedCodesRef = useRef(new Set())
 
   const bulkPeriodos = useMemo(() => {
-    return [...new Set(effectiveGrupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort()
+    return [...new Set(effectiveGrupos.map(g => getPeriodoVal(g)).filter(Boolean))].sort().reverse()
   }, [effectiveGrupos])
+
+  const bulkSemanas = useMemo(() => {
+    let filtered = effectiveGrupos
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    const unique = [...new Set(filtered.map(g => getSemanaVal(g)).filter(Boolean))]
+    return unique.sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, '')) || 0
+      const numB = parseInt(String(b).replace(/\D/g, '')) || 0
+      return numA - numB
+    })
+  }, [effectiveGrupos, bulkPeriodo])
 
   const bulkSegmentos = useMemo(() => {
-    const fromGrupos = effectiveGrupos.map(g => (g.segmento || inferSegmento(g.campana)) ? String(g.segmento || inferSegmento(g.campana)).trim().toUpperCase() : null).filter(Boolean);
-    return [...new Set([...SEGMENTOS_SIU, ...fromGrupos])].sort();
-  }, [effectiveGrupos])
+    let filtered = effectiveGrupos
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    const fromGrupos = filtered.map(g => getSegmentoVal(g)).filter(Boolean)
+    return [...new Set(fromGrupos)].sort()
+  }, [effectiveGrupos, bulkPeriodo, bulkSemana])
 
   const bulkCampanas = useMemo(() => {
-    let filtered = effectiveGrupos.filter(g => g.periodo)
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo) === String(bulkPeriodo))
-    if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = g.segmento || inferSegmento(g.campana)
-      return String(seg).trim() === String(bulkSegmento).trim()
-    })
-    return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
-  }, [effectiveGrupos, bulkPeriodo, bulkSegmento])
+    let filtered = effectiveGrupos
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
+    return [...new Set(filtered.map(g => getCampanaVal(g)).filter(Boolean))].sort()
+  }, [effectiveGrupos, bulkPeriodo, bulkSemana, bulkSegmento])
 
   const bulkGruposList = useMemo(() => {
-    let filtered = effectiveGrupos.filter(g => g.periodo);
-    if (bulkPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(bulkPeriodo).trim());
-    if (bulkSegmento) filtered = filtered.filter(g => {
-      const seg = g.segmento || inferSegmento(g.campana)
-      return String(seg).trim() === String(bulkSegmento).trim()
-    });
-    if (bulkCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(bulkCampana).trim());
+    let filtered = effectiveGrupos
+    if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
+    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
+    if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
     // Remove duplicates
-    const unique = [];
-    const seen = new Set();
+    const unique = []
+    const seen = new Set()
     for (const g of filtered) {
-      if (!seen.has(g.codigo)) {
-        seen.add(g.codigo);
-        unique.push(g);
+      const cod = String(g.codigo || g.grupo_codigo || '').trim()
+      if (cod && !seen.has(cod)) {
+        seen.add(cod)
+        unique.push(g)
       }
     }
-    return unique.sort((a,b) => String(a.codigo).localeCompare(String(b.codigo)));
-  }, [effectiveGrupos, bulkPeriodo, bulkSegmento, bulkCampana])
+    return unique.sort((a, b) => String(a.codigo || a.grupo_codigo || '').localeCompare(String(b.codigo || b.grupo_codigo || '')))
+  }, [effectiveGrupos, bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana])
 
   // ── Batch-fetch completeness for visible group cards ──────────
   useEffect(() => {
@@ -210,7 +231,7 @@ export default function NominaCompletar({
       />
 
       {/* ── CASCADE FILTERS BAR (Modular Glassmorphic Cards) ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         {/* PERIODO */}
         <div
           className={`relative rounded-xl p-3 flex flex-col justify-between transition-all bg-[var(--bg-elevated)] border ${
@@ -227,11 +248,50 @@ export default function NominaCompletar({
           </div>
           <select
             value={bulkPeriodo}
-            onChange={e => { setBulkPeriodo(e.target.value); setBulkSegmento(''); setBulkCampana(''); setBulkGrupo('') }}
+            onChange={e => { 
+              setBulkPeriodo(e.target.value); 
+              setBulkSemana('');
+              setBulkSegmento(''); 
+              setBulkCampana(''); 
+              setBulkGrupo('') 
+            }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-cyan-400 transition-colors"
           >
             <option value="">Todos los Periodos</option>
             {bulkPeriodos.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        {/* SEMANA */}
+        <div
+          className={`relative rounded-xl p-3 flex flex-col justify-between transition-all bg-[var(--bg-elevated)] border ${
+            bulkSemana ? 'border-blue-500 shadow-[0_0_14px_-2px_rgba(59,130,246,0.2)]' : 'border-[var(--border-subtle)]'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">SEMANA</span>
+            {bulkSemana && (
+              <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                Activo
+              </span>
+            )}
+          </div>
+          <select
+            value={bulkSemana}
+            onChange={e => { 
+              setBulkSemana(e.target.value); 
+              setBulkSegmento(''); 
+              setBulkCampana(''); 
+              setBulkGrupo('') 
+            }}
+            className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-blue-400 transition-colors"
+          >
+            <option value="">Todas las Semanas</option>
+            {bulkSemanas.map(s => (
+              <option key={s} value={s}>
+                {s.toUpperCase().startsWith('SEM') ? s : `Semana ${s}`}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -251,7 +311,11 @@ export default function NominaCompletar({
           </div>
           <select
             value={bulkSegmento}
-            onChange={e => { setBulkSegmento(e.target.value); setBulkCampana(''); setBulkGrupo('') }}
+            onChange={e => { 
+              setBulkSegmento(e.target.value); 
+              setBulkCampana(''); 
+              setBulkGrupo('') 
+            }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-purple-400 transition-colors"
           >
             <option value="">Todos los Segmentos</option>
@@ -279,8 +343,12 @@ export default function NominaCompletar({
               const c = e.target.value;
               setBulkCampana(c);
               setBulkGrupo('');
-              const match = grupos.find(g => g.campana === c);
-              if (match) setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(c));
+              const match = effectiveGrupos.find(g => getCampanaVal(g) === String(c || '').trim().toUpperCase());
+              if (match) {
+                if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+              }
             }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-orange-400 transition-colors"
           >
@@ -308,19 +376,21 @@ export default function NominaCompletar({
             onChange={e => {
               const cod = e.target.value;
               setBulkGrupo(cod);
-              const match = bulkGruposList.find(g => g.codigo === cod) || grupos.find(g => g.codigo === cod);
+              const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase())
+                || effectiveGrupos.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
               if (match) {
-                setBulkCampana(match.campana || '');
-                setBulkSegmento(match.segmento ? String(match.segmento).trim() : inferSegmento(match.campana));
-                if (match.periodo) setBulkPeriodo(match.periodo);
+                if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
+                if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
+                if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
+                if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
               }
             }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-emerald-400 transition-colors"
           >
             <option value="">Seleccione Grupo ({bulkGruposList.length} disponibles)</option>
             {bulkGruposList.map(g => (
-              <option key={g.codigo} value={g.codigo}>
-                {String(g.codigo).startsWith('PROY-') ? '—' : String(g.codigo).replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}
+              <option key={g.codigo || g.grupo_codigo} value={g.codigo || g.grupo_codigo}>
+                {String(g.codigo || g.grupo_codigo).startsWith('PROY-') ? '—' : String(g.codigo || g.grupo_codigo).replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}
               </option>
             ))}
           </select>
