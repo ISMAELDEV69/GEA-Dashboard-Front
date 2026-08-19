@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, Cell, LabelList
 } from 'recharts'
 import { Filter, Search, AlertCircle, RefreshCw, Loader2, Sparkles, Layers, Download, X } from 'lucide-react'
-import { fetchAllDescuentosBI } from '../lib/dataService'
+import { fetchAllDescuentosBI, invalidateCache } from '../lib/dataService'
 
 const COLORS = {
   bars: 'var(--accent)',
@@ -35,7 +35,10 @@ export default function DescuentosBI() {
   const [searchDocumento, setSearchDocumento] = useState('')
 
   const loadData = useCallback(async (force = false) => {
-    if (!force && cachedDescuentos && cachedDescuentos.length > 0) {
+    if (force === true) {
+      invalidateCache('all_descuentos_bi')
+      cachedDescuentos = null
+    } else if (cachedDescuentos && cachedDescuentos.length > 0) {
       setData(cachedDescuentos)
       setLoading(false)
       return
@@ -206,7 +209,7 @@ export default function DescuentosBI() {
           <AlertCircle size={28} className="text-rose-500 mx-auto" />
           <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
           <p className="text-xs text-[var(--text-muted)]">{error}</p>
-          <button onClick={loadData} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
+          <button onClick={() => loadData(true)} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
             Reintentar
           </button>
         </div>

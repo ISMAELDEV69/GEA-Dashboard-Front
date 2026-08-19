@@ -108,6 +108,106 @@ function PoolStat({ label, value, color, icon: Icon }) {
   )
 }
 
+function scoreSheetMatch(sheetName, { bulkGrupo, bulkCampana, bulkSegmento }) {
+  if (!sheetName) return -1
+  const cleanSheet = sheetName.toUpperCase().replace(/\s+/g, ' ')
+  let score = 0
+
+  // 1. Coincidencia por Código de Grupo (ej. GPE-2026011)
+  if (bulkGrupo) {
+    const rawGrp = String(bulkGrupo).trim().toUpperCase()
+    const cleanGrp = rawGrp.replace(/[^A-Z0-9]/g, '')
+    const cleanSheetNoPunct = cleanSheet.replace(/[^A-Z0-9]/g, '')
+
+    if (cleanSheetNoPunct.includes(cleanGrp)) {
+      score += 100
+      if (cleanSheet.includes(rawGrp)) {
+        score += 20
+      }
+    }
+  }
+
+  // 2. Coincidencia por Campaña (ej. "CLARO POSTPAGO - CROSS", "RETENCIONES FIJA INBOUND")
+  if (bulkCampana) {
+    const rawCamp = String(bulkCampana).trim().toUpperCase()
+    const cleanCamp = rawCamp.replace(/[^A-Z0-9]/g, '')
+    const cleanSheetNoPunct = cleanSheet.replace(/[^A-Z0-9]/g, '')
+
+    // Coincidencia de frase completa de campaña
+    if (cleanSheetNoPunct.includes(cleanCamp)) {
+      score += 150
+    }
+
+    // Coincidencia por palabras clave significativas de campaña
+    const campWords = rawCamp.split(/[\s\-_/+]+/).filter(w => w.length >= 3)
+    campWords.forEach(word => {
+      if (cleanSheet.includes(word)) {
+        score += 40
+      }
+    })
+  }
+
+  // 3. Coincidencia por Segmento (ej. "CLARO PERU", "CLARO CHILE", "LIPIGAS")
+  if (bulkSegmento) {
+    const rawSeg = String(bulkSegmento).trim().toUpperCase()
+    const segWords = rawSeg.split(/[\s\-_/+]+/).filter(w => w.length >= 3 && !['CLARO'].includes(w))
+    segWords.forEach(word => {
+      if (cleanSheet.includes(word)) {
+        score += 15
+      }
+    })
+  }
+
+  return score
+}
+
+function extractDateFromSheetName(name) {
+  if (!name) return 0
+  // Extrae fechas en formatos: 27.07, 27/07, 27-07, 27.07.2026, 2026-07-27
+  const dmyMatch = name.match(/(\d{1,2})[./\-_](\d{1,2})(?:[./\-_](\d{2,4}))?/)
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10)
+    const month = parseInt(dmyMatch[2], 10)
+    const year = dmyMatch[3] ? parseInt(dmyMatch[3], 10) : 2026
+    const fullYear = year < 100 ? 2000 + year : year
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return new Date(fullYear, month - 1, day).getTime()
+    }
+  }
+  return 0
+}
+
+function findBestMatchingSheet(names, filters) {
+  if (!names || names.length === 0) return ''
+
+  const evaluated = names.map((name, index) => {
+    const score = scoreSheetMatch(name, filters)
+    const dateVal = extractDateFromSheetName(name)
+    const cleanName = name.toUpperCase().replace(/[^A-Z0-9]/g, '')
+    return { name, index, score, dateVal, cleanName }
+  })
+
+  // Desempate ordenado:
+  // 1. Mayor score ponderado
+  // 2. Fecha más reciente en el nombre de la hoja (ej. 27.07 > 25.07)
+  // 3. Menor longitud del nombre (mayor especificidad, menos palabras basura)
+  // 4. Índice original
+  evaluated.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    if (b.dateVal !== a.dateVal) return b.dateVal - a.dateVal
+    if (a.cleanName.length !== b.cleanName.length) return a.cleanName.length - b.cleanName.length
+    return a.index - b.index
+  })
+
+  const top = evaluated[0]
+  if (top && top.score >= 50) {
+    return top.name
+  }
+
+  const formFallback = names.find(n => n.toLowerCase().includes('respuestas') || n.toLowerCase().includes('formulario'))
+  return formFallback || names[0]
+}
+
 export default function NominaFormPool({
   bulkPeriodo,
   bulkSemana,
@@ -163,18 +263,7 @@ export default function NominaFormPool({
       setWorkbookData(wbInfo)
       setSheetNames(names)
 
-      let matchedSheet = names[0]
-      if (bulkGrupo) {
-        const cleanGrp = bulkGrupo.toUpperCase().replace(/[^A-Z0-9]/g, '')
-        const found = names.find(n => {
-          const cleanName = n.toUpperCase().replace(/[^A-Z0-9]/g, '')
-          return cleanName.includes(cleanGrp) || cleanGrp.includes(cleanName)
-        })
-        if (found) matchedSheet = found
-      } else {
-        const firstGpe = matchedSheet.match(/GPE-\d+/i)?.[0]
-        if (firstGpe && onSelectGrupo) onSelectGrupo(firstGpe)
-      }
+      const matchedSheet = findBestMatchingSheet(names, { bulkGrupo, bulkCampana, bulkSegmento })
       setSelectedSheet(matchedSheet)
       await loadSheetCandidates(wbInfo, matchedSheet)
       setSuccess(`✅ Archivo "${file.name}" cargado con éxito. Se detectaron ${names.length} hojas.`)
@@ -205,23 +294,8 @@ export default function NominaFormPool({
       const names = wbInfo.sheetNames || ['Hoja 1']
       setSheetNames(names)
 
-      // Auto-match sheet based on selected Grupo, Campaña or "Respuestas de formulario"
-      let matchedSheet = names.find(n => n.toLowerCase().includes('respuestas') || n.toLowerCase().includes('formulario')) || names[0]
-      if (bulkGrupo) {
-        const cleanGrp = bulkGrupo.toUpperCase().replace(/[^A-Z0-9]/g, '')
-        const found = names.find(n => {
-          const cleanName = n.toUpperCase().replace(/[^A-Z0-9]/g, '')
-          return cleanName.includes(cleanGrp) || cleanGrp.includes(cleanName)
-        })
-        if (found) matchedSheet = found
-      } else if (bulkCampana) {
-        const cleanCamp = bulkCampana.toUpperCase().slice(0, 8)
-        const found = names.find(n => n.toUpperCase().includes(cleanCamp))
-        if (found) matchedSheet = found
-      } else {
-        const firstGpe = matchedSheet.match(/GPE-\d+/i)?.[0]
-        if (firstGpe && onSelectGrupo) onSelectGrupo(firstGpe)
-      }
+      // Auto-match sheet basándose en Grupo, Campaña y Segmento de forma ponderada
+      const matchedSheet = findBestMatchingSheet(names, { bulkGrupo, bulkCampana, bulkSegmento })
 
       setSelectedSheet(matchedSheet)
       await loadSheetCandidates(wbInfo, matchedSheet)
@@ -231,24 +305,25 @@ export default function NominaFormPool({
     } finally {
       setConnecting(false)
     }
-  }, [sheetUrl, bulkGrupo, bulkCampana, onSelectGrupo])
+  }, [sheetUrl, bulkGrupo, bulkCampana, bulkSegmento])
 
   // 2. Parse candidates from the selected sheet tab & check DB assignments
   const loadSheetCandidates = useCallback(async (wbInfo, sheetName) => {
     if (!wbInfo) return
+    const targetSheetName = sheetName || wbInfo.sheetNames?.[0] || 'Hoja 1'
+    setSelectedSheet(targetSheetName)
+
     try {
       setLoading(true)
       setError(null)
 
       let matrix = []
       if (wbInfo.type === 'workbook') {
-        const targetSheetName = sheetName || wbInfo.sheetNames[0]
         const worksheet = wbInfo.workbook.Sheets[targetSheetName]
         if (worksheet) {
           matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
         }
       } else if (wbInfo.type === 'published_sheets') {
-        const targetSheetName = sheetName || wbInfo.sheetNames[0]
         if (targetSheetName === wbInfo.currentSheet && wbInfo.matrix && wbInfo.matrix.length > 0) {
           matrix = wbInfo.matrix
         } else {
@@ -366,33 +441,38 @@ export default function NominaFormPool({
     } finally {
       setLoading(false)
     }
-  }, [bulkGrupo, selectedSheet])
+  }, [bulkGrupo, sheetUrl])
 
   // Initial load
   useEffect(() => {
     connectSpreadsheet()
   }, [])
 
-  // Auto-switch tab if bulkGrupo changes and matches another sheet
+  // Auto-switch tab ONLY when top filters change
+  const prevFiltersRef = React.useRef({ bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana, bulkGrupo })
+
   useEffect(() => {
-    if (!bulkGrupo || !sheetNames.length || !workbookData) return
-    const cleanGrp = bulkGrupo.toUpperCase().replace(/[^A-Z0-9]/g, '')
-    const match = sheetNames.find(n => {
-      const cleanName = n.toUpperCase().replace(/[^A-Z0-9]/g, '')
-      return cleanName.includes(cleanGrp) || cleanGrp.includes(cleanName)
-    })
-    if (match && match !== selectedSheet) {
-      setSelectedSheet(match)
-      loadSheetCandidates(workbookData, match)
+    const prev = prevFiltersRef.current
+    const filtersChanged = (
+      prev.bulkPeriodo !== bulkPeriodo ||
+      prev.bulkSemana !== bulkSemana ||
+      prev.bulkSegmento !== bulkSegmento ||
+      prev.bulkCampana !== bulkCampana ||
+      prev.bulkGrupo !== bulkGrupo
+    )
+    prevFiltersRef.current = { bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana, bulkGrupo }
+
+    if (!sheetNames.length || !workbookData) return
+
+    if (filtersChanged && (bulkGrupo || bulkCampana)) {
+      const match = findBestMatchingSheet(sheetNames, { bulkGrupo, bulkCampana, bulkSegmento })
+      if (match && String(match).trim().toLowerCase() !== String(selectedSheet).trim().toLowerCase()) {
+        loadSheetCandidates(workbookData, match)
+      }
     }
-  }, [bulkGrupo, sheetNames, workbookData, selectedSheet, loadSheetCandidates])
+  }, [bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana, bulkGrupo, sheetNames, workbookData, selectedSheet, loadSheetCandidates])
 
   const handleSheetChange = (sheetName) => {
-    setSelectedSheet(sheetName)
-    const tabGpeMatch = sheetName.match(/GPE-\d+/i)?.[0]
-    if (tabGpeMatch && onSelectGrupo) {
-      onSelectGrupo(tabGpeMatch)
-    }
     loadSheetCandidates(workbookData, sheetName)
   }
 
@@ -677,44 +757,47 @@ export default function NominaFormPool({
         </div>
 
         {/* Sheet / Tab Selector */}
-        {sheetNames.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[var(--border-subtle)]/60">
-            <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--text-muted)] mr-1">
-              <Layers size={13} className="text-cyan-500" />
-              <span>Hojas del Libro ({sheetNames.length}):</span>
-            </div>
+        {sheetNames.length > 0 && (() => {
+          const bestMatchSheet = findBestMatchingSheet(sheetNames, { bulkGrupo, bulkCampana, bulkSegmento })
+          return (
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[var(--border-subtle)]/60">
+              <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--text-muted)] mr-1">
+                <Layers size={13} className="text-cyan-500" />
+                <span>Hojas del Libro ({sheetNames.length}):</span>
+              </div>
 
-            <div className="flex flex-wrap items-center gap-1.5 flex-1">
-              {sheetNames.map(name => {
-                const isActive = selectedSheet === name
-                const isGroupMatch = bulkGrupo && name.toUpperCase().includes(bulkGrupo.toUpperCase().slice(0, 10))
+              <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                {sheetNames.map(name => {
+                  const isActive = String(selectedSheet || '').trim().toLowerCase() === String(name || '').trim().toLowerCase()
+                  const isGroupMatch = !isActive && bestMatchSheet === name && scoreSheetMatch(name, { bulkGrupo, bulkCampana, bulkSegmento }) >= 100
 
-                return (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => handleSheetChange(name)}
-                    className={`
-                      px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border
-                      ${isActive 
-                        ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.35)] font-black' 
-                        : 'bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
-                      }
-                    `}
-                  >
-                    <FileSpreadsheet size={12} className={isActive ? 'text-slate-950' : 'text-emerald-500'} />
-                    <span>{name}</span>
-                    {isGroupMatch && !isActive && (
-                      <span className="px-1 py-0.2 rounded text-[8px] bg-purple-500/20 text-purple-400 font-mono">
-                        Match Grupo
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => handleSheetChange(name)}
+                      className={`
+                        px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border
+                        ${isActive 
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.35)] font-black' 
+                          : 'bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
+                        }
+                      `}
+                    >
+                      <FileSpreadsheet size={12} className={isActive ? 'text-slate-950' : 'text-emerald-500'} />
+                      <span>{name}</span>
+                      {isGroupMatch && (
+                        <span className="px-1.5 py-0.2 rounded text-[8px] bg-purple-500/20 text-purple-400 font-mono font-bold border border-purple-500/30">
+                          Match Grupo
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
       </div>
 

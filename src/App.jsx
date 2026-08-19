@@ -128,7 +128,18 @@ export default function App() {
       }
       setSession(s ?? null)
     })
-    return () => subscription.unsubscribe()
+
+    const handleSessionExpired = () => {
+      console.warn('[App] Session expired event received. Clearing session state.')
+      setSession(null)
+      setUserProfile(null)
+    }
+    window.addEventListener('gea:session_expired', handleSessionExpired)
+
+    return () => {
+      subscription.unsubscribe()
+      window.removeEventListener('gea:session_expired', handleSessionExpired)
+    }
   }, [])
 
   useEffect(() => {

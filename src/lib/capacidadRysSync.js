@@ -24,9 +24,16 @@ export function findGrupoPlan(grupos = [], { codigo, campana, semana, periodo } 
 
   const cod = normalizeKey(codigo)
   const camp = normalizeKey(campana)
-  if (cod) {
-    const exactWithCamp = camp ? grupos.find(g => normalizeKey(g.codigo) === cod && normalizeKey(g.campana) === camp) : null
-    const exact = exactWithCamp || grupos.find(g => normalizeKey(g.codigo) === cod)
+
+  // 1. Si tenemos código y campaña, buscar coincidencia EXACTA en ambos (máxima prioridad)
+  if (cod && camp) {
+    const exactWithCamp = grupos.find(g => normalizeKey(g.codigo) === cod && normalizeKey(g.campana) === camp)
+    if (exactWithCamp) return exactWithCamp
+  }
+
+  // 2. Si solo tenemos código sin campaña especificada
+  if (cod && !camp) {
+    const exact = grupos.find(g => normalizeKey(g.codigo) === cod)
     if (exact) return exact
   }
 
@@ -45,9 +52,10 @@ export function findGrupoPlan(grupos = [], { codigo, campana, semana, periodo } 
   return candidates.sort((a, b) => {
     const score = (g) => {
       let s = 0
+      if (cod && normalizeKey(g.codigo) === cod) s += 10
+      if (camp && normalizeKey(g.campana) === camp) s += 8
       if (per && g.periodo === per) s += 4
       if (['ACTIVO', 'EN_CURSO', 'PLANIFICADO'].includes(g.estado)) s += 2
-      if (cod && normalizeKey(g.codigo).includes(cod.slice(0, 8))) s += 1
       return s
     }
     return score(b) - score(a)
