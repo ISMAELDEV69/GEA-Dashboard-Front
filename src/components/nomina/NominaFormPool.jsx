@@ -250,20 +250,28 @@ export default function NominaFormPool({
         if (targetSheetName === wbInfo.currentSheet && wbInfo.matrix && wbInfo.matrix.length > 0) {
           matrix = wbInfo.matrix
         } else {
-          const gid = wbInfo.sheetMap?.[targetSheetName]
-          const docId = wbInfo.docId && wbInfo.docId !== 'published_form' ? wbInfo.docId : null
+          const cleanTarget = String(targetSheetName || '').trim().toUpperCase()
+          let gid = wbInfo.sheetMap?.[targetSheetName]
+          if (gid === undefined && wbInfo.sheetMap) {
+            const foundKey = Object.keys(wbInfo.sheetMap).find(k => k.trim().toUpperCase() === cleanTarget)
+            if (foundKey) gid = wbInfo.sheetMap[foundKey]
+          }
+
+          const docId = (wbInfo.docId && wbInfo.docId !== 'published_form')
+            ? wbInfo.docId
+            : (sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)?.[1] || null)
 
           let csvText = null
           const urlsToTry = []
           
-          if (docId) {
-            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid || 0}`)
+          if (docId && gid !== undefined) {
+            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid}`)
           }
-          if (wbInfo.baseUrl) {
-            urlsToTry.push(`${wbInfo.baseUrl}/pub?gid=${gid || 0}&single=true&output=csv`)
+          if (wbInfo.baseUrl && gid !== undefined) {
+            urlsToTry.push(`${wbInfo.baseUrl}/pub?gid=${gid}&single=true&output=csv`)
           }
-          if (docId) {
-            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid || 0}`)
+          if (docId && gid !== undefined) {
+            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid}`)
           }
 
           for (const url of urlsToTry) {
