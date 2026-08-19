@@ -2418,90 +2418,127 @@ export function normalizeGoogleSheetCsvUrl(rawUrl) {
  * Lee un libro completo de Google Spreadsheet (todas sus hojas/pestañas) vía XLSX o CSV.
  * Devuelve la lista de nombres de pestañas y el workbook para poder cambiar de hoja al instante.
  */
+function decodeGoogleSheetName(str) {
+  if (!str) return ''
+  try {
+    return str
+      .replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\u([0-9A-Fa-f]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\'/g, "'")
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, ' ')
+      .replace(/\\t/g, ' ')
+      .replace(/\\\\/g, '\\')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#39;/g, "'")
+      .replace(/&quot;/g, '"')
+      .trim()
+  } catch {
+    return str.replace(/\\x20/g, ' ').replace(/\\'/g, "'").trim()
+  }
+}
+
 export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   const url = String(rawUrl || '').trim()
   if (!url) throw new Error('Ingresa un enlace de Google Sheets válido.')
 
+  const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
+  const docId = docMatch ? docMatch[1] : null
+  const gidMatch = url.match(/gid=([0-9]+)/)
+  const requestedGid = gidMatch ? gidMatch[1] : '0'
+
   const isPublished = url.includes('/d/e/2PACX-') || url.includes('/pubhtml') || url.includes('/pub')
 
-  // Intento A: Si es una hoja publicada en la web (/pubhtml o /pub)
+  // Estrategia 1: Scraping de pestañas desde /pubhtml o /htmlview
+  const pubUrlsToTry = []
   if (isPublished) {
-    const pubHtmlUrl = url.includes('/pubhtml') ? url : url.replace(/\/pub.*/, '/pubhtml')
-    const baseUrl = url.replace(/(\/pubhtml|\/pub).*/, '')
+    pubUrlsToTry.push(url.includes('/pubhtml') ? url : url.replace(/\/pub.*/, '/pubhtml'))
+  } else if (docId) {
+    pubUrlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/pubhtml`)
+    pubUrlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/htmlview`)
+  }
 
+  for (const pubHtmlUrl of pubUrlsToTry) {
     try {
       const resp = await fetch(pubHtmlUrl)
       if (resp.ok) {
         const html = await resp.text()
-        const regex = /items\.push\(\{\s*name:\s*"([^"]+)",[\s\S]*?gid:\s*"([^"]+)"/g
-        let match
         const sheetMap = {}
         const sheetNames = []
 
-        while ((match = regex.exec(html)) !== null) {
-          const name = match[1].replace(/\\x20/g, ' ').replace(/\\'/g, "'").trim()
+        // Intento 1.1: Regex de items.push con nombre completo decodificado
+        const regexPush = /items\.push\(\{\s*name:\s*"([^"]+)",[\s\S]*?gid:\s*"([^"]+)"/g
+        let match
+        while ((match = regexPush.exec(html)) !== null) {
+          const rawName = match[1]
+          const name = decodeGoogleSheetName(rawName)
           const gid = match[2]
-          sheetMap[name] = gid
-          sheetNames.push(name)
+          if (name && gid && !sheetMap[name]) {
+            sheetMap[name] = gid
+            sheetNames.push(name)
+          }
         }
 
-        if (sheetNames.length > 0) {
-          // Ordenar para que 'Respuestas de formulario' o similar aparezca de primera
-          sheetNames.sort((a, b) => {
-            const aIsResp = /respuesta|form|postulante/i.test(a) ? -1 : 1
-            const bIsResp = /respuesta|form|postulante/i.test(b) ? -1 : 1
-            return aIsResp - bIsResp
-          })
-
-          const targetName = sheetNames[0]
-          const targetGid = sheetMap[targetName]
-          const csvUrl = `${baseUrl}/pub?gid=${targetGid}&single=true&output=csv`
-          const csvResp = await fetch(csvUrl)
-          if (csvResp.ok) {
-            const csvText = await csvResp.text()
-            const matrix = parseCSV(csvText)
-            return {
-              type: 'published_sheets',
-              baseUrl,
-              sheetMap,
-              sheetNames,
-              matrix,
-              currentSheet: targetName,
-              docId: 'published_form'
+        // Intento 1.2: Regex de botones de hojas <li id="sheet-button-...">
+        if (sheetNames.length === 0) {
+          const regexButtons = /<li[^>]*id="sheet-button-([^"]+)"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/g
+          while ((match = regexButtons.exec(html)) !== null) {
+            const gid = match[1]
+            const name = decodeGoogleSheetName(match[2])
+            if (name && gid && !sheetMap[name]) {
+              sheetMap[name] = gid
+              sheetNames.push(name)
             }
           }
         }
-      }
-    } catch (e) {
-      console.warn('Published HTML scraping failed, fallback a CSV directo:', e)
-    }
 
-    const csvPubUrl = normalizeGoogleSheetCsvUrl(url)
-    try {
-      const response = await fetch(csvPubUrl)
-      if (response.ok) {
-        const text = await response.text()
-        if (text && !text.includes('<!DOCTYPE html>')) {
-          const matrix = parseCSV(text)
+        if (sheetNames.length > 0) {
+          // Ordenar para que hojas de 'Respuestas' o formularios tengan prioridad inicial si no se seleccionó grupo
+          const targetName = (requestedGid && Object.keys(sheetMap).find(k => sheetMap[k] === requestedGid)) || sheetNames[0]
+          const targetGid = sheetMap[targetName] || requestedGid || '0'
+
+          let matrix = []
+          try {
+            const baseUrl = docId 
+              ? `https://docs.google.com/spreadsheets/d/${docId}` 
+              : url.replace(/(\/pubhtml|\/pub).*/, '')
+            
+            // Probar CSV por pub y luego por gviz
+            const csvUrl = `${baseUrl}/pub?gid=${targetGid}&single=true&output=csv`
+            const csvResp = await fetch(csvUrl)
+            if (csvResp.ok) {
+              const csvText = await csvResp.text()
+              matrix = parseCSV(csvText)
+            } else if (docId) {
+              const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${targetGid}`
+              const gvizResp = await fetch(gvizUrl)
+              if (gvizResp.ok) {
+                const gvizText = await gvizResp.text()
+                matrix = parseCSV(gvizText)
+              }
+            }
+          } catch (_) { /* fallback silencioso */ }
+
           return {
-            type: 'csv',
+            type: 'published_sheets',
+            baseUrl: docId ? `https://docs.google.com/spreadsheets/d/${docId}` : url.replace(/(\/pubhtml|\/pub).*/, ''),
+            sheetMap,
+            sheetNames,
             matrix,
-            sheetNames: ['Respuestas de Formulario']
+            currentSheet: targetName,
+            docId: docId || 'published_form'
           }
         }
       }
     } catch (e) {
-      console.warn('Published CSV export failed:', e)
+      console.warn('Scraping pubhtml/htmlview fallback:', e)
     }
   }
 
-  const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
-  const gidMatch = url.match(/gid=([0-9]+)/)
-  const gid = gidMatch ? gidMatch[1] : '0'
-
-  // Intento 1: Descargar libro completo en formato XLSX para extraer todas las pestañas (Google Drive normal)
-  if (docMatch && docMatch[1] !== 'e') {
-    const docId = docMatch[1]
+  // Estrategia 2: Descargar libro completo en formato XLSX (Google Drive con acceso de lectura)
+  if (docId && docId !== 'e') {
     const xlsxUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=xlsx`
     try {
       const resp = await fetch(xlsxUrl)
@@ -2519,12 +2556,12 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
         }
       }
     } catch (e) {
-      console.warn('XLSX export failed, intentando fallback CSV:', e)
+      console.warn('XLSX export fallback:', e)
     }
 
-    // Fallback 1.2: Google Visualization API CSV (soporta CORS)
+    // Estrategia 3: Google Visualization API CSV (soporta CORS)
     try {
-      const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid}`
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${requestedGid}`
       const gvizResp = await fetch(gvizUrl)
       if (gvizResp.ok) {
         const text = await gvizResp.text()
@@ -2538,11 +2575,11 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
         }
       }
     } catch (e) {
-      console.warn('GVIZ export failed:', e)
+      console.warn('GVIZ export fallback:', e)
     }
   }
 
-  // Intento 2: Exportación directa CSV
+  // Estrategia 4: Exportación directa CSV
   const csvUrl = normalizeGoogleSheetCsvUrl(url)
   try {
     const response = await fetch(csvUrl)
@@ -2558,10 +2595,10 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
       }
     }
   } catch (e) {
-    console.warn('Direct CSV export failed:', e)
+    console.warn('Direct CSV export fallback:', e)
   }
 
-  throw new Error('No se pudo conectar con el documento de Google Sheets. Asegúrate de que el documento tenga permisos de "Cualquier persona con el enlace puede ser lector" en Google Drive.')
+  throw new Error('No se pudo conectar con el documento de Google Sheets. Verifica que el documento tenga permisos de "Cualquier persona con el enlace puede ser lector" en Google Drive o esté publicado en la web (Archivo > Compartir > Publicar en la web).')
 }
 
 /**

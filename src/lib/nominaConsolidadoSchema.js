@@ -34,22 +34,21 @@ function parseTimestamp(val) {
 
 import { parseExcelDate } from './capacidadRysSchema.js'
 
-// No UI Form structure needed yet since Phase B will be a grid
 export const NOMINA_DB_FIELDS = [
   'marca_temporal', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede', 'tipo_documento', 'documento',
-  'postulante_documento', 'grupo_id', 'origen',
   'apellido_paterno', 'apellido_materno', 'nombres', 'celular', 'celular_referencia', 'correo',
   'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera',
   'nacionalidad', 'lugar_residencia', 'distrito_residencia', 'direccion_domicilio',
   'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra',
-  'fuente_oferta', 'observacion_reclutamiento', 'campana', 'grupo_codigo', 'modalidad',
+  'fuente_oferta', 'observacion_reclutamiento', 'campana', 'segmento', 'grupo_codigo', 'modalidad',
   'condicion', 'horario_gestion', 'descanso', 'envio_dni', 'test_psicologico', 'validacion_pc',
   'evaluacion_dia_0', 'fecha_inicio_capacitacion', 'fecha_fin_capacitacion', 'fecha_conexion_ojt',
   'fecha_conexion_op', 'pago_capacitacion', 'tipo_contratacion', 'razon_social', 'remuneracion',
   'bono_variable', 'bono_movilidad', 'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta',
   'cargo_contractual', 'dia_0', 'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs',
   'doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos',
-  'doc_autorizacion', 'status_final', 'observacion_final', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar'
+  'doc_autorizacion', 'status_final', 'observacion_final', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar',
+  'estado', 'observacion_estado', 'activo'
 ]
 
 // The exact column headers from the form to parse

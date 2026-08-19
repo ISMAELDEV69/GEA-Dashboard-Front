@@ -461,9 +461,6 @@ export default function NominaFormPool({
 
           const rawPayload = {
             ...d,
-            postulante_documento: d.documento,
-            grupo_id: matchedGrupoObj?.id || null,
-            origen: 'GOOGLE_FORMS',
             marca_temporal: safeMarcaTemporal,
             periodo_reclutado: matchedGrupoObj?.periodo || bulkPeriodo,
             semana_trabajo: semanaNum,
