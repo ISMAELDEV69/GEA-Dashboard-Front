@@ -2506,6 +2506,7 @@ function decodeGoogleSheetName(str) {
 
 export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   const url = String(rawUrl || '').trim()
+  console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] URL recibida:', url)
   if (!url) throw new Error('Ingresa un enlace de Google Sheets válido.')
 
   const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
@@ -2514,6 +2515,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   const requestedGid = gidMatch ? gidMatch[1] : '0'
 
   const isPublished = url.includes('/d/e/2PACX-') || url.includes('/pubhtml') || url.includes('/pub')
+  console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] docId:', docId, 'requestedGid:', requestedGid, 'isPublished:', isPublished)
 
   // Estrategia 1: Scraping de pestañas desde /pubhtml o /htmlview
   const pubUrlsToTry = []
@@ -2526,9 +2528,12 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
 
   for (const pubHtmlUrl of pubUrlsToTry) {
     try {
+      console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Intentando descargar pubhtml:', pubHtmlUrl)
       const resp = await fetch(pubHtmlUrl)
+      console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Status HTTP:', resp.status, resp.statusText)
       if (resp.ok) {
         const html = await resp.text()
+        console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] HTML descargado (longitud):', html.length, 'bytes')
         const sheetMap = {}
         const sheetNames = []
 
@@ -2558,10 +2563,12 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
           }
         }
 
+        console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestañas encontradas en pubhtml:', sheetNames, sheetMap)
+
         if (sheetNames.length > 0) {
-          // Ordenar para que hojas de 'Respuestas' o formularios tengan prioridad inicial si no se seleccionó grupo
           const targetName = (requestedGid && Object.keys(sheetMap).find(k => sheetMap[k] === requestedGid)) || sheetNames[0]
           const targetGid = sheetMap[targetName] || requestedGid || '0'
+          console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestaña objetivo:', targetName, 'GID:', targetGid)
 
           let matrix = []
           try {
@@ -2670,6 +2677,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
  * mapeando las 68 columnas estándar de GEA y Google Forms.
  */
 export async function parseSheetMatrixCandidates(matrix, options = {}) {
+  console.info('[POOL-PIPELINE] [ETAPA 3/4: MATRIZ CRUDA] Filas totales en matriz:', matrix?.length || 0)
   if (!matrix || matrix.length < 2) return []
 
   const { mapGoogleFormHeaders, parseGoogleFormRow } = await import('./nominaConsolidadoSchema.js')
@@ -2681,6 +2689,7 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
       return str.includes('DNI') || str.includes('DOCUMENTO') || str.includes('NOMBRES') || str.includes('APELLIDO')
     })) {
       const colIdx = mapGoogleFormHeaders(headerRow)
+      console.info('[POOL-PIPELINE] [ETAPA 4: MAPEO COLUMNAS] Fila encabezado detectada en índice:', i, 'Columnas mapeadas:', Object.keys(colIdx))
       const rows = []
 
       for (let j = i + 1; j < matrix.length; j++) {
@@ -2701,6 +2710,7 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
           return /^\d{7,12}$/.test(c)
         })
         if (isSecondaryHeader && !hasDocInRow) {
+          console.info('[POOL-PIPELINE] [ETAPA 4: CORTE] Corte por tabla secundaria en fila:', j)
           break
         }
 
@@ -2751,9 +2761,11 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
         return dateB - dateA
       })
 
+      console.info('[POOL-PIPELINE] [ETAPA 5: RESULTADO PARSEO] Total postulantes válidos extraídos de la hoja:', rows.length)
       return rows
     }
   }
+  console.warn('[POOL-PIPELINE] [ETAPA 4: MAPEO COLUMNAS] No se encontró ninguna fila de encabezado reconocible en las primeras 15 filas.')
   return []
 }
 

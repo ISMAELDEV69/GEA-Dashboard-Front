@@ -290,9 +290,11 @@ export default function NominaFormPool({
       setWorkbookData(wbInfo)
       const names = wbInfo.sheetNames || ['Hoja 1']
       setSheetNames(names)
+      console.info('[POOL-PIPELINE] [ETAPA 2: WORKBOOK INFO] Pestañas disponibles:', names, 'Tipo de conexión:', wbInfo.type)
 
       // Auto-match sheet basándose en Grupo, Campaña y Segmento de forma ponderada
       const matchedSheet = findBestMatchingSheet(names, { bulkGrupo, bulkCampana, bulkSegmento })
+      console.info('[POOL-PIPELINE] [ETAPA 3: AUTO-MATCHING] Pestaña seleccionada por auto-match:', matchedSheet, 'para grupo:', bulkGrupo, 'campaña:', bulkCampana)
 
       setSelectedSheet(matchedSheet)
       await loadSheetCandidates(wbInfo, matchedSheet)
@@ -438,9 +440,13 @@ export default function NominaFormPool({
         }
       })
 
+      console.info('[POOL-PIPELINE] [ETAPA 6: DEDUPLICACIÓN] Postulantes únicos tras deduplicación por DNI:', uniqueData.length)
+      console.info('[POOL-PIPELINE] [ETAPA 6: SUPABASE CHECK] Consultando historial en BD para DNIs:', uniqueDnis.length)
+
       setPoolData(uniqueData)
       setLatestAssignedDocs(latestMap)
       setSelectedDocs(new Set())
+      console.info('[POOL-PIPELINE] [ETAPA 6: MATRIZ PREVIEW LISTA] Renderizando en la tabla', uniqueData.length, 'postulantes.')
     } catch (err) {
       setError(`Error al leer la hoja "${sheetName}": ${err.message}`)
     } finally {
