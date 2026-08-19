@@ -1632,7 +1632,7 @@ export function fetchGruposConMetas() {
       const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
         supabase
           .from('capacidad_rys')
-          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
+          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_ingreso_op')
           .order('codigo'),
         supabase
           .from('grupo_reclutadores')
@@ -1783,6 +1783,7 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
         .insert(rows)
       if (insErr) throw insErr
     }
+    invalidateCache('grupos_con_metas')
     return true
   }
   return true
@@ -3391,6 +3392,7 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
       throw error;
     }
     
+    invalidateCache('grupos_con_metas');
     mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { [field]: value });
     return true;
   }
