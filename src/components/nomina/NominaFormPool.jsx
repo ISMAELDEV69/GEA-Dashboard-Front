@@ -251,16 +251,41 @@ export default function NominaFormPool({
           matrix = wbInfo.matrix
         } else {
           const gid = wbInfo.sheetMap?.[targetSheetName]
-          if (gid) {
-            const csvUrl = `${wbInfo.baseUrl}/pub?gid=${gid}&single=true&output=csv`
-            const csvResp = await fetch(csvUrl)
-            if (csvResp.ok) {
-              const csvText = await csvResp.text()
-              const { parseCsvToMatrix } = await import('../../lib/nominaConsolidadoSchema.js')
-              matrix = parseCsvToMatrix(csvText)
+          const docId = wbInfo.docId && wbInfo.docId !== 'published_form' ? wbInfo.docId : null
+
+          let csvText = null
+          const urlsToTry = []
+          
+          if (docId) {
+            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid || 0}`)
+          }
+          if (wbInfo.baseUrl) {
+            urlsToTry.push(`${wbInfo.baseUrl}/pub?gid=${gid || 0}&single=true&output=csv`)
+          }
+          if (docId) {
+            urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid || 0}`)
+          }
+
+          for (const url of urlsToTry) {
+            try {
+              const resp = await fetch(url)
+              if (resp.ok) {
+                const text = await resp.text()
+                if (text && !text.includes('<!DOCTYPE html>')) {
+                  csvText = text
+                  break
+                }
+              }
+            } catch (e) {
+              console.warn('Fetch error on tab url:', url, e)
             }
+          }
+
+          if (csvText) {
+            const { parseCsvToMatrix } = await import('../../lib/nominaConsolidadoSchema.js')
+            matrix = parseCsvToMatrix(csvText)
           } else {
-            matrix = wbInfo.matrix || []
+            matrix = []
           }
         }
       } else {
