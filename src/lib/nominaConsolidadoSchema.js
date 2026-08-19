@@ -82,72 +82,74 @@ const HEADER_ALIASES = {
   exp_otra: ['DETALLANOS OTRA EXPERIENCIA LABORAL'],
   exp_tiempo_otra: ['TIEMPO DE EXPERIENCIA2'], // We'll handle duplicate manually
   fuente_oferta: ['¿CÓMO TE ENTERASTE DE LA OFERTA LABORAL?'],
-  observacion_reclutamiento: ['OBSERVACION'], // First occurrence
-}
-
-export function mapGoogleFormHeaders(headerRow = []) {
+  observacion_reclutamiento: ['OBSERVACION'], // First occexport function mapGoogleFormHeaders(headerRow = []) {
   const headers = headerRow.map(h => String(h || '').toUpperCase().trim())
   const colIdx = {}
 
-  let tiempoExpCount = 0
-  let observacionCount = 0
-
   headers.forEach((h, i) => {
-    // Exact matching where possible, fallback to includes
-    if (h.includes('MARCA TEMPORAL') || h.includes('TIMESTAMP') || h === 'HORA DE REGISTRO') colIdx['marca_temporal'] = i
-    else if (h.includes('PERIODO RECLUTADO') || h === 'PERIODO' || h.includes('PERÍODO')) colIdx['periodo_reclutado'] = i
-    else if (h.includes('SEMANA DE TRABAJO') || h === 'SEMANA') colIdx['semana_trabajo'] = i
-    else if (h.includes('RECLUTADOR') || h.includes('SELECCIONADOR') || h.includes('PSICOLOG') || h.includes('QUIEN TE CONTACTO') || h.includes('QUIÉN TE CONTACTÓ')) colIdx['reclutador'] = i
-    else if (h.includes('CAMPAÑA') || h.includes('CAMPANA') || h.includes('A QUE CAMPAÑA') || h.includes('A QUÉ CAMPAÑA')) colIdx['campana'] = i
-    else if (h.includes('SEDE')) colIdx['sede'] = i
-    else if (h.includes('TIPO DE DOCUMENTO') || h === 'TIPO DOC') colIdx['tipo_documento'] = i
-    else if (h.includes('DNI') || h.includes('DOCUMENTO') || h.includes('C.E.') || h.includes('CEDULA') || h === 'NRO DE IDENTIFICACION' || h === 'NUMERO DE IDENTIFICACION') {
+    const clean = h.replace(/\s+/g, ' ')
+
+    if (clean.includes('MARCA TEMPORAL') || clean.includes('TIMESTAMP') || clean === 'HORA DE REGISTRO') colIdx['marca_temporal'] = i
+    else if (clean.includes('PERIODO RECLUTADO') || clean === 'PERIODO' || clean.includes('PERÍODO')) colIdx['periodo_reclutado'] = i
+    else if (clean.includes('SEMANA DE TRAB') || clean.includes('SEMANA')) colIdx['semana_trabajo'] = i
+    else if (clean.includes('RECLUTADOR') || clean.includes('SELECCIONADOR') || clean.includes('PSICOLOG') || clean.includes('QUIEN TE CONTACTO') || clean.includes('QUIÉN TE CONTACTÓ')) colIdx['reclutador'] = i
+    else if (clean.includes('CAMPAÑA') || clean.includes('CAMPANA') || clean.includes('A QUE CAMPAÑA') || clean.includes('A QUÉ CAMPAÑA')) colIdx['campana'] = i
+    else if (clean.includes('SEDE')) colIdx['sede'] = i
+    else if (clean.includes('TIPO DE DOCUMENTO') || clean === 'TIPO DOC') colIdx['tipo_documento'] = i
+    else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean === 'NRO DE IDENTIFICACION' || clean === 'NUMERO DE IDENTIFICACION') {
       if (colIdx['documento'] === undefined) colIdx['documento'] = i
     }
-    else if (h.includes('APELLIDO PATERNO') || h === 'PATERNO') colIdx['apellido_paterno'] = i
-    else if (h.includes('APELLIDO MATERNO') || h === 'MATERNO') colIdx['apellido_materno'] = i
-    else if (h.includes('APELLIDOS') && colIdx['apellido_paterno'] === undefined) colIdx['apellido_paterno'] = i
-    else if (h.includes('NOMBRES') || h.includes('NOMBRE COMPLETO') || h === 'NOMBRE') {
+    else if (clean.includes('APELLIDO PATERNO') || clean === 'PATERNO') colIdx['apellido_paterno'] = i
+    else if (clean.includes('APELLIDO MATERNO') || clean === 'MATERNO') colIdx['apellido_materno'] = i
+    else if (clean.includes('APELLIDOS') && colIdx['apellido_paterno'] === undefined) colIdx['apellido_paterno'] = i
+    else if (clean.includes('NOMBRES') || clean.includes('NOMBRE COMPLETO') || clean === 'NOMBRE') {
       if (colIdx['nombres'] === undefined) colIdx['nombres'] = i
     }
-    else if (h.includes('CELULAR') || h.includes('MÓVIL') || h.includes('MOVIL') || h.includes('TELEFONO') || h.includes('TELÉFONO')) {
-      if (h.includes('REFERENCIA') || h.includes('EMERGENCIA') || h.includes('FAMILIAR')) colIdx['celular_referencia'] = i
+    else if (clean.includes('CELULAR') || clean.includes('MÓVIL') || clean.includes('MOVIL') || clean.includes('TELEFONO') || clean.includes('TELÉFONO')) {
+      if (clean.includes('REFERENCIA') || clean.includes('EMERGENCIA') || clean.includes('FAMILIAR')) colIdx['celular_referencia'] = i
       else if (colIdx['celular'] === undefined) colIdx['celular'] = i
     }
-    else if (h.includes('CORREO') || h.includes('EMAIL') || h.includes('E-MAIL')) colIdx['correo'] = i
-    else if (h.includes('GÉNERO') || h.includes('GENERO') || h.includes('SEXO')) colIdx['genero'] = i
-    else if (h.includes('FECHA DE NACIMIENTO') || h.includes('F. NACIMIENTO') || h.includes('NACIMIENTO')) colIdx['fecha_nacimiento'] = i
-    else if (h === 'EDAD' || h.includes('EDAD')) colIdx['edad'] = i
-    else if (h.includes('ESTADO CIVIL')) colIdx['estado_civil'] = i
-    else if (h.includes('HIJOS') || h.includes('N° DE HIJOS')) colIdx['n_hijos'] = i
-    else if (h.includes('NIVEL ACADÉMICO') || h.includes('NIVEL ACADEMICO') || h.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
-    else if (h.includes('CARREA') || h.includes('CARRERA') || h.includes('PROFESION') || h.includes('PROFESIÓN')) colIdx['carrera'] = i
-    else if (h.includes('NACIONALIDAD') || h.includes('PAÍS') || h.includes('PAIS')) colIdx['nacionalidad'] = i
-    else if (h.includes('LUGAR DE RESIDENCIA') || h.includes('RESIDENCIA')) colIdx['lugar_residencia'] = i
-    else if (h.includes('DISTRITO')) colIdx['distrito_residencia'] = i
-    else if (h.includes('DIRECCIÓN') || h.includes('DIRECCION') || h.includes('DOMICILIO')) colIdx['direccion_domicilio'] = i
-    else if (h.includes('EXPERIENCIA') && (h.includes('CALL') || h.includes('CENTER'))) colIdx['exp_call_center'] = i
-    else if (h.includes('TIPO DE EXPERIENCIA')) colIdx['exp_tipo_campana'] = i
-    else if (h.includes('TIEMPO DE EXPERIENCIA') || h.includes('CUANTO TIEMPO')) {
-      if (tiempoExpCount === 0) colIdx['exp_tiempo_call'] = i
-      if (tiempoExpCount === 1) colIdx['exp_tiempo_otra'] = i
-      tiempoExpCount++
+    else if (clean.includes('CORREO') || clean.includes('EMAIL') || clean.includes('E-MAIL')) colIdx['correo'] = i
+    else if (clean.includes('GÉNERO') || clean.includes('GENERO') || clean.includes('SEXO')) colIdx['genero'] = i
+    else if (clean.includes('FECHA DE NACIMIENTO') || clean.includes('F. NACIMIENTO') || clean.includes('NACIMIENTO')) colIdx['fecha_nacimiento'] = i
+    else if (clean === 'EDAD' || clean.includes('EDAD')) colIdx['edad'] = i
+    else if (clean.includes('ESTADO CIVIL')) colIdx['estado_civil'] = i
+    else if (clean.includes('HIJOS') || clean.includes('N° DE HIJOS')) colIdx['n_hijos'] = i
+    else if (clean.includes('NIVEL ACADÉMICO') || clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
+    else if (clean.includes('CARREA') || clean.includes('CARRERA') || clean.includes('PROFESION') || clean.includes('PROFESIÓN')) colIdx['carrera'] = i
+    else if (clean.includes('NACIONALIDAD') || clean.includes('PAÍS') || clean.includes('PAIS')) colIdx['nacionalidad'] = i
+    else if (clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA')) colIdx['lugar_residencia'] = i
+    else if (clean.includes('DISTRITO')) colIdx['distrito_residencia'] = i
+    else if (clean.includes('DIRECCIÓN') || clean.includes('DIRECCION') || clean.includes('DOMICILIO')) colIdx['direccion_domicilio'] = i
+    else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
+    else if (clean.includes('TIPO DE EXPERIENCIA')) colIdx['exp_tipo_campana'] = i
+    else if (clean.includes('TIEMPO DE EXPERIENCIA') || clean.includes('CUANTO TIEMPO')) {
+      if (colIdx['exp_tiempo_call'] === undefined) colIdx['exp_tiempo_call'] = i
+      else if (colIdx['exp_tiempo_otra'] === undefined) colIdx['exp_tiempo_otra'] = i
     }
-    else if (h.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
-    else if (h.includes('OFERTA') || h.includes('ENTERASTE') || h.includes('FUENTE')) colIdx['fuente_oferta'] = i
-    else if (h === 'STATUS DÍA 1' || h === 'STATUS DIA 1' || h === 'STATUS' || h === 'ESTADO DÍA 1' || h === 'ESTADO DIA 1') colIdx['status_dia_1'] = i
-    else if (h === 'DÍA 0' || h === 'DIA 0' || h === 'ASISTENCIA DÍA 0' || h === 'ASISTENCIA DIA 0') colIdx['dia_0'] = i
-    else if (h === 'DÍA 1' || h === 'DIA 1' || h === 'ASISTENCIA DÍA 1' || h === 'ASISTENCIA DIA 1') colIdx['dia_1'] = i
-    else if (h.includes('OBSERVACIONES DÍA 0') || h.includes('OBS DÍA 0') || h.includes('OBS DIA 0')) colIdx['dia_0_obs'] = i
-    else if (h.includes('OBSERVACIONES DÍA 1') || h.includes('OBS DÍA 1') || h.includes('OBS DIA 1')) colIdx['dia_1_obs'] = i
-    else if (h === 'EVALUAR' || h.includes('EVALUAR')) colIdx['evaluar'] = i
-    else if (h === 'OBS. EVALUAR' || h === 'OBS EVALUAR') colIdx['obs_evaluar'] = i
-    else if (h === 'OBSERVACION' || h === 'OBSERVACIONES' || h.includes('OBSERVACION RECLUTAMIENTO')) {
-      if (observacionCount === 0) colIdx['observacion_reclutamiento'] = i
-      else if (observacionCount === 1) colIdx['dia_0_obs'] = i
-      else if (observacionCount === 2) colIdx['dia_1_obs'] = i
-      else if (observacionCount === 3) colIdx['observacion_final'] = i
-      observacionCount++
+    else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
+    else if (clean.includes('OFERTA') || clean.includes('ENTERASTE') || clean.includes('FUENTE')) colIdx['fuente_oferta'] = i
+    else if (clean.includes('CARGO CONTRACTUAL') || clean.includes('CARGO')) colIdx['cargo_contractual'] = i
+    else if (clean.includes('STATUS DIA 1') || clean.includes('STATUS DÍA 1') || clean.includes('STATUS DIA1') || clean.includes('STATUS DÍA1') || clean === 'STATUS' || clean === 'ESTADO DIA 1' || clean === 'ESTADO DÍA 1') colIdx['status_dia_1'] = i
+    else if ((clean.includes('DIA 0') || clean.includes('DÍA 0') || clean.includes('DIA0') || clean.includes('DÍA0')) && !clean.includes('OBS') && !clean.includes('ASISTI')) colIdx['dia_0'] = i
+    else if ((clean.includes('DIA 1') || clean.includes('DÍA 1') || clean.includes('DIA1') || clean.includes('DÍA1')) && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('ASISTI')) colIdx['dia_1'] = i
+    else if (clean.includes('NO ASISTIÓ DÍA 0') || clean.includes('NO ASISTIO DIA 0') || clean.includes('ASISTE DÍA1') || clean.includes('ASISTE DIA1') || (clean.includes('OBS') && (clean.includes('DIA 1') || clean.includes('DÍA 1')))) colIdx['dia_1_obs'] = i
+    else if (clean.includes('OBS') && (clean.includes('DIA 0') || clean.includes('DÍA 0'))) colIdx['dia_0_obs'] = i
+    else if (clean.includes('OBS') && clean.includes('EVALUAR')) colIdx['obs_evaluar'] = i
+    else if (clean.includes('EVALUAR')) colIdx['evaluar'] = i
+  })
+
+  // Segunda pasada contextual para columnas genéricas "OBSERVACIONES" o "OBS"
+  headers.forEach((h, i) => {
+    const clean = h.replace(/\s+/g, ' ')
+    if (clean === 'OBSERVACION' || clean === 'OBSERVACIONES' || clean === 'OBS') {
+      if (colIdx['dia_0'] !== undefined && i === colIdx['dia_0'] + 1 && colIdx['dia_0_obs'] === undefined) {
+        colIdx['dia_0_obs'] = i
+      } else if (colIdx['dia_1'] !== undefined && i === colIdx['dia_1'] + 1 && colIdx['dia_1_obs'] === undefined) {
+        colIdx['dia_1_obs'] = i
+      } else if (colIdx['observacion_reclutamiento'] === undefined) {
+        colIdx['observacion_reclutamiento'] = i
+      }
     }
   })
 
@@ -177,6 +179,16 @@ export function isValidDocumento(val) {
   return /[0-9]/.test(s) && /^[A-Z0-9\-_.]+$/i.test(s)
 }
 
+function normalizeAsistencia(val) {
+  if (!val) return null
+  const s = String(val).trim().toUpperCase()
+  if (!s || s === '-' || s === '0' || s === 'NULL' || s === '--') return null
+  if (s.includes('ASIST') || s === 'A' || s === 'SI' || s === 'SÍ') return 'ASISTIO'
+  if (s.includes('FALT') || s === 'F' || s === 'FI' || s === 'FJ' || s === 'NO') return 'FALTA'
+  if (s.includes('DESERT') || s.includes('BAJA') || s === 'B') return 'DESERTO'
+  return s
+}
+
 export function parseGoogleFormRow(row, colIdx) {
   const get = (key) => {
     const i = colIdx[key]
@@ -200,8 +212,8 @@ export function parseGoogleFormRow(row, colIdx) {
   }
 
   let rawStatusDia1 = str('status_dia_1')
-  let rawDia0 = str('dia_0')
-  let rawDia1 = str('dia_1')
+  let rawDia0 = normalizeAsistencia(get('dia_0'))
+  let rawDia1 = normalizeAsistencia(get('dia_1'))
   let rawDia0Obs = str('dia_0_obs')
   let rawDia1Obs = str('dia_1_obs')
   let rawObs = str('observacion_reclutamiento')
@@ -261,6 +273,7 @@ export function parseGoogleFormRow(row, colIdx) {
     exp_tiempo_otra: str('exp_tiempo_otra'),
     fuente_oferta: str('fuente_oferta'),
     observacion_reclutamiento: rawObs,
+    cargo_contractual: str('cargo_contractual'),
     status_dia_1: rawStatusDia1 || 'APTO',
     dia_0: rawDia0 || null,
     dia_0_obs: rawDia0Obs || null,
