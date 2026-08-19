@@ -2728,8 +2728,8 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
           return /^\d{7,12}$/.test(c)
         })
         if (isSecondaryHeader && !hasDocInRow) {
-          console.info('[POOL-PIPELINE] [ETAPA 4: CORTE] Corte por tabla secundaria en fila:', j)
-          break
+          console.info('[POOL-PIPELINE] [ETAPA 4: SALTO] Saltando fila de tabla secundaria en índice:', j)
+          continue
         }
 
         const parsed = parseGoogleFormRow(row, colIdx)

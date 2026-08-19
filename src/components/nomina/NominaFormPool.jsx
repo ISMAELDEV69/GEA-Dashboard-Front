@@ -831,13 +831,10 @@ export default function NominaFormPool({
       <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex gap-2.5 flex-wrap flex-1 items-center">
-            <PoolStat label="En la Hoja (2 Meses)" value={poolStats.total}        color="var(--accent, #06b6d4)" icon={Users} />
+            <PoolStat label="En la Hoja" value={poolStats.total} color="var(--accent, #06b6d4)" icon={Users} />
             <PoolStat label="Disponibles"          value={poolStats.disponibles}  color="#10b981" icon={CheckCircle2} />
             <PoolStat label="Ya Adjudicados"       value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
             <PoolStat label="Seleccionados"        value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
-            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-600 dark:text-cyan-400 text-[11px] font-bold">
-              <Calendar size={13} /> Últimos 2 Meses
-            </span>
           </div>
 
           {/* Target Group Badge */}

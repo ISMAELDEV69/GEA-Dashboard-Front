@@ -198,16 +198,21 @@ export function cleanDocumento(val) {
   let s = String(val).trim()
   if (!s) return ''
   
-  // 1. Eliminar comillas simples, dobles, apóstrofes (incluyendo Unicode ’ ‘ ` " ” “) al inicio y final
+  // 1. Si viene como fórmula Excel ej. ="006541136" o ='006541136'
+  if (s.startsWith('=')) {
+    s = s.replace(/^=\s*["']?/, '').replace(/["']?$/, '').trim()
+  }
+  
+  // 2. Eliminar comillas simples, dobles, apóstrofes (incluyendo Unicode ’ ‘ ` " ” “) al inicio y final
   s = s.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
   
-  // 2. Si el texto tiene formato como 'DNI: 006541136', 'CE: 12345678', 'NRO. 00123456', limpiar el prefijo
+  // 3. Si el texto tiene formato como 'DNI: 006541136', 'CE: 12345678', 'NRO. 00123456', limpiar el prefijo
   s = s.replace(/^(?:DNI|CE|C\.E\.|PASAPORTE|DOC|DOCUMENTO|NRO|N°|NUM|ID)[\s:.\-_#]*/i, '')
   
-  // 3. Eliminar comillas o apóstrofes residuales incrustados y espacios
+  // 4. Eliminar comillas o apóstrofes residuales incrustados y espacios
   s = s.replace(/['"`’‘“”\s]/g, '').trim()
   
-  // 4. Si es puramente numérico de 7 dígitos (DNI peruano que perdió un cero en Excel por falta de apóstrofe), padearlo a 8 dígitos
+  // 5. Si es puramente numérico de 7 dígitos (DNI peruano que perdió un cero en Excel por falta de apóstrofe), padearlo a 8 dígitos
   if (/^\d{7}$/.test(s)) {
     s = '0' + s
   }
@@ -255,7 +260,18 @@ export function parseGoogleFormRow(row, colIdx) {
   }
 
   const str = (k) => String(get(k) || '').trim() || null
-  const rawDoc = cleanDocumento(get('documento'))
+  let rawDoc = cleanDocumento(get('documento'))
+
+  // Fallback: Si no hay documento en la columna mapeada, buscar en las demás celdas de la fila un DNI válido
+  if (!isValidDocumento(rawDoc)) {
+    for (let cIdx = 0; cIdx < row.length; cIdx++) {
+      const candidate = cleanDocumento(row[cIdx])
+      if (isValidDocumento(candidate) && /^\d{7,12}$/.test(candidate)) {
+        rawDoc = candidate
+        break
+      }
+    }
+  }
 
   // Si no tiene un documento válido (es nota, apunte o fila vacía), retornar null
   if (!isValidDocumento(rawDoc)) {
