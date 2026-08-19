@@ -5,6 +5,7 @@ import {
   fetchGoogleFormsPool
 } from '../../lib/dataService'
 import { NOMINA_DB_FIELDS } from '../../lib/nominaConsolidadoSchema'
+import { parseExcelDate } from '../../lib/capacidadRysSchema'
 import { supabase } from '../../lib/supabase'
 import {
   Loader2, Search, CheckSquare, Square, DownloadCloud,
@@ -520,6 +521,7 @@ export default function NominaFormPool({
         const rawPayload = {
           ...d,
           marca_temporal: safeMarcaTemporal,
+          fecha_nacimiento: parseExcelDate(d.fecha_nacimiento),
           periodo_reclutado: matchedGrupoObj?.periodo || bulkPeriodo,
           semana_trabajo: semanaNum,
           reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',
