@@ -2517,7 +2517,37 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   const isPublished = url.includes('/d/e/2PACX-') || url.includes('/pubhtml') || url.includes('/pub')
   console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] docId:', docId, 'requestedGid:', requestedGid, 'isPublished:', isPublished)
 
-  // Estrategia 1: Scraping de pestañas desde /pubhtml o /htmlview
+  // ── PRIORIDAD 1: Descargar libro completo en formato XLSX (Multi-Hoja Instantáneo) ──
+  if (docId && docId !== 'e' && !isPublished) {
+    const xlsxUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=xlsx`
+    try {
+      console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Intentando descargar libro completo XLSX:', xlsxUrl)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 8000)
+      const resp = await fetch(xlsxUrl, { signal: controller.signal })
+      clearTimeout(timeoutId)
+
+      if (resp.ok) {
+        const buffer = await resp.arrayBuffer()
+        console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] XLSX descargado con éxito:', buffer.byteLength, 'bytes')
+        const workbook = XLSX.read(buffer, { type: 'array' })
+        const sheetNames = workbook.SheetNames || []
+        if (sheetNames.length > 0) {
+          console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestañas en libro XLSX:', sheetNames)
+          return {
+            type: 'workbook',
+            workbook,
+            sheetNames,
+            docId
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[POOL-PIPELINE] XLSX export fallback (probando pubhtml):', e)
+    }
+  }
+
+  // ── PRIORIDAD 2: Scraping de pestañas desde /pubhtml o /htmlview ──────────
   const pubUrlsToTry = []
   if (isPublished) {
     pubUrlsToTry.push(url.includes('/pubhtml') ? url : url.replace(/\/pub.*/, '/pubhtml'))
@@ -2529,7 +2559,11 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   for (const pubHtmlUrl of pubUrlsToTry) {
     try {
       console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Intentando descargar pubhtml:', pubHtmlUrl)
-      const resp = await fetch(pubHtmlUrl)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 6000)
+      const resp = await fetch(pubHtmlUrl, { signal: controller.signal })
+      clearTimeout(timeoutId)
+
       console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Status HTTP:', resp.status, resp.statusText)
       if (resp.ok) {
         const html = await resp.text()
@@ -2537,7 +2571,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
         const sheetMap = {}
         const sheetNames = []
 
-        // Intento 1.1: Regex de items.push con nombre completo decodificado
+        // Intento 2.1: Regex de items.push con nombre completo decodificado
         const regexPush = /items\.push\(\{\s*name:\s*"([^"]+)",[\s\S]*?gid:\s*"([^"]+)"/g
         let match
         while ((match = regexPush.exec(html)) !== null) {
@@ -2550,7 +2584,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
           }
         }
 
-        // Intento 1.2: Regex de botones de hojas <li id="sheet-button-...">
+        // Intento 2.2: Regex de botones de hojas <li id="sheet-button-...">
         if (sheetNames.length === 0) {
           const regexButtons = /<li[^>]*id="sheet-button-([^"]+)"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/g
           while ((match = regexButtons.exec(html)) !== null) {
@@ -2568,7 +2602,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
         if (sheetNames.length > 0) {
           const targetName = (requestedGid && Object.keys(sheetMap).find(k => sheetMap[k] === requestedGid)) || sheetNames[0]
           const targetGid = sheetMap[targetName] || requestedGid || '0'
-          console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestaña objetivo:', targetName, 'GID:', targetGid)
+          console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestaña objetivo inicial:', targetName, 'GID:', targetGid)
 
           let matrix = []
           try {
@@ -2576,18 +2610,23 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
               ? `https://docs.google.com/spreadsheets/d/${docId}` 
               : url.replace(/(\/pubhtml|\/pub).*/, '')
             
-            // Probar CSV por pub y luego por gviz
-            const csvUrl = `${baseUrl}/pub?gid=${targetGid}&single=true&output=csv`
-            const csvResp = await fetch(csvUrl)
-            if (csvResp.ok) {
-              const csvText = await csvResp.text()
-              matrix = parseCSV(csvText)
-            } else if (docId) {
-              const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${targetGid}`
+            // Probar CSV por gviz y luego por pub
+            const gvizUrl = docId ? `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${targetGid}` : null
+            if (gvizUrl) {
               const gvizResp = await fetch(gvizUrl)
               if (gvizResp.ok) {
                 const gvizText = await gvizResp.text()
-                matrix = parseCSV(gvizText)
+                if (gvizText && !gvizText.includes('<!DOCTYPE html>')) {
+                  matrix = parseCSV(gvizText)
+                }
+              }
+            }
+            if (matrix.length === 0) {
+              const csvUrl = `${baseUrl}/pub?gid=${targetGid}&single=true&output=csv`
+              const csvResp = await fetch(csvUrl)
+              if (csvResp.ok) {
+                const csvText = await csvResp.text()
+                matrix = parseCSV(csvText)
               }
             }
           } catch (_) { /* fallback silencioso */ }
@@ -2608,29 +2647,8 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
     }
   }
 
-  // Estrategia 2: Descargar libro completo en formato XLSX (Google Drive con acceso de lectura)
+  // ── PRIORIDAD 3: Google Visualization API CSV ────────────────────────────
   if (docId && docId !== 'e') {
-    const xlsxUrl = `https://docs.google.com/spreadsheets/d/${docId}/export?format=xlsx`
-    try {
-      const resp = await fetch(xlsxUrl)
-      if (resp.ok) {
-        const buffer = await resp.arrayBuffer()
-        const workbook = XLSX.read(buffer, { type: 'array' })
-        const sheetNames = workbook.SheetNames || []
-        if (sheetNames.length > 0) {
-          return {
-            type: 'workbook',
-            workbook,
-            sheetNames,
-            docId
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('XLSX export fallback:', e)
-    }
-
-    // Estrategia 3: Google Visualization API CSV (soporta CORS)
     try {
       const gvizUrl = `https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${requestedGid}`
       const gvizResp = await fetch(gvizUrl)

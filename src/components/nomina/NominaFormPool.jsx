@@ -307,6 +307,8 @@ export default function NominaFormPool({
   }, [sheetUrl, bulkGrupo, bulkCampana, bulkSegmento])
 
   // 2. Parse candidates from the selected sheet tab & check DB assignments
+  const tabCacheRef = useRef(new Map())
+
   const loadSheetCandidates = useCallback(async (wbInfo, sheetName) => {
     if (!wbInfo) return
     const targetSheetName = sheetName || wbInfo.sheetNames?.[0] || 'Hoja 1'
@@ -317,14 +319,19 @@ export default function NominaFormPool({
       setError(null)
 
       let matrix = []
-      if (wbInfo.type === 'workbook') {
+      // 1. Revisar si la pestaña ya está en caché en memoria
+      if (tabCacheRef.current.has(targetSheetName)) {
+        matrix = tabCacheRef.current.get(targetSheetName)
+      } else if (wbInfo.type === 'workbook') {
         const worksheet = wbInfo.workbook.Sheets[targetSheetName]
         if (worksheet) {
           matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
+          tabCacheRef.current.set(targetSheetName, matrix)
         }
       } else if (wbInfo.type === 'published_sheets') {
         if (targetSheetName === wbInfo.currentSheet && wbInfo.matrix && wbInfo.matrix.length > 0) {
           matrix = wbInfo.matrix
+          tabCacheRef.current.set(targetSheetName, matrix)
         } else {
           const cleanTarget = String(targetSheetName || '').trim().toUpperCase()
           let gid = wbInfo.sheetMap?.[targetSheetName]
@@ -352,7 +359,11 @@ export default function NominaFormPool({
 
           for (const url of urlsToTry) {
             try {
-              const resp = await fetch(url)
+              const controller = new AbortController()
+              const timeoutId = setTimeout(() => controller.abort(), 4000)
+              const resp = await fetch(url, { signal: controller.signal })
+              clearTimeout(timeoutId)
+
               if (resp.ok) {
                 const text = await resp.text()
                 if (text && !text.includes('<!DOCTYPE html>')) {
@@ -368,15 +379,17 @@ export default function NominaFormPool({
           if (csvText) {
             const { parseCsvToMatrix } = await import('../../lib/nominaConsolidadoSchema.js')
             matrix = parseCsvToMatrix(csvText)
+            tabCacheRef.current.set(targetSheetName, matrix)
           } else {
             matrix = []
           }
         }
       } else {
         matrix = wbInfo.matrix || []
+        tabCacheRef.current.set(targetSheetName, matrix)
       }
 
-      const data = await parseSheetMatrixCandidates(matrix)
+      const data = await parseSheetMatrixCandidates(matrix, { limitLast2Months: false })
 
       // Deduplicar postulantes por DNI (conservando la respuesta más reciente del formulario)
       const deduplicatedMap = new Map()
