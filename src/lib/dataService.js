@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from './supabase'
 import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
-import { parseCsvToMatrix, parseNominaRows } from './nominaConsolidadoSchema.js'
+import { parseCsvToMatrix, parseNominaRows, cleanDocumento } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
 import { parseCapacidadRysCsv } from './capacidadRysSchema.js'
@@ -596,7 +596,7 @@ export async function ensureFormador(nombre, documento) {
 
 function buildNominaPayload(payload, ids) {
   return {
-    documento: payload.documento,
+    documento: cleanDocumento(payload.documento),
     tipo_documento: payload.tipo_documento || 'DNI',
     apellido_paterno: payload.apellido_paterno,
     apellido_materno: payload.apellido_materno,

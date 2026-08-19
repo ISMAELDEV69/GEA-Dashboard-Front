@@ -204,8 +204,13 @@ export function cleanDocumento(val) {
   // 2. Si el texto tiene formato como 'DNI: 006541136', 'CE: 12345678', 'NRO. 00123456', limpiar el prefijo
   s = s.replace(/^(?:DNI|CE|C\.E\.|PASAPORTE|DOC|DOCUMENTO|NRO|N°|NUM|ID)[\s:.\-_#]*/i, '')
   
-  // 3. Eliminar comillas o apóstrofes residuales incrustados
-  s = s.replace(/['"`’‘“”]/g, '').trim()
+  // 3. Eliminar comillas o apóstrofes residuales incrustados y espacios
+  s = s.replace(/['"`’‘“”\s]/g, '').trim()
+  
+  // 4. Si es puramente numérico de 7 dígitos (DNI peruano que perdió un cero en Excel por falta de apóstrofe), padearlo a 8 dígitos
+  if (/^\d{7}$/.test(s)) {
+    s = '0' + s
+  }
   
   return s
 }
@@ -481,11 +486,39 @@ export function parseCsvToMatrix(text) {
   return result
 }
 
-// Dummy exports to satisfy legacy imports
+export function applyNominaPayloadToForm(payload = {}, setValue) {
+  if (!payload || typeof setValue !== 'function') return
+  const cleanDoc = cleanDocumento(payload.documento)
+  
+  const fields = [
+    'documento', 'tipo_documento', 'apellido_paterno', 'apellido_materno', 'nombres',
+    'celular', 'celular_referencia', 'correo', 'genero', 'fecha_nacimiento', 'edad',
+    'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'nacionalidad',
+    'lugar_residencia', 'distrito_residencia', 'direccion_domicilio', 'exp_call_center',
+    'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra', 'fuente_oferta',
+    'observacion_reclutamiento', 'campana', 'segmento', 'grupo_codigo', 'modalidad',
+    'condicion', 'horario_gestion', 'descanso', 'envio_dni', 'test_psicologico',
+    'validacion_pc', 'evaluacion_dia_0', 'fecha_inicio_capacitacion', 'fecha_fin_capacitacion',
+    'fecha_conexion_ojt', 'fecha_conexion_op', 'pago_capacitacion', 'tipo_contratacion',
+    'razon_social', 'remuneracion', 'bono_variable', 'bono_movilidad', 'bono_bienvenida',
+    'bono_permanencia', 'bono_asistencia_perfecta', 'cargo_contractual', 'dia_0',
+    'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs', 'estado', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede'
+  ]
+
+  fields.forEach(field => {
+    if (payload[field] !== undefined && payload[field] !== null) {
+      if (field === 'documento') {
+        setValue('documento', cleanDoc, { shouldValidate: true })
+      } else {
+        setValue(field, payload[field], { shouldValidate: true })
+      }
+    }
+  })
+}
+
 export const NOMINA_FORM_GROUPS = []
 export const STEP_LABELS = []
 export const STEP_FIELDS = {}
 export const REQUIRED_NOMINA_FIELDS = []
-export const applyNominaPayloadToForm = () => {}
 export const parseMoney = () => 0
 export const NOMINA_FIELD_META = {}

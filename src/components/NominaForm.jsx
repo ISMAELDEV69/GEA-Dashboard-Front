@@ -12,7 +12,7 @@ import { ensureReclutador, ensureSede, ensureCampana } from '../lib/dataService'
 import { findGrupoPlan, grupoToNominaDefaults, inferSegmento, SEGMENTOS_SIU } from '../lib/capacidadRysSync'
 import {
   NOMINA_FORM_GROUPS, STEP_LABELS, STEP_FIELDS, REQUIRED_NOMINA_FIELDS,
-  parseNominaRows, applyNominaPayloadToForm, parseMoney,
+  parseNominaRows, applyNominaPayloadToForm, parseMoney, cleanDocumento
 } from '../lib/nominaConsolidadoSchema'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
@@ -139,10 +139,7 @@ const NOMINA_FORM_DEFAULTS = {
 // Validation schema for a single candidate
 const schema = z.object({
   documento: z
-    .string()
-    .min(8, { message: 'El documento debe tener al menos 8 dígitos' })
-    .max(12, { message: 'El documento debe tener máximo 12 dígitos' })
-    .regex(/^\d+$/, { message: 'El documento debe contener solo números' }),
+    .preprocess((val) => cleanDocumento(val), z.string().min(8, { message: 'El documento debe tener al menos 8 dígitos' }).max(20, { message: 'El documento debe tener máximo 20 dígitos' })),
   tipo_documento: z.enum(['DNI', 'CE', 'PASAPORTE']),
   apellido_paterno: z.string().min(2, { message: 'El apellido paterno es requerido' }),
   apellido_materno: z.string().min(2, { message: 'El apellido materno es requerido' }),
@@ -964,7 +961,11 @@ export default function NominaForm({
                       <input
                         type="text"
                         {...register('documento')}
-                        placeholder="Ej. 75977988"
+                        onBlur={(e) => {
+                          const cleaned = cleanDocumento(e.target.value)
+                          setValue('documento', cleaned, { shouldValidate: true })
+                        }}
+                        placeholder="Ej. 75977988 o 006541136"
                         className={`form-input ${errors.documento ? 'border-red-300 focus:border-red-500 focus:ring-red-500/20' : ''}`}
                       />
                       {errors.documento && (
