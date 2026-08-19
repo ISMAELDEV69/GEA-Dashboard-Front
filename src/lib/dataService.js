@@ -786,44 +786,53 @@ export async function insertPostulante(payload) {
 }
 
 export async function insertPostulantesBulk(payloads) {
-  const cleanPayloads = payloads.filter(p => p.documento && p.documento.trim());
-  if (cleanPayloads.length === 0) return { inserted: [], skipped: [], failed: [] };
+  const cleanPayloads = (payloads || []).filter(p => p && p.documento && String(p.documento).trim());
+  if (cleanPayloads.length === 0) return { inserted: [], skipped: [], failed: [], results: [] };
 
   const targetGrupo = cleanPayloads[0].grupo_codigo;
-  let existingDocs = new Set();
-  const results = { inserted: [], skipped: [], failed: [] };
-  
+  const existingDocs = new Set();
+  const uniquePayloads = [];
+  const skipped = [];
+
+  for (const p of cleanPayloads) {
+    const doc = String(p.documento).trim();
+    if (existingDocs.has(doc)) {
+      skipped.push(doc);
+    } else {
+      existingDocs.add(doc);
+      uniquePayloads.push(p);
+    }
+  }
+
   if (DB_MODE === 'supabase') {
-    // Ya no verificamos docs activos en este grupo. La BD (registrar_nomina)
-    // desactiva nóminas anteriores, permitiendo reasignaciones.
-    // Aún así, filtramos los repetidos exactos dentro del mismo payload
-    
-    // Todas las asistencias a insertar
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('registrar_nominas_bulk', { p_data: uniquePayloads });
+    if (rpcErr) {
+      console.error('Error en registrar_nominas_bulk:', rpcErr);
+      throw rpcErr;
+    }
+
+    const insertedRows = (rpcRes?.inserted || []).map(row => ({
+      ...row,
+      campaign: row.campana,
+      observacion: row.observacion_reclutamiento
+    }));
+
+    const failed = (rpcRes?.results || [])
+      .filter(r => !r.success)
+      .map(r => ({ documento: r.documento, reason: r.error }));
+
+    // Generar asistencias asociadas únicamente para los postulantes insertados con éxito
+    const insertedDocSet = new Set(insertedRows.map(r => r.documento));
     const allAsistenciaRecords = [];
 
-    for (const payload of cleanPayloads) {
-      if (existingDocs.has(payload.documento)) {
-        results.skipped.push(payload.documento);
-        continue;
-      }
-      try {
-        const saved = await insertPostulante(payload);
-        results.inserted.push(saved);
-        existingDocs.add(payload.documento);
-        
-        // Generar registros de asistencia día 0 / día 1
-        const aRecords = asistenciaRecordsFromNominaRow(payload);
+    for (const p of uniquePayloads) {
+      if (insertedDocSet.has(p.documento)) {
+        const aRecords = asistenciaRecordsFromNominaRow(p);
         allAsistenciaRecords.push(...aRecords);
-        
-      } catch (err) {
-        console.error('Bulk skip:', payload.documento, err.message);
-        results.failed.push({ documento: payload.documento, reason: err.message });
       }
     }
 
-    // Insertar asistencias si hay alguna
     if (allAsistenciaRecords.length > 0) {
-      // Agrupar por grupo y fecha
       const groupsMap = new Map();
       allAsistenciaRecords.forEach(r => {
         const key = `${r.grupo_codigo}|${r.fecha_asistencia}`;
@@ -831,45 +840,51 @@ export async function insertPostulantesBulk(payloads) {
         groupsMap.get(key).registros.push(r);
       });
       
+      const asisPromises = [];
       for (const group of groupsMap.values()) {
-        try {
-          await upsertAsistencias({
+        asisPromises.push(
+          upsertAsistencias({
             grupo_codigo: group.grupo_codigo,
             fecha_asistencia: group.fecha_asistencia,
             records: group.registros
-          });
-        } catch(e) {
-          console.error("Error upserting asistencias for group:", group.grupo_codigo, e);
-        }
+          }).catch(e => console.error("Error upserting asistencias for group:", group.grupo_codigo, e))
+        );
+      }
+      if (asisPromises.length > 0) {
+        await Promise.all(asisPromises);
       }
     }
 
-    try {
-      await checkCalibracionDia1(targetGrupo)
-    } catch(e) {
-      console.error("Error checkCalibracionDia1 from insertPostulantesBulk:", e)
+    if (targetGrupo) {
+      try {
+        await checkCalibracionDia1(targetGrupo);
+      } catch(e) {
+        console.error("Error checkCalibracionDia1 from insertPostulantesBulk:", e);
+      }
     }
 
-    return results;
+    // Invalidar cachés operacionales para reflejar los nuevos registros de inmediato
+    invalidateCache('all_consolidado');
+    invalidateCache('resumen_cap_');
+
+    return {
+      inserted: insertedRows,
+      skipped,
+      failed,
+      results: rpcRes?.results || []
+    };
   }
 
   // Local/Demo Mode fallback
   const list = getFromStorage('postulantes') || [];
-  if (targetGrupo) {
-    list.filter(p => p.grupo_codigo === targetGrupo).forEach(p => existingDocs.add(p.documento));
-  }
-  for (const payload of cleanPayloads) {
-    if (existingDocs.has(payload.documento)) {
-      results.skipped.push(payload.documento);
-      continue;
-    }
-    const item = { ...payload, id: Date.now() }
+  const inserted = [];
+  for (const payload of uniquePayloads) {
+    const item = { ...payload, id: Date.now() + Math.random() };
     list.push(item);
-    results.inserted.push(item);
-    existingDocs.add(payload.documento);
+    inserted.push(item);
   }
-  saveToStorage('postulantes', list)
-  return results;
+  saveToStorage('postulantes', list);
+  return { inserted, skipped, failed: [], results: [] };
 }
 
 
@@ -986,15 +1001,22 @@ export async function fetchCapacidadRysOperativo() {
   return fetchGrupos()
 }
 
-/** Suscripción realtime a cambios de grupos y nóminas */
+/** Suscripción realtime a cambios de grupos y nóminas con debounce de seguridad */
 export function subscribeOperationalData(onChange) {
   if (DB_MODE !== 'supabase') return () => {}
 
+  let debounceTimer = null;
   const handleChange = () => {
     // Limpiar caché antes de recargar para garantizar datos frescos de Supabase
     invalidateCache('all_consolidado');
     invalidateCache('all_asistencias_bajas');
-    onChange();
+    invalidateCache('grupos_con_metas');
+    invalidateCache('resumen_cap_');
+    
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      onChange();
+    }, 1500);
   };
 
   const channel = supabase
@@ -1331,48 +1353,38 @@ export async function syncGoogleSheets({ sourceIds = null, onProgress } = {}) {
       }
     }
 
-    const seen = new Set()
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
+    const uniqueSheetRows = []
+    const seenSheetDocs = new Set()
+    for (const row of rows) {
+      if (row.documento && !seenSheetDocs.has(row.documento)) {
+        seenSheetDocs.add(row.documento)
+        uniqueSheetRows.push(row)
+      } else {
+        result.skipped++
+      }
+    }
+
+    if (uniqueSheetRows.length > 0) {
       onProgress?.({
         phase: 'nominas',
         sourceId: source.id,
         label: source.label,
-        total: rows.length,
-        current: i + 1,
-        message: `Importando ${row.documento}…`,
+        total: uniqueSheetRows.length,
+        current: 0,
+        message: `Importando lote de ${uniqueSheetRows.length} nóminas…`,
       })
 
-      if (seen.has(row.documento)) {
-        result.skipped++
-        continue
-      }
-      seen.add(row.documento)
-
       try {
-        await insertPostulante(row)
-        result.nominas++
-
-        if (source.importAsistencia) {
-          const records = asistenciaRecordsFromNominaRow(row)
-          const batches = new Map()
-          for (const rec of records) {
-            const key = `${rec.grupo_codigo}|${rec.fecha_asistencia}`
-            if (!batches.has(key)) batches.set(key, [])
-            batches.get(key).push({
-              documento: rec.documento,
-              sigla: rec.sigla,
-              motivo_baja: rec.motivo_baja,
-            })
-          }
-          for (const [key, recs] of batches) {
-            const [grupo_codigo, fecha_asistencia] = key.split('|')
-            await upsertAsistencias({ grupo_codigo, fecha_asistencia, records: recs })
-            result.asistencias += recs.length
-          }
+        const bulkRes = await insertPostulantesBulk(uniqueSheetRows)
+        result.nominas += (bulkRes.inserted?.length || 0)
+        result.skipped += (bulkRes.skipped?.length || 0)
+        if (bulkRes.failed?.length > 0) {
+          bulkRes.failed.forEach(f => {
+            result.errors.push({ ref: f.documento, message: f.reason })
+          })
         }
       } catch (err) {
-        result.errors.push({ ref: row.documento, message: err.message })
+        result.errors.push({ ref: source.label, message: err.message })
       }
     }
   }
@@ -1441,37 +1453,67 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
       .eq('grupo_codigo', grupo_codigo)
       .eq('fecha_asistencia', fecha_asistencia)
 
-    // Solo actualizamos 'nominas' si hay bajas (CESADO).
-    for (const r of records.filter(x => x.sigla === 'B' && x.documento)) {
-      const atrib = atribuirBaja(r.motivo_baja)
-      await supabase
-        .from('nominas')
-        .update({
-          estado: 'BAJA',
-          observacion_estado: `${r.motivo_baja || 'BAJA'} [${atrib}]`,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('postulante_documento', r.documento)
-        .eq('activo', true)
+    if (delErr) console.warn('Error borrando asistencias previas:', delErr.message);
+
+    // 1. Agrupar bajas por motivo de baja para actualizar en lote por grupo de motivo
+    const bajasByMotivo = new Map();
+    for (const r of (records || []).filter(x => x.sigla === 'B' && x.documento)) {
+      const motivo = r.motivo_baja || 'BAJA';
+      const atrib = atribuirBaja(motivo);
+      const obs = `${motivo} [${atrib}]`;
+      if (!bajasByMotivo.has(obs)) {
+        bajasByMotivo.set(obs, []);
+      }
+      bajasByMotivo.get(obs).push(r.documento);
     }
 
-    // Restaurar a ACTIVO si ya no es 'B' (Reactiva a los que vuelven a asistir)
-    for (const r of records.filter(x => x.sigla !== 'B' && x.documento)) {
-      await supabase
-        .from('nominas')
-        .update({
-          estado: 'ACTIVO',
-          observacion_estado: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('postulante_documento', r.documento)
-        .eq('activo', true)
-        .eq('estado', 'BAJA')
+    // 2. Documentos a restaurar a ACTIVO (cualquiera que asista con sigla distinta de B)
+    const activeDocs = (records || [])
+      .filter(x => x.sigla !== 'B' && x.documento)
+      .map(x => x.documento);
+
+    // 3. Ejecutar updates de forma concurrente con Promise.all
+    const updatePromises = [];
+
+    for (const [obs, docs] of bajasByMotivo.entries()) {
+      if (docs.length > 0) {
+        updatePromises.push(
+          supabase
+            .from('nominas')
+            .update({
+              estado: 'BAJA',
+              observacion_estado: obs,
+              updated_at: new Date().toISOString(),
+            })
+            .in('documento', docs)
+            .eq('activo', true)
+        );
+      }
+    }
+
+    if (activeDocs.length > 0) {
+      updatePromises.push(
+        supabase
+          .from('nominas')
+          .update({
+            estado: 'ACTIVO',
+            observacion_estado: null,
+            updated_at: new Date().toISOString(),
+          })
+          .in('documento', activeDocs)
+          .eq('activo', true)
+          .in('estado', ['BAJA', 'CESADO', 'INACTIVO', 'DESERTO'])
+      );
+    }
+
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
     }
 
     // Invalidar caché para que la próxima lectura traiga datos frescos de Supabase
     invalidateCache('all_consolidado');
     invalidateCache('all_asistencias_bajas');
+    invalidateCache('resumen_cap_');
     return true
   }
 
@@ -1583,29 +1625,31 @@ export async function fetchReclutadoresFull() {
   }))
 }
 
-export async function fetchGruposConMetas() {
-  if (DB_MODE === 'supabase') {
-    // 1. Fetch groups and recruiters in parallel (QW-2: consultar solo columnas necesarias de nominas activas)
-    const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
-      supabase
-        .from('capacidad_rys')
-        .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
-        .order('codigo'),
-      supabase
-        .from('grupo_reclutadores')
-        .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, reclutadores(nombre_completo)'),
-      supabase
-        .from('nominas')
-        .select('documento, grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede')
-        .eq('activo', true),
-      supabase
-        .from('equipo_reclutamiento')
-        .select('documento, alias, apellido_paterno, apellido_materno, nombres_completos')
-        .eq('estado', 'ACTIVO'),
-      supabase
-        .from('consolidado_asistencias')
-        .select('documento, motivo_baja, estado, codigo_grupo, campana')
-    ])
+export function fetchGruposConMetas() {
+  return withCache('grupos_con_metas', 180000, async () => {
+    if (DB_MODE === 'supabase') {
+      // 1. Fetch groups and recruiters in parallel (consultando solo columnas necesarias de nominas activas)
+      const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
+        supabase
+          .from('capacidad_rys')
+          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, rango_horario, fecha_registro, fecha_ingreso_op')
+          .order('codigo'),
+        supabase
+          .from('grupo_reclutadores')
+          .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, reclutadores(nombre_completo)'),
+        supabase
+          .from('nominas')
+          .select('documento, grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede')
+          .eq('activo', true),
+        supabase
+          .from('equipo_reclutamiento')
+          .select('documento, alias, apellido_paterno, apellido_materno, nombres_completos')
+          .eq('estado', 'ACTIVO'),
+        supabase
+          .from('consolidado_asistencias')
+          .select('documento, motivo_baja, estado, codigo_grupo, campana')
+          .limit(10000)
+      ])
 
     if (gruposRes.error) throw gruposRes.error
     if (relRes.error) throw relRes.error
@@ -1711,6 +1755,7 @@ export async function fetchGruposConMetas() {
 
   // Local fallback
   return []
+  })
 }
 
 export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
@@ -2088,8 +2133,8 @@ export async function saveAsistenciasReclutador(grupo_codigo, campana, registros
   // Actualizar estado en nóminas si hubo bajas
   if (bajas.length > 0) {
     await supabase.from('nominas')
-      .update({ estado: 'CESADO', activo: false })
-      .in('postulante_documento', bajas)
+      .update({ estado: 'CESADO', activo: false, updated_at: new Date().toISOString() })
+      .in('documento', bajas)
   }
   
   // Llamar a check calibracion
@@ -2651,7 +2696,11 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
           cell === 'SOLICITUDES DE HORARIO'
         )
         // Si es título de tabla secundaria y no tiene datos de postulante, cortar
-        if (isSecondaryHeader && !rowCells.some(cell => /^\d{8}$/.test(cell))) {
+        const hasDocInRow = rowCells.some(cell => {
+          const c = cell.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
+          return /^\d{7,12}$/.test(c)
+        })
+        if (isSecondaryHeader && !hasDocInRow) {
           break
         }
 

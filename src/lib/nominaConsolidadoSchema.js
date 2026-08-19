@@ -189,13 +189,35 @@ export function mapGoogleFormHeaders(headerRow = []) {
 }
 
 /**
+ * Limpia y normaliza números de documento de identidad (DNI, CE, Pasaporte),
+ * eliminando apóstrofes iniciales (ej. '006541136 puesto en Excel/Sheets para preservar ceros),
+ * comillas simples/dobles, prefijos de texto como "DNI:" o "NRO", caracteres de control y espacios.
+ */
+export function cleanDocumento(val) {
+  if (val === null || val === undefined) return ''
+  let s = String(val).trim()
+  if (!s) return ''
+  
+  // 1. Eliminar comillas simples, dobles, apóstrofes (incluyendo Unicode ’ ‘ ` " ” “) al inicio y final
+  s = s.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
+  
+  // 2. Si el texto tiene formato como 'DNI: 006541136', 'CE: 12345678', 'NRO. 00123456', limpiar el prefijo
+  s = s.replace(/^(?:DNI|CE|C\.E\.|PASAPORTE|DOC|DOCUMENTO|NRO|N°|NUM|ID)[\s:.\-_#]*/i, '')
+  
+  // 3. Eliminar comillas o apóstrofes residuales incrustados
+  s = s.replace(/['"`’‘“”]/g, '').trim()
+  
+  return s
+}
+
+/**
  * Valida si un valor parece un documento de identidad válido (DNI, CE, Pasaporte)
  * y descarta textos de apuntes, notas, subtotales o encabezados repetidos.
  */
 export function isValidDocumento(val) {
   if (!val) return false
-  const s = String(val).trim().toUpperCase()
-  if (s.length < 5 || s.length > 25) return false
+  const clean = cleanDocumento(val).toUpperCase()
+  if (clean.length < 5 || clean.length > 25) return false
   
   // Lista de palabras clave que suelen aparecer en notas, tablas secundarias o resúmenes al pie de página
   const invalidKeywords = [
@@ -205,10 +227,10 @@ export function isValidDocumento(val) {
     'HORARIO', 'HORARIOS', 'ESPECIAL', 'ESPECIALES', 'SOLICITUD', 'SOLICITUDES', 'CAPACITACION',
     'PRESENCIAL', 'DESCANSO', 'ESTUDIO', 'ESTUDIOS', 'CAIDOS', 'CAÍDOS', 'DESISTIDO', 'DESISTIDOS', 'BAJA', 'BAJAS'
   ]
-  if (invalidKeywords.some(kw => s.includes(kw))) return false
+  if (invalidKeywords.some(kw => clean === kw || clean.startsWith(kw + ' ') || clean.endsWith(' ' + kw))) return false
   
   // Debe contener al menos algún número o formato alfanumérico de documento válido
-  return /[0-9]/.test(s) && /^[A-Z0-9\-_.]+$/i.test(s)
+  return /[0-9]/.test(clean) && /^[A-Z0-9\-_.]+$/i.test(clean)
 }
 
 function normalizeAsistencia(val) {
@@ -228,7 +250,7 @@ export function parseGoogleFormRow(row, colIdx) {
   }
 
   const str = (k) => String(get(k) || '').trim() || null
-  const rawDoc = str('documento')
+  const rawDoc = cleanDocumento(get('documento'))
 
   // Si no tiene un documento válido (es nota, apunte o fila vacía), retornar null
   if (!isValidDocumento(rawDoc)) {
