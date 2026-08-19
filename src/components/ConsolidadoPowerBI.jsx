@@ -443,7 +443,14 @@ export default function ConsolidadoPowerBI() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({ periodo: 'Todas', segmento: 'Todas', campana: 'Todas', gpe: 'Todas', estado: 'Todas' });
+  const [filters, setFilters] = useState({ 
+    periodo: 'Todas', 
+    semana: 'Todas',
+    segmento: 'Todas', 
+    campana: 'Todas', 
+    gpe: 'Todas', 
+    estado: 'Todas' 
+  });
 
   const loadData = useCallback(async () => {
     try {
@@ -482,25 +489,48 @@ export default function ConsolidadoPowerBI() {
     });
   }, [data]);
 
-  const capacidadMap = useMemo(() => {
-    const map = new Map();
+  // ── 1. Indexar capacidades por clave compuesta y por código directo para búsqueda robusta ──
+  const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
+    const byKey = new Map();
+    const byCode = new Map();
+    const allItems = [];
+
     capacidades.forEach((item) => {
-      const key = `${normalizeCampana(item.campana)}|${normalizeGpe(item.codigo)}`;
-      map.set(key, {
+      const campana = normalizeCampana(item.campana);
+      const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
+      const rawSemana = item.semana_label || item.semana_trabajo || item.semana || '';
+      const semanaStr = rawSemana ? String(rawSemana).trim() : '';
+
+      const capInfo = {
+        codigo: gpe,
+        campana: campana,
         meta_dia_1: Number(item.meta_dia_1) || 0,
         rq_solicitado: Number(item.rq_solicitado) || 0,
         fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
         periodo: normalizeText(item.periodo),
+        semana: semanaStr,
         segmento: normalizeSegmento(item.segmento),
-      });
+      };
+
+      if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
+      if (gpe) byCode.set(gpe, capInfo);
+      allItems.push(capInfo);
     });
-    return map;
+
+    return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
   }, [capacidades]);
 
+  // Helper robusto para obtener capacidad (por clave compuesta o por código directo)
+  const getCapInfo = useCallback((campana, gpe) => {
+    const normCampana = normalizeCampana(campana);
+    const normGpe = normalizeGpe(gpe);
+    return capacidadByKeyMap.get(`${normCampana}|${normGpe}`) || capacidadByCodigoMap.get(normGpe) || null;
+  }, [capacidadByKeyMap, capacidadByCodigoMap]);
+
+  // Compatibilidad con capacidadMap legado
+  const capacidadMap = capacidadByKeyMap;
+
   // ── Mapa de último estado por documento (fecha máxima) ──
-  // Esto evita huecos en asistencia al filtrar por estado:
-  // el estado del filtro se evalúa contra el ÚLTIMO registro del documento,
-  // pero se mantienen TODAS sus filas de asistencia.
   const lastStateMap = useMemo(() => {
     const docMap = new Map();
     validData.forEach((row) => {
@@ -528,60 +558,159 @@ export default function ConsolidadoPowerBI() {
     return result; // doc -> 'ACTIVO' | 'CESADO'
   }, [validData]);
 
+  // ── Jerarquía en Cascada Estricta (Periodo -> Semana -> Segmento -> Campaña -> GPE) ──
   const filterOptions = useMemo(() => {
+    const getRowPeriodo = (r) => {
+      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
+      return cap?.periodo || normalizeText(r.periodo);
+    };
+    const getRowSemana = (r) => {
+      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
+      return cap?.semana || normalizeText(r.semana);
+    };
+    const getRowSegmento = (r) => {
+      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
+      return cap?.segmento || normalizeSegmento(r.segmento);
+    };
+    const getRowCampana = (r) => {
+      return normalizeCampana(r.campana);
+    };
+    const getRowGpe = (r) => {
+      return normalizeGpe(r.codigo_grupo || r.grupo || r.codigo);
+    };
+
+    // 1. Periodos disponibles
     const periodos = new Set();
+    allCapacidadItems.forEach(c => { if (c.periodo) periodos.add(c.periodo); });
+    validData.forEach(r => { const p = getRowPeriodo(r); if (p) periodos.add(p); });
+
+    // 2. Semanas disponibles según Periodo
+    const semanas = new Set();
+    const matchPeriodo = (p) => filters.periodo === 'Todas' || p === filters.periodo;
+    allCapacidadItems.forEach(c => {
+      if (matchPeriodo(c.periodo) && c.semana) semanas.add(c.semana);
+    });
+    validData.forEach(r => {
+      if (matchPeriodo(getRowPeriodo(r))) {
+        const s = getRowSemana(r);
+        if (s) semanas.add(s);
+      }
+    });
+
+    // 3. Segmentos disponibles según Periodo y Semana
     const segmentos = new Set();
+    const matchSemana = (s) => filters.semana === 'Todas' || s === filters.semana;
+    allCapacidadItems.forEach(c => {
+      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && c.segmento) {
+        segmentos.add(c.segmento);
+      }
+    });
+    validData.forEach(r => {
+      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r))) {
+        const seg = getRowSegmento(r);
+        if (seg && seg !== 'SIN SEGMENTO') segmentos.add(seg);
+      }
+    });
+
+    // 4. Campañas disponibles según Periodo, Semana y Segmento
     const campanas = new Set();
+    const matchSegmento = (seg) => filters.segmento === 'Todas' || seg === filters.segmento;
+    allCapacidadItems.forEach(c => {
+      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && c.campana) {
+        campanas.add(c.campana);
+      }
+    });
+    validData.forEach(r => {
+      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r)) && matchSegmento(getRowSegmento(r))) {
+        const camp = getRowCampana(r);
+        if (camp && camp !== 'SIN CAMPAÑA') campanas.add(camp);
+      }
+    });
+
+    // 5. Grupos (GPE) disponibles según Periodo, Semana, Segmento y Campaña
     const gpes = new Set();
-    const estados = new Set();
+    const matchCampana = (c) => filters.campana === 'Todas' || c === filters.campana;
+    allCapacidadItems.forEach(c => {
+      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && matchCampana(c.campana) && c.codigo) {
+        gpes.add(c.codigo);
+      }
+    });
+    validData.forEach(r => {
+      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r)) && matchSegmento(getRowSegmento(r)) && matchCampana(getRowCampana(r))) {
+        const g = getRowGpe(r);
+        if (g && g !== 'SIN GPE') gpes.add(g);
+      }
+    });
 
-    validData.forEach((row) => {
-      const campana = normalizeCampana(row.campana);
-      const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
-      const key = `${campana}|${gpe}`;
-      const cap = capacidadMap.get(key);
+    // 6. Estados (ACTIVO / CESADO)
+    const estados = new Set(['ACTIVO', 'CESADO']);
 
-      if (cap?.periodo) periodos.add(cap.periodo);
-      if (cap?.segmento) segmentos.add(cap.segmento);
-      if (campana && campana !== 'SIN CAMPAÑA') campanas.add(campana);
-      if (gpe && gpe !== 'SIN GPE') gpes.add(gpe);
-
-      // Estado: usar el último estado del documento
-      const doc = normalizeText(row.documento);
-      const lastState = lastStateMap.get(doc);
-      if (lastState) estados.add(lastState);
+    const sortedSemanas = Array.from(semanas).sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
+      const numB = parseInt(String(b).replace(/\D/g, '')) || 0;
+      return numA - numB;
     });
 
     return {
-      periodo: sortOptions(periodos),
+      periodo: ['Todas', ...Array.from(periodos).sort().reverse()],
+      semana: ['Todas', ...sortedSemanas],
       segmento: sortOptions(segmentos),
       campana: sortOptions(campanas),
       gpe: sortOptions(gpes),
-      estado: sortOptions(estados),
+      estado: ['Todas', ...Array.from(estados)],
     };
-  }, [validData, capacidadMap, lastStateMap]);
+  }, [validData, allCapacidadItems, filters.periodo, filters.semana, filters.segmento, filters.campana, getCapInfo]);
 
   const handleFilterChange = (key, value) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'periodo') {
+        next.semana = 'Todas';
+        next.segmento = 'Todas';
+        next.campana = 'Todas';
+        next.gpe = 'Todas';
+      } else if (key === 'semana') {
+        next.segmento = 'Todas';
+        next.campana = 'Todas';
+        next.gpe = 'Todas';
+      } else if (key === 'segmento') {
+        next.campana = 'Todas';
+        next.gpe = 'Todas';
+      } else if (key === 'campana') {
+        next.gpe = 'Todas';
+      } else if (key === 'gpe' && value !== 'Todas') {
+        const cap = getCapInfo(next.campana, value);
+        if (cap) {
+          if (next.periodo === 'Todas' && cap.periodo) next.periodo = cap.periodo;
+          if (next.semana === 'Todas' && cap.semana) next.semana = cap.semana;
+          if (next.segmento === 'Todas' && cap.segmento) next.segmento = cap.segmento;
+          if (next.campana === 'Todas' && cap.campana) next.campana = cap.campana;
+        }
+      }
+      return next;
+    });
   };
 
-  // ── Datos filtrados para Indicadores / KPIs (Periodo, Segmento, Campaña, GPE) ──
-  // El filtro de ESTADO NO altera los indicadores globales, solo la tabla de detalle.
+  // ── Datos filtrados para Indicadores / KPIs (Periodo, Semana, Segmento, Campaña, GPE) ──
   const kpiFilteredData = useMemo(() => {
     return validData.filter((row) => {
       const campana = normalizeCampana(row.campana);
       const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
-      const key = `${campana}|${gpe}`;
-      const cap = capacidadMap.get(key);
+      const cap = getCapInfo(campana, gpe);
 
-      if (filters.periodo !== 'Todas' && cap?.periodo !== filters.periodo) return false;
-      if (filters.segmento !== 'Todas' && cap?.segmento !== filters.segmento) return false;
+      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
+      const rowSemana = cap?.semana || normalizeText(row.semana);
+      const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
+
+      if (filters.periodo !== 'Todas' && rowPeriodo !== filters.periodo) return false;
+      if (filters.semana !== 'Todas' && rowSemana !== filters.semana) return false;
+      if (filters.segmento !== 'Todas' && rowSegmento !== filters.segmento) return false;
       if (filters.campana !== 'Todas' && campana !== filters.campana) return false;
       if (filters.gpe !== 'Todas' && gpe !== filters.gpe) return false;
 
       return true;
     });
-  }, [validData, filters.periodo, filters.segmento, filters.campana, filters.gpe, capacidadMap]);
+  }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe, getCapInfo]);
 
   // ── Datos filtrados para la Tabla (aplica además el filtro de Estado) ──
   const filteredData = useMemo(() => {
@@ -633,7 +762,7 @@ export default function ConsolidadoPowerBI() {
 
       const campana = normalizeCampana(lastRow.campana);
       const gpe = normalizeGpe(lastRow.codigo_grupo || lastRow.grupo);
-      const cap = capacidadMap.get(`${campana}|${gpe}`);
+      const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
 
       const entry = {
@@ -665,7 +794,7 @@ export default function ConsolidadoPowerBI() {
       );
     }
     return result;
-  }, [filteredData, capacidadMap, lastStateMap, search]);
+  }, [filteredData, getCapInfo, lastStateMap, search]);
 
   const kpis = useMemo(() => {
     const docMap = new Map();
@@ -714,10 +843,12 @@ export default function ConsolidadoPowerBI() {
 
     // 1. Sumar capacidades de los grupos en las filas activas
     kpiFilteredData.forEach((row) => {
-      const key = `${normalizeCampana(row.campana)}|${normalizeGpe(row.codigo_grupo || row.grupo)}`;
+      const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
+      const campana = normalizeCampana(row.campana);
+      const key = `${campana}|${gpe}`;
       if (!computedGroups.has(key)) {
         computedGroups.add(key);
-        const cap = capacidadMap.get(key);
+        const cap = getCapInfo(campana, gpe);
         if (cap) {
           sumMetaDia1 += cap.meta_dia_1;
           sumRqSolicitado += cap.rq_solicitado;
@@ -726,19 +857,15 @@ export default function ConsolidadoPowerBI() {
     });
 
     // 2. Si no hubo filas de asistencia pero hay capacidades coincidentes con los filtros seleccionados
-    if (sumRqSolicitado === 0 && (filters.periodo !== 'Todas' || filters.segmento !== 'Todas' || filters.campana !== 'Todas' || filters.gpe !== 'Todas')) {
-      capacidades.forEach((cap) => {
-        const capCampana = normalizeCampana(cap.campana);
-        const capGpe = normalizeGpe(cap.codigo);
-        const capPeriodo = normalizeText(cap.periodo);
-        const capSegmento = normalizeSegmento(cap.segmento);
+    if (sumRqSolicitado === 0 && (filters.periodo !== 'Todas' || filters.semana !== 'Todas' || filters.segmento !== 'Todas' || filters.campana !== 'Todas' || filters.gpe !== 'Todas')) {
+      allCapacidadItems.forEach((cap) => {
+        if (filters.periodo !== 'Todas' && cap.periodo !== filters.periodo) return;
+        if (filters.semana !== 'Todas' && cap.semana !== filters.semana) return;
+        if (filters.segmento !== 'Todas' && cap.segmento !== filters.segmento) return;
+        if (filters.campana !== 'Todas' && cap.campana !== filters.campana) return;
+        if (filters.gpe !== 'Todas' && cap.codigo !== filters.gpe) return;
 
-        if (filters.periodo !== 'Todas' && capPeriodo !== filters.periodo) return;
-        if (filters.segmento !== 'Todas' && capSegmento !== filters.segmento) return;
-        if (filters.campana !== 'Todas' && capCampana !== filters.campana) return;
-        if (filters.gpe !== 'Todas' && capGpe !== filters.gpe) return;
-
-        const key = `${capCampana}|${capGpe}`;
+        const key = `${cap.campana}|${cap.codigo}`;
         if (!computedGroups.has(key)) {
           computedGroups.add(key);
           sumMetaDia1 += Number(cap.meta_dia_1) || 0;
@@ -757,7 +884,7 @@ export default function ConsolidadoPowerBI() {
       sumMetaDia1,
       sumRqSolicitado,
     };
-  }, [kpiFilteredData, capacidadMap, lastStateMap, capacidades, filters]);
+  }, [kpiFilteredData, getCapInfo, lastStateMap, allCapacidadItems, filters]);
 
   const percentages = useMemo(() => {
     const cumpDia1 = kpis.sumMetaDia1 > 0 
@@ -803,10 +930,22 @@ export default function ConsolidadoPowerBI() {
       return base;
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(rowsToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Consolidado');
-    XLSX.writeFile(workbook, `Consolidado_Asistencias_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const ws = XLSX.utils.json_to_sheet(rowsToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Consolidado_Asistencias');
+    const timestamp = new Date().toISOString().substring(0, 10);
+    XLSX.writeFile(wb, `Control_Asistencia_${timestamp}.xlsx`);
+  };
+
+  const getSiglaColor = (sigla) => {
+    const s = String(sigla || '').toUpperCase();
+    if (s === 'A') return 'bg-emerald-500/15 text-emerald-400 font-black border border-emerald-500/30';
+    if (s === 'B') return 'bg-rose-500/20 text-rose-400 font-black border border-rose-500/40 animate-pulse';
+    if (s === 'FI') return 'bg-amber-500/15 text-amber-400 font-bold border border-amber-500/30';
+    if (s === 'FJ') return 'bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30';
+    if (s === 'I-OP') return 'bg-purple-500/20 text-purple-300 font-black border border-purple-500/40';
+    if (s === 'S' || s === 'SUS') return 'bg-zinc-500/15 text-zinc-400 font-medium';
+    return 'text-slate-600 dark:text-slate-500';
   };
 
   const FIXED_COLS = [
@@ -861,10 +1000,11 @@ export default function ConsolidadoPowerBI() {
           </h2>
         </div>
 
-        {/* Inline Compact Filter Badges */}
+        {/* Inline Compact Filter Badges (Jerarquía: Periodo -> Semana -> Segmento -> Campaña -> GPE -> Estado) */}
         <div className="flex flex-wrap items-center gap-1.5">
           {[
             { key: 'periodo', label: 'Período', options: filterOptions.periodo },
+            { key: 'semana', label: 'Semana', options: filterOptions.semana },
             { key: 'segmento', label: 'Segmento', options: filterOptions.segmento },
             { key: 'campana', label: 'Campaña', options: filterOptions.campana },
             { key: 'gpe', label: 'GPE', options: filterOptions.gpe },
