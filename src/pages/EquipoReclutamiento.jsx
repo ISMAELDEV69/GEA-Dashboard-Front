@@ -81,13 +81,13 @@ export default function EquipoReclutamiento() {
       nombres_completos: '',
       apellido_paterno: '',
       apellido_materno: '',
-      cargo: '',
+      cargo: 'Asistente de Reclutamiento y Selección',
       estado: 'ACTIVO',
-      fecha_ingreso: '',
+      fecha_ingreso: new Date().toISOString().split('T')[0],
       fecha_cese: '',
-      bono: 0,
-      pct_efectivo: 0,
-      pct_sodexo: 0,
+      bono: 400,
+      pct_efectivo: 60,
+      pct_sodexo: 40,
       alix: '',
       _tempId: tempId
     }
@@ -109,25 +109,16 @@ export default function EquipoReclutamiento() {
   const handleSave = async () => {
     if (!editingRow) return
     
-    // Validación de campos requeridos (fecha_cese no es obligatoria)
-    const requiredFields = {
-      documento: 'DNI',
-      nombres_completos: 'Nombres',
-      apellido_paterno: 'Apellido Paterno',
-      apellido_materno: 'Apellido Materno',
-      cargo: 'Cargo',
-      estado: 'Estado',
-      fecha_ingreso: 'Fecha de Ingreso',
-    }
-    
-    const missingFields = Object.keys(requiredFields).filter(key => {
-      const val = editForm[key]
-      return val === undefined || val === null || String(val).trim() === ''
-    })
+    // Solo requerir Documento y Nombre mínimo para crear la ficha
+    const doc = String(editForm.documento || '').trim()
+    const nom = String(editForm.nombres_completos || '').trim()
 
-    if (missingFields.length > 0) {
-      const fieldNames = missingFields.map(k => requiredFields[k]).join(', ')
-      alert(`Por favor rellene todos los campos obligatorios. Faltan: ${fieldNames}`)
+    if (!doc) {
+      alert('Por favor ingrese el Documento / DNI.')
+      return
+    }
+    if (!nom) {
+      alert('Por favor ingrese los Nombres del colaborador.')
       return
     }
 
@@ -137,7 +128,18 @@ export default function EquipoReclutamiento() {
       delete payload._tempId
       delete payload._realUsername // Eliminar campo virtual
       
+      // Defaults automáticos
+      payload.documento = doc
+      payload.nombres_completos = nom
+      payload.cargo = payload.cargo || 'Asistente de Reclutamiento y Selección'
+      payload.estado = (payload.estado || 'ACTIVO').toUpperCase()
+      
       // Sanitizar campos vacíos que rompen la BD
+      if (!payload.fecha_cese || payload.fecha_cese === '') payload.fecha_cese = null;
+      if (!payload.fecha_ingreso || payload.fecha_ingreso === '') payload.fecha_ingreso = null;
+      payload.bono = (payload.bono === '' || isNaN(payload.bono)) ? 0 : Number(payload.bono);
+      payload.pct_efectivo = (payload.pct_efectivo === '' || isNaN(payload.pct_efectivo)) ? 0 : Number(payload.pct_efectivo);
+      payload.pct_sodexo = (payload.pct_sodexo === '' || isNaN(payload.pct_sodexo)) ? 0 : Number(payload.pct_sodexo);
       if (payload.fecha_cese === '') payload.fecha_cese = null;
       if (payload.fecha_ingreso === '') payload.fecha_ingreso = null;
       if (isNaN(payload.bono) || payload.bono === '') payload.bono = 0;

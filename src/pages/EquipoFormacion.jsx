@@ -90,13 +90,13 @@ export default function EquipoFormacion() {
       apellido_materno: '',
       nombres_completos: '',
       datos_completos: '',
-      sede: '',
-      segmento: '',
+      sede: 'LIMA',
+      segmento: 'PROVINCIAS',
       subcampana: '',
-      cargo_contractual: '',
-      cargo_funcional: '',
+      cargo_contractual: 'FORMADOR',
+      cargo_funcional: 'FORMADOR',
       estado: 'ACTIVO',
-      fecha_inicio: '',
+      fecha_inicio: new Date().toISOString().split('T')[0],
       fecha_cese: '',
       bono_bruto: 0,
       usuario_alix: '',
@@ -120,29 +120,15 @@ export default function EquipoFormacion() {
   const handleSave = async () => {
     if (!editingRow) return
     
-    // Validación de campos requeridos
-    const requiredFields = {
-      documento: 'DNI',
-      nombres_completos: 'Nombres',
-      apellido_paterno: 'Apellido Paterno',
-      apellido_materno: 'Apellido Materno',
-      sede: 'Sede',
-      segmento: 'Segmento',
-      subcampana: 'Subcampaña',
-      cargo_contractual: 'Cargo Contractual',
-      cargo_funcional: 'Cargo Funcional',
-      estado: 'Estado',
-      fecha_inicio: 'Fecha de Inicio',
-    }
-    
-    const missingFields = Object.keys(requiredFields).filter(key => {
-      const val = editForm[key]
-      return val === undefined || val === null || String(val).trim() === ''
-    })
+    const doc = String(editForm.documento || '').trim()
+    const nom = String(editForm.nombres_completos || '').trim()
 
-    if (missingFields.length > 0) {
-      const fieldNames = missingFields.map(k => requiredFields[k]).join(', ')
-      alert(`Por favor rellene todos los campos obligatorios. Faltan: ${fieldNames}`)
+    if (!doc) {
+      alert('Por favor ingrese el Documento / DNI.')
+      return
+    }
+    if (!nom) {
+      alert('Por favor ingrese los Nombres del colaborador.')
       return
     }
 
@@ -151,13 +137,22 @@ export default function EquipoFormacion() {
       const payload = { ...editForm }
       delete payload._tempId
       delete payload._realUsername // Eliminar campo virtual
+
+      payload.documento = doc
+      payload.nombres_completos = nom
+      payload.sede = payload.sede || 'LIMA'
+      payload.segmento = payload.segmento || 'PROVINCIAS'
+      payload.cargo_funcional = payload.cargo_funcional || 'FORMADOR'
+      payload.cargo_contractual = payload.cargo_contractual || 'FORMADOR'
+      payload.estado = (payload.estado || 'ACTIVO').toUpperCase()
+
       // Auto-generar datos completos
-      payload.datos_completos = `${payload.nombres_completos} ${payload.apellido_paterno} ${payload.apellido_materno}`.trim()
+      payload.datos_completos = `${payload.nombres_completos} ${payload.apellido_paterno || ''} ${payload.apellido_materno || ''}`.trim()
 
       // Sanitize empty strings for DB compatibility
-      if (!payload.fecha_cese) payload.fecha_cese = null;
-      if (!payload.fecha_inicio) payload.fecha_inicio = null;
-      if (isNaN(payload.bono_bruto) || payload.bono_bruto === '') payload.bono_bruto = 0;
+      if (!payload.fecha_cese || payload.fecha_cese === '') payload.fecha_cese = null;
+      if (!payload.fecha_inicio || payload.fecha_inicio === '') payload.fecha_inicio = null;
+      payload.bono_bruto = (payload.bono_bruto === '' || isNaN(payload.bono_bruto)) ? 0 : Number(payload.bono_bruto);
 
       let savedData = null
       
