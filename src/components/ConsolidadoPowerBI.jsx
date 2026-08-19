@@ -58,6 +58,18 @@ function normalizeSegmento(value) {
   return normalizeText(value, 'Sin segmento').toUpperCase();
 }
 
+function normalizeSemana(label, trabajo) {
+  if (label && String(label).trim()) {
+    const s = String(label).trim().toUpperCase();
+    return s.startsWith('SEM') ? s : `SEM ${s}`;
+  }
+  if (trabajo !== null && trabajo !== undefined && String(trabajo).trim()) {
+    const num = String(trabajo).replace(/\D/g, '');
+    return num ? `SEM ${num}` : String(trabajo).trim().toUpperCase();
+  }
+  return '';
+}
+
 function normalizeSigla(value) {
   const sigla = normalizeText(value, '').toUpperCase();
   return ['A', 'B', 'FI', 'FJ', 'I-OP', 'S', 'SUS'].includes(sigla) ? sigla : '';
@@ -498,8 +510,7 @@ export default function ConsolidadoPowerBI() {
     capacidades.forEach((item) => {
       const campana = normalizeCampana(item.campana);
       const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
-      const rawSemana = item.semana_label || item.semana_trabajo || item.semana || '';
-      const semanaStr = rawSemana ? String(rawSemana).trim() : '';
+      const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
 
       const capInfo = {
         codigo: gpe,
@@ -566,7 +577,7 @@ export default function ConsolidadoPowerBI() {
     };
     const getRowSemana = (r) => {
       const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
-      return cap?.semana || normalizeText(r.semana);
+      return cap?.semana || normalizeSemana(r.semana_label, r.semana_trabajo || r.semana);
     };
     const getRowSegmento = (r) => {
       const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
@@ -579,6 +590,11 @@ export default function ConsolidadoPowerBI() {
       return normalizeGpe(r.codigo_grupo || r.grupo || r.codigo);
     };
 
+    const matchPeriodo = (p) => filters.periodo === 'Todas' || String(p || '').trim() === String(filters.periodo).trim();
+    const matchSemana = (s) => filters.semana === 'Todas' || String(s || '').trim().toUpperCase() === String(filters.semana).trim().toUpperCase();
+    const matchSegmento = (seg) => filters.segmento === 'Todas' || String(seg || '').trim().toUpperCase() === String(filters.segmento).trim().toUpperCase();
+    const matchCampana = (c) => filters.campana === 'Todas' || String(c || '').trim().toUpperCase() === String(filters.campana).trim().toUpperCase();
+
     // 1. Periodos disponibles
     const periodos = new Set();
     allCapacidadItems.forEach(c => { if (c.periodo) periodos.add(c.periodo); });
@@ -586,7 +602,6 @@ export default function ConsolidadoPowerBI() {
 
     // 2. Semanas disponibles según Periodo
     const semanas = new Set();
-    const matchPeriodo = (p) => filters.periodo === 'Todas' || p === filters.periodo;
     allCapacidadItems.forEach(c => {
       if (matchPeriodo(c.periodo) && c.semana) semanas.add(c.semana);
     });
@@ -599,7 +614,6 @@ export default function ConsolidadoPowerBI() {
 
     // 3. Segmentos disponibles según Periodo y Semana
     const segmentos = new Set();
-    const matchSemana = (s) => filters.semana === 'Todas' || s === filters.semana;
     allCapacidadItems.forEach(c => {
       if (matchPeriodo(c.periodo) && matchSemana(c.semana) && c.segmento) {
         segmentos.add(c.segmento);
@@ -614,7 +628,6 @@ export default function ConsolidadoPowerBI() {
 
     // 4. Campañas disponibles según Periodo, Semana y Segmento
     const campanas = new Set();
-    const matchSegmento = (seg) => filters.segmento === 'Todas' || seg === filters.segmento;
     allCapacidadItems.forEach(c => {
       if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && c.campana) {
         campanas.add(c.campana);
@@ -629,7 +642,6 @@ export default function ConsolidadoPowerBI() {
 
     // 5. Grupos (GPE) disponibles según Periodo, Semana, Segmento y Campaña
     const gpes = new Set();
-    const matchCampana = (c) => filters.campana === 'Todas' || c === filters.campana;
     allCapacidadItems.forEach(c => {
       if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && matchCampana(c.campana) && c.codigo) {
         gpes.add(c.codigo);

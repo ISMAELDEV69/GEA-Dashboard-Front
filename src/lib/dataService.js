@@ -1917,7 +1917,7 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, fecha_inicio_ojt, periodo, segmento'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap')
     ])
     if (capRes.error) throw capRes.error
