@@ -241,15 +241,14 @@ export default function App() {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      // ── FASE 1: Carga Crítica (Catálogos, Roles, Permisos, Metas) ───────────
-      const [r, s, c, mb, mp, ar, cm, h] = await Promise.all([
+      // ── FASE 1: Carga Ultrarrápida (<100ms: Catálogos, Roles, Permisos) ────────
+      const [r, s, c, mb, mp, ar, h] = await Promise.all([
         fetchReclutadores().catch(e => { console.warn('fetchReclutadores error:', e); return [] }),
         fetchSedes().catch(e => { console.warn('fetchSedes error:', e); return [] }),
         fetchCampanas().catch(e => { console.warn('fetchCampanas error:', e); return [] }),
         fetchMotivosBaja().catch(e => { console.warn('fetchMotivosBaja error:', e); return [] }),
         fetchModulePermissions().catch(e => { console.warn('fetchModulePermissions error:', e); return [] }),
         fetchAppRoles().catch(e => { console.warn('fetchAppRoles error:', e); return [] }),
-        fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
         fetchHomologadas().catch(e => { console.warn('fetchHomologadas error:', e); return [] })
       ])
 
@@ -259,15 +258,16 @@ export default function App() {
       setMotivosBaja(mb || [])
       setNavPermissions(mp || [])
       setAppRoles(ar || [])
-      setCampanasMetas(cm || [])
       setOpcionesHomologadas(h || [])
 
+      // Desbloquear inmediatamente la UI para que el usuario nunca vea la pantalla trabada
       if (!silent) setLoading(false)
       hasLoadedOnceRef.current = true
 
-      // ── FASE 2: Carga Diferida (Postulantes, Asistencias, Grupos, Logs) ─────
-      const [p, a, al, f] = await Promise.all([
-        fetchPostulantes({ limit: 2000 }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
+      // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
+      const [cm, p, a, al, f] = await Promise.all([
+        fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
+        fetchPostulantes({ limit: 1500 }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
         fetchAsistencias().catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
         fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] }),
         fetchFormadores().catch(e => { console.warn('fetchFormadores error:', e); return [] })
@@ -275,6 +275,7 @@ export default function App() {
 
       const g = await fetchGrupos(p).catch(e => { console.warn('fetchGrupos error:', e); return [] })
 
+      if (cm?.length) setCampanasMetas(cm)
       if (p?.length) setPostulantes(p)
       if (g?.length) setGrupos(g)
       if (a?.length) setAsistencias(a)
