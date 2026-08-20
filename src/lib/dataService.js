@@ -269,7 +269,7 @@ async function fetchAllConsolidado() {
     while(hasMore) {
       const { data, error } = await supabase
         .from('consolidado_asistencias')
-        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado')
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
         .order('created_at', { ascending: true })
         .range(from, from + step - 1);
       if(error) throw error;

@@ -269,7 +269,7 @@ export default function App() {
       // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
       const [cm, p, a, al, f] = await Promise.all([
         fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
-        fetchPostulantes({ limit: 1500 }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
+        fetchPostulantes({ all: true }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
         fetchAsistencias().catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
         fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] }),
         fetchFormadores().catch(e => { console.warn('fetchFormadores error:', e); return [] })

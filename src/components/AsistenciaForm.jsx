@@ -22,7 +22,8 @@ import {
   Building2
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1 } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, DB_MODE } from '../lib/dataService'
+import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import { useToast } from '../context/ToastContext'
@@ -346,6 +347,46 @@ export default function AsistenciaForm({
     }
   }, [activeGrupoObj, asistencias, selectedGrupo]);
 
+  const [groupPostulantesDirect, setGroupPostulantesDirect] = useState([]);
+
+  useEffect(() => {
+    if (!selectedGrupo) {
+      setGroupPostulantesDirect([]);
+      return;
+    }
+    const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo;
+    const targetCampana = activeGrupoObj?.campana;
+
+    if (DB_MODE === 'supabase') {
+      let q = supabase
+        .from('v_nominas_consolidado')
+        .select('*')
+        .eq('grupo_codigo', targetGrupoCodigo);
+      if (targetCampana) {
+        q = q.eq('campana', targetCampana);
+      }
+      q.then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          setGroupPostulantesDirect(data.map(row => ({
+            ...row,
+            campaign: row.campana,
+            observacion: row.observacion_reclutamiento
+          })));
+        }
+      });
+    }
+  }, [selectedGrupo, activeGrupoObj]);
+
+  const effectivePostulantes = useMemo(() => {
+    if (groupPostulantesDirect.length > 0) {
+      const map = new Map();
+      postulantes.forEach(p => map.set(p.documento, p));
+      groupPostulantesDirect.forEach(p => map.set(p.documento, p));
+      return Array.from(map.values());
+    }
+    return postulantes;
+  }, [postulantes, groupPostulantesDirect]);
+
   useEffect(() => {
     if (!selectedGrupo) {
       setAttendanceList([])
@@ -391,7 +432,7 @@ export default function AsistenciaForm({
     }
 
     const invalidList = []
-    const filteredPostulantes = postulantes.filter(p => {
+    const filteredPostulantes = effectivePostulantes.filter(p => {
       const isGrupoMatch = p.grupo_codigo === targetGroup || p.grupo_codigo === targetGrupoCodigo
       const isCampanaMatch = !targetCampana || p.campana === targetCampana
       

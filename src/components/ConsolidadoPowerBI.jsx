@@ -40,6 +40,8 @@ function normalizeText(value, fallback = '') {
 function normalizeGpe(value) {
   const text = normalizeText(value, 'Sin GPE');
   if (text.startsWith('PROY-')) return 'EN PROYECCIÓN';
+  const m = text.match(/^(GP[A-Z0-9]+-[0-9A-Z]+(?:-[0-9A-Z]+)?)/i);
+  if (m) return m[1].toUpperCase();
   return text.replace(/_\d+$/, '');
 }
 
@@ -58,7 +60,7 @@ function normalizeSegmento(value) {
   return normalizeText(value, 'Sin segmento').toUpperCase();
 }
 
-function normalizeSemana(label, trabajo) {
+function normalizeSemana(label, trabajo, archivo) {
   if (label && String(label).trim()) {
     const s = String(label).trim().toUpperCase();
     return s.startsWith('SEM') ? s : `SEM ${s}`;
@@ -66,6 +68,11 @@ function normalizeSemana(label, trabajo) {
   if (trabajo !== null && trabajo !== undefined && String(trabajo).trim()) {
     const num = String(trabajo).replace(/\D/g, '');
     return num ? `SEM ${num}` : String(trabajo).trim().toUpperCase();
+  }
+  if (archivo && String(archivo).trim().toUpperCase().startsWith('SEM')) {
+    const s = String(archivo).trim().toUpperCase();
+    const num = s.replace(/\D/g, '');
+    return num ? `SEM ${num}` : s;
   }
   return '';
 }
@@ -572,15 +579,15 @@ export default function ConsolidadoPowerBI() {
   // ── Jerarquía en Cascada Estricta (Periodo -> Semana -> Segmento -> Campaña -> GPE) ──
   const filterOptions = useMemo(() => {
     const getRowPeriodo = (r) => {
-      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
+      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
       return cap?.periodo || normalizeText(r.periodo);
     };
     const getRowSemana = (r) => {
-      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
-      return cap?.semana || normalizeSemana(r.semana_label, r.semana_trabajo || r.semana);
+      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
+      return cap?.semana || normalizeSemana(r.semana_label, r.semana_trabajo || r.semana, r.archivo_origen);
     };
     const getRowSegmento = (r) => {
-      const cap = getCapInfo(r.campana, r.codigo_grupo || r.grupo);
+      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
       return cap?.segmento || normalizeSegmento(r.segmento);
     };
     const getRowCampana = (r) => {
@@ -707,11 +714,11 @@ export default function ConsolidadoPowerBI() {
   const kpiFilteredData = useMemo(() => {
     return validData.filter((row) => {
       const campana = normalizeCampana(row.campana);
-      const gpe = normalizeGpe(row.codigo_grupo || row.grupo);
+      const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
       const cap = getCapInfo(campana, gpe);
 
       const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
-      const rowSemana = cap?.semana || normalizeText(row.semana);
+      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
 
       if (filters.periodo !== 'Todas' && rowPeriodo !== filters.periodo) return false;
