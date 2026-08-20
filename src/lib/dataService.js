@@ -1426,6 +1426,11 @@ export async function fetchAsistencias() {
         const key = `${row.documento}_${isoDate}`;
         map.set(key, {
           postulante_documento: row.documento,
+          nombres: row.nombres,
+          apellido_paterno: row.apellido_paterno,
+          apellido_materno: row.apellido_materno,
+          celular: row.celular,
+          condicion_laboral: row.condicion_laboral,
           grupo_codigo: row.codigo_grupo,
           campana: row.campana,
           fecha_asistencia: isoDate,

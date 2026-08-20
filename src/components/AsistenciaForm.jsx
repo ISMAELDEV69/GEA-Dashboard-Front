@@ -358,21 +358,61 @@ export default function AsistenciaForm({
     const targetCampana = activeGrupoObj?.campana;
 
     if (DB_MODE === 'supabase') {
-      let q = supabase
+      let q1 = supabase
         .from('v_nominas_consolidado')
         .select('*')
         .eq('grupo_codigo', targetGrupoCodigo);
       if (targetCampana) {
-        q = q.eq('campana', targetCampana);
+        q1 = q1.eq('campana', targetCampana);
       }
-      q.then(({ data, error }) => {
-        if (!error && data && data.length > 0) {
-          setGroupPostulantesDirect(data.map(row => ({
-            ...row,
-            campaign: row.campana,
-            observacion: row.observacion_reclutamiento
-          })));
+
+      let q2 = supabase
+        .from('consolidado_asistencias')
+        .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
+        .eq('codigo_grupo', targetGrupoCodigo);
+      if (targetCampana) {
+        q2 = q2.eq('campana', targetCampana);
+      }
+
+      Promise.all([q1, q2]).then(([res1, res2]) => {
+        const docMap = new Map();
+
+        // 1. Postulantes de nominas
+        if (res1.data && res1.data.length > 0) {
+          res1.data.forEach(row => {
+            docMap.set(row.documento, {
+              ...row,
+              campaign: row.campana,
+              observacion: row.observacion_reclutamiento
+            });
+          });
         }
+
+        // 2. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
+        if (res2.data && res2.data.length > 0) {
+          res2.data.forEach(row => {
+            if (!docMap.has(row.documento)) {
+              docMap.set(row.documento, {
+                documento: row.documento,
+                nombres: row.nombres || '',
+                apellido_paterno: row.apellido_paterno || '',
+                apellido_materno: row.apellido_materno || '',
+                celular: row.celular || '',
+                telefono: row.celular || '',
+                condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+                campana: row.campana || targetCampana || '',
+                grupo_codigo: row.codigo_grupo || targetGrupoCodigo,
+                dia_0: 'ASISTIO',
+                status_dia_1: row.tipo_reclutado || 'APTO',
+                estado: row.estado || 'ACTIVO',
+                formador_documento: row.documento_formador || '',
+                formador_nombre: row.nombre_formador || ''
+              });
+            }
+          });
+        }
+
+        setGroupPostulantesDirect(Array.from(docMap.values()));
       });
     }
   }, [selectedGrupo, activeGrupoObj]);
@@ -431,8 +471,31 @@ export default function AsistenciaForm({
       }
     }
 
+    // Ensure all historical attendees from asistencias are present in candidate pool
+    const candidateDocs = new Set(effectivePostulantes.map(p => p.documento));
+    const mergedCandidates = [...effectivePostulantes];
+    for (const a of groupRecordsAll) {
+      if (!candidateDocs.has(a.postulante_documento)) {
+        candidateDocs.add(a.postulante_documento);
+        mergedCandidates.push({
+          documento: a.postulante_documento,
+          nombres: a.nombres || '',
+          apellido_paterno: a.apellido_paterno || '',
+          apellido_materno: a.apellido_materno || '',
+          celular: a.celular || '',
+          telefono: a.celular || '',
+          condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+          campana: a.campana || targetCampana || '',
+          grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
+          dia_0: 'ASISTIO',
+          status_dia_1: 'APTO',
+          estado: 'ACTIVO'
+        });
+      }
+    }
+
     const invalidList = []
-    const filteredPostulantes = effectivePostulantes.filter(p => {
+    const filteredPostulantes = mergedCandidates.filter(p => {
       const isGrupoMatch = p.grupo_codigo === targetGroup || p.grupo_codigo === targetGrupoCodigo
       const isCampanaMatch = !targetCampana || p.campana === targetCampana
       
