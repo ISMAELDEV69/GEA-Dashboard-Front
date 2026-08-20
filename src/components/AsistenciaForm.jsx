@@ -355,7 +355,7 @@ export default function AsistenciaForm({
       return;
     }
     const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo;
-    const targetCampana = activeGrupoObj?.campana;
+    const targetCampana = activeGrupoObj?.campana || selectedCampana;
 
     if (DB_MODE === 'supabase') {
       let q1 = supabase
@@ -369,7 +369,7 @@ export default function AsistenciaForm({
       let q2 = supabase
         .from('consolidado_asistencias')
         .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
-        .eq('codigo_grupo', targetGrupoCodigo);
+        .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`);
       if (targetCampana) {
         q2 = q2.eq('campana', targetCampana);
       }
@@ -415,7 +415,7 @@ export default function AsistenciaForm({
         setGroupPostulantesDirect(Array.from(docMap.values()));
       });
     }
-  }, [selectedGrupo, activeGrupoObj]);
+  }, [selectedGrupo, selectedCampana, activeGrupoObj]);
 
   const effectivePostulantes = useMemo(() => {
     if (groupPostulantesDirect.length > 0) {
@@ -525,7 +525,7 @@ export default function AsistenciaForm({
       const camp = p.campana || activeGrupoObj?.campana || ''
       if (!camp) missing.push('Campaña')
 
-      if (missing.length > 0) {
+      if (!hasPreviousAttendance && missing.length > 0) {
         invalidList.push({
           nombre: `${p.apellido_paterno || ''} ${p.nombres || ''}`.trim() || p.documento || 'Sin nombre',
           faltantes: missing.join(', ')
