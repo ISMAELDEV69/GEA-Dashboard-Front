@@ -357,106 +357,87 @@ export default function AsistenciaForm({
       setGroupPostulantesDirect([]);
       return;
     }
-    const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo;
-    const targetCampana = activeGrupoObj?.campana || selectedCampana;
+    const targetGrupoCodigo = String(activeGrupoObj?.codigo || selectedGrupo).trim();
+    const targetCampana = String(activeGrupoObj?.campana || selectedCampana || '').trim();
 
     if (DB_MODE === 'supabase') {
       let isMounted = true;
       (async () => {
         try {
-          // Intento 1: coincidencia estricta grupo + campaña (si existe)
-          let q1 = supabase
-            .from('v_nominas_consolidado')
-            .select('*')
-            .eq('grupo_codigo', targetGrupoCodigo);
-          if (targetCampana) {
-            q1 = q1.eq('campana', targetCampana);
-          }
-
-          let q2 = supabase
-            .from('consolidado_asistencias')
-            .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
-            .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`);
-          if (targetCampana) {
-            q2 = q2.eq('campana', targetCampana);
-          }
-
-          const [res1, res2] = await Promise.all([q1, q2]).catch(err => {
+          // Intento 1: Búsqueda flexible en nominas y consolidado
+          const [res1, resNom, res2] = await Promise.all([
+            supabase
+              .from('v_nominas_consolidado')
+              .select('*')
+              .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`),
+            supabase
+              .from('nominas')
+              .select('*')
+              .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`),
+            supabase
+              .from('consolidado_asistencias')
+              .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
+              .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo},codigo_grupo.ilike.%${targetGrupoCodigo}%`)
+          ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
-            toast.error('Error al cargar postulantes', err.message || 'No se pudo consultar la nómina del grupo.');
-            return [{ data: [] }, { data: [] }];
+            return [{ data: [] }, { data: [] }, { data: [] }];
           });
 
           let dataQ1 = res1?.data || [];
+          let dataNom = resNom?.data || [];
           let dataQ2 = res2?.data || [];
-
-          // Fallback: si no hubo resultados con campaña exacta, reintenta SOLO por grupo
-          if (targetCampana && dataQ1.length === 0 && dataQ2.length === 0) {
-            console.warn(`Sin resultados con campaña exacta "${targetCampana}" para grupo ${targetGrupoCodigo}. Reintentando solo por grupo...`);
-            const [fallback1, fallback2] = await Promise.all([
-              supabase.from('v_nominas_consolidado').select('*').eq('grupo_codigo', targetGrupoCodigo),
-              supabase.from('consolidado_asistencias')
-                .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
-                .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
-            ]).catch(err => {
-              console.error('Error en fallback por grupo:', err);
-              return [{ data: [] }, { data: [] }];
-            });
-            dataQ1 = fallback1?.data || [];
-            dataQ2 = fallback2?.data || [];
-
-            if ((dataQ1.length > 0 || dataQ2.length > 0) && isMounted) {
-              const detectedCamp = dataQ1[0]?.campana || dataQ2[0]?.campana || 'Diferente';
-              toast.warning(
-                'Campaña no coincide exactamente',
-                `Se encontraron postulantes para ${targetGrupoCodigo}, pero registrados bajo la campaña "${detectedCamp}" en vez de "${targetCampana}".`
-              );
-            }
-          }
 
           if (!isMounted) return;
 
           const docMap = new Map();
 
-          // 1. Postulantes de nominas
-          if (dataQ1.length > 0) {
-            dataQ1.forEach(row => {
+          // 1. Postulantes de v_nominas_consolidado
+          dataQ1.forEach(row => {
+            if (row.documento) {
               docMap.set(row.documento, {
                 ...row,
                 campaign: row.campana,
                 observacion: row.observacion_reclutamiento
               });
-            });
-          }
+            }
+          });
 
-          // 2. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
-          if (dataQ2.length > 0) {
-            dataQ2.forEach(row => {
-              if (!docMap.has(row.documento)) {
-                docMap.set(row.documento, {
-                  documento: row.documento,
-                  nombres: row.nombres || '',
-                  apellido_paterno: row.apellido_paterno || '',
-                  apellido_materno: row.apellido_materno || '',
-                  celular: row.celular || '',
-                  telefono: row.celular || '',
-                  condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-                  campana: row.campana || targetCampana || '',
-                  grupo_codigo: row.codigo_grupo || targetGrupoCodigo,
-                  dia_0: 'ASISTIO',
-                  status_dia_1: row.tipo_reclutado || 'APTO',
-                  estado: row.estado || 'ACTIVO',
-                  formador_documento: row.documento_formador || '',
-                  formador_nombre: row.nombre_formador || ''
-                });
-              }
-            });
-          }
+          // 2. Postulantes directos de tabla nominas
+          dataNom.forEach(row => {
+            if (row.documento && !docMap.has(row.documento)) {
+              docMap.set(row.documento, {
+                ...row,
+                campaign: row.campana,
+                observacion: row.observacion_reclutamiento
+              });
+            }
+          });
+
+          // 3. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
+          dataQ2.forEach(row => {
+            if (row.documento && !docMap.has(row.documento)) {
+              docMap.set(row.documento, {
+                documento: row.documento,
+                nombres: row.nombres || '',
+                apellido_paterno: row.apellido_paterno || '',
+                apellido_materno: row.apellido_materno || '',
+                celular: row.celular || '—',
+                telefono: row.celular || '—',
+                condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+                campana: row.campana || targetCampana || '',
+                grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
+                dia_0: 'ASISTIO',
+                status_dia_1: row.tipo_reclutado || 'APTO',
+                estado: row.estado || 'ACTIVO',
+                formador_documento: row.documento_formador || '',
+                formador_nombre: row.nombre_formador || ''
+              });
+            }
+          });
 
           setGroupPostulantesDirect(Array.from(docMap.values()));
         } catch (e) {
           console.error('Error procesando postulantes directos:', e);
-          if (isMounted) toast.error('Error inesperado', 'Ocurrió un error al procesar los postulantes del grupo.');
         }
       })();
 
@@ -544,46 +525,28 @@ export default function AsistenciaForm({
 
     const invalidList = []
     const filteredPostulantes = mergedCandidates.filter(p => {
+      if (!p.documento) return false
+
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
+      const hasPreviousAttendance = mappedDocs.has(p.documento)
       
-      const inGroup = isGrupoMatch || mappedDocs.has(p.documento)
+      const inGroup = isGrupoMatch || hasPreviousAttendance
       if (!inGroup) return false
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
-      const asistioD0 = dia0Val === 'ASISTIO'
-      const pendienteD0 = dia0Val === '' || dia0Val === 'NULL' || dia0Val === 'PENDIENTE'
       const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
       const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1
-      const hasPreviousAttendance = mappedDocs.has(p.documento)
-      if (!hasPreviousAttendance) {
-        if (rechazadoD0) return false
-        if (!(asistioD0 || pendienteD0 || agregadoD1)) return false
-      }
-
-      const missing = []
-      if (!p.documento) missing.push('DNI')
-      if (!p.nombres) missing.push('Nombres')
-      if (!p.apellido_paterno) missing.push('Apellido Paterno')
-      if (!p.celular && !p.telefono) missing.push('Celular')
-      const cond = p.condicion || activeGrupoObj?.condicion || 'FULL TIME'
-      if (!cond) missing.push('Condición Laboral')
-      const camp = p.campana || activeGrupoObj?.campana || ''
-      if (!camp) missing.push('Campaña')
-
-      if (!hasPreviousAttendance && missing.length > 0) {
-        invalidList.push({
-          nombre: `${p.apellido_paterno || ''} ${p.nombres || ''}`.trim() || p.documento || 'Sin nombre',
-          faltantes: missing.join(', ')
-        })
+      
+      if (!hasPreviousAttendance && rechazadoD0) {
         return false
       }
-      
+
       return true
     })
     
-    setMissingDataCandidates(invalidList)
+    setMissingDataCandidates([])
 
     let firstDateOfGroup = null
     if (groupRecordsAll.length > 0) {
@@ -599,8 +562,8 @@ export default function AsistenciaForm({
     const uniquePostulantes = []
     const seenDocs = new Set()
     const sortedPostulantes = [...filteredPostulantes].sort((a, b) => {
-       const aMatch = (normalize(a.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(a.grupo_codigo) === normalize(targetGroup)) && (!targetCampana || normalize(a.campana) === normalize(targetCampana)) ? 1 : 0
-       const bMatch = (normalize(b.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(b.grupo_codigo) === normalize(targetGroup)) && (!targetCampana || normalize(b.campana) === normalize(targetCampana)) ? 1 : 0
+       const aMatch = (normalize(a.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(a.grupo_codigo) === normalize(targetGroup)) ? 1 : 0
+       const bMatch = (normalize(b.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(b.grupo_codigo) === normalize(targetGroup)) ? 1 : 0
        return bMatch - aMatch
     })
     for (let i = 0; i < sortedPostulantes.length; i++) {
