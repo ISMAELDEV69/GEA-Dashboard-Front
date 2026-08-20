@@ -444,6 +444,8 @@ export default function AsistenciaForm({
       
       const asistioD0 = dia0Val === 'ASISTIO'
       const pendienteD0 = dia0Val === '' || dia0Val === 'NULL' || dia0Val === 'PENDIENTE'
+      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1
       const hasPreviousAttendance = mappedDocs.has(p.documento)
       if (!hasPreviousAttendance) {
         if (rechazadoD0) return false
