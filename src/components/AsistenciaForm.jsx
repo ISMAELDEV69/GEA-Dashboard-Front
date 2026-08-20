@@ -495,8 +495,7 @@ export default function AsistenciaForm({
     for (let i = 0; i < asistencias.length; i++) {
       const a = asistencias[i]
       const matchGrupo = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.grupo_codigo) === normalize(targetGrupoCodigo)
-      const matchCampana = !targetCampana || normalize(a.campana) === normalize(targetCampana)
-      if (!matchGrupo || !matchCampana) continue
+      if (!matchGrupo) continue
 
       groupRecordsAll.push(a)
       mappedDocs.add(a.postulante_documento)
@@ -546,9 +545,8 @@ export default function AsistenciaForm({
     const invalidList = []
     const filteredPostulantes = mergedCandidates.filter(p => {
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
-      const isCampanaMatch = !targetCampana || normalize(p.campana) === normalize(targetCampana)
       
-      const inGroup = (isGrupoMatch && isCampanaMatch) || mappedDocs.has(p.documento)
+      const inGroup = isGrupoMatch || mappedDocs.has(p.documento)
       if (!inGroup) return false
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
