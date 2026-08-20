@@ -444,11 +444,11 @@ export default function AsistenciaForm({
       
       const asistioD0 = dia0Val === 'ASISTIO'
       const pendienteD0 = dia0Val === '' || dia0Val === 'NULL' || dia0Val === 'PENDIENTE'
-      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
-      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1
-      
-      if (rechazadoD0) return false
-      if (!(asistioD0 || pendienteD0 || agregadoD1)) return false
+      const hasPreviousAttendance = mappedDocs.has(p.documento)
+      if (!hasPreviousAttendance) {
+        if (rechazadoD0) return false
+        if (!(asistioD0 || pendienteD0 || agregadoD1)) return false
+      }
 
       const missing = []
       if (!p.documento) missing.push('DNI')
@@ -566,7 +566,7 @@ export default function AsistenciaForm({
     })
 
     setAttendanceList(list)
-  }, [selectedGrupo, fecha, asistencias, postulantes, activeGrupoObj, formadores, dia1Calibrado])
+  }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado])
 
   const handleStatusChange = useCallback((doc, newSigla) => {
     setAttendanceList(prev => prev.map(item => {
