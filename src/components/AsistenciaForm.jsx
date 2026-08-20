@@ -36,6 +36,8 @@ const SIGLAS = [
   { value: 'B', label: 'B - Baja', bgVar: 'var(--status-b-bg)', textVar: 'var(--status-b-text)' }
 ]
 
+const normalize = (s) => (s || '').toString().trim().toUpperCase()
+
 function formatSpreadsheetDate(dateStr) {
   if (!dateStr) return ''
   const [year, month, day] = dateStr.split('-')
@@ -312,7 +314,8 @@ export default function AsistenciaForm({
       return
     }
     fetchGruposDia1().then(configs => {
-      const g = configs.find(c => c.grupo_codigo === (activeGrupoObj?.codigo || selectedGrupo))
+      const targetGrupo = activeGrupoObj?.codigo || selectedGrupo
+      const g = configs.find(c => normalize(c.grupo_codigo) === normalize(targetGrupo))
       setDia1Calibrado(g?.estado_calibracion === 'CALIBRADO')
     }).catch(err => {
       console.error('Error fetching dia1 calibracion:', err)
@@ -330,7 +333,7 @@ export default function AsistenciaForm({
     if (lastSetGrupo.current === groupKey) return;
 
     const groupDates = asistencias
-      .filter(a => (a.grupo_codigo === activeGrupoObj.codigo || a.grupo_codigo === selectedGrupo) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
+      .filter(a => (normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo) || normalize(a.grupo_codigo) === normalize(selectedGrupo)) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)))
       .map(a => a.fecha_asistencia)
       .sort();
 
@@ -358,62 +361,108 @@ export default function AsistenciaForm({
     const targetCampana = activeGrupoObj?.campana || selectedCampana;
 
     if (DB_MODE === 'supabase') {
-      let q1 = supabase
-        .from('v_nominas_consolidado')
-        .select('*')
-        .eq('grupo_codigo', targetGrupoCodigo);
-      if (targetCampana) {
-        q1 = q1.eq('campana', targetCampana);
-      }
+      let isMounted = true;
+      (async () => {
+        try {
+          // Intento 1: coincidencia estricta grupo + campaña (si existe)
+          let q1 = supabase
+            .from('v_nominas_consolidado')
+            .select('*')
+            .eq('grupo_codigo', targetGrupoCodigo);
+          if (targetCampana) {
+            q1 = q1.eq('campana', targetCampana);
+          }
 
-      let q2 = supabase
-        .from('consolidado_asistencias')
-        .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
-        .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`);
-      if (targetCampana) {
-        q2 = q2.eq('campana', targetCampana);
-      }
+          let q2 = supabase
+            .from('consolidado_asistencias')
+            .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
+            .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`);
+          if (targetCampana) {
+            q2 = q2.eq('campana', targetCampana);
+          }
 
-      Promise.all([q1, q2]).then(([res1, res2]) => {
-        const docMap = new Map();
+          const [res1, res2] = await Promise.all([q1, q2]).catch(err => {
+            console.error('Error al cargar postulantes del grupo:', err);
+            toast.error('Error al cargar postulantes', err.message || 'No se pudo consultar la nómina del grupo.');
+            return [{ data: [] }, { data: [] }];
+          });
 
-        // 1. Postulantes de nominas
-        if (res1.data && res1.data.length > 0) {
-          res1.data.forEach(row => {
-            docMap.set(row.documento, {
-              ...row,
-              campaign: row.campana,
-              observacion: row.observacion_reclutamiento
+          let dataQ1 = res1?.data || [];
+          let dataQ2 = res2?.data || [];
+
+          // Fallback: si no hubo resultados con campaña exacta, reintenta SOLO por grupo
+          if (targetCampana && dataQ1.length === 0 && dataQ2.length === 0) {
+            console.warn(`Sin resultados con campaña exacta "${targetCampana}" para grupo ${targetGrupoCodigo}. Reintentando solo por grupo...`);
+            const [fallback1, fallback2] = await Promise.all([
+              supabase.from('v_nominas_consolidado').select('*').eq('grupo_codigo', targetGrupoCodigo),
+              supabase.from('consolidado_asistencias')
+                .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
+                .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
+            ]).catch(err => {
+              console.error('Error en fallback por grupo:', err);
+              return [{ data: [] }, { data: [] }];
             });
-          });
-        }
+            dataQ1 = fallback1?.data || [];
+            dataQ2 = fallback2?.data || [];
 
-        // 2. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
-        if (res2.data && res2.data.length > 0) {
-          res2.data.forEach(row => {
-            if (!docMap.has(row.documento)) {
-              docMap.set(row.documento, {
-                documento: row.documento,
-                nombres: row.nombres || '',
-                apellido_paterno: row.apellido_paterno || '',
-                apellido_materno: row.apellido_materno || '',
-                celular: row.celular || '',
-                telefono: row.celular || '',
-                condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-                campana: row.campana || targetCampana || '',
-                grupo_codigo: row.codigo_grupo || targetGrupoCodigo,
-                dia_0: 'ASISTIO',
-                status_dia_1: row.tipo_reclutado || 'APTO',
-                estado: row.estado || 'ACTIVO',
-                formador_documento: row.documento_formador || '',
-                formador_nombre: row.nombre_formador || ''
-              });
+            if ((dataQ1.length > 0 || dataQ2.length > 0) && isMounted) {
+              const detectedCamp = dataQ1[0]?.campana || dataQ2[0]?.campana || 'Diferente';
+              toast.warning(
+                'Campaña no coincide exactamente',
+                `Se encontraron postulantes para ${targetGrupoCodigo}, pero registrados bajo la campaña "${detectedCamp}" en vez de "${targetCampana}".`
+              );
             }
-          });
-        }
+          }
 
-        setGroupPostulantesDirect(Array.from(docMap.values()));
-      });
+          if (!isMounted) return;
+
+          const docMap = new Map();
+
+          // 1. Postulantes de nominas
+          if (dataQ1.length > 0) {
+            dataQ1.forEach(row => {
+              docMap.set(row.documento, {
+                ...row,
+                campaign: row.campana,
+                observacion: row.observacion_reclutamiento
+              });
+            });
+          }
+
+          // 2. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
+          if (dataQ2.length > 0) {
+            dataQ2.forEach(row => {
+              if (!docMap.has(row.documento)) {
+                docMap.set(row.documento, {
+                  documento: row.documento,
+                  nombres: row.nombres || '',
+                  apellido_paterno: row.apellido_paterno || '',
+                  apellido_materno: row.apellido_materno || '',
+                  celular: row.celular || '',
+                  telefono: row.celular || '',
+                  condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+                  campana: row.campana || targetCampana || '',
+                  grupo_codigo: row.codigo_grupo || targetGrupoCodigo,
+                  dia_0: 'ASISTIO',
+                  status_dia_1: row.tipo_reclutado || 'APTO',
+                  estado: row.estado || 'ACTIVO',
+                  formador_documento: row.documento_formador || '',
+                  formador_nombre: row.nombre_formador || ''
+                });
+              }
+            });
+          }
+
+          setGroupPostulantesDirect(Array.from(docMap.values()));
+        } catch (e) {
+          console.error('Error procesando postulantes directos:', e);
+          if (isMounted) toast.error('Error inesperado', 'Ocurrió un error al procesar los postulantes del grupo.');
+        }
+      })();
+
+      return () => {
+        isMounted = false;
+      };
     }
   }, [selectedGrupo, selectedCampana, activeGrupoObj]);
 
@@ -445,8 +494,8 @@ export default function AsistenciaForm({
 
     for (let i = 0; i < asistencias.length; i++) {
       const a = asistencias[i]
-      const matchGrupo = a.grupo_codigo === targetGroup || a.grupo_codigo === targetGrupoCodigo
-      const matchCampana = !targetCampana || a.campana === targetCampana
+      const matchGrupo = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.grupo_codigo) === normalize(targetGrupoCodigo)
+      const matchCampana = !targetCampana || normalize(a.campana) === normalize(targetCampana)
       if (!matchGrupo || !matchCampana) continue
 
       groupRecordsAll.push(a)
@@ -496,8 +545,8 @@ export default function AsistenciaForm({
 
     const invalidList = []
     const filteredPostulantes = mergedCandidates.filter(p => {
-      const isGrupoMatch = p.grupo_codigo === targetGroup || p.grupo_codigo === targetGrupoCodigo
-      const isCampanaMatch = !targetCampana || p.campana === targetCampana
+      const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
+      const isCampanaMatch = !targetCampana || normalize(p.campana) === normalize(targetCampana)
       
       const inGroup = (isGrupoMatch && isCampanaMatch) || mappedDocs.has(p.documento)
       if (!inGroup) return false
@@ -552,8 +601,8 @@ export default function AsistenciaForm({
     const uniquePostulantes = []
     const seenDocs = new Set()
     const sortedPostulantes = [...filteredPostulantes].sort((a, b) => {
-       const aMatch = (a.grupo_codigo === targetGrupoCodigo || a.grupo_codigo === targetGroup) && a.campana === targetCampana ? 1 : 0
-       const bMatch = (b.grupo_codigo === targetGrupoCodigo || b.grupo_codigo === targetGroup) && b.campana === targetCampana ? 1 : 0
+       const aMatch = (normalize(a.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(a.grupo_codigo) === normalize(targetGroup)) && (!targetCampana || normalize(a.campana) === normalize(targetCampana)) ? 1 : 0
+       const bMatch = (normalize(b.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(b.grupo_codigo) === normalize(targetGroup)) && (!targetCampana || normalize(b.campana) === normalize(targetCampana)) ? 1 : 0
        return bMatch - aMatch
     })
     for (let i = 0; i < sortedPostulantes.length; i++) {
@@ -692,7 +741,7 @@ export default function AsistenciaForm({
       const nowStr = new Date().toLocaleString('es-PE');
       
       const groupDates = [...new Set(asistencias
-        .filter(a => (a.grupo_codigo === targetGroup) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
+        .filter(a => (normalize(a.grupo_codigo) === normalize(targetGroup) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)))
         .map(a => a.fecha_asistencia))]
         .sort();
       const pastDates = groupDates.filter(d => d < fecha);
@@ -724,7 +773,7 @@ export default function AsistenciaForm({
         });
 
         pastDates.forEach(pastDate => {
-          const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (a.grupo_codigo === targetGroup || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana) && a.fecha_asistencia === pastDate);
+          const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (normalize(a.grupo_codigo) === normalize(targetGroup) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)) && a.fecha_asistencia === pastDate);
           
           let shouldBackfillFI = false;
           
@@ -823,7 +872,7 @@ export default function AsistenciaForm({
     
     const targetGroup = activeGrupoObj?.codigo || selectedGrupo;
     const groupDates = [...new Set(asistencias
-      .filter(a => (a.grupo_codigo === targetGroup) && (!activeGrupoObj || a.campana === activeGrupoObj.campana))
+      .filter(a => (normalize(a.grupo_codigo) === normalize(targetGroup) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)))
       .map(a => a.fecha_asistencia))]
       .sort();
       
@@ -898,7 +947,7 @@ export default function AsistenciaForm({
     const effectiveStartStr = start.toISOString().split('T')[0];
     
     const registeredDates = new Set(
-      asistencias.filter(a => (a.grupo_codigo === selectedGrupo || (activeGrupoObj && a.grupo_codigo === activeGrupoObj.codigo)) && (!activeGrupoObj || a.campana === activeGrupoObj.campana)).map(a => a.fecha_asistencia)
+      asistencias.filter(a => (normalize(a.grupo_codigo) === normalize(selectedGrupo) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana))).map(a => a.fecha_asistencia)
     );
 
     const todayStr = new Date().toISOString().split('T')[0];
