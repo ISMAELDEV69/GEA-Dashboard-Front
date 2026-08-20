@@ -243,15 +243,17 @@ export default function App() {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      // ── FASE 1: Carga Ultrarrápida (<100ms: Catálogos, Roles, Permisos) ────────
-      const [r, s, c, mb, mp, ar, h] = await Promise.all([
+      // ── FASE 1: Carga Ultrarrápida (<100ms: Catálogos, Roles, Permisos, Grupos y Formadores) ─
+      const [r, s, c, mb, mp, ar, h, fInit, gInit] = await Promise.all([
         fetchReclutadores().catch(e => { console.warn('fetchReclutadores error:', e); return [] }),
         fetchSedes().catch(e => { console.warn('fetchSedes error:', e); return [] }),
         fetchCampanas().catch(e => { console.warn('fetchCampanas error:', e); return [] }),
         fetchMotivosBaja().catch(e => { console.warn('fetchMotivosBaja error:', e); return [] }),
         fetchModulePermissions().catch(e => { console.warn('fetchModulePermissions error:', e); return [] }),
         fetchAppRoles().catch(e => { console.warn('fetchAppRoles error:', e); return [] }),
-        fetchHomologadas().catch(e => { console.warn('fetchHomologadas error:', e); return [] })
+        fetchHomologadas().catch(e => { console.warn('fetchHomologadas error:', e); return [] }),
+        fetchFormadores().catch(e => { console.warn('fetchFormadores error:', e); return [] }),
+        fetchGrupos().catch(e => { console.warn('fetchGrupos error:', e); return [] })
       ])
 
       setReclutadores(r || [])
@@ -261,28 +263,29 @@ export default function App() {
       setNavPermissions(mp || [])
       setAppRoles(ar || [])
       setOpcionesHomologadas(h || [])
+      if (fInit?.length) setFormadores(fInit)
+      if (gInit?.length) setGrupos(gInit)
 
       // Desbloquear inmediatamente la UI para que el usuario nunca vea la pantalla trabada
       if (!silent) setLoading(false)
       hasLoadedOnceRef.current = true
 
       // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
-      const [cm, p, a, al, f] = await Promise.all([
+      const [cm, p, a, al] = await Promise.all([
         fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
         fetchPostulantes({ all: true }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
         fetchAsistencias().catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
-        fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] }),
-        fetchFormadores().catch(e => { console.warn('fetchFormadores error:', e); return [] })
+        fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] })
       ])
 
-      const g = await fetchGrupos(p).catch(e => { console.warn('fetchGrupos error:', e); return [] })
-
       if (cm?.length) setCampanasMetas(cm)
-      if (p?.length) setPostulantes(p)
-      if (g?.length) setGrupos(g)
+      if (p?.length) {
+        setPostulantes(p)
+        const gEnriched = await fetchGrupos(p).catch(e => { console.warn('fetchGrupos enriched error:', e); return null })
+        if (gEnriched?.length) setGrupos(gEnriched)
+      }
       if (a?.length) setAsistencias(a)
       if (al?.length) setAuditLogs(al)
-      if (f?.length) setFormadores(f)
 
     } catch (err) {
       console.error('Error loading data:', err)
