@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { checkCalibracionDia1, fetchReclutadoresFull } from '../../lib/dataService'
+import { nameMatches } from '../../lib/dashboardAnalytics'
 import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
@@ -69,8 +70,6 @@ const EDITABLE_COLUMNS = [
   { key: 'observacion_reingreso', label: 'OBSERVACIÓN REINGRESO', width: 200 }
 ]
 
-import { nameMatches } from '../../lib/dashboardAnalytics'
-
 export default function NominaGridEditor({
   grupoCodigo,
   campana,
@@ -80,10 +79,16 @@ export default function NominaGridEditor({
   onSaveComplete,
   userProfile = null,
   currentRole = null,
-  reclutadores = []
+  reclutadores = [],
+  refreshKey = 0
 }) {
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [lastUpdatedTime, setLastUpdatedTime] = useState(() => {
+    const now = new Date()
+    return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  })
   const [savingStatus, setSavingStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
@@ -140,6 +145,7 @@ export default function NominaGridEditor({
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
+    else setIsRefreshing(true)
     setError(null)
     setExternalChangeDetected(false)
     try {
@@ -193,17 +199,20 @@ export default function NominaGridEditor({
 
       setData(finalRows)
       lastLoadedAtRef.current = new Date().toISOString()
+      const now = new Date()
+      setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
     } catch (err) {
       console.error('Error cargando nomina en grid:', err)
       setError(err.message)
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
   }, [grupoCodigo, campana, periodo, semana, segmento, currentRole, userFullName])
 
   useEffect(() => {
     if (grupoCodigo) loadData(false)
-  }, [grupoCodigo, campana, periodo, semana, segmento, currentRole, userFullName])
+  }, [grupoCodigo, campana, periodo, semana, segmento, currentRole, userFullName, refreshKey])
 
   // ── Realtime concurrency detection ─────────────────────────────
   useEffect(() => {
@@ -479,7 +488,22 @@ export default function NominaGridEditor({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Botón de Actualizar sin recargar página */}
+          <button
+            type="button"
+            onClick={() => {
+              loadData(true)
+              if (onSaveComplete) onSaveComplete()
+            }}
+            disabled={loading || isRefreshing}
+            className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-2xs"
+            title="Recargar postulantes y nuevos ingresos de este grupo"
+          >
+            <RefreshCw size={13} className={(loading || isRefreshing) ? 'animate-spin text-cyan-400' : ''} />
+            <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
+          </button>
+
           <button 
             onClick={handleBulkUpdate}
             disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn}
@@ -491,11 +515,11 @@ export default function NominaGridEditor({
               : 'Selecciona columna para replicar'}
           </button>
 
-          {/* Autosave status pill */}
-          <div className="flex items-center text-xs font-bold px-3 py-1.5 rounded-lg border bg-[var(--bg-elevated)] border-[var(--border-subtle)]">
+          {/* Autosave status pill + subtle timestamp */}
+          <div className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg border bg-[var(--bg-elevated)] border-[var(--border-subtle)]">
             {savingStatus === 'saving' && (
               <span className="flex items-center gap-1.5 text-cyan-400">
-                <Loader2 size={13} className="animate-spin" /> Guardando cambios...
+                <Loader2 size={13} className="animate-spin" /> Guardando...
               </span>
             )}
             {savingStatus === 'saved' && (
@@ -511,6 +535,11 @@ export default function NominaGridEditor({
             {savingStatus === 'idle' && (
               <span className="text-[var(--text-muted)] flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Sincronizado
+              </span>
+            )}
+            {lastUpdatedTime && (
+              <span className="text-[10px] text-[var(--text-muted)] font-mono opacity-60 border-l border-[var(--border-subtle)] pl-2" title="Hora de última sincronización">
+                {lastUpdatedTime}
               </span>
             )}
           </div>

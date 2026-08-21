@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { Layers, Eye, ArrowRight, Sparkles, Loader2 } from 'lucide-react'
+import { Layers, Eye, ArrowRight, Sparkles, Loader2, RefreshCw } from 'lucide-react'
 import NominaGridEditor from '../components/nomina/NominaGridEditor'
 import NominaFullPreview from '../components/nomina/NominaFullPreview'
 import { inferSegmento, SEGMENTOS_SIU } from '../lib/capacidadRysSync'
 import PageLayout from '../components/ui/PageLayout'
 import PageHeader from '../components/ui/PageHeader'
 import { supabase } from '../lib/supabase'
+import { filterPostulantesReclutador } from '../lib/flujoOperativo'
 
 // ── Doc completeness columns (full set per spec) ─────────────────
 const DOC_COLS = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final']
@@ -42,8 +43,6 @@ function CompletenessBar({ pct, complete, total }) {
     </div>
   )
 }
-
-import { filterPostulantesReclutador } from '../lib/flujoOperativo'
 
 export default function NominaCompletar({
   grupos = [],
@@ -224,6 +223,23 @@ export default function NominaCompletar({
     }
   }
 
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const handleManualRefresh = async () => {
+    try {
+      setRefreshing(true)
+      setRefreshKey(k => k + 1)
+      fetchedCodesRef.current.clear()
+      setStatsMap({})
+      if (bulkGrupo) {
+        await refreshGroupStat(bulkGrupo)
+      }
+    } finally {
+      setTimeout(() => setRefreshing(false), 500)
+    }
+  }
+
   const handleSelectGrupoDirect = (grupo) => {
     if (!grupo) return
     const cod = grupo.codigo || grupo.grupo_codigo || ''
@@ -249,11 +265,22 @@ export default function NominaCompletar({
         title="Gestión y Completitud de Nóminas"
         subtitle="Registro documental, validaciones y calibración de postulantes por grupo"
         actions={
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 transition-all cursor-pointer disabled:opacity-50 active:scale-95 shadow-2xs"
+              title="Actualizar datos de postulantes y nóminas"
+            >
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+              <span>{refreshing ? 'Actualizando...' : 'Actualizar'}</span>
+            </button>
+
             {bulkGrupo && (
               <button
                 onClick={handleResetFilters}
-                className="text-xs font-bold px-3 py-2 rounded-xl border border-[var(--border-normal)] bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition-all"
+                className="text-xs font-bold px-3 py-2 rounded-xl border border-[var(--border-normal)] bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] transition-all cursor-pointer"
               >
                 Limpiar Selección
               </button>
@@ -261,7 +288,7 @@ export default function NominaCompletar({
             <button
               disabled={!bulkGrupo}
               onClick={() => setShowFullPreview(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-bold rounded-xl text-xs transition-all border border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 font-bold rounded-xl text-xs transition-all border border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(16,185,129,0.15)] cursor-pointer"
             >
               <Eye size={15} />
               NÓMINA COMPLETA (VISTA PREVIA)
@@ -444,6 +471,7 @@ export default function NominaCompletar({
             userProfile={userProfile}
             currentRole={currentRole}
             reclutadores={reclutadores}
+            refreshKey={refreshKey}
             onSaveComplete={() => refreshGroupStat(bulkGrupo)}
           />
         </div>

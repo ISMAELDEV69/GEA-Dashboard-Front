@@ -34,3 +34,4 @@ inserts.sql
 migrate_data.py
 .env
 .env.local
+.vercel

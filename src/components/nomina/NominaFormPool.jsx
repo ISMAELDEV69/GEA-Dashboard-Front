@@ -313,6 +313,9 @@ export default function NominaFormPool({
     if (!wbInfo) return
     const targetSheetName = sheetName || wbInfo.sheetNames?.[0] || 'Hoja 1'
     setSelectedSheet(targetSheetName)
+    // FIX: reiniciar la paginación al cambiar de hoja/fuente para evitar quedar
+    // "atrapado" en una página que no existe en el nuevo dataset (tabla vacía).
+    setPage(1)
 
     try {
       setLoading(true)
@@ -459,6 +462,9 @@ export default function NominaFormPool({
       setPoolData(uniqueData)
       setLatestAssignedDocs(latestMap)
       setSelectedDocs(new Set())
+      setSearch('')
+      // FIX: garantizar página 1 también tras terminar de setear el nuevo dataset
+      setPage(1)
       console.info('[POOL-PIPELINE] [ETAPA 6: MATRIZ PREVIEW LISTA] Renderizando en la tabla', uniqueData.length, 'postulantes.')
     } catch (err) {
       setError(`Error al leer la hoja "${sheetName}": ${err.message}`)
@@ -517,6 +523,15 @@ export default function NominaFormPool({
   }, [poolData, search])
 
   const totalPages = Math.max(1, Math.ceil(availableData.length / pageSize))
+
+  // FIX: auto-clamp — si la página actual quedó fuera de rango para el dataset
+  // vigente (cambio de hoja, filtro de búsqueda, etc.), corregirla automáticamente
+  // en vez de dejar la tabla mostrando un rango vacío.
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(1)
+    }
+  }, [page, totalPages])
 
   const paginatedData = useMemo(() => {
     const start = (page - 1) * pageSize
@@ -859,11 +874,19 @@ export default function NominaFormPool({
             type="text"
             placeholder="Filtrar por DNI, Nombres, Apellidos o Teléfono…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => {
+              setSearch(e.target.value)
+              // FIX: volver a página 1 al filtrar, para no quedar en una página
+              // que ya no existe para el resultado filtrado.
+              setPage(1)
+            }}
             className="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-[var(--bg-surface)] border border-[var(--border-normal)] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-cyan-500 outline-none"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+            <button
+              onClick={() => { setSearch(''); setPage(1) }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            >
               <X size={13} />
             </button>
           )}
@@ -1191,7 +1214,7 @@ export default function NominaFormPool({
                       <span className={strikeClass}>{d.exp_call_center || '—'}</span>
                     </td>
 
-                    {/* Tipo Exp. */}
+                    {/* Tipo Experiencia */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
                       <span className={strikeClass}>{d.exp_tipo_campana || '—'}</span>
                     </td>
@@ -1201,7 +1224,7 @@ export default function NominaFormPool({
                       <span className={strikeClass}>{d.exp_tiempo_call || '—'}</span>
                     </td>
 
-                    {/* Otra Exp. */}
+                    {/* Otra Experiencia */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
                       <span className={strikeClass}>{d.exp_otra || '—'}</span>
                     </td>
