@@ -348,11 +348,7 @@ export default function NominaGridEditor({
   const kpis = useMemo(() => {
     const total = data.length
     const asistieronD0 = data.filter(d => (d.dia_0 || '').toUpperCase() === 'ASISTIO').length
-    const aptosD1 = data.filter(d => {
-      const s = (d.status_dia_1 || '').toUpperCase()
-      const d1 = (d.dia_1 || '').toUpperCase()
-      return s === 'APTO' || s === 'RECUPERADO' || s === 'AGREGADO' || d1 === 'ASISTIO'
-    }).length
+    const asistieronD1 = data.filter(d => (d.dia_1 || '').toUpperCase() === 'ASISTIO').length
     const docsOk = data.filter(d => {
       if ((d.status_final || '').toUpperCase() === 'COMPLETO') return true
       return (
@@ -369,8 +365,8 @@ export default function NominaGridEditor({
       total,
       asistieronD0,
       pctD0: total > 0 ? ((asistieronD0 / total) * 100).toFixed(0) : 0,
-      aptosD1,
-      pctD1: total > 0 ? ((aptosD1 / total) * 100).toFixed(0) : 0,
+      asistieronD1,
+      pctD1: total > 0 ? ((asistieronD1 / total) * 100).toFixed(0) : 0,
       docsOk,
       pctDocs: total > 0 ? ((docsOk / total) * 100).toFixed(0) : 0,
     }
@@ -445,12 +441,12 @@ export default function NominaGridEditor({
           </div>
         </div>
 
-        {/* Apto Día 1 */}
+        {/* Asistieron Día 1 */}
         <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-purple-500/20 shadow-[0_0_12px_rgba(191,95,255,0.08)] flex items-center justify-between">
           <div>
-            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Status Día 1</div>
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Asistieron Día 1</div>
             <div className="text-xl sm:text-2xl font-black text-purple-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {kpis.aptosD1} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD1}%)</span>
+              {kpis.asistieronD1} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD1}%)</span>
             </div>
           </div>
           <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">

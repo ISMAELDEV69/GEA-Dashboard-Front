@@ -390,6 +390,7 @@ export default function AsistenciaForm({
           if (!isMounted) return;
 
           const docMap = new Map();
+          const hasNominaData = (dataNom && dataNom.length > 0) || (dataQ1 && dataQ1.length > 0);
 
           // 1. Postulantes de v_nominas_consolidado
           dataQ1.forEach(row => {
@@ -402,9 +403,9 @@ export default function AsistenciaForm({
             }
           });
 
-          // 2. Postulantes directos de tabla nominas
+          // 2. Postulantes directos de tabla nominas (fuente de verdad oficial)
           dataNom.forEach(row => {
-            if (row.documento && !docMap.has(row.documento)) {
+            if (row.documento) {
               docMap.set(row.documento, {
                 ...row,
                 campaign: row.campana,
@@ -413,27 +414,30 @@ export default function AsistenciaForm({
             }
           });
 
-          // 3. Postulantes del consolidado_asistencias (para grupos cargados por Excel)
-          dataQ2.forEach(row => {
-            if (row.documento && !docMap.has(row.documento)) {
-              docMap.set(row.documento, {
-                documento: row.documento,
-                nombres: row.nombres || '',
-                apellido_paterno: row.apellido_paterno || '',
-                apellido_materno: row.apellido_materno || '',
-                celular: row.celular || '—',
-                telefono: row.celular || '—',
-                condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-                campana: row.campana || targetCampana || '',
-                grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
-                dia_0: 'ASISTIO',
-                status_dia_1: row.tipo_reclutado || 'APTO',
-                estado: row.estado || 'ACTIVO',
-                formador_documento: row.documento_formador || '',
-                formador_nombre: row.nombre_formador || ''
-              });
-            }
-          });
+          // 3. Postulantes de consolidado_asistencias (SOLO como fallback para grupos legacy sin nómina digital)
+          if (!hasNominaData) {
+            dataQ2.forEach(row => {
+              if (row.documento && !docMap.has(row.documento)) {
+                docMap.set(row.documento, {
+                  documento: row.documento,
+                  nombres: row.nombres || '',
+                  apellido_paterno: row.apellido_paterno || '',
+                  apellido_materno: row.apellido_materno || '',
+                  celular: row.celular || '—',
+                  telefono: row.celular || '—',
+                  condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+                  campana: row.campana || targetCampana || '',
+                  grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
+                  dia_0: 'ASISTIO',
+                  dia_1: 'ASISTIO',
+                  status_dia_1: row.tipo_reclutado || 'APTO',
+                  estado: row.estado || 'ACTIVO',
+                  formador_documento: row.documento_formador || '',
+                  formador_nombre: row.nombre_formador || ''
+                });
+              }
+            });
+          }
 
           setGroupPostulantesDirect(Array.from(docMap.values()));
         } catch (e) {
@@ -500,26 +504,31 @@ export default function AsistenciaForm({
       }
     }
 
-    // Ensure all historical attendees from asistencias are present in candidate pool
+    // Ensure all historical attendees from asistencias are present in candidate pool ONLY for legacy groups without nomina
+    const hasGroupNomina = groupPostulantesDirect.length > 0;
     const candidateDocs = new Set(effectivePostulantes.map(p => p.documento));
     const mergedCandidates = [...effectivePostulantes];
-    for (const a of groupRecordsAll) {
-      if (!candidateDocs.has(a.postulante_documento)) {
-        candidateDocs.add(a.postulante_documento);
-        mergedCandidates.push({
-          documento: a.postulante_documento,
-          nombres: a.nombres || '',
-          apellido_paterno: a.apellido_paterno || '',
-          apellido_materno: a.apellido_materno || '',
-          celular: a.celular || '',
-          telefono: a.celular || '',
-          condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-          campana: a.campana || targetCampana || '',
-          grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
-          dia_0: 'ASISTIO',
-          status_dia_1: 'APTO',
-          estado: 'ACTIVO'
-        });
+
+    if (!hasGroupNomina) {
+      for (const a of groupRecordsAll) {
+        if (!candidateDocs.has(a.postulante_documento)) {
+          candidateDocs.add(a.postulante_documento);
+          mergedCandidates.push({
+            documento: a.postulante_documento,
+            nombres: a.nombres || '',
+            apellido_paterno: a.apellido_paterno || '',
+            apellido_materno: a.apellido_materno || '',
+            celular: a.celular || '',
+            telefono: a.celular || '',
+            condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+            campana: a.campana || targetCampana || '',
+            grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
+            dia_0: 'ASISTIO',
+            dia_1: 'ASISTIO',
+            status_dia_1: 'APTO',
+            estado: 'ACTIVO'
+          });
+        }
       }
     }
 
@@ -528,18 +537,23 @@ export default function AsistenciaForm({
       if (!p.documento) return false
 
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
-      const hasPreviousAttendance = mappedDocs.has(p.documento)
-      
-      const inGroup = isGrupoMatch || hasPreviousAttendance
-      if (!inGroup) return false
+      if (!isGrupoMatch && !hasGroupNomina && mappedDocs.has(p.documento)) {
+        // Permitir histórico solo para grupos legacy sin nómina digital
+      } else if (!isGrupoMatch) {
+        return false
+      }
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
+      const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
-      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1
+      const asistioD1 = dia1Val === 'ASISTIO'
       
-      if (!hasPreviousAttendance && rechazadoD0) {
+      const rechazadoD1 = (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO') && !agregadoD1
+      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1 && !asistioD1
+      
+      if (rechazadoD1 || rechazadoD0) {
         return false
       }
 
