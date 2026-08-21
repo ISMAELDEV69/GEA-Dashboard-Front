@@ -2740,11 +2740,12 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
 
         const parsed = parseGoogleFormRow(row, colIdx)
         if (parsed && parsed.documento) {
-          // Filtrado y optimización: solo traer registros con máximo 2 meses de antigüedad
+          // Filtrado y optimización: solo traer registros desde el 01/07/2026 en adelante
           if (options.limitLast2Months !== false) {
-            const now = new Date()
-            const cutoffDate = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0)
-            const cutoffTime = cutoffDate.getTime()
+            // Fecha de corte solicitada: 01 de Julio de 2026 (mes 6 en JS 0-indexado)
+            const cutoffTime = options.startDateCutoff 
+              ? new Date(options.startDateCutoff).getTime() 
+              : new Date(2026, 6, 1, 0, 0, 0).getTime()
 
             let isRecent = false
             if (parsed.marca_temporal) {
@@ -2755,12 +2756,11 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
                 }
               }
             } else if (parsed.periodo_reclutado) {
-              const pStr = String(parsed.periodo_reclutado).trim()
-              const pYear = parseInt(pStr.substring(0, 4), 10)
-              const pMonth = parseInt(pStr.substring(4, 6), 10)
-              if (!isNaN(pYear) && !isNaN(pMonth)) {
-                const pDate = new Date(pYear, pMonth - 1, 1)
-                if (pDate.getTime() >= cutoffTime) {
+              const pStr = String(parsed.periodo_reclutado).replace(/\D/g, '')
+              if (pStr.length >= 6) {
+                const pNum = parseInt(pStr.substring(0, 6), 10)
+                // 202607 = Julio 2026
+                if (!isNaN(pNum) && pNum >= 202607) {
                   isRecent = true
                 }
               }

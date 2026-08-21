@@ -392,7 +392,7 @@ export default function NominaFormPool({
         tabCacheRef.current.set(targetSheetName, matrix)
       }
 
-      const data = await parseSheetMatrixCandidates(matrix, { limitLast2Months: false })
+      const data = await parseSheetMatrixCandidates(matrix, { limitLast2Months: true, startDateCutoff: '2026-07-01' })
 
       // Deduplicar postulantes por DNI (conservando la respuesta más reciente del formulario)
       const deduplicatedMap = new Map()
@@ -846,7 +846,7 @@ export default function NominaFormPool({
       <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex gap-2.5 flex-wrap flex-1 items-center">
-            <PoolStat label="En la Hoja" value={poolStats.total} color="var(--accent, #06b6d4)" icon={Users} />
+            <PoolStat label="En la Hoja (Desde 01/07)" value={poolStats.total} color="var(--accent, #06b6d4)" icon={Users} />
             <PoolStat label="Disponibles"          value={poolStats.disponibles}  color="#10b981" icon={CheckCircle2} />
             <PoolStat label="Ya Adjudicados"       value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
             <PoolStat label="Seleccionados"        value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
