@@ -761,7 +761,7 @@ export default function NominaFormPool({
               type="text"
               value={sheetUrl}
               onChange={e => setSheetUrl(e.target.value)}
-              placeholder="Pega el enlace de Google Sheets de reclutamiento (ej. https://docs.google.com/spreadsheets/d/...)"
+              placeholder="Pega el enlace de Google Sheets o API Web App (ej. https://script.google.com/... o https://docs.google.com/...)"
               className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-[var(--bg-surface)] border border-[var(--border-normal)] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono outline-none"
             />
           </div>

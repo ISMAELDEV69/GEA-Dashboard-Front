@@ -2515,6 +2515,45 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
   console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] URL recibida:', url)
   if (!url) throw new Error('Ingresa un enlace de Google Sheets válido.')
 
+  // ── PRIORIDAD 0: Google Apps Script Web App API (JSON Instantáneo en Vivo) ──
+  if (url.includes('script.google.com/macros/s/')) {
+    try {
+      let finalUrl = url.trim()
+      if (!finalUrl.includes('token=')) {
+        finalUrl += (finalUrl.includes('?') ? '&' : '?') + 'token=GEA_SECURE_TOKEN_2026_x89aF29mKpL0v'
+      }
+      console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] Consultando Web App API en vivo:', finalUrl)
+      const resp = await fetch(finalUrl, { redirect: 'follow' })
+      if (resp.ok) {
+        const json = await resp.json()
+        if (json.error) throw new Error(json.error)
+        if (Array.isArray(json) && json.length > 0) {
+          const headers = Object.keys(json[0])
+          const matrix = [headers]
+          json.forEach(item => {
+            matrix.push(headers.map(h => (item[h] !== undefined && item[h] !== null ? item[h] : '')))
+          })
+          return {
+            type: 'webapp_api',
+            matrix,
+            sheetNames: ['API en Vivo (Formulario)'],
+            currentSheet: 'API en Vivo (Formulario)'
+          }
+        } else if (Array.isArray(json) && json.length === 0) {
+          return {
+            type: 'webapp_api',
+            matrix: [],
+            sheetNames: ['API en Vivo (Formulario)'],
+            currentSheet: 'API en Vivo (Formulario)'
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error consumiendo Google Apps Script Web App API:', e)
+      throw e
+    }
+  }
+
   const docMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9\-_]+)/)
   const docId = docMatch ? docMatch[1] : null
   const gidMatch = url.match(/gid=([0-9]+)/)
