@@ -674,18 +674,34 @@ export default function AsistenciaForm({
         }
       }
       
-      const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
-      const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
-      const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
-      
-      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
-      const asistioD1 = dia1Val === 'ASISTIO'
-      
-      const rechazadoD1 = (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO') && !agregadoD1
-      const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1 && !asistioD1
-      
-      if (rechazadoD1 || rechazadoD0) {
-        return false
+      // Validar regla de asistencia de Reclutamiento para pasar al Formador:
+      // Para grupos con nómina, solo deben llegar los que Reclutamiento marcó como ASISTIO en Día 1
+      // o con status_dia_1 AGREGADO / RECUPERADO
+      if (hasGroupNomina) {
+        const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
+        const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
+        
+        const asistioD1 = dia1Val === 'ASISTIO'
+        const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+        
+        if (!asistioD1 && !agregadoD1) {
+          return false
+        }
+      } else {
+        // Para grupos legacy sin nómina digital
+        const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
+        const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
+        const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
+        
+        const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+        const asistioD1 = dia1Val === 'ASISTIO'
+        
+        const rechazadoD1 = (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO') && !agregadoD1
+        const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1 && !asistioD1
+        
+        if (rechazadoD1 || rechazadoD0) {
+          return false
+        }
       }
 
       return true
