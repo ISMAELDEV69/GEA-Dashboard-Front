@@ -19,7 +19,9 @@ import {
   X,
   Layers,
   Radio,
-  Building2
+  Building2,
+  CalendarRange,
+  Laptop
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { insertConsolidado, fetchGruposDia1, DB_MODE } from '../lib/dataService'
@@ -37,6 +39,16 @@ const SIGLAS = [
 ]
 
 const normalize = (s) => (s || '').toString().trim().toUpperCase()
+
+const getSemanaLabel = (g) => {
+  if (!g) return ''
+  const val = g.semana_label || g.semana_trabajo || g.semana || ''
+  if (!val) return ''
+  const s = String(val).trim().toUpperCase()
+  if (s.startsWith('SEM')) return s
+  const num = parseInt(s.replace(/\D/g, ''), 10)
+  return !isNaN(num) ? `SEM ${num}` : s
+}
 
 function formatSpreadsheetDate(dateStr) {
   if (!dateStr) return ''
@@ -152,8 +164,10 @@ export default function AsistenciaForm({
 }) {
   const toast = useToast()
   const [selectedPeriodo, setSelectedPeriodo] = useState(() => localStorage.getItem('wfm_asis_periodo') || '')
+  const [selectedSemana, setSelectedSemana] = useState(() => localStorage.getItem('wfm_asis_semana') || '')
   const [selectedSegmento, setSelectedSegmento] = useState(() => localStorage.getItem('wfm_asis_segmento') || '')
   const [selectedCampana, setSelectedCampana] = useState(() => localStorage.getItem('wfm_asis_campana') || '')
+  const [selectedModalidad, setSelectedModalidad] = useState(() => localStorage.getItem('wfm_asis_modalidad') || '')
   const [selectedGrupo, setSelectedGrupo] = useState(() => localStorage.getItem('wfm_asis_grupo') || '')
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
   const [searchTerm, setSearchTerm] = useState('')
@@ -171,10 +185,12 @@ export default function AsistenciaForm({
   // Persist filter selections
   useEffect(() => {
     if (selectedPeriodo) localStorage.setItem('wfm_asis_periodo', selectedPeriodo)
+    if (selectedSemana) localStorage.setItem('wfm_asis_semana', selectedSemana)
     if (selectedSegmento) localStorage.setItem('wfm_asis_segmento', selectedSegmento)
     if (selectedCampana) localStorage.setItem('wfm_asis_campana', selectedCampana)
+    if (selectedModalidad) localStorage.setItem('wfm_asis_modalidad', selectedModalidad)
     if (selectedGrupo) localStorage.setItem('wfm_asis_grupo', selectedGrupo)
-  }, [selectedPeriodo, selectedSegmento, selectedCampana, selectedGrupo])
+  }, [selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedModalidad, selectedGrupo])
 
   const datePickerRef = useRef(null)
   const userEditsRef = useRef(new Map())
@@ -260,50 +276,85 @@ export default function AsistenciaForm({
     return `${day} ${monthNames[monthIndex] || ''} ${year}`;
   };
 
+  // ── 1. Cascading filter collections ─────────────────────────────
   const periodos = useMemo(() => {
     return [...new Set(grupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort()
   }, [grupos])
 
+  const semanas = useMemo(() => {
+    let filtered = grupos.filter(g => g.periodo)
+    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    const list = filtered.map(g => getSemanaLabel(g)).filter(Boolean)
+    return [...new Set(list)].sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+      return numB - numA
+    })
+  }, [grupos, selectedPeriodo])
+
   const segmentos = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
     return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo])
+  }, [grupos, selectedPeriodo, selectedSemana])
 
   const campanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSegmento])
+  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento])
+
+  const modalidades = useMemo(() => {
+    let filtered = grupos.filter(g => g.periodo)
+    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
+    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
+    return [...new Set(filtered.map(g => g.modalidad ? String(g.modalidad).trim().toUpperCase() : null).filter(Boolean))].sort()
+  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
 
   const gruposFiltrados = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
+    if (selectedModalidad) filtered = filtered.filter(g => String(g.modalidad || '').trim().toUpperCase() === String(selectedModalidad).trim().toUpperCase())
     
     const unique = [];
     const seen = new Set();
     for (const g of filtered) {
-      if (!seen.has(g.codigo)) {
-        seen.add(g.codigo);
+      const uniqueKey = `${g.codigo}_${g.id || ''}_${g.periodo || ''}_${getSemanaLabel(g)}`;
+      if (!seen.has(uniqueKey)) {
+        seen.add(uniqueKey);
         unique.push(g);
       }
     }
     return unique.sort((a,b) => String(a.codigo).localeCompare(String(b.codigo)));
-  }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana])
+  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedModalidad])
 
   const activeGrupoObj = useMemo(() => {
     if (!selectedGrupo) return null;
     const match = gruposFiltrados.find(g => g.id === selectedGrupo || g.codigo === selectedGrupo);
     if (match) return match;
-    return grupos.find(g => (g.id === selectedGrupo || g.codigo === selectedGrupo) && (!selectedCampana || String(g.campana).trim() === String(selectedCampana).trim()));
-  }, [grupos, gruposFiltrados, selectedGrupo, selectedCampana])
+    return grupos.find(g => 
+      (g.id === selectedGrupo || g.codigo === selectedGrupo) && 
+      (!selectedCampana || String(g.campana).trim() === String(selectedCampana).trim()) &&
+      (!selectedPeriodo || String(g.periodo).trim() === String(selectedPeriodo).trim()) &&
+      (!selectedSemana || getSemanaLabel(g) === selectedSemana)
+    );
+  }, [grupos, gruposFiltrados, selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana])
 
-  useEffect(() => { setSelectedSegmento(''); setSelectedCampana(''); setSelectedGrupo('') }, [selectedPeriodo])
-  useEffect(() => { setSelectedCampana(''); setSelectedGrupo('') }, [selectedSegmento])
-  useEffect(() => { setSelectedGrupo('') }, [selectedCampana])
+  // Clear dependent filters on parent filter change
+  useEffect(() => { setSelectedSemana(''); setSelectedSegmento(''); setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedPeriodo])
+  useEffect(() => { setSelectedSegmento(''); setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedSemana])
+  useEffect(() => { setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedSegmento])
+  useEffect(() => { setSelectedModalidad(''); setSelectedGrupo('') }, [selectedCampana])
+  useEffect(() => { setSelectedGrupo('') }, [selectedModalidad])
+
   useEffect(() => {
     if (gruposFiltrados.length === 1 && !selectedGrupo) setSelectedGrupo(gruposFiltrados[0].id || gruposFiltrados[0].codigo)
   }, [gruposFiltrados, selectedGrupo])
@@ -329,11 +380,24 @@ export default function AsistenciaForm({
   useEffect(() => {
     if (!activeGrupoObj) return;
 
-    const groupKey = activeGrupoObj.codigo;
+    const groupKey = `${activeGrupoObj.codigo}_${activeGrupoObj.periodo || ''}_${getSemanaLabel(activeGrupoObj)}`;
     if (lastSetGrupo.current === groupKey) return;
 
+    const targetGrupoCodigo = activeGrupoObj.codigo;
+    const targetCampana = activeGrupoObj.campana;
+    const targetSemanaNum = parseInt(String(activeGrupoObj.semana_trabajo || activeGrupoObj.semana_label || '').replace(/\D/g, ''), 10);
+
     const groupDates = asistencias
-      .filter(a => (normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo) || normalize(a.grupo_codigo) === normalize(selectedGrupo)) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)))
+      .filter(a => {
+        const matchG = normalize(a.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(a.grupo_codigo) === normalize(selectedGrupo);
+        if (!matchG) return false;
+        if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) return false;
+        if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && a.archivo_origen) {
+          const aSem = parseInt(String(a.archivo_origen).replace(/\D/g, ''), 10);
+          if (!isNaN(aSem) && aSem !== targetSemanaNum) return false;
+        }
+        return true;
+      })
       .map(a => a.fecha_asistencia)
       .sort();
 
@@ -359,25 +423,58 @@ export default function AsistenciaForm({
     }
     const targetGrupoCodigo = String(activeGrupoObj?.codigo || selectedGrupo).trim();
     const targetCampana = String(activeGrupoObj?.campana || selectedCampana || '').trim();
+    const targetPeriodo = String(activeGrupoObj?.periodo || selectedPeriodo || '').replace(/\D/g, '').trim();
+    const targetSemanaRaw = activeGrupoObj?.semana_trabajo || activeGrupoObj?.semana_label || selectedSemana || '';
+    const targetSemanaNum = parseInt(String(targetSemanaRaw).replace(/\D/g, ''), 10);
 
     if (DB_MODE === 'supabase') {
       let isMounted = true;
       (async () => {
         try {
-          // Intento 1: Búsqueda flexible en nominas y consolidado
+          // Búsqueda delimitada por Grupo + Semana + Periodo para evitar cruces entre semanas
+          let q1 = supabase
+            .from('v_nominas_consolidado')
+            .select('*')
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+          if (targetPeriodo) {
+            q1 = q1.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
+          }
+          if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
+            q1 = q1.eq('semana_trabajo', targetSemanaNum)
+          }
+          if (targetCampana) {
+            q1 = q1.ilike('campana', `%${targetCampana}%`)
+          }
+
+          let qNom = supabase
+            .from('nominas')
+            .select('*')
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+          if (targetPeriodo) {
+            qNom = qNom.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
+          }
+          if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
+            qNom = qNom.eq('semana_trabajo', targetSemanaNum)
+          }
+          if (targetCampana) {
+            qNom = qNom.ilike('campana', `%${targetCampana}%`)
+          }
+
+          let q2 = supabase
+            .from('consolidado_asistencias')
+            .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja, archivo_origen')
+            .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo},codigo_grupo.ilike.%${targetGrupoCodigo}%`)
+          if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
+            q2 = q2.or(`archivo_origen.ilike.%SEM${targetSemanaNum}%,archivo_origen.ilike.%SEM ${targetSemanaNum}%,archivo_origen.is.null`)
+          }
+          if (targetCampana) {
+            q2 = q2.ilike('campana', `%${targetCampana}%`)
+          }
+
           const [res1, resNom, res2] = await Promise.all([
-            supabase
-              .from('v_nominas_consolidado')
-              .select('*')
-              .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`),
-            supabase
-              .from('nominas')
-              .select('*')
-              .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`),
-            supabase
-              .from('consolidado_asistencias')
-              .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja')
-              .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo},codigo_grupo.ilike.%${targetGrupoCodigo}%`)
+            q1,
+            qNom,
+            q2
           ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
             return [{ data: [] }, { data: [] }, { data: [] }];
@@ -389,11 +486,25 @@ export default function AsistenciaForm({
 
           if (!isMounted) return;
 
+          const isRowMatchWeekAndPeriod = (row) => {
+            if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && row.semana_trabajo) {
+              const rSem = parseInt(String(row.semana_trabajo).replace(/\D/g, ''), 10)
+              if (!isNaN(rSem) && rSem !== targetSemanaNum) return false
+            }
+            if (targetPeriodo && row.periodo_reclutado) {
+              const rPer = String(row.periodo_reclutado).replace(/\D/g, '')
+              if (rPer && !rPer.includes(targetPeriodo) && !targetPeriodo.includes(rPer)) return false
+            }
+            return true
+          }
+
           const docMap = new Map();
-          const hasNominaData = (dataNom && dataNom.length > 0) || (dataQ1 && dataQ1.length > 0);
+          const filteredQ1 = dataQ1.filter(isRowMatchWeekAndPeriod);
+          const filteredNom = dataNom.filter(isRowMatchWeekAndPeriod);
+          const hasNominaData = (filteredNom && filteredNom.length > 0) || (filteredQ1 && filteredQ1.length > 0);
 
           // 1. Postulantes de v_nominas_consolidado
-          dataQ1.forEach(row => {
+          filteredQ1.forEach(row => {
             if (row.documento) {
               docMap.set(row.documento, {
                 ...row,
@@ -404,7 +515,7 @@ export default function AsistenciaForm({
           });
 
           // 2. Postulantes directos de tabla nominas (fuente de verdad oficial)
-          dataNom.forEach(row => {
+          filteredNom.forEach(row => {
             if (row.documento) {
               docMap.set(row.documento, {
                 ...row,
@@ -428,6 +539,8 @@ export default function AsistenciaForm({
                   condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
                   campana: row.campana || targetCampana || '',
                   grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
+                  semana_trabajo: targetSemanaNum || null,
+                  periodo_reclutado: targetPeriodo || null,
                   dia_0: 'ASISTIO',
                   dia_1: 'ASISTIO',
                   status_dia_1: row.tipo_reclutado || 'APTO',
@@ -449,7 +562,7 @@ export default function AsistenciaForm({
         isMounted = false;
       };
     }
-  }, [selectedGrupo, selectedCampana, activeGrupoObj]);
+  }, [selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana, activeGrupoObj]);
 
   const effectivePostulantes = useMemo(() => {
     if (groupPostulantesDirect.length > 0) {
@@ -471,6 +584,9 @@ export default function AsistenciaForm({
     const targetGroup = selectedGrupo
     const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo
     const targetCampana = activeGrupoObj?.campana
+    const targetSemanaRaw = activeGrupoObj?.semana_trabajo || activeGrupoObj?.semana_label || selectedSemana || ''
+    const targetSemanaNum = parseInt(String(targetSemanaRaw).replace(/\D/g, ''), 10)
+    const targetPeriodo = String(activeGrupoObj?.periodo || selectedPeriodo || '').replace(/\D/g, '').trim()
 
     const groupRecordsAll = []
     const mappedDocs = new Set()
@@ -481,6 +597,11 @@ export default function AsistenciaForm({
       const a = asistencias[i]
       const matchGrupo = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.grupo_codigo) === normalize(targetGrupoCodigo)
       if (!matchGrupo) continue
+      if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) continue
+      if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && a.archivo_origen) {
+        const aSem = parseInt(String(a.archivo_origen).replace(/\D/g, ''), 10)
+        if (!isNaN(aSem) && aSem !== targetSemanaNum) continue
+      }
 
       groupRecordsAll.push(a)
       mappedDocs.add(a.postulante_documento)
@@ -523,6 +644,8 @@ export default function AsistenciaForm({
             condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
             campana: a.campana || targetCampana || '',
             grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
+            semana_trabajo: targetSemanaNum || null,
+            periodo_reclutado: targetPeriodo || null,
             dia_0: 'ASISTIO',
             dia_1: 'ASISTIO',
             status_dia_1: 'APTO',
@@ -541,6 +664,14 @@ export default function AsistenciaForm({
         // Permitir histórico solo para grupos legacy sin nómina digital
       } else if (!isGrupoMatch) {
         return false
+      }
+
+      // Validar coincidencia estricta de semana
+      if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && p.semana_trabajo) {
+        const rowSemanaNum = parseInt(String(p.semana_trabajo).replace(/\D/g, ''), 10)
+        if (!isNaN(rowSemanaNum) && rowSemanaNum !== targetSemanaNum) {
+          return false
+        }
       }
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
@@ -1131,7 +1262,7 @@ export default function AsistenciaForm({
 
       {/* ── 2. HIGH-DENSITY CASCADE FILTERS RIBBON (Height ~50px) ── */}
       <div className="p-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-xs shrink-0">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 items-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 items-center">
           
           {/* PERIODO */}
           <div className="flex flex-col gap-0.5 min-w-0">
@@ -1143,8 +1274,23 @@ export default function AsistenciaForm({
               onChange={e => setSelectedPeriodo(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
-              <option value="">Todos los Períodos</option>
+              <option value="">Todos</option>
               {periodos.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          {/* SEMANA */}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <CalendarRange size={10} className="text-emerald-500 shrink-0" /> SEMANA
+            </span>
+            <select
+              value={selectedSemana}
+              onChange={e => setSelectedSemana(e.target.value)}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
+            >
+              <option value="">Todas</option>
+              {semanas.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
@@ -1156,10 +1302,9 @@ export default function AsistenciaForm({
             <select
               value={selectedSegmento}
               onChange={e => setSelectedSegmento(e.target.value)}
-              disabled={!selectedPeriodo && periodos.length > 0}
-              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
-              <option value="">Todos los Segmentos</option>
+              <option value="">Todos</option>
               {segmentos.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
@@ -1172,11 +1317,25 @@ export default function AsistenciaForm({
             <select
               value={selectedCampana}
               onChange={e => setSelectedCampana(e.target.value)}
-              disabled={!selectedSegmento && segmentos.length > 0}
-              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
-              <option value="">Todas las Campañas</option>
+              <option value="">Todas</option>
               {campanas.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* MODALIDAD */}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+              <Laptop size={10} className="text-pink-500 shrink-0" /> MODALIDAD
+            </span>
+            <select
+              value={selectedModalidad}
+              onChange={e => setSelectedModalidad(e.target.value)}
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
+            >
+              <option value="">Todas</option>
+              {modalidades.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
 
@@ -1188,10 +1347,9 @@ export default function AsistenciaForm({
             <select
               value={selectedGrupo}
               onChange={e => setSelectedGrupo(e.target.value)}
-              disabled={!selectedCampana && campanas.length > 0}
-              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer disabled:opacity-40 truncate"
+              className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
-              <option value="">Seleccionar Grupo</option>
+              <option value="">Seleccionar</option>
               {gruposFiltrados.map((g, idx) => (
                 <option key={`${g.id || g.codigo}_${idx}`} value={g.codigo}>
                   {String(g.codigo).startsWith('PROY-') ? '—' : (String(g.codigo).replace(/_\d+$/, '') || 'SIN CÓDIGO')}
@@ -1209,7 +1367,7 @@ export default function AsistenciaForm({
               type="text"
               readOnly
               value={activeGrupoObj ? (formadores.find(f => f.documento === activeGrupoObj.formador_documento)?.nombre_completo || 'SIN ASIGNAR') : ''}
-              placeholder="Formador asignado"
+              placeholder="Formador"
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-secondary)] px-2 outline-none cursor-not-allowed uppercase truncate"
             />
           </div>
@@ -1217,7 +1375,7 @@ export default function AsistenciaForm({
           {/* FECHA ASISTENCIA */}
           <div className="flex flex-col gap-0.5 min-w-0">
             <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
-              <ClockAlert size={10} className="text-amber-500 shrink-0" /> FECHA ASISTENCIA
+              <ClockAlert size={10} className="text-amber-500 shrink-0" /> FECHA
             </span>
             <div className="relative w-full" ref={datePickerRef}>
               <div 

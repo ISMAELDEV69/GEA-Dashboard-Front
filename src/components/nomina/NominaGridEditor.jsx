@@ -6,11 +6,16 @@ import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, 
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
+  const group1 = ['celular', 'celular_referencia', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
   const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final'];
   const group3 = ['validacion_reingreso', 'fecha_validacion', 'observacion_reingreso'];
   
   if (isSelected) {
     return 'bg-cyan-500/20 text-cyan-300 shadow-inner border-b-2 border-cyan-400';
+  }
+
+  if (group1.includes(key)) {
+    return 'bg-sky-500/10 text-sky-300';
   }
   
   if (group2.includes(key)) {
@@ -24,8 +29,30 @@ function getHeaderColor(key, isSelected = false) {
   return 'bg-[var(--table-head-bg)] text-[var(--text-secondary)]';
 }
 
-// The editable columns for Phase B
-const EDITABLE_COLUMNS = [
+// 1. Datos Demográficos y de Contacto (Cargados desde Bolsa de Postulantes)
+export const POSTULANTE_COLUMNS = [
+  { key: 'celular', label: 'CELULAR', width: 130 },
+  { key: 'celular_referencia', label: 'CEL. REF.', width: 130 },
+  { key: 'correo', label: 'CORREO', width: 220 },
+  { key: 'genero', label: 'GÉNERO', width: 110 },
+  { key: 'fecha_nacimiento', label: 'F. NACIMIENTO', width: 130 },
+  { key: 'edad', label: 'EDAD', width: 90, type: 'number' },
+  { key: 'estado_civil', label: 'ESTADO CIVIL', width: 130 },
+  { key: 'n_hijos', label: 'N° HIJOS', width: 90, type: 'number' },
+  { key: 'nivel_academico', label: 'NIVEL ACADÉMICO', width: 160 },
+  { key: 'carrera', label: 'CARRERA', width: 160 },
+  { key: 'distrito_residencia', label: 'DISTRITO', width: 150 },
+  { key: 'lugar_residencia', label: 'LUGAR RESIDENCIA', width: 160 },
+  { key: 'direccion_domicilio', label: 'DIRECCIÓN', width: 220 },
+  { key: 'exp_call_center', label: 'EXP. CALL', width: 130 },
+  { key: 'exp_tipo_campana', label: 'EXP. CAMPAÑA', width: 160 },
+  { key: 'exp_tiempo_call', label: 'TIEMPO EXP.', width: 130 },
+  { key: 'fuente_oferta', label: 'FUENTE OFERTA', width: 160 },
+  { key: 'observacion_reclutamiento', label: 'OBS. RECLUTAMIENTO', width: 220 }
+]
+
+// 2. Gestión Operativa y Capacitación
+export const OPERACION_COLUMNS = [
   { key: 'reclutador', label: 'RECLUTADOR', width: 220, type: 'select', options: [] },
   { key: 'sede', label: 'SEDE', width: 150, type: 'select', options: ['ATE', 'SAN ISIDRO', 'COMAS', 'JOCKEY'] },
   { key: 'modalidad', label: 'MODALIDAD', width: 120, type: 'select', options: ['PRESENCIAL', 'HIBRIDO', 'REMOTO'] },
@@ -56,7 +83,11 @@ const EDITABLE_COLUMNS = [
   { key: 'dia_1', label: 'DÍA 1', width: 120, type: 'select', options: ['ASISTIO', 'FALTA'] },
   { key: 'dia_1_obs', label: 'OBSERVACIONES DÍA 1', width: 200 },
   { key: 'evaluar', label: 'EVALUAR', width: 150, type: 'select', options: ['APROBADO', 'DESAPROBADO', 'NO DA EVALUAR', 'NO LE LLEGA EL CORREO', 'SIN STATUS', 'DESAPRUEBA Y DA SEGUNDO EVALUAR'] },
-  { key: 'obs_evaluar', label: 'OBS. EVALUAR', width: 200 },
+  { key: 'obs_evaluar', label: 'OBS. EVALUAR', width: 200 }
+]
+
+// 3. Documentación y Validación
+export const DOCUMENTOS_COLUMNS = [
   { key: 'doc_cv', label: 'CV', width: 80, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'doc_dni_adjunto', label: 'DNI (ADJUNTO)', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'doc_certijoven', label: 'CERTIJOVEN', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
@@ -68,6 +99,12 @@ const EDITABLE_COLUMNS = [
   { key: 'validacion_reingreso', label: 'VALIDACIÓN DE REINGRESO', width: 160, type: 'select', options: ['REINGRESO', 'NO REINGRESO'] },
   { key: 'fecha_validacion', label: 'FECHA DE VALIDACIÓN', width: 150, type: 'date' },
   { key: 'observacion_reingreso', label: 'OBSERVACIÓN REINGRESO', width: 200 }
+]
+
+export const ALL_EDITABLE_COLUMNS = [
+  ...POSTULANTE_COLUMNS,
+  ...OPERACION_COLUMNS,
+  ...DOCUMENTOS_COLUMNS
 ]
 
 export default function NominaGridEditor({
@@ -85,6 +122,7 @@ export default function NominaGridEditor({
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [columnTab, setColumnTab] = useState('POSTULANTE') // 'POSTULANTE' | 'OPERATIVO' | 'DOCUMENTOS' | 'TODO'
   const [lastUpdatedTime, setLastUpdatedTime] = useState(() => {
     const now = new Date()
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -96,6 +134,13 @@ export default function NominaGridEditor({
   const [reclutadoresList, setReclutadoresList] = useState([])
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
+
+  const visibleColumns = useMemo(() => {
+    if (columnTab === 'POSTULANTE') return POSTULANTE_COLUMNS
+    if (columnTab === 'OPERATIVO') return OPERACION_COLUMNS
+    if (columnTab === 'DOCUMENTOS') return DOCUMENTOS_COLUMNS
+    return ALL_EDITABLE_COLUMNS
+  }, [columnTab])
 
   // Debounce ref to store pending updates grouped by rowId
   const pendingUpdatesRef = useRef(new Map())
@@ -484,6 +529,54 @@ export default function NominaGridEditor({
           </p>
         </div>
 
+        {/* View Mode Tabs Selector */}
+        <div className="flex items-center bg-[var(--bg-elevated)] p-1 rounded-xl border border-[var(--border-subtle)] gap-1">
+          <button
+            type="button"
+            onClick={() => setColumnTab('POSTULANTE')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              columnTab === 'POSTULANTE'
+                ? 'bg-sky-500 text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            👤 Datos Postulante (Bolsa)
+          </button>
+          <button
+            type="button"
+            onClick={() => setColumnTab('OPERATIVO')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              columnTab === 'OPERATIVO'
+                ? 'bg-cyan-500 text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            ⚙️ Operación & Capa
+          </button>
+          <button
+            type="button"
+            onClick={() => setColumnTab('DOCUMENTOS')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              columnTab === 'DOCUMENTOS'
+                ? 'bg-amber-500 text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            📑 Documentos
+          </button>
+          <button
+            type="button"
+            onClick={() => setColumnTab('TODO')}
+            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              columnTab === 'TODO'
+                ? 'bg-purple-500 text-white shadow-xs'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            🌐 Ver Todo ({visibleColumns.length})
+          </button>
+        </div>
+
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Botón de Actualizar sin recargar página */}
           <button
@@ -507,7 +600,7 @@ export default function NominaGridEditor({
           >
             <CheckCircle2 size={14} /> 
             {selectedColumn 
-              ? `Replicar "${EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
+              ? `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
               : 'Selecciona columna para replicar'}
           </button>
 
@@ -634,7 +727,7 @@ export default function NominaGridEditor({
                     />
                   </div>
                 </th>
-                {EDITABLE_COLUMNS.map(col => (
+                {visibleColumns.map(col => (
                   <th 
                     key={col.key} 
                     className={`p-2.5 font-bold border-r border-[var(--border-subtle)] select-none align-middle uppercase tracking-wider text-[10px] ${getHeaderColor(col.key, selectedColumn === col.key)}`} 
@@ -669,7 +762,7 @@ export default function NominaGridEditor({
                     </span>
                     <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
                   </td>
-                  {EDITABLE_COLUMNS.map(col => {
+                  {visibleColumns.map(col => {
                     const val = row[col.key] || '';
                     let badgeClass = 'text-[var(--text-primary)]';
                     if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO') {
@@ -689,7 +782,7 @@ export default function NominaGridEditor({
                             className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
                           >
                             <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
-                            {(col.key === 'reclutador' ? reclutadorOptions : col.options).map(opt => (
+                            {(col.key === 'reclutador' ? reclutadorOptions : col.options || []).map(opt => (
                               <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                                 {opt}
                               </option>
