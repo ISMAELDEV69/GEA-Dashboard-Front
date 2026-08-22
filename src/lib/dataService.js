@@ -2195,7 +2195,21 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   }
 
   if (!recAsis || recAsis.length === 0 || mapFormFull.size === 0 || !fecha_dia1_ref) {
-    await supabase.from('grupos_dia1').upsert({ grupo_codigo, campana, estado_calibracion: 'PENDIENTE', updated_at: new Date().toISOString() }, { onConflict: 'campana,grupo_codigo' })
+    if (fecha_dia1_ref) {
+      await supabase.from('grupos_dia1').upsert({
+        grupo_codigo,
+        campana,
+        fecha_dia1: fecha_dia1_ref,
+        estado_calibracion: 'PENDIENTE',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'campana,grupo_codigo' })
+    } else {
+      // Solo actualizar si el registro ya existe en grupos_dia1 para no violar not-null en fecha_dia1
+      await supabase.from('grupos_dia1').update({
+        estado_calibracion: 'PENDIENTE',
+        updated_at: new Date().toISOString()
+      }).eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+    }
     return 'PENDIENTE'
   }
 
@@ -2229,7 +2243,13 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   }
   
   const newState = isCalibrated ? 'CALIBRADO' : 'DESCALIBRADO'
-  await supabase.from('grupos_dia1').upsert({ grupo_codigo, campana, estado_calibracion: newState, updated_at: new Date().toISOString() }, { onConflict: 'campana,grupo_codigo' })
+  await supabase.from('grupos_dia1').upsert({
+    grupo_codigo,
+    campana,
+    fecha_dia1: fecha_dia1_ref || new Date().toISOString().split('T')[0],
+    estado_calibracion: newState,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'campana,grupo_codigo' })
   return newState
 }
 
