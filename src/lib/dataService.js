@@ -262,31 +262,45 @@ export function getDescuentosSetGlobal() {
 
 async function fetchAllConsolidado() {
   return withCache('all_consolidado', 180000, async () => {
+    // 1. Obtener conteo exacto ultra-rápido (head query, ~40ms)
+    const { count, error: countErr } = await supabase
+      .from('consolidado_asistencias')
+      .select('*', { count: 'exact', head: true });
+    
+    if (countErr) throw countErr;
+
+    const totalCount = count || 0;
+    if (totalCount === 0) return [];
+
+    const step = 5000;
+    const chunkPromises = [];
+    for (let from = 0; from < totalCount; from += step) {
+      chunkPromises.push(
+        supabase
+          .from('consolidado_asistencias')
+          .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
+          .order('created_at', { ascending: true })
+          .range(from, from + step - 1)
+      );
+    }
+
+    const [descSet, ...results] = await Promise.all([
+      getDescuentosSetGlobal(),
+      ...chunkPromises
+    ]);
+
     let allData = [];
-    let from = 0;
-    const step = 2000;
-    let hasMore = true;
-    while(hasMore) {
-      const { data, error } = await supabase
-        .from('consolidado_asistencias')
-        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
-        .order('created_at', { ascending: true })
-        .range(from, from + step - 1);
-      if(error) throw error;
-      if(data && data.length > 0) {
-        allData = allData.concat(data);
-        if(data.length < step) hasMore = false;
-        else from += step;
-      } else {
-        hasMore = false;
+    for (const res of results) {
+      if (res.error) throw res.error;
+      if (res.data && res.data.length > 0) {
+        allData = allData.concat(res.data);
       }
     }
-    
-    const descSet = await getDescuentosSetGlobal();
-    if (descSet.size > 0) {
+
+    if (descSet && descSet.size > 0) {
       allData = allData.filter(row => !descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)));
     }
-    
+
     return allData;
   });
 }

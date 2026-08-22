@@ -17,7 +17,11 @@ import {
   Layers,
   Filter,
   CheckCircle2,
-  X
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { fetchDashboardData } from '../lib/dataService';
 import * as XLSX from 'xlsx';
@@ -462,6 +466,8 @@ export default function ConsolidadoPowerBI() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [filters, setFilters] = useState({ 
     periodo: 'Todas', 
     semana: 'Todas',
@@ -492,29 +498,14 @@ export default function ConsolidadoPowerBI() {
     loadData();
   }, [loadData]);
 
-  const validData = useMemo(() => {
-    return data.map(row => {
-      const txtEstado = String(row.estado || '').toUpperCase();
-      const txtMotivo = String(row.motivo_baja || '').toUpperCase();
-      const txtObs = String(row.observacion_estado || '').toUpperCase();
-      
-      const isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
-      
-      return {
-        ...row,
-        isBajaDia1,
-        isDescuento: false
-      };
-    });
-  }, [data]);
-
-  // ── 1. Indexar capacidades por clave compuesta y por código directo para búsqueda robusta ──
+  // ── 1. Indexar capacidades por clave compuesta y por código directo para búsqueda ultra-rápida O(1) ──
   const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
     const byKey = new Map();
     const byCode = new Map();
     const allItems = [];
 
-    capacidades.forEach((item) => {
+    for (let i = 0; i < capacidades.length; i++) {
+      const item = capacidades[i];
       const campana = normalizeCampana(item.campana);
       const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
       const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
@@ -533,135 +524,121 @@ export default function ConsolidadoPowerBI() {
       if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
       if (gpe) byCode.set(gpe, capInfo);
       allItems.push(capInfo);
-    });
+    }
 
     return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
   }, [capacidades]);
 
-  // Helper robusto para obtener capacidad (por clave compuesta o por código directo)
+  // Helper robusto para obtener capacidad
   const getCapInfo = useCallback((campana, gpe) => {
     const normCampana = normalizeCampana(campana);
     const normGpe = normalizeGpe(gpe);
     return capacidadByKeyMap.get(`${normCampana}|${normGpe}`) || capacidadByCodigoMap.get(normGpe) || null;
   }, [capacidadByKeyMap, capacidadByCodigoMap]);
 
-  // Compatibilidad con capacidadMap legado
-  const capacidadMap = capacidadByKeyMap;
+  // Pre-computar campos normalizados en validData una sola vez (evita cientos de miles de llamadas redundantes)
+  const validData = useMemo(() => {
+    const result = new Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const campana = normalizeCampana(row.campana);
+      const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
+      const cap = getCapInfo(campana, gpe);
 
-  // ── Mapa de último estado por documento (fecha máxima) ──
+      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
+      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
+      const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
+
+      const txtEstado = String(row.estado || '').toUpperCase();
+      const txtMotivo = String(row.motivo_baja || '').toUpperCase();
+      const txtObs = String(row.observacion_estado || '').toUpperCase();
+      
+      const isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
+      
+      result[i] = {
+        ...row,
+        _campana: campana,
+        _gpe: gpe,
+        _periodo: rowPeriodo,
+        _semana: rowSemana,
+        _segmento: rowSegmento,
+        isBajaDia1,
+        isDescuento: false
+      };
+    }
+    return result;
+  }, [data, getCapInfo]);
+
+  // ── Mapa de último estado por documento (fecha máxima) en un solo pase O(N) ──
   const lastStateMap = useMemo(() => {
-    const docMap = new Map();
-    validData.forEach((row) => {
+    const latestDocMap = new Map();
+    for (let i = 0; i < validData.length; i++) {
+      const row = validData[i];
       const doc = normalizeText(row.documento);
-      if (!doc) return;
-      if (!docMap.has(doc)) docMap.set(doc, []);
-      docMap.get(doc).push(row);
-    });
+      if (!doc) continue;
+      
+      const d = parseLocalDate(row.fecha_registro_asistencia);
+      const time = d ? d.getTime() : 0;
+      
+      const prev = latestDocMap.get(doc);
+      if (!prev || time >= prev.time) {
+        latestDocMap.set(doc, { time, row });
+      }
+    }
 
     const result = new Map();
-    docMap.forEach((rows, doc) => {
-      const sorted = [...rows].sort((a, b) => {
-        const da = parseLocalDate(a.fecha_registro_asistencia);
-        const db = parseLocalDate(b.fecha_registro_asistencia);
-        const ta = da ? da.getTime() : 0;
-        const tb = db ? db.getTime() : 0;
-        return ta - tb;
-      });
-      const lastRow = sorted[sorted.length - 1];
-      const txtEstado = normalizeEstado(lastRow?.estado);
-      const isBaja = normalizeSigla(lastRow?.sigla) === 'B' || txtEstado === 'CESADO';
+    for (const [doc, { row }] of latestDocMap.entries()) {
+      const txtEstado = normalizeEstado(row?.estado);
+      const isBaja = normalizeSigla(row?.sigla) === 'B' || txtEstado === 'CESADO';
       result.set(doc, isBaja ? 'CESADO' : 'ACTIVO');
-    });
+    }
 
-    return result; // doc -> 'ACTIVO' | 'CESADO'
+    return result;
   }, [validData]);
 
   // ── Jerarquía en Cascada Estricta (Periodo -> Semana -> Segmento -> Campaña -> GPE) ──
   const filterOptions = useMemo(() => {
-    const getRowPeriodo = (r) => {
-      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
-      return cap?.periodo || normalizeText(r.periodo);
-    };
-    const getRowSemana = (r) => {
-      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
-      return cap?.semana || normalizeSemana(r.semana_label, r.semana_trabajo || r.semana, r.archivo_origen);
-    };
-    const getRowSegmento = (r) => {
-      const cap = getCapInfo(r.campana, r.grupo || r.codigo_grupo);
-      return cap?.segmento || normalizeSegmento(r.segmento);
-    };
-    const getRowCampana = (r) => {
-      return normalizeCampana(r.campana);
-    };
-    const getRowGpe = (r) => {
-      return normalizeGpe(r.codigo_grupo || r.grupo || r.codigo);
-    };
-
     const matchPeriodo = (p) => filters.periodo === 'Todas' || String(p || '').trim() === String(filters.periodo).trim();
     const matchSemana = (s) => filters.semana === 'Todas' || String(s || '').trim().toUpperCase() === String(filters.semana).trim().toUpperCase();
     const matchSegmento = (seg) => filters.segmento === 'Todas' || String(seg || '').trim().toUpperCase() === String(filters.segmento).trim().toUpperCase();
     const matchCampana = (c) => filters.campana === 'Todas' || String(c || '').trim().toUpperCase() === String(filters.campana).trim().toUpperCase();
 
-    // 1. Periodos disponibles
     const periodos = new Set();
-    allCapacidadItems.forEach(c => { if (c.periodo) periodos.add(c.periodo); });
-    validData.forEach(r => { const p = getRowPeriodo(r); if (p) periodos.add(p); });
-
-    // 2. Semanas disponibles según Periodo
     const semanas = new Set();
-    allCapacidadItems.forEach(c => {
-      if (matchPeriodo(c.periodo) && c.semana) semanas.add(c.semana);
-    });
-    validData.forEach(r => {
-      if (matchPeriodo(getRowPeriodo(r))) {
-        const s = getRowSemana(r);
-        if (s) semanas.add(s);
-      }
-    });
-
-    // 3. Segmentos disponibles según Periodo y Semana
     const segmentos = new Set();
-    allCapacidadItems.forEach(c => {
-      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && c.segmento) {
-        segmentos.add(c.segmento);
-      }
-    });
-    validData.forEach(r => {
-      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r))) {
-        const seg = getRowSegmento(r);
-        if (seg && seg !== 'SIN SEGMENTO') segmentos.add(seg);
-      }
-    });
-
-    // 4. Campañas disponibles según Periodo, Semana y Segmento
     const campanas = new Set();
-    allCapacidadItems.forEach(c => {
-      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && c.campana) {
-        campanas.add(c.campana);
-      }
-    });
-    validData.forEach(r => {
-      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r)) && matchSegmento(getRowSegmento(r))) {
-        const camp = getRowCampana(r);
-        if (camp && camp !== 'SIN CAMPAÑA') campanas.add(camp);
-      }
-    });
-
-    // 5. Grupos (GPE) disponibles según Periodo, Semana, Segmento y Campaña
     const gpes = new Set();
-    allCapacidadItems.forEach(c => {
-      if (matchPeriodo(c.periodo) && matchSemana(c.semana) && matchSegmento(c.segmento) && matchCampana(c.campana) && c.codigo) {
-        gpes.add(c.codigo);
-      }
-    });
-    validData.forEach(r => {
-      if (matchPeriodo(getRowPeriodo(r)) && matchSemana(getRowSemana(r)) && matchSegmento(getRowSegmento(r)) && matchCampana(getRowCampana(r))) {
-        const g = getRowGpe(r);
-        if (g && g !== 'SIN GPE') gpes.add(g);
-      }
-    });
 
-    // 6. Estados (ACTIVO / CESADO)
+    for (let i = 0; i < allCapacidadItems.length; i++) {
+      const c = allCapacidadItems[i];
+      if (c.periodo) periodos.add(c.periodo);
+      if (matchPeriodo(c.periodo)) {
+        if (c.semana) semanas.add(c.semana);
+        if (matchSemana(c.semana)) {
+          if (c.segmento) segmentos.add(c.segmento);
+          if (matchSegmento(c.segmento)) {
+            if (c.campana) campanas.add(c.campana);
+            if (matchCampana(c.campana) && c.codigo) gpes.add(c.codigo);
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < validData.length; i++) {
+      const r = validData[i];
+      if (r._periodo) periodos.add(r._periodo);
+      if (matchPeriodo(r._periodo)) {
+        if (r._semana) semanas.add(r._semana);
+        if (matchSemana(r._semana)) {
+          if (r._segmento && r._segmento !== 'SIN SEGMENTO') segmentos.add(r._segmento);
+          if (matchSegmento(r._segmento)) {
+            if (r._campana && r._campana !== 'SIN CAMPAÑA') campanas.add(r._campana);
+            if (matchCampana(r._campana) && r._gpe && r._gpe !== 'SIN GPE') gpes.add(r._gpe);
+          }
+        }
+      }
+    }
+
     const estados = new Set(['ACTIVO', 'CESADO']);
 
     const sortedSemanas = Array.from(semanas).sort((a, b) => {
@@ -678,9 +655,10 @@ export default function ConsolidadoPowerBI() {
       gpe: sortOptions(gpes),
       estado: ['Todas', ...Array.from(estados)],
     };
-  }, [validData, allCapacidadItems, filters.periodo, filters.semana, filters.segmento, filters.campana, getCapInfo]);
+  }, [validData, allCapacidadItems, filters.periodo, filters.semana, filters.segmento, filters.campana]);
 
   const handleFilterChange = (key, value) => {
+    setPage(1);
     setFilters((prev) => {
       const next = { ...prev, [key]: value };
       if (key === 'periodo') {
@@ -710,28 +688,19 @@ export default function ConsolidadoPowerBI() {
     });
   };
 
-  // ── Datos filtrados para Indicadores / KPIs (Periodo, Semana, Segmento, Campaña, GPE) ──
+  // ── Datos filtrados para Indicadores / KPIs ──
   const kpiFilteredData = useMemo(() => {
     return validData.filter((row) => {
-      const campana = normalizeCampana(row.campana);
-      const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
-      const cap = getCapInfo(campana, gpe);
-
-      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
-      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
-      const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
-
-      if (filters.periodo !== 'Todas' && rowPeriodo !== filters.periodo) return false;
-      if (filters.semana !== 'Todas' && rowSemana !== filters.semana) return false;
-      if (filters.segmento !== 'Todas' && rowSegmento !== filters.segmento) return false;
-      if (filters.campana !== 'Todas' && campana !== filters.campana) return false;
-      if (filters.gpe !== 'Todas' && gpe !== filters.gpe) return false;
-
+      if (filters.periodo !== 'Todas' && row._periodo !== filters.periodo) return false;
+      if (filters.semana !== 'Todas' && row._semana !== filters.semana) return false;
+      if (filters.segmento !== 'Todas' && row._segmento !== filters.segmento) return false;
+      if (filters.campana !== 'Todas' && row._campana !== filters.campana) return false;
+      if (filters.gpe !== 'Todas' && row._gpe !== filters.gpe) return false;
       return true;
     });
-  }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe, getCapInfo]);
+  }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe]);
 
-  // ── Datos filtrados para la Tabla (aplica además el filtro de Estado) ──
+  // ── Datos filtrados para la Tabla ──
   const filteredData = useMemo(() => {
     if (filters.estado === 'Todas') return kpiFilteredData;
 
@@ -744,10 +713,12 @@ export default function ConsolidadoPowerBI() {
 
   const uniqueDates = useMemo(() => {
     const dates = new Set();
-    filteredData.forEach((row) => {
-      const parsed = parseLocalDate(row.fecha_registro_asistencia);
-      if (parsed) dates.add(row.fecha_registro_asistencia);
-    });
+    for (let i = 0; i < filteredData.length; i++) {
+      const row = filteredData[i];
+      if (row.fecha_registro_asistencia) {
+        dates.add(row.fecha_registro_asistencia);
+      }
+    }
     return Array.from(dates).sort((a, b) => {
       const dateA = parseLocalDate(a);
       const dateB = parseLocalDate(b);
@@ -758,54 +729,55 @@ export default function ConsolidadoPowerBI() {
   }, [filteredData]);
 
   const pivotRows = useMemo(() => {
-    // Primero agrupar todos los registros por documento
-    const groupMap = new Map();
-    filteredData.forEach((row) => {
-      const doc = normalizeText(row.documento);
-      if (!doc) return;
-      if (!groupMap.has(doc)) groupMap.set(doc, []);
-      groupMap.get(doc).push(row);
-    });
-
     const map = new Map();
-    groupMap.forEach((rows, doc) => {
-      // Ordenar por fecha ascendente → el último elemento es el registro más reciente
-      const sorted = [...rows].sort((a, b) => {
-        const da = parseLocalDate(a.fecha_registro_asistencia);
-        const db = parseLocalDate(b.fecha_registro_asistencia);
-        const ta = da ? da.getTime() : 0;
-        const tb = db ? db.getTime() : 0;
-        return ta - tb;
-      });
-      const lastRow = sorted[sorted.length - 1];
+    
+    for (let i = 0; i < filteredData.length; i++) {
+      const row = filteredData[i];
+      const doc = normalizeText(row.documento);
+      if (!doc) continue;
+      
+      const d = parseLocalDate(row.fecha_registro_asistencia);
+      const time = d ? d.getTime() : 0;
+      
+      let entry = map.get(doc);
+      if (!entry) {
+        entry = {
+          documento: doc,
+          latestTime: time,
+          lastRow: row,
+          fechas: {},
+        };
+        map.set(doc, entry);
+      } else if (time >= entry.latestTime) {
+        entry.latestTime = time;
+        entry.lastRow = row;
+      }
+      
+      if (row.fecha_registro_asistencia) {
+        entry.fechas[row.fecha_registro_asistencia] = normalizeSigla(row.sigla);
+      }
+    }
 
-      const campana = normalizeCampana(lastRow.campana);
-      const gpe = normalizeGpe(lastRow.codigo_grupo || lastRow.grupo);
+    let result = [];
+    for (const [doc, entry] of map.entries()) {
+      const lastRow = entry.lastRow;
+      const campana = lastRow._campana;
+      const gpe = lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
 
-      const entry = {
+      result.push({
         documento: doc,
         nombre_completo: `${normalizeText(lastRow.apellido_paterno)} ${normalizeText(lastRow.apellido_materno)} ${normalizeText(lastRow.nombres)}`.trim(),
-        // ult_estado sincronizado 100% con lastStateMap
         ult_estado: docState,
         fecha_inicio_ojt: cap?.fecha_inicio_ojt || '—',
         gpe: gpe || '—',
         condicion_laboral: normalizeText(lastRow.condicion_laboral, '—'),
         tipo_reclutado: normalizeText(lastRow.tipo_reclutado, '—'),
-        fechas: {},
-      };
-
-      sorted.forEach((row) => {
-        if (row.fecha_registro_asistencia) {
-          entry.fechas[row.fecha_registro_asistencia] = normalizeSigla(row.sigla);
-        }
+        fechas: entry.fechas,
       });
+    }
 
-      map.set(doc, entry);
-    });
-
-    let result = Array.from(map.values());
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -814,6 +786,16 @@ export default function ConsolidadoPowerBI() {
     }
     return result;
   }, [filteredData, getCapInfo, lastStateMap, search]);
+
+  const totalPages = pageSize === 'Todas' ? 1 : Math.max(1, Math.ceil(pivotRows.length / Number(pageSize)));
+  const currentPage = Math.min(page, totalPages);
+  
+  const paginatedRows = useMemo(() => {
+    if (pageSize === 'Todas') return pivotRows;
+    const size = Number(pageSize) || 50;
+    const start = (currentPage - 1) * size;
+    return pivotRows.slice(start, start + size);
+  }, [pivotRows, currentPage, pageSize]);
 
   const kpis = useMemo(() => {
     const docMap = new Map();
@@ -1148,12 +1130,12 @@ export default function ConsolidadoPowerBI() {
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Buscar por documento o nombre..."
               className="w-full h-7 pl-7 pr-6 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-cyan-500 transition-colors font-medium"
             />
             {search && (
-              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+              <button onClick={() => { setSearch(''); setPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                 <X size={11} />
               </button>
             )}
@@ -1198,7 +1180,7 @@ export default function ConsolidadoPowerBI() {
               </tr>
             </thead>
             <tbody>
-              {pivotRows.map((row) => (
+              {paginatedRows.map((row) => (
                 <tr key={row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 font-bold font-mono text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
                     {row.documento}
@@ -1253,6 +1235,74 @@ export default function ConsolidadoPowerBI() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Toolbar */}
+        <div className="flex flex-wrap items-center justify-between px-3 py-1.5 border-t border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--text-muted)] font-medium">Filas por página:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(e.target.value === 'Todas' ? 'Todas' : Number(e.target.value));
+                setPage(1);
+              }}
+              className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-primary)] outline-none cursor-pointer"
+            >
+              {[25, 50, 100, 250, 'Todas'].map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold ml-1">
+              {pivotRows.length > 0
+                ? `${pageSize === 'Todas' ? 1 : (currentPage - 1) * Number(pageSize) + 1}–${pageSize === 'Todas' ? pivotRows.length : Math.min(currentPage * Number(pageSize), pivotRows.length)} de ${pivotRows.length}`
+                : '0 de 0'}
+            </span>
+          </div>
+
+          {pageSize !== 'Todas' && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(1)}
+                disabled={currentPage <= 1}
+                className="h-6 w-6 rounded flex items-center justify-center bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-primary)]"
+                title="Primera página"
+              >
+                <ChevronsLeft size={12} />
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="h-6 w-6 rounded flex items-center justify-center bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-primary)]"
+                title="Página anterior"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              
+              <span className="text-[10px] font-mono font-bold text-[var(--text-primary)] px-2">
+                Pág. {currentPage} / {totalPages}
+              </span>
+
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="h-6 w-6 rounded flex items-center justify-center bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-primary)]"
+                title="Página siguiente"
+              >
+                <ChevronRight size={12} />
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={currentPage >= totalPages}
+                className="h-6 w-6 rounded flex items-center justify-center bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer text-[var(--text-primary)]"
+                title="Última página"
+              >
+                <ChevronsRight size={12} />
+              </button>
+            </div>
+          )}
         </div>
 
       </div>
