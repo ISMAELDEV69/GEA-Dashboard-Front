@@ -427,7 +427,7 @@ export default function NominaFormPool({
           chunks.map(chunk =>
             supabase
               .from('nominas')
-              .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, motivo_baja, dia_0, dia_1, created_at')
+              .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, dia_0, dia_1, created_at')
               .in('documento', chunk)
               .order('created_at', { ascending: false })
           )

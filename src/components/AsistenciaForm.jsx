@@ -435,7 +435,7 @@ export default function AsistenciaForm({
           let q1 = supabase
             .from('v_nominas_consolidado')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
           if (targetPeriodo) {
             q1 = q1.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
           }
@@ -449,7 +449,7 @@ export default function AsistenciaForm({
           let qNom = supabase
             .from('nominas')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},codigo_grupo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
           if (targetPeriodo) {
             qNom = qNom.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
           }
