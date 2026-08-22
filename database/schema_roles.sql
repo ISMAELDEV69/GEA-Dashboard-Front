@@ -13,30 +13,49 @@ CREATE TABLE IF NOT EXISTS public.config_roles (
 -- Habilitar RLS
 ALTER TABLE public.config_roles ENABLE ROW LEVEL SECURITY;
 
--- Políticas
+-- Función de seguridad centralizada
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'rol') = 'admin'
+    OR EXISTS (
+      SELECT 1 FROM public.perfiles
+      WHERE id = auth.uid() AND rol = 'admin'
+    ),
+    false
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated;
+
+-- Políticas Seguras para config_roles
 DROP POLICY IF EXISTS "Permitir lectura a todos los usuarios autenticados" ON public.config_roles;
 CREATE POLICY "Permitir lectura a todos los usuarios autenticados" 
-ON public.config_roles FOR SELECT TO authenticated USING (true);
+ON public.config_roles FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Permitir insercion a administradores" ON public.config_roles;
 CREATE POLICY "Permitir insercion a administradores" 
 ON public.config_roles FOR INSERT TO authenticated WITH CHECK (
-  (auth.jwt() -> 'user_metadata' ->> 'rol') = 'admin' OR 
-  EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'admin')
+  public.is_admin()
 );
 
 DROP POLICY IF EXISTS "Permitir actualizacion a administradores" ON public.config_roles;
 CREATE POLICY "Permitir actualizacion a administradores" 
 ON public.config_roles FOR UPDATE TO authenticated USING (
-  (auth.jwt() -> 'user_metadata' ->> 'rol') = 'admin' OR 
-  EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'admin')
+  public.is_admin()
+) WITH CHECK (
+  public.is_admin()
 );
 
 DROP POLICY IF EXISTS "Permitir borrado a administradores" ON public.config_roles;
 CREATE POLICY "Permitir borrado a administradores" 
 ON public.config_roles FOR DELETE TO authenticated USING (
-  (auth.jwt() -> 'user_metadata' ->> 'rol') = 'admin' OR 
-  EXISTS (SELECT 1 FROM public.perfiles WHERE id = auth.uid() AND rol = 'admin')
+  public.is_admin()
 );
 
 -- Insertar roles por defecto si no existen
