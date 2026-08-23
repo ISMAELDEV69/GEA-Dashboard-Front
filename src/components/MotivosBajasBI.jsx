@@ -477,7 +477,7 @@ export default function MotivosBajasBI() {
       });
     });
 
-    // 2. Resumir por postulante: start_day y first_baja_day (Exacto a SQL)
+    // 2. Resumir por postulante: start_day, first_baja_day y first_iop_day (Ingreso a Operación)
     const postulanteMap = new Map();
 
     filteredData.forEach((row) => {
@@ -493,12 +493,15 @@ export default function MotivosBajasBI() {
       const diaSesion = sessionNumMap.get(`${gKey}|${fecha}`);
       if (!diaSesion || diaSesion < 1 || diaSesion > 30) return;
 
+      const sigla = String(row.sigla || '').trim().toUpperCase();
       const esBaja = row._isBaja;
+      const esIop = sigla === 'I-OP' || sigla === 'I_OP' || sigla === 'IOP' || sigla.includes('I-OP') || sigla.includes('OPERACION') || sigla.includes('OPERACIÓN');
 
       if (!postulanteMap.has(doc)) {
         postulanteMap.set(doc, {
           start_day: diaSesion,
-          first_baja_day: null
+          first_baja_day: null,
+          first_iop_day: null,
         });
       }
 
@@ -509,24 +512,39 @@ export default function MotivosBajasBI() {
           p.first_baja_day = diaSesion;
         }
       }
+      if (esIop) {
+        if (p.first_iop_day === null || diaSesion < p.first_iop_day) {
+          p.first_iop_day = diaSesion;
+        }
+      }
     });
 
-    // 3. Población inicial de la cohorte (Día 1 / start_day <= 2)
+    // 3. Población inicial de la cohorte (Día 1 / start_day = 1)
     const allPersons = Array.from(postulanteMap.values());
-    const initialPopulation = allPersons.filter(p => p.start_day <= 2).length || allPersons.length || 1;
+    const initialPopulation = allPersons.filter(p => p.start_day === 1).length || allPersons.length || 1;
 
-    // 4. Precalcular los días (hasta día 30) con lógica decreciente
+    // 4. Precalcular los días (hasta día 30) con lógica decreciente y exclusión de I-OP
     const rawDays = [];
     for (let day = 1; day <= 30; day++) {
       let activos = 0;
       let bajas = 0;
+      let graduadosOp = 0;
 
       allPersons.forEach((p) => {
         if (p.start_day <= day) {
-          if (p.first_baja_day === null || p.first_baja_day > day) {
-            activos++;
-          } else if (p.first_baja_day === day) {
+          // Si desertó en un día anterior, sale del embudo
+          if (p.first_baja_day !== null && p.first_baja_day < day) return;
+
+          // Si ya ingresó a operación (I-OP) en este día o antes, ya no está en capacitación
+          if (p.first_iop_day !== null && p.first_iop_day <= day) {
+            if (p.first_iop_day === day) graduadosOp++;
+            return;
+          }
+
+          if (p.first_baja_day === day) {
             bajas++;
+          } else {
+            activos++;
           }
         }
       });
@@ -544,6 +562,7 @@ export default function MotivosBajasBI() {
         diaNum: day,
         activos,
         bajas,
+        graduadosOp,
         total: totalEnProceso,
         retencionAcumulada: parseFloat(pctRetencionAcumulada),
         retencionDiaria: parseFloat(pctSupervivenciaDiaria),
@@ -1024,6 +1043,12 @@ export default function MotivosBajasBI() {
                               <span>Bajas en esta sesión:</span>
                               <span className="font-bold">{d.bajas}</span>
                             </div>
+                            {d.graduadosOp > 0 && (
+                              <div className="flex items-center justify-between gap-3 text-cyan-400 font-mono">
+                                <span>Ingreso a Operación (I-OP):</span>
+                                <span className="font-bold">+{d.graduadosOp}</span>
+                              </div>
+                            )}
                             <div className="pt-1 border-t border-[var(--border-subtle)] space-y-0.5">
                               <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
                                 <span>Retención Acumulada (vs Día 1):</span>
