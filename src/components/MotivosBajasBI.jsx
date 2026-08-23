@@ -670,8 +670,8 @@ export default function MotivosBajasBI() {
           </div>
 
           {/* Chart Container */}
-          <div className="flex-1 min-h-0 pt-1.5 relative">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="flex-1 min-h-0 pt-1.5 relative overflow-hidden">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart
                 data={rankingMotivosData}
                 layout="vertical"
@@ -760,75 +760,77 @@ export default function MotivosBajasBI() {
           </div>
 
           {/* Chart Container */}
-          <div className="flex-1 min-h-0 pt-1.5 relative overflow-y-auto custom-scrollbar">
+          <div className={`flex-1 min-h-0 pt-1.5 relative ${formadorViewAll ? 'overflow-y-auto custom-scrollbar pr-1' : 'overflow-hidden'}`}>
             {displayedFormadores.length === 0 ? (
               <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
                 No hay datos de formadores para los filtros seleccionados.
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={formadorViewAll ? Math.max(displayedFormadores.length * 28, 200) : '100%'}>
-                <BarChart
-                  data={displayedFormadores}
-                  layout="vertical"
-                  margin={{ top: 5, right: 55, left: 10, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
-                  <XAxis type="number" domain={[0, 100]} hide />
-                  <YAxis
-                    dataKey="formador"
-                    type="category"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
-                    width={140}
-                  />
-                  <RechartsTooltip
-                    cursor={{ fill: 'rgba(6, 182, 212, 0.08)' }}
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const d = payload[0].payload;
-                        return (
-                          <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
-                            <p className="font-black text-[var(--text-primary)]">{d.formador}</p>
-                            <div className="flex items-center justify-between gap-3 text-xs">
-                              <span className="text-[var(--text-muted)]">% Deserción:</span>
-                              <span className={`font-mono font-black ${d.isAlert ? 'text-rose-500' : 'text-emerald-400'}`}>
-                                {d.pctDesercion}%
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
-                              <span>Bajas / Total Asignados:</span>
-                              <span className="font-mono font-bold text-[var(--text-primary)]">
-                                {d.totalBajas} de {d.totalAsignados} postulantes
-                              </span>
-                            </div>
-                            {d.isAlert && (
-                              <div className="text-[9px] font-black text-rose-500 uppercase pt-0.5 border-t border-[var(--border-subtle)]">
-                                ⚠️ Supera umbral crítico (&gt;30%)
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                    {displayedFormadores.map((entry, index) => (
-                      <Cell
-                        key={`cell-form-${index}`}
-                        fill={entry.isAlert ? '#F43F5E' : '#10B981'}
-                      />
-                    ))}
-                    <LabelList
-                      dataKey="pctDesercion"
-                      position="right"
-                      formatter={(val, entry) => `${val}% (${entry?.totalBajas || 0}/${entry?.totalAsignados || 0})`}
-                      style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
+              <div style={{ height: formadorViewAll ? `${Math.max(displayedFormadores.length * 28, 220)}px` : '100%', width: '100%' }}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <BarChart
+                    data={displayedFormadores}
+                    layout="vertical"
+                    margin={{ top: 5, right: 55, left: 10, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
+                    <XAxis type="number" domain={[0, 100]} hide />
+                    <YAxis
+                      dataKey="formador"
+                      type="category"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
+                      width={140}
                     />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                    <RechartsTooltip
+                      cursor={{ fill: 'rgba(6, 182, 212, 0.08)' }}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const d = payload[0].payload;
+                          return (
+                            <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
+                              <p className="font-black text-[var(--text-primary)]">{d.formador}</p>
+                              <div className="flex items-center justify-between gap-3 text-xs">
+                                <span className="text-[var(--text-muted)]">% Deserción:</span>
+                                <span className={`font-mono font-black ${d.isAlert ? 'text-rose-500' : 'text-emerald-400'}`}>
+                                  {d.pctDesercion}%
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
+                                <span>Bajas / Total Asignados:</span>
+                                <span className="font-mono font-bold text-[var(--text-primary)]">
+                                  {d.totalBajas} de {d.totalAsignados} postulantes
+                                </span>
+                              </div>
+                              {d.isAlert && (
+                                <div className="text-[9px] font-black text-rose-500 uppercase pt-0.5 border-t border-[var(--border-subtle)]">
+                                  ⚠️ Supera umbral crítico (&gt;30%)
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                      {displayedFormadores.map((entry, index) => (
+                        <Cell
+                          key={`cell-form-${index}`}
+                          fill={entry.isAlert ? '#F43F5E' : '#10B981'}
+                        />
+                      ))}
+                      <LabelList
+                        dataKey="pctDesercion"
+                        position="right"
+                        formatter={(val, entry) => `${val}% (${entry?.totalBajas || 0}/${entry?.totalAsignados || 0})`}
+                        style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </div>
         </div>
@@ -858,13 +860,13 @@ export default function MotivosBajasBI() {
           </div>
 
           {/* Chart Container */}
-          <div className="flex-1 min-h-0 pt-1.5 relative">
+          <div className="flex-1 min-h-0 pt-1.5 relative overflow-hidden">
             {embudoData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
                 No hay registros con fecha de inicio para calcular días de capacitación.
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart
                   data={embudoData}
                   margin={{ top: 10, right: 15, left: -20, bottom: 5 }}
