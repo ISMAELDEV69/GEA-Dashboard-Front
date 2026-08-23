@@ -1,215 +1,552 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
-  ResponsiveContainer, Cell, LabelList
+  ResponsiveContainer, Cell, LabelList, Legend
 } from 'recharts'
-import { Filter, AlertCircle, RefreshCw, Loader2, Sparkles, TrendingDown, Layers } from 'lucide-react'
-import { fetchGrupos, fetchAllAsistenciasBajas, fetchPostulantes } from '../lib/dataService'
+import { 
+  AlertCircle, 
+  Loader2, 
+  Sparkles, 
+  TrendingDown, 
+  Layers, 
+  Users, 
+  UserX, 
+  BarChart3, 
+  Grid, 
+  Filter, 
+  RefreshCw, 
+  Trophy, 
+  Flame, 
+  CalendarDays,
+  CheckCircle2
+} from 'lucide-react'
+import { fetchMotivosBajasData, invalidateCache } from '../lib/dataService'
 
-const COLORS = {
-  bars: 'var(--accent)',
-  barsLight: 'var(--accent-hover)',
-  text: 'var(--text-primary)',
-  bg: 'var(--bg-elevated)'
+function normalizeText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  return String(value).trim();
 }
 
-// In-memory cache to make tab switching instant
-let cachedMotivosBajas = null
+function normalizeCampana(value) {
+  return normalizeText(value, 'Sin campaña').toUpperCase();
+}
 
-export default function MotivosBajasBI({ grupos: propGrupos = [], postulantes: propPostulantes = [] }) {
-  const [data, setData] = useState(cachedMotivosBajas || [])
-  const [loading, setLoading] = useState(!cachedMotivosBajas)
-  const [error, setError] = useState(null)
+function normalizeGpe(value) {
+  const text = normalizeText(value, 'Sin GPE');
+  if (text.startsWith('PROY-')) return 'EN PROYECCIÓN';
+  const m = text.match(/^(GP[A-Z0-9]+-[0-9A-Z]+(?:-[0-9A-Z]+)?)/i);
+  if (m) return m[1].toUpperCase();
+  return text.replace(/_\d+$/, '');
+}
+
+function normalizeSegmento(value) {
+  return normalizeText(value, 'Sin segmento').toUpperCase();
+}
+
+function normalizeSemana(label, trabajo, archivo) {
+  if (label && String(label).trim()) {
+    const s = String(label).trim().toUpperCase();
+    return s.startsWith('SEM') ? s : `SEM ${s}`;
+  }
+  if (trabajo !== null && trabajo !== undefined && String(trabajo).trim()) {
+    const num = String(trabajo).replace(/\D/g, '');
+    return num ? `SEM ${num}` : String(trabajo).trim().toUpperCase();
+  }
+  if (archivo && String(archivo).trim().toUpperCase().startsWith('SEM')) {
+    const s = String(archivo).trim().toUpperCase();
+    const num = s.replace(/\D/g, '');
+    return num ? `SEM ${num}` : s;
+  }
+  return '';
+}
+
+function parseLocalDate(value) {
+  if (!value) return null;
+  const str = String(value).trim();
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      const year = parseInt(parts[2], 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  } else if (str.includes('-')) {
+    const parts = str.substring(0, 10).split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      const day = parseInt(parts[2], 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  }
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* ── Mini Sparkline for Trend in Header ── */
+function SparklineTrend({ data = [], color = '#F43F5E' }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data.map(d => d.value), 1);
+  const min = Math.min(...data.map(d => d.value), 0);
+  const range = max - min || 1;
+  const width = 120;
+  const height = 24;
+  const padding = 3;
+
+  const points = data.map((d, i) => {
+    const x = padding + (i / Math.max(data.length - 1, 1)) * (width - padding * 2);
+    const y = height - padding - ((d.value - min) / range) * (height - padding * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-0.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
+      <div className="flex flex-col">
+        <span className="text-[7.5px] font-black uppercase tracking-wider text-[var(--text-muted)] leading-tight">
+          Tendencia Periodos
+        </span>
+        <span className="text-[10px] font-mono font-bold text-rose-500 leading-tight">
+          {data[data.length - 1]?.value || 0} en {data[data.length - 1]?.period || '—'}
+        </span>
+      </div>
+      <svg width={width} height={height} className="overflow-visible">
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+        />
+        {data.map((d, i) => {
+          const x = padding + (i / Math.max(data.length - 1, 1)) * (width - padding * 2);
+          const y = height - padding - ((d.value - min) / range) * (height - padding * 2);
+          return (
+            <circle
+              key={d.period || i}
+              cx={x}
+              cy={y}
+              r="2"
+              fill={color}
+              className="transition-transform hover:scale-150"
+            />
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+export default function MotivosBajasBI() {
+  const [data, setData] = useState({ consolidado: [], capacidades: [], nominas: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // Top Bar Filters
-  const [selectedSegmento, setSelectedSegmento] = useState('TODAS')
-  const [selectedCampana, setSelectedCampana] = useState('TODAS')
-  const [selectedGrupo, setSelectedGrupo] = useState('TODAS')
-  const [selectedPeriodo, setSelectedPeriodo] = useState('TODAS')
-  const [selectedSemana, setSelectedSemana] = useState('TODAS')
+  const [selectedSegmento, setSelectedSegmento] = useState('TODAS');
+  const [selectedCampana, setSelectedCampana] = useState('TODAS');
+  const [selectedGrupo, setSelectedGrupo] = useState('TODAS');
+  const [selectedPeriodo, setSelectedPeriodo] = useState('TODAS');
+  const [selectedSemana, setSelectedSemana] = useState('TODAS');
+
+  // Toggle View Controls for High Density Panels
+  const [formadorViewAll, setFormadorViewAll] = useState(false);
+  const [heatmapViewAll, setHeatmapViewAll] = useState(false);
 
   const loadData = useCallback(async (force = false) => {
-    if (!force && cachedMotivosBajas && cachedMotivosBajas.length > 0) {
-      setData(cachedMotivosBajas)
-      setLoading(false)
-      return
+    if (force) {
+      invalidateCache('all_motivos_bajas');
+      invalidateCache('all_consolidado');
     }
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const gruposPromise = (propGrupos && propGrupos.length > 0) ? Promise.resolve(propGrupos) : fetchGrupos()
-      const postulantesPromise = (propPostulantes && propPostulantes.length > 0) ? Promise.resolve(propPostulantes) : fetchPostulantes()
-      
-      const [grupos, asistenciasBajas, postulantes] = await Promise.all([
-        gruposPromise,
-        fetchAllAsistenciasBajas(),
-        postulantesPromise
-      ])
-
-      // Create a map for fast lookup of group info (periodo)
-      const groupMap = new Map()
-      grupos.forEach(g => {
-        groupMap.set(`${g.codigo}-${g.campana}`, g)
-      })
-
-      const postulantesMap = new Map()
-      postulantes.forEach(p => {
-        postulantesMap.set(p.documento, p)
-      })
-
-      // Deduplicate by person (documento) so we don't count the same person multiple times
-      const uniqueBajasMap = new Map()
-      asistenciasBajas.forEach(a => {
-        const p = postulantesMap.get(a.documento)
-        // Considerar si la persona existe en nómina y no es "BAJA DIA 1"
-        if (a.motivo_baja !== 'BAJA DIA 1' && p) {
-          uniqueBajasMap.set(a.documento, a)
-        }
-      })
-
-      // Map over unique asistencias to build the final bajas array
-      const bajas = Array.from(uniqueBajasMap.values()).map(a => {
-        const groupInfo = groupMap.get(`${a.codigo_grupo}-${a.campana}`)
-        
-        return {
-          documento: a.documento,
-          motivo_baja: a.motivo_baja || 'SIN MOTIVO',
-          fecha_baja: a.fecha_registro_asistencia,
-          campana: a.campana || 'SIN CAMPAÑA',
-          periodo_ingreso: groupInfo?.periodo || 'SIN PERIODO',
-          semana: groupInfo?.semana_label || (groupInfo?.semana_trabajo ? `SEM ${groupInfo.semana_trabajo}` : 'SIN SEMANA'),
-          grupo_cap: a.grupo || a.codigo_grupo || 'SIN GRUPO',
-          segmento: groupInfo?.segmento || 'SIN SEGMENTO'
-        }
-      })
-
-      cachedMotivosBajas = bajas
-      setData(bajas)
+      const res = await fetchMotivosBajasData();
+      setData({
+        consolidado: res?.consolidado || [],
+        capacidades: res?.capacidades || [],
+        nominas: res?.nominas || []
+      });
     } catch (err) {
-      console.error(err)
-      setError(err?.message || 'Error al cargar los datos de motivos de bajas.')
+      console.error('Error cargando motivos de bajas:', err);
+      setError(err?.message || 'Error al cargar los datos de motivos de bajas.');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [propGrupos, propPostulantes])
+  }, []);
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    loadData();
+  }, [loadData]);
 
-  // Derived Filter Lists (Hierarchical Cross-filtering)
-  const segmentos = useMemo(() => ['TODAS', ...new Set(data.map(d => d.segmento).filter(Boolean))], [data])
-  
-  const campanas = useMemo(() => {
-    const filtered = data.filter(d => selectedSegmento === 'TODAS' || d.segmento === selectedSegmento)
-    return ['TODAS', ...new Set(filtered.map(d => d.campana || d.campaign).filter(Boolean))]
-  }, [data, selectedSegmento])
+  // ── 1. Indexar capacidades y nóminas en O(1) ──
+  const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
+    const byKey = new Map();
+    const byCode = new Map();
+    const allItems = [];
 
-  const grupos = useMemo(() => {
-    const filtered = data.filter(d => 
-      (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
-      (selectedCampana === 'TODAS' || (d.campana || d.campaign) === selectedCampana)
-    )
-    return ['TODAS', ...new Set(filtered.map(d => d.grupo_cap).filter(Boolean))]
-  }, [data, selectedSegmento, selectedCampana])
+    (data.capacidades || []).forEach((item) => {
+      const campana = normalizeCampana(item.campana);
+      const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
+      const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
 
-  const periodos = useMemo(() => {
-    const filtered = data.filter(d => 
-      (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
-      (selectedCampana === 'TODAS' || (d.campana || d.campaign) === selectedCampana) &&
-      (selectedGrupo === 'TODAS' || d.grupo_cap === selectedGrupo)
-    )
-    return ['TODAS', ...new Set(filtered.map(d => d.periodo_ingreso).filter(Boolean))].sort()
-  }, [data, selectedSegmento, selectedCampana, selectedGrupo])
+      const capInfo = {
+        codigo: gpe,
+        campana: campana,
+        meta_dia_1: Number(item.meta_dia_1) || 0,
+        rq_solicitado: Number(item.rq_solicitado) || 0,
+        fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
+        periodo: normalizeText(item.periodo),
+        semana: semanaStr,
+        segmento: normalizeSegmento(item.segmento),
+      };
 
-  const semanas = useMemo(() => {
-    const filtered = data.filter(d => 
-      (selectedSegmento === 'TODAS' || d.segmento === selectedSegmento) && 
-      (selectedCampana === 'TODAS' || (d.campana || d.campaign) === selectedCampana) &&
-      (selectedGrupo === 'TODAS' || d.grupo_cap === selectedGrupo) &&
-      (selectedPeriodo === 'TODAS' || d.periodo_ingreso === selectedPeriodo)
-    )
-    const sems = filtered.map(d => d.semana).filter(Boolean)
-    return ['TODAS', ...new Set(sems)].sort()
-  }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo])
+      if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
+      if (gpe) byCode.set(gpe, capInfo);
+      allItems.push(capInfo);
+    });
 
-  // Apply filters
+    return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
+  }, [data.capacidades]);
+
+  const nominasMap = useMemo(() => {
+    const map = new Map();
+    (data.nominas || []).forEach(n => {
+      if (n.documento) {
+        map.set(normalizeText(n.documento), n);
+      }
+    });
+    return map;
+  }, [data.nominas]);
+
+  const getCapInfo = useCallback((campana, gpe) => {
+    const normCampana = normalizeCampana(campana);
+    const normGpe = normalizeGpe(gpe);
+    return capacidadByKeyMap.get(`${normCampana}|${normGpe}`) || capacidadByCodigoMap.get(normGpe) || null;
+  }, [capacidadByKeyMap, capacidadByCodigoMap]);
+
+  // ── 2. Enriquecer datos de asistencia en un solo pase O(N) ──
+  const enrichedConsolidado = useMemo(() => {
+    const list = data.consolidado || [];
+    const result = new Array(list.length);
+
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      const doc = normalizeText(row.documento);
+      const campana = normalizeCampana(row.campana);
+      const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
+      const cap = getCapInfo(campana, gpe);
+      const nomina = nominasMap.get(doc);
+
+      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
+      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
+      const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
+
+      const sigla = normalizeText(row.sigla).toUpperCase();
+      const txtMotivo = normalizeText(row.motivo_baja);
+      const isBaja = sigla === 'B' || (txtMotivo !== '' && txtMotivo.toUpperCase() !== 'NULL');
+      const motivoClean = isBaja ? (txtMotivo || 'BAJA SIN ESPECIFICAR').toUpperCase() : '';
+
+      // Cálculo de día relativo para el embudo (Día 1 -> Día N)
+      let diaRelativo = null;
+      if (row.fecha_registro_asistencia && nomina?.fecha_inicio_capacitacion) {
+        const dAsis = parseLocalDate(row.fecha_registro_asistencia);
+        const dIni = parseLocalDate(nomina.fecha_inicio_capacitacion);
+        if (dAsis && dIni) {
+          const diffDays = Math.round((dAsis.getTime() - dIni.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays >= 0 && diffDays <= 30) {
+            diaRelativo = diffDays + 1;
+          }
+        }
+      }
+
+      result[i] = {
+        ...row,
+        _doc: doc,
+        _campana: campana,
+        _gpe: gpe,
+        _periodo: rowPeriodo,
+        _semana: rowSemana,
+        _segmento: rowSegmento,
+        _formador: normalizeText(row.nombre_formador || row.formador, 'SIN FORMADOR').toUpperCase(),
+        _sigla: sigla,
+        _isBaja: isBaja,
+        _motivo: motivoClean,
+        _diaRelativo: diaRelativo,
+      };
+    }
+    return result;
+  }, [data.consolidado, getCapInfo, nominasMap]);
+
+  // ── 3. Listas de Filtros en Cascada O(N) ──
+  const filterOptions = useMemo(() => {
+    const matchSegmento = (seg) => selectedSegmento === 'TODAS' || String(seg || '').toUpperCase() === selectedSegmento;
+    const matchCampana = (c) => selectedCampana === 'TODAS' || String(c || '').toUpperCase() === selectedCampana;
+    const matchGrupo = (g) => selectedGrupo === 'TODAS' || String(g || '').toUpperCase() === selectedGrupo;
+    const matchPeriodo = (p) => selectedPeriodo === 'TODAS' || String(p || '').toUpperCase() === selectedPeriodo;
+
+    const segmentos = new Set();
+    const campanas = new Set();
+    const grupos = new Set();
+    const periodos = new Set();
+    const semanas = new Set();
+
+    for (let i = 0; i < enrichedConsolidado.length; i++) {
+      const r = enrichedConsolidado[i];
+      if (r._segmento && r._segmento !== 'SIN SEGMENTO') segmentos.add(r._segmento);
+      
+      if (matchSegmento(r._segmento)) {
+        if (r._campana && r._campana !== 'SIN CAMPAÑA') campanas.add(r._campana);
+        
+        if (matchCampana(r._campana)) {
+          if (r._gpe && r._gpe !== 'SIN GPE') grupos.add(r._gpe);
+          
+          if (matchGrupo(r._gpe)) {
+            if (r._periodo && r._periodo !== 'SIN PERIODO') periodos.add(r._periodo);
+            
+            if (matchPeriodo(r._periodo)) {
+              if (r._semana && r._semana !== 'SIN SEMANA') semanas.add(r._semana);
+            }
+          }
+        }
+      }
+    }
+
+    const sortAlpha = (set) => ['TODAS', ...Array.from(set).sort((a, b) => String(a).localeCompare(String(b), 'es'))];
+    const sortedSemanas = Array.from(semanas).sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
+      const numB = parseInt(String(b).replace(/\D/g, '')) || 0;
+      return numA - numB;
+    });
+
+    return {
+      segmentos: sortAlpha(segmentos),
+      campanas: sortAlpha(campanas),
+      grupos: sortAlpha(grupos),
+      periodos: ['TODAS', ...Array.from(periodos).sort().reverse()],
+      semanas: ['TODAS', ...sortedSemanas],
+    };
+  }, [enrichedConsolidado, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo]);
+
+  // ── 4. Filtrar dataset activo en un solo pase O(N) ──
   const filteredData = useMemo(() => {
-    return data.filter(d => {
-      if (selectedSegmento !== 'TODAS' && d.segmento !== selectedSegmento) return false
-      if (selectedCampana !== 'TODAS' && (d.campana || d.campaign) !== selectedCampana) return false
-      if (selectedGrupo !== 'TODAS' && d.grupo_cap !== selectedGrupo) return false
-      if (selectedPeriodo !== 'TODAS' && d.periodo_ingreso !== selectedPeriodo) return false
-      if (selectedSemana !== 'TODAS' && d.semana !== selectedSemana) return false
-      return true
-    })
-  }, [data, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana])
+    return enrichedConsolidado.filter((row) => {
+      if (selectedSegmento !== 'TODAS' && row._segmento !== selectedSegmento) return false;
+      if (selectedCampana !== 'TODAS' && row._campana !== selectedCampana) return false;
+      if (selectedGrupo !== 'TODAS' && row._gpe !== selectedGrupo) return false;
+      if (selectedPeriodo !== 'TODAS' && row._periodo !== selectedPeriodo) return false;
+      if (selectedSemana !== 'TODAS' && row._semana !== selectedSemana) return false;
+      return true;
+    });
+  }, [enrichedConsolidado, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana]);
 
-  // 1. Bajas por periodo
-  const byPeriod = useMemo(() => {
-    const counts = {}
-    filteredData.forEach(d => {
-      const period = d.periodo_ingreso || 'SIN PERIODO'
-      counts[period] = (counts[period] || 0) + 1
-    })
-    return Object.entries(counts)
+  // Deduplicar bajas únicas por persona para los indicadores y rankings
+  const { uniqueBajas, totalBajasCount, byPeriodTrend } = useMemo(() => {
+    const docBajaMap = new Map();
+    const periodCounts = {};
+
+    filteredData.forEach((row) => {
+      if (row._isBaja && row._doc) {
+        if (!docBajaMap.has(row._doc)) {
+          docBajaMap.set(row._doc, row);
+          const p = row._periodo || 'SIN PERIODO';
+          periodCounts[p] = (periodCounts[p] || 0) + 1;
+        }
+      }
+    });
+
+    const bajasList = Array.from(docBajaMap.values());
+    const trend = Object.entries(periodCounts)
       .map(([period, value]) => ({ period, value }))
-      .sort((a, b) => b.period.localeCompare(a.period))
-  }, [filteredData])
+      .sort((a, b) => a.period.localeCompare(b.period));
 
-  // 2. Ranking de Motivos
-  const byMotivo = useMemo(() => {
-    const counts = {}
-    filteredData.forEach(d => {
-      const m = (d.motivo_baja || 'SIN MOTIVO').toUpperCase()
-      counts[m] = (counts[m] || 0) + 1
-    })
-    return Object.entries(counts)
-      .map(([motivo, value]) => ({ motivo, value }))
-      .sort((a, b) => b.value - a.value)
-  }, [filteredData])
+    return {
+      uniqueBajas: bajasList,
+      totalBajasCount: bajasList.length,
+      byPeriodTrend: trend
+    };
+  }, [filteredData]);
 
-  // 3. Matriz Cruzada (Campaña vs Motivo)
-  const matrixData = useMemo(() => {
-    const rowCounts = {}
-    const colTotals = {}
-    let grandTotal = 0
+  // ── 5. GRÁFICO 1: Ranking de Motivos de Deserción con Badges Top 3 ──
+  const rankingMotivosData = useMemo(() => {
+    const counts = {};
+    uniqueBajas.forEach((b) => {
+      const m = b._motivo || 'SIN MOTIVO ESPECÍFICO';
+      counts[m] = (counts[m] || 0) + 1;
+    });
 
-    filteredData.forEach(d => {
-      const c = ((d.campana || d.campaign) || 'SIN CAMPAÑA').toUpperCase()
-      const m = (d.motivo_baja || 'SIN MOTIVO').toUpperCase()
-      
-      if (!rowCounts[c]) rowCounts[c] = { total: 0, motivos: {} }
-      rowCounts[c].motivos[m] = (rowCounts[c].motivos[m] || 0) + 1
-      rowCounts[c].total++
-      
-      colTotals[m] = (colTotals[m] || 0) + 1
-      grandTotal++
-    })
+    const total = uniqueBajas.length || 1;
+    const sorted = Object.entries(counts)
+      .map(([motivo, value]) => ({
+        motivo,
+        value,
+        pct: ((value / total) * 100).toFixed(1)
+      }))
+      .sort((a, b) => b.value - a.value);
 
-    const topMotivos = byMotivo.map(m => m.motivo).slice(0, 15)
-    const rows = Object.keys(rowCounts).sort().map(c => {
-      const row = { campana: c, total: rowCounts[c].total }
-      topMotivos.forEach(m => {
-        row[m] = rowCounts[c].motivos[m] || 0
+    return sorted.slice(0, 10);
+  }, [uniqueBajas]);
+
+  const top3Motivos = useMemo(() => {
+    return rankingMotivosData.slice(0, 3);
+  }, [rankingMotivosData]);
+
+  // ── 6. GRÁFICO 2: Deserción por Formador (% y Conteo + Alerta >30%) ──
+  const formadoresData = useMemo(() => {
+    const formMap = new Map();
+
+    filteredData.forEach((row) => {
+      const fName = row._formador;
+      if (!fName || fName === 'SIN FORMADOR') return;
+
+      if (!formMap.has(fName)) {
+        formMap.set(fName, { formador: fName, docs: new Set(), bajas: new Set() });
+      }
+      const entry = formMap.get(fName);
+      if (row._doc) {
+        entry.docs.add(row._doc);
+        if (row._isBaja) {
+          entry.bajas.add(row._doc);
+        }
+      }
+    });
+
+    const list = [];
+    for (const [formador, entry] of formMap.entries()) {
+      const totalAsignados = entry.docs.size;
+      const totalBajas = entry.bajas.size;
+      const pctDesercion = totalAsignados > 0 ? Math.round((totalBajas / totalAsignados) * 100) : 0;
+
+      list.push({
+        formador,
+        totalAsignados,
+        totalBajas,
+        pctDesercion,
+        isAlert: pctDesercion > 30, // Umbral >30%
+      });
+    }
+
+    // Ordenar de mayor a menor % de deserción
+    list.sort((a, b) => b.pctDesercion - a.pctDesercion || b.totalBajas - a.totalBajas);
+    return list;
+  }, [filteredData]);
+
+  const displayedFormadores = useMemo(() => {
+    if (formadorViewAll) return formadoresData;
+    return formadoresData.slice(0, 8);
+  }, [formadoresData, formadorViewAll]);
+
+  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) ──
+  const embudoData = useMemo(() => {
+    const dayMap = new Map();
+
+    filteredData.forEach((row) => {
+      let dRel = row._diaRelativo;
+      if (!dRel || dRel < 1 || dRel > 15) return;
+
+      if (!dayMap.has(dRel)) {
+        dayMap.set(dRel, { dia: `Día ${dRel}`, diaNum: dRel, activosSet: new Set(), bajasSet: new Set() });
+      }
+      const entry = dayMap.get(dRel);
+      if (row._doc) {
+        if (row._isBaja) {
+          entry.bajasSet.add(row._doc);
+        } else {
+          entry.activosSet.add(row._doc);
+        }
+      }
+    });
+
+    const result = Array.from(dayMap.values())
+      .map(entry => {
+        const activos = entry.activosSet.size;
+        const bajas = entry.bajasSet.size;
+        const total = activos + bajas;
+        const retencion = total > 0 ? Math.round((activos / total) * 100) : 100;
+        return {
+          dia: entry.dia,
+          diaNum: entry.diaNum,
+          activos,
+          bajas,
+          total,
+          retencion
+        };
       })
-      return row
-    })
+      .sort((a, b) => a.diaNum - b.diaNum);
 
-    return { rows, topMotivos, grandTotal, colTotals }
-  }, [filteredData, byMotivo])
+    return result;
+  }, [filteredData]);
+
+  // ── 8. GRÁFICO 4: Heatmap Campaña vs Motivo ──
+  const heatmapData = useMemo(() => {
+    const rowCounts = {};
+    const colTotals = {};
+    let maxVal = 1;
+
+    uniqueBajas.forEach((b) => {
+      const c = b._campana || 'SIN CAMPAÑA';
+      const m = b._motivo || 'SIN MOTIVO';
+
+      if (!rowCounts[c]) rowCounts[c] = { campana: c, total: 0, motivos: {} };
+      rowCounts[c].motivos[m] = (rowCounts[c].motivos[m] || 0) + 1;
+      rowCounts[c].total++;
+
+      if (rowCounts[c].motivos[m] > maxVal) maxVal = rowCounts[c].motivos[m];
+      colTotals[m] = (colTotals[m] || 0) + 1;
+    });
+
+    const topMotivos = rankingMotivosData.slice(0, 8).map(m => m.motivo);
+    const allCampaignsSorted = Object.values(rowCounts).sort((a, b) => b.total - a.total);
+
+    let displayRows = [];
+    if (heatmapViewAll || allCampaignsSorted.length <= 10) {
+      displayRows = allCampaignsSorted;
+    } else {
+      const top10 = allCampaignsSorted.slice(0, 10);
+      const rest = allCampaignsSorted.slice(10);
+      
+      const otherRow = {
+        campana: `Otras (${rest.length} campañas)`,
+        total: 0,
+        motivos: {},
+        isOthers: true
+      };
+
+      rest.forEach(r => {
+        otherRow.total += r.total;
+        topMotivos.forEach(m => {
+          otherRow.motivos[m] = (otherRow.motivos[m] || 0) + (r.motivos[m] || 0);
+          if (otherRow.motivos[m] > maxVal) maxVal = otherRow.motivos[m];
+        });
+      });
+
+      displayRows = [...top10, otherRow];
+    }
+
+    return {
+      rows: displayRows,
+      topMotivos,
+      maxVal,
+      totalCampaigns: allCampaignsSorted.length
+    };
+  }, [uniqueBajas, rankingMotivosData, heatmapViewAll]);
 
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 size={32} className="animate-spin text-cyan-400" />
+          <Loader2 size={32} className="animate-spin text-rose-500" />
           <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Cargando Análisis de Bajas...
           </p>
         </div>
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -219,39 +556,53 @@ export default function MotivosBajasBI({ grupos: propGrupos = [], postulantes: p
           <AlertCircle size={28} className="text-rose-500 mx-auto" />
           <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
           <p className="text-xs text-[var(--text-muted)]">{error}</p>
-          <button onClick={loadData} className="px-4 py-2 rounded-xl bg-cyan-500 text-white text-xs font-bold hover:bg-cyan-600 transition-all cursor-pointer">
+          <button onClick={() => loadData(true)} className="px-4 py-2 rounded-xl bg-rose-500 text-white text-xs font-bold hover:bg-rose-600 transition-all cursor-pointer">
             Reintentar
           </button>
         </div>
       </div>
-    )
+    );
   }
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
       
-      {/* ── 1. COMPACT HERO HEADER + FILTERS IN 1 ROW (Height ~38px) ── */}
+      {/* ── 1. COMPACT HERO KPI HEADER (Height ~42px, Fijo) ── */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
         
-        {/* Title + Total Badge */}
+        {/* Title + Total Badge + Micro Sparkline */}
         <div className="flex items-center gap-2.5">
           <div className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_#F43F5E] animate-pulse" />
           <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
-            Análisis de Bajas <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· motivos & deserción</span>
+            Motivos de Bajas <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· bi deserción</span>
           </h2>
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-500 border border-rose-500/30">
-            Total: {filteredData.length} bajas
-          </span>
+          
+          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-rose-500/10 text-rose-500 border border-rose-500/25">
+            <UserX size={12} />
+            <span className="text-xs font-black font-mono">
+              {totalBajasCount}
+            </span>
+            <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">
+              Bajas Totales
+            </span>
+          </div>
+
+          {/* Sparkline integrado de tendencia por periodo */}
+          {byPeriodTrend.length > 1 && (
+            <div className="hidden xl:block">
+              <SparklineTrend data={byPeriodTrend} color="#F43F5E" />
+            </div>
+          )}
         </div>
 
         {/* Inline Compact Filter Badges */}
         <div className="flex flex-wrap items-center gap-1.5">
           {[
-            { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: segmentos },
-            { label: 'Campaña', val: selectedCampana, set: (v) => { setSelectedCampana(v); setSelectedGrupo('TODAS'); }, opts: campanas },
-            { label: 'Grupo', val: selectedGrupo, set: setSelectedGrupo, opts: grupos },
-            { label: 'Periodo', val: selectedPeriodo, set: (v) => { setSelectedPeriodo(v); setSelectedSemana('TODAS'); }, opts: periodos },
-            { label: 'Semana', val: selectedSemana, set: setSelectedSemana, opts: semanas },
+            { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: filterOptions.segmentos },
+            { label: 'Campaña', val: selectedCampana, set: (v) => { setSelectedCampana(v); setSelectedGrupo('TODAS'); }, opts: filterOptions.campanas },
+            { label: 'Grupo', val: selectedGrupo, set: setSelectedGrupo, opts: filterOptions.grupos },
+            { label: 'Periodo', val: selectedPeriodo, set: (v) => { setSelectedPeriodo(v); setSelectedSemana('TODAS'); }, opts: filterOptions.periodos },
+            { label: 'Semana', val: selectedSemana, set: setSelectedSemana, opts: filterOptions.semanas },
           ].map(({ label, val, set, opts }) => (
             <div key={label} className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-normal)] rounded-lg px-2 py-1">
               <span className="text-[8px] font-black uppercase tracking-wider text-[var(--text-muted)]">
@@ -260,7 +611,7 @@ export default function MotivosBajasBI({ grupos: propGrupos = [], postulantes: p
               <select
                 value={val}
                 onChange={(e) => set(e.target.value)}
-                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[110px] truncate"
+                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[105px] truncate"
               >
                 {opts.map((opt) => (
                   <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
@@ -270,171 +621,419 @@ export default function MotivosBajasBI({ grupos: propGrupos = [], postulantes: p
               </select>
             </div>
           ))}
+
+          <button
+            onClick={() => loadData(true)}
+            className="h-7 w-7 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] hover:border-rose-500/40 text-[var(--text-muted)] hover:text-rose-500 flex items-center justify-center transition-colors cursor-pointer"
+            title="Refrescar datos de Supabase"
+          >
+            <RefreshCw size={12} />
+          </button>
         </div>
       </div>
 
-      {/* ── 2. FLUID RESPONSIVE CHARTS ROW (Auto-scales on Large Monitors) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-2 min-h-[175px] h-[190px] lg:h-[230px] 2xl:h-[280px] shrink-0">
+      {/* ── 2. GRID 2X2 CON ALTURA FIJA BALANCEADA (Dashboard BI sin Scroll) ── */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-2 overflow-y-auto lg:overflow-hidden">
         
-        {/* Chart 1: Bajas por Periodo */}
-        <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
-          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
-            <span>Bajas por Periodo</span>
-            <Layers size={12} className="text-cyan-400" />
-          </div>
-          <div className="flex-1 min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byPeriod} layout="vertical" margin={{ top: 5, right: 30, left: 35, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.3} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="period" type="category" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10, fontWeight: 700}} width={48} />
-                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
-                <Bar dataKey="value" fill="#06B6D4" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                  <LabelList dataKey="value" position="right" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        {/* ── CUADRANTE 1: RANKING DE MOTIVOS CON PODIO TOP 3 INTEGRADO ── */}
+        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
+          
+          {/* Card Header + Top 3 Podio Pills */}
+          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
+            <div className="flex items-center gap-1.5">
+              <TrendingDown size={13} className="text-rose-500" />
+              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
+                Ranking de Motivos de Deserción
+              </span>
+            </div>
 
-        {/* Chart 2: Ranking de Motivos (2 columns) */}
-        <div className="md:col-span-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col min-w-0 shadow-xs">
-          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-1 flex items-center justify-between">
-            <span>Ranking de Motivos de Deserción</span>
-            <TrendingDown size={12} className="text-rose-500" />
-          </div>
-          <div className="flex-1 min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byMotivo.slice(0, 10)} margin={{ top: 10, right: 15, left: -20, bottom: 35 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} opacity={0.3} />
-                <XAxis 
-                  dataKey="motivo" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 600}} 
-                  angle={-25} 
-                  textAnchor="end" 
-                  interval={0}
-                  height={35}
-                />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)', fontSize: 10}} />
-                <RechartsTooltip cursor={{fill: 'rgba(128,128,128,0.1)'}} contentStyle={{backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', borderRadius: '8px', fontSize: '11px'}} />
-                <Bar dataKey="value" fill="#F43F5E" radius={[4, 4, 0, 0]} isAnimationActive={false}>
-                  <LabelList dataKey="value" position="top" fill="var(--text-muted)" fontSize={10} fontWeight="bold" />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Top 3 Motivos Quick Cards */}
-        <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 flex flex-col justify-between min-w-0 shadow-xs">
-          <div className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
-            Top Motivos
-          </div>
-          <div className="space-y-1.5 my-auto">
-            {byMotivo.slice(0, 3).map((m, idx) => (
-              <div key={m.motivo} className="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
-                <div className="min-w-0 flex-1 truncate pr-2">
-                  <p className="text-[9.5px] font-bold text-[var(--text-muted)] truncate uppercase">
-                    #{idx + 1} {m.motivo}
-                  </p>
+            {/* Podio Badges */}
+            <div className="flex items-center gap-1">
+              {top3Motivos.map((m, idx) => (
+                <div 
+                  key={m.motivo}
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase border truncate max-w-[120px] ${
+                    idx === 0 
+                      ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
+                      : idx === 1 
+                        ? 'bg-slate-400/15 text-slate-400 border-slate-400/30' 
+                        : 'bg-orange-500/15 text-orange-500 border-orange-500/30'
+                  }`}
+                  title={`${idx === 0 ? '🥇 #1' : idx === 1 ? '🥈 #2' : '🥉 #3'} ${m.motivo} (${m.value} bajas · ${m.pct}%)`}
+                >
+                  <span>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
+                  <span className="truncate">{m.motivo}</span>
+                  <span className="font-mono">({m.value})</span>
                 </div>
-                <span className="text-sm font-black text-rose-500 font-mono">
-                  {m.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-      </div>
-
-      {/* ── 3. FULL-HEIGHT MATRIX TABLE WITH INTERNAL SCROLL ── */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
-        
-        {/* Matrix Header Toolbar */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-black text-[var(--text-primary)] uppercase tracking-tight">
-              Matriz Cruzada: Campaña vs Motivo
-            </span>
-            <span className="text-[9px] text-[var(--text-muted)] font-bold">
-              ({matrixData.rows.length} campañas analizadas)
-            </span>
-          </div>
-          <span className="text-[10px] font-mono font-bold text-cyan-400">
-            Total General: {matrixData.grandTotal}
-          </span>
-        </div>
-
-        {/* Scrollable Matrix Table */}
-        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative">
-          <table className="w-full text-left text-xs whitespace-nowrap border-separate border-spacing-0">
-            <thead className="sticky top-0 z-20">
-              <tr>
-                <th className="sticky left-0 z-30 px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase bg-[var(--table-head-bg)] tracking-wider">
-                  CAMPAÑA
-                </th>
-                {matrixData.topMotivos.map(m => (
-                  <th key={m} className="px-3 py-2 border-r border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-muted)] uppercase text-center max-w-[130px] truncate bg-[var(--table-head-bg)]" title={m}>
-                    {m}
-                  </th>
-                ))}
-                <th className="px-3 py-2 border-b border-[var(--border-normal)] font-black text-[9px] text-[var(--text-primary)] uppercase text-center bg-[var(--table-head-bg)]">
-                  TOTAL
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {matrixData.rows.map((row) => (
-                <tr key={row.campana} className="hover:bg-[var(--bg-elevated)] transition-colors group">
-                  <td className="sticky left-0 z-10 px-3 py-1.5 border-r border-b border-[var(--border-subtle)] font-bold text-[11px] text-[var(--text-primary)] bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)]">
-                    {row.campana}
-                  </td>
-                  {matrixData.topMotivos.map(m => {
-                    const val = row[m]
-                    const pct = matrixData.grandTotal > 0 ? ((val / matrixData.grandTotal) * 100).toFixed(1) : 0
-                    const hasVal = val > 0
-                    return (
-                      <td key={m} className="px-3 py-1.5 border-r border-b border-[var(--border-subtle)] text-center relative">
-                        {hasVal ? (
-                          <div className="flex items-center justify-center gap-1">
-                            <span className="text-[11px] font-mono font-bold text-[var(--text-primary)]">{pct}%</span>
-                            <span className="text-[9px] text-[var(--text-muted)] font-mono">({val})</span>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-[var(--text-muted)] opacity-40">—</span>
-                        )}
-                      </td>
-                    )
-                  })}
-                  <td className="px-3 py-1.5 border-b border-[var(--border-subtle)] text-center text-[11px] font-black text-[var(--text-primary)] font-mono bg-[var(--bg-elevated)]/40">
-                    {row.total}
-                  </td>
-                </tr>
               ))}
-            </tbody>
-            <tfoot className="bg-[var(--table-head-bg)] sticky bottom-0 z-20 border-t-2 border-[var(--border-normal)]">
-              <tr>
-                <td className="sticky left-0 z-30 px-3 py-2 border-r border-[var(--border-normal)] font-black text-[10px] text-[var(--text-primary)] bg-[var(--table-head-bg)]">
-                  TOTAL GENERAL
-                </td>
-                {matrixData.topMotivos.map(m => (
-                  <td key={m} className="px-3 py-2 border-r border-[var(--border-normal)] text-center font-black text-[10px] text-[var(--text-primary)] font-mono">
-                    {matrixData.grandTotal > 0 ? ((matrixData.colTotals[m] / matrixData.grandTotal) * 100).toFixed(1) : 0}%
-                  </td>
-                ))}
-                <td className="px-3 py-2 text-center font-black text-xs text-rose-500 font-mono">
-                  {matrixData.grandTotal}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+            </div>
+          </div>
+
+          {/* Chart Container */}
+          <div className="flex-1 min-h-0 pt-1.5 relative">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={rankingMotivosData}
+                layout="vertical"
+                margin={{ top: 5, right: 45, left: 10, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
+                <XAxis type="number" hide />
+                <YAxis
+                  dataKey="motivo"
+                  type="category"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
+                  width={140}
+                />
+                <RechartsTooltip
+                  cursor={{ fill: 'rgba(244, 63, 94, 0.08)' }}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const d = payload[0].payload;
+                      return (
+                        <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-0.5">
+                          <p className="font-black text-[var(--text-primary)]">{d.motivo}</p>
+                          <p className="text-rose-500 font-mono font-bold">{d.value} bajas ({d.pct}% del total)</p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  {rankingMotivosData.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={
+                        index === 0 ? '#F43F5E' :
+                        index === 1 ? '#FB7185' :
+                        index === 2 ? '#FDA4AF' : '#64748B'
+                      }
+                    />
+                  ))}
+                  <LabelList
+                    dataKey="value"
+                    position="right"
+                    formatter={(val, entry) => `${val} (${entry?.pct || 0}%)`}
+                    style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* ── CUADRANTE 2: DESERCIÓN POR FORMADOR (NUEVO) ── */}
+        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
+          
+          {/* Card Header + Threshold Info + View Toggle */}
+          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
+            <div className="flex items-center gap-1.5">
+              <Users size={13} className="text-cyan-400" />
+              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
+                Deserción por Formador
+              </span>
+              <span className="text-[8.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">
+                Meta: &lt;30%
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-mono text-[var(--text-muted)]">
+                {formadoresData.length} formadores
+              </span>
+              {formadoresData.length > 8 && (
+                <button
+                  onClick={() => setFormadorViewAll(!formadorViewAll)}
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer ${
+                    formadorViewAll 
+                      ? 'bg-cyan-500 text-white shadow-xs' 
+                      : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
+                  }`}
+                >
+                  {formadorViewAll ? 'Top 8' : 'Ver Todos'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Chart Container */}
+          <div className="flex-1 min-h-0 pt-1.5 relative overflow-y-auto custom-scrollbar">
+            {displayedFormadores.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
+                No hay datos de formadores para los filtros seleccionados.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={formadorViewAll ? Math.max(displayedFormadores.length * 28, 200) : '100%'}>
+                <BarChart
+                  data={displayedFormadores}
+                  layout="vertical"
+                  margin={{ top: 5, right: 55, left: 10, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
+                  <XAxis type="number" domain={[0, 100]} hide />
+                  <YAxis
+                    dataKey="formador"
+                    type="category"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
+                    width={140}
+                  />
+                  <RechartsTooltip
+                    cursor={{ fill: 'rgba(6, 182, 212, 0.08)' }}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const d = payload[0].payload;
+                        return (
+                          <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
+                            <p className="font-black text-[var(--text-primary)]">{d.formador}</p>
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="text-[var(--text-muted)]">% Deserción:</span>
+                              <span className={`font-mono font-black ${d.isAlert ? 'text-rose-500' : 'text-emerald-400'}`}>
+                                {d.pctDesercion}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
+                              <span>Bajas / Total Asignados:</span>
+                              <span className="font-mono font-bold text-[var(--text-primary)]">
+                                {d.totalBajas} de {d.totalAsignados} postulantes
+                              </span>
+                            </div>
+                            {d.isAlert && (
+                              <div className="text-[9px] font-black text-rose-500 uppercase pt-0.5 border-t border-[var(--border-subtle)]">
+                                ⚠️ Supera umbral crítico (&gt;30%)
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {displayedFormadores.map((entry, index) => (
+                      <Cell
+                        key={`cell-form-${index}`}
+                        fill={entry.isAlert ? '#F43F5E' : '#10B981'}
+                      />
+                    ))}
+                    <LabelList
+                      dataKey="pctDesercion"
+                      position="right"
+                      formatter={(val, entry) => `${val}% (${entry?.totalBajas || 0}/${entry?.totalAsignados || 0})`}
+                      style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* ── CUADRANTE 3: EMBUDO DE CAPACITACIÓN DÍA 1 → DÍA N (NUEVO) ── */}
+        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
+          
+          {/* Card Header + Legend */}
+          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
+            <div className="flex items-center gap-1.5">
+              <Layers size={13} className="text-purple-400" />
+              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
+                Embudo de Capacitación (Día 1 → Día N)
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 text-[9px] font-bold">
+              <div className="flex items-center gap-1 text-emerald-500">
+                <div className="w-2 h-2 rounded-xs bg-emerald-500" />
+                <span>Activos</span>
+              </div>
+              <div className="flex items-center gap-1 text-rose-500">
+                <div className="w-2 h-2 rounded-xs bg-rose-500" />
+                <span>Bajas</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Chart Container */}
+          <div className="flex-1 min-h-0 pt-1.5 relative">
+            {embudoData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
+                No hay registros con fecha de inicio para calcular días de capacitación.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={embudoData}
+                  margin={{ top: 10, right: 15, left: -20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} opacity={0.25} />
+                  <XAxis
+                    dataKey="dia"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: 'var(--text-muted)', fontSize: 9.5 }}
+                  />
+                  <RechartsTooltip
+                    cursor={{ fill: 'rgba(139, 92, 246, 0.08)' }}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const d = payload[0].payload;
+                        return (
+                          <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
+                            <p className="font-black text-[var(--text-primary)]">{d.dia}</p>
+                            <div className="flex items-center justify-between gap-3 text-emerald-400 font-mono">
+                              <span>Activos:</span>
+                              <span className="font-bold">{d.activos}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-rose-500 font-mono">
+                              <span>Bajas en jornada:</span>
+                              <span className="font-bold">{d.bajas}</span>
+                            </div>
+                            <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
+                              <span>Retención acumulada:</span>
+                              <span className="font-mono text-cyan-400">{d.retencion}%</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="activos" stackId="a" fill="#10B981" radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                  <Bar dataKey="bajas" stackId="a" fill="#F43F5E" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                    <LabelList
+                      dataKey="total"
+                      position="top"
+                      style={{ fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 'bold' }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* ── CUADRANTE 4: HEATMAP CAMPAÑA VS MOTIVO (INTERACTIVO SIN SCROLL DE PÁGINA) ── */}
+        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
+          
+          {/* Card Header + Toggle Top 10 vs Todas */}
+          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
+            <div className="flex items-center gap-1.5">
+              <Grid size={13} className="text-amber-500" />
+              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
+                Heatmap: Campaña vs Motivo
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-mono text-[var(--text-muted)]">
+                {heatmapData.totalCampaigns} campañas
+              </span>
+              {heatmapData.totalCampaigns > 10 && (
+                <button
+                  onClick={() => setHeatmapViewAll(!heatmapViewAll)}
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer ${
+                    heatmapViewAll 
+                      ? 'bg-amber-500 text-white shadow-xs' 
+                      : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
+                  }`}
+                >
+                  {heatmapViewAll ? 'Top 10' : 'Ver Todas (19)'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Matrix Heatmap Table Container with Internal Scroll */}
+          <div className="flex-1 min-h-0 pt-1 relative overflow-x-auto overflow-y-auto custom-scrollbar">
+            {heatmapData.rows.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
+                No hay bajas registradas para esta selección.
+              </div>
+            ) : (
+              <table className="w-full text-left text-[10px] whitespace-nowrap border-separate border-spacing-1">
+                <thead className="sticky top-0 z-20 bg-[var(--bg-surface)]">
+                  <tr>
+                    <th className="sticky left-0 z-30 px-2 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-muted)] tracking-wider">
+                      CAMPAÑA
+                    </th>
+                    {heatmapData.topMotivos.map((m) => (
+                      <th
+                        key={m}
+                        className="px-1.5 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-muted)] text-center max-w-[85px] truncate"
+                        title={m}
+                      >
+                        {m}
+                      </th>
+                    ))}
+                    <th className="px-1.5 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-primary)] text-center font-mono">
+                      TOTAL
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {heatmapData.rows.map((row) => (
+                    <tr key={row.campana} className="group">
+                      <td 
+                        className={`sticky left-0 z-10 px-2 py-1 border border-[var(--border-subtle)] rounded font-bold text-[10px] truncate max-w-[130px] ${
+                          row.isOthers 
+                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 font-black' 
+                            : 'bg-[var(--bg-surface)] text-[var(--text-primary)] group-hover:bg-[var(--bg-elevated)]'
+                        }`}
+                        title={row.campana}
+                      >
+                        {row.campana}
+                      </td>
+
+                      {heatmapData.topMotivos.map((m) => {
+                        const count = row.motivos[m] || 0;
+                        const pct = row.total > 0 ? ((count / row.total) * 100).toFixed(0) : 0;
+                        const intensity = count > 0 ? Math.min(count / heatmapData.maxVal, 1) : 0;
+
+                        return (
+                          <td
+                            key={m}
+                            className="p-0 text-center"
+                            title={`${row.campana} · ${m}: ${count} bajas (${pct}% de la campaña)`}
+                          >
+                            <div
+                              className={`h-6 min-w-[36px] flex items-center justify-center rounded font-mono font-black text-[9.5px] transition-all group-hover:scale-102 ${
+                                count === 0 
+                                  ? 'bg-[var(--bg-elevated)]/40 text-[var(--text-muted)]/30 border border-transparent' 
+                                  : 'border border-rose-500/30'
+                              }`}
+                              style={{
+                                backgroundColor: count > 0 ? `rgba(244, 63, 94, ${0.15 + intensity * 0.8})` : undefined,
+                                color: count > 0 ? (intensity > 0.45 ? '#FFFFFF' : '#F43F5E') : undefined,
+                              }}
+                            >
+                              {count > 0 ? count : '—'}
+                            </div>
+                          </td>
+                        );
+                      })}
+
+                      <td className="px-2 py-1 border border-[var(--border-subtle)] rounded text-center font-mono font-black text-rose-500 text-[10.5px] bg-[var(--bg-elevated)]/60">
+                        {row.total}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
       </div>
 
     </div>
-  )
+  );
 }

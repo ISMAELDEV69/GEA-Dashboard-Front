@@ -1024,6 +1024,7 @@ export function subscribeOperationalData(onChange) {
     // Limpiar caché antes de recargar para garantizar datos frescos de Supabase
     invalidateCache('all_consolidado');
     invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
     invalidateCache('grupos_con_metas');
     invalidateCache('resumen_cap_');
     
@@ -1987,6 +1988,7 @@ export async function insertConsolidado(payloads) {
   // Invalidar caché para que la próxima lectura traiga datos frescos de Supabase
   invalidateCache('all_consolidado');
   invalidateCache('all_asistencias_bajas');
+  invalidateCache('all_motivos_bajas');
 }
 
 export async function fetchConsolidado() {
@@ -2014,6 +2016,27 @@ export async function fetchDashboardData() {
     }
   }
   return { consolidado: [], capacidades: [], descuentos: [] }
+}
+
+export async function fetchMotivosBajasData() {
+  if (DB_MODE !== 'supabase') return { consolidado: [], capacidades: [], nominas: [] };
+
+  return withCache('all_motivos_bajas', 180000, async () => {
+    const [consData, capRes, nominasRes] = await Promise.all([
+      fetchAllConsolidado(),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
+      supabase.from('nominas').select('documento, campana, grupo_codigo, fecha_inicio_capacitacion, estado, activo')
+    ]);
+
+    if (capRes.error) console.warn('Error fetching capacidad_rys in fetchMotivosBajasData:', capRes.error);
+    if (nominasRes.error) console.warn('Error fetching nominas in fetchMotivosBajasData:', nominasRes.error);
+
+    return {
+      consolidado: consData || [],
+      capacidades: capRes.data || [],
+      nominas: nominasRes.data || []
+    };
+  });
 }
 
 export async function fetchAsistenciaPorRango(startDate, endDate) {
