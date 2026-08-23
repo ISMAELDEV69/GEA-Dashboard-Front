@@ -450,113 +450,128 @@ export default function MotivosBajasBI() {
     return formadoresData.slice(0, 8);
   }, [formadoresData, formadorViewAll]);
 
-  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) en Cohorte Real ──
+  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) en Cohorte Real Exacta a SQL ──
   const embudoData = useMemo(() => {
-    // 1. Mapear fechas reales de clase por grupo para numerar sesiones (Día 1, Día 2...)
+    // 1. Numerar las sesiones lectivas reales por grupo exacto (campana + COALESCE(codigo_grupo, grupo))
+    // Idéntico a SQL: DENSE_RANK() OVER (PARTITION BY campana, COALESCE(codigo_grupo, grupo) ORDER BY fecha_registro_asistencia ASC)
     const groupDatesMap = new Map();
 
     filteredData.forEach((row) => {
-      const gKey = `${row._campana}|${row._gpe}`;
+      const camp = String(row.campana || '').trim();
+      const gpe = String(row.codigo_grupo || row.grupo || '').trim();
+      const fecha = row.fecha_registro_asistencia ? String(row.fecha_registro_asistencia).substring(0, 10).trim() : null;
+      if (!fecha) return;
+
+      const gKey = `${camp}|${gpe}`;
       if (!groupDatesMap.has(gKey)) {
         groupDatesMap.set(gKey, new Set());
       }
-      if (row.fecha_registro_asistencia) {
-        groupDatesMap.get(gKey).add(row.fecha_registro_asistencia);
-      }
+      groupDatesMap.get(gKey).add(fecha);
     });
 
     const sessionNumMap = new Map();
     groupDatesMap.forEach((dateSet, gKey) => {
-      const sortedDates = Array.from(dateSet).sort((a, b) => {
-        const da = parseLocalDate(a);
-        const db = parseLocalDate(b);
-        return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
-      });
+      const sortedDates = Array.from(dateSet).sort();
       sortedDates.forEach((dStr, idx) => {
         sessionNumMap.set(`${gKey}|${dStr}`, idx + 1);
       });
     });
 
-    // 2. Determinar para cada persona: Día de inicio y Primer día de Baja
-    const personInfoMap = new Map();
+    // 2. Resumir por postulante: start_day y first_baja_day (Exacto a SQL)
+    const postulanteMap = new Map();
 
     filteredData.forEach((row) => {
       const doc = row._doc;
       if (!doc) return;
-      const gKey = `${row._campana}|${row._gpe}`;
-      const sNum = sessionNumMap.get(`${gKey}|${row.fecha_registro_asistencia}`) || row._diaRelativo;
-      if (!sNum || sNum < 1 || sNum > 15) return;
 
-      if (!personInfoMap.has(doc)) {
-        personInfoMap.set(doc, {
-          gKey,
-          startDay: sNum,
-          firstBajaDay: null,
-          sessionsAttended: new Set()
+      const camp = String(row.campana || '').trim();
+      const gpe = String(row.codigo_grupo || row.grupo || '').trim();
+      const fecha = row.fecha_registro_asistencia ? String(row.fecha_registro_asistencia).substring(0, 10).trim() : null;
+      if (!fecha) return;
+
+      const gKey = `${camp}|${gpe}`;
+      const diaSesion = sessionNumMap.get(`${gKey}|${fecha}`);
+      if (!diaSesion || diaSesion < 1 || diaSesion > 30) return;
+
+      const esBaja = row._isBaja;
+
+      if (!postulanteMap.has(doc)) {
+        postulanteMap.set(doc, {
+          start_day: diaSesion,
+          first_baja_day: null
         });
       }
 
-      const pInfo = personInfoMap.get(doc);
-      if (sNum < pInfo.startDay) pInfo.startDay = sNum;
-      pInfo.sessionsAttended.add(sNum);
-
-      if (row._isBaja) {
-        if (pInfo.firstBajaDay === null || sNum < pInfo.firstBajaDay) {
-          pInfo.firstBajaDay = sNum;
+      const p = postulanteMap.get(doc);
+      if (diaSesion < p.start_day) p.start_day = diaSesion;
+      if (esBaja) {
+        if (p.first_baja_day === null || diaSesion < p.first_baja_day) {
+          p.first_baja_day = diaSesion;
         }
       }
     });
 
-    // 3. Población inicial de la cohorte (Día 1)
-    const allPersons = Array.from(personInfoMap.values());
-    const initialPopulation = allPersons.filter(p => p.startDay <= 2).length || allPersons.length || 1;
+    // 3. Población inicial de la cohorte (Día 1 / start_day <= 2)
+    const allPersons = Array.from(postulanteMap.values());
+    const initialPopulation = allPersons.filter(p => p.start_day <= 2).length || allPersons.length || 1;
 
-    let maxDay = 0;
-    sessionNumMap.forEach((dayNum) => {
-      if (dayNum > maxDay && dayNum <= 15) maxDay = dayNum;
-    });
-    if (maxDay < 5) maxDay = 5;
-
-    // 4. Construir cohorte decreciente día por día
-    const result = [];
-    for (let day = 1; day <= maxDay; day++) {
+    // 4. Precalcular los días (hasta día 30) con lógica decreciente
+    const rawDays = [];
+    for (let day = 1; day <= 30; day++) {
       let activos = 0;
       let bajas = 0;
 
       allPersons.forEach((p) => {
-        if (p.startDay > day) return; // Aún no empezaba
-        if (p.firstBajaDay !== null && p.firstBajaDay < day) return; // Ya desertó en día anterior, sale del embudo
-
-        if (p.firstBajaDay === day) {
-          bajas++;
-        } else {
-          activos++;
+        if (p.start_day <= day) {
+          if (p.first_baja_day === null || p.first_baja_day > day) {
+            activos++;
+          } else if (p.first_baja_day === day) {
+            bajas++;
+          }
         }
       });
 
       const totalEnProceso = activos + bajas;
-      if (totalEnProceso > 0 || day <= 5) {
-        const retencionAcumulada = initialPopulation > 0 
-          ? Math.min(100, Math.round((activos / initialPopulation) * 100)) 
-          : 100;
-        const retencionDiaria = totalEnProceso > 0 
-          ? Math.round((activos / totalEnProceso) * 100) 
-          : 100;
+      const pctRetencionAcumulada = initialPopulation > 0 
+        ? ((activos / initialPopulation) * 100).toFixed(1) 
+        : '0.0';
+      const pctSupervivenciaDiaria = totalEnProceso > 0 
+        ? ((activos / totalEnProceso) * 100).toFixed(1) 
+        : '100.0';
 
-        result.push({
-          dia: `Día ${day}`,
-          diaNum: day,
-          activos,
-          bajas,
-          total: totalEnProceso,
-          retencionAcumulada,
-          retencionDiaria,
-          initialPopulation
-        });
+      rawDays.push({
+        dia: `Día ${day}`,
+        diaNum: day,
+        activos,
+        bajas,
+        total: totalEnProceso,
+        retencionAcumulada: parseFloat(pctRetencionAcumulada),
+        retencionDiaria: parseFloat(pctSupervivenciaDiaria),
+        initialPopulation
+      });
+    }
+
+    // 5. Límite Dinámico Inteligente:
+    // Si la población cae por debajo del 3% o menos de 10 personas, cortar eje X para no mostrar barras planas residuales
+    const finalDays = [];
+    const umbralMinimo = Math.max(10, Math.round(initialPopulation * 0.03));
+
+    for (let i = 0; i < rawDays.length; i++) {
+      const d = rawDays[i];
+      if (i < 5) {
+        finalDays.push(d); // Mínimo 5 días para coherencia visual
+      } else {
+        if (d.total === 0) break;
+        if (d.total < umbralMinimo && d.bajas === 0 && i >= 10) break;
+        if (i < 20) {
+          finalDays.push(d);
+        } else {
+          break;
+        }
       }
     }
 
-    return result;
+    return finalDays;
   }, [filteredData]);
 
   // ── 8. GRÁFICO 4: Heatmap Campaña vs Motivo ──
