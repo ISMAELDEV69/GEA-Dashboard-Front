@@ -810,12 +810,22 @@ export default function MotivosBajasBI() {
                   <LabelList
                     dataKey="value"
                     position="right"
-                    formatter={(val, entry, idx) => {
-                      const p = rankingMotivosData[idx];
-                      const pct = p?.pct || (totalBajasCount > 0 ? ((val / totalBajasCount) * 100).toFixed(1) : '0.0');
-                      return `${val} (${pct}%)`;
+                    content={({ x, y, width, height, value, index }) => {
+                      const d = rankingMotivosData[index];
+                      const pct = d?.pct ?? (totalBajasCount > 0 ? ((value / totalBajasCount) * 100).toFixed(1) : '0.0');
+                      return (
+                        <text
+                          x={Number(x) + Number(width) + 5}
+                          y={Number(y) + Number(height) / 2 + 3}
+                          fill="var(--text-muted)"
+                          fontSize={9}
+                          fontWeight="bold"
+                          textAnchor="start"
+                        >
+                          {`${value} (${pct}%)`}
+                        </text>
+                      );
                     }}
-                    style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
                   />
                 </Bar>
               </BarChart>
@@ -922,11 +932,22 @@ export default function MotivosBajasBI() {
                       <LabelList
                         dataKey="pctDesercion"
                         position="right"
-                        formatter={(val, entry, idx) => {
-                          const p = displayedFormadores[idx];
-                          return `${val}% (${p?.totalBajas || 0}/${p?.totalAsignados || 0})`;
+                        content={({ x, y, width, height, value, index }) => {
+                          const d = displayedFormadores[index];
+                          if (!d) return null;
+                          return (
+                            <text
+                              x={Number(x) + Number(width) + 5}
+                              y={Number(y) + Number(height) / 2 + 3}
+                              fill="var(--text-muted)"
+                              fontSize={9}
+                              fontWeight="bold"
+                              textAnchor="start"
+                            >
+                              {`${value}% (${d.totalBajas}/${d.totalAsignados})`}
+                            </text>
+                          );
                         }}
-                        style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
                       />
                     </Bar>
                   </BarChart>
@@ -1024,12 +1045,22 @@ export default function MotivosBajasBI() {
                     <LabelList
                       dataKey="total"
                       position="top"
-                      formatter={(val, entry, idx) => {
-                        const p = embudoData[idx];
-                        const pct = p?.retencionAcumulada !== undefined ? p.retencionAcumulada : (p?.initialPopulation > 0 ? Math.round((p.activos / p.initialPopulation) * 100) : 0);
-                        return `${val} (${pct}%)`;
+                      content={({ x, y, width, value, index }) => {
+                        const d = embudoData[index];
+                        if (!d) return null;
+                        return (
+                          <text
+                            x={Number(x) + Number(width) / 2}
+                            y={Number(y) - 5}
+                            fill="var(--text-muted)"
+                            fontSize={8.5}
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            {`${d.total} (${d.retencionAcumulada}%)`}
+                          </text>
+                        );
                       }}
-                      style={{ fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 'bold' }}
                     />
                   </Bar>
                 </BarChart>
