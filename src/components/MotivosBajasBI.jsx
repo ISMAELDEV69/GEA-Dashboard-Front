@@ -421,19 +421,27 @@ export default function MotivosBajasBI() {
     for (const [formador, entry] of formMap.entries()) {
       const totalAsignados = entry.docs.size;
       const totalBajas = entry.bajas.size;
-      const pctDesercion = totalAsignados > 0 ? Math.round((totalBajas / totalAsignados) * 100) : 0;
+
+      // EXCLUSIÓN DE FORMA SEGURA:
+      // 1. Excluir formadores con 0 personas asignadas (0/0)
+      if (totalAsignados === 0) continue;
+
+      // 2. Mínimo 3 postulantes asignados para relevancia estadística (evita 1/1 = 100% de ruido)
+      if (totalAsignados < 3) continue;
+
+      const pctDesercion = Math.round((totalBajas / totalAsignados) * 100);
 
       list.push({
         formador,
         totalAsignados,
         totalBajas,
         pctDesercion,
-        isAlert: pctDesercion > 30, // Umbral >30%
+        isAlert: pctDesercion > 30, // Umbral crítico >30%
       });
     }
 
-    // Ordenar de mayor a menor % de deserción
-    list.sort((a, b) => b.pctDesercion - a.pctDesercion || b.totalBajas - a.totalBajas);
+    // Ordenar de mayor a menor % de deserción, y por volumen de bajas/asignados como desempate
+    list.sort((a, b) => b.pctDesercion - a.pctDesercion || b.totalBajas - a.totalBajas || b.totalAsignados - a.totalAsignados);
     return list;
   }, [filteredData]);
 
@@ -787,7 +795,11 @@ export default function MotivosBajasBI() {
                   <LabelList
                     dataKey="value"
                     position="right"
-                    formatter={(val, entry) => `${val} (${entry?.pct || 0}%)`}
+                    formatter={(val, entry, idx) => {
+                      const p = rankingMotivosData[idx];
+                      const pct = p?.pct || (totalBajasCount > 0 ? ((val / totalBajasCount) * 100).toFixed(1) : '0.0');
+                      return `${val} (${pct}%)`;
+                    }}
                     style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
                   />
                 </Bar>
@@ -895,7 +907,10 @@ export default function MotivosBajasBI() {
                       <LabelList
                         dataKey="pctDesercion"
                         position="right"
-                        formatter={(val, entry) => `${val}% (${entry?.totalBajas || 0}/${entry?.totalAsignados || 0})`}
+                        formatter={(val, entry, idx) => {
+                          const p = displayedFormadores[idx];
+                          return `${val}% (${p?.totalBajas || 0}/${p?.totalAsignados || 0})`;
+                        }}
                         style={{ fill: 'var(--text-muted)', fontSize: 9, fontWeight: 'bold' }}
                       />
                     </Bar>
@@ -994,7 +1009,11 @@ export default function MotivosBajasBI() {
                     <LabelList
                       dataKey="total"
                       position="top"
-                      formatter={(val, entry) => `${val} (${entry?.payload?.retencionAcumulada ?? entry?.retencionAcumulada ?? 0}%)`}
+                      formatter={(val, entry, idx) => {
+                        const p = embudoData[idx];
+                        const pct = p?.retencionAcumulada !== undefined ? p.retencionAcumulada : (p?.initialPopulation > 0 ? Math.round((p.activos / p.initialPopulation) * 100) : 0);
+                        return `${val} (${pct}%)`;
+                      }}
                       style={{ fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 'bold' }}
                     />
                   </Bar>
