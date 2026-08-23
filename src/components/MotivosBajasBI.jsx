@@ -5,6 +5,8 @@ import {
 } from 'recharts'
 import { 
   AlertCircle, 
+  AlertTriangle,
+  AlertOctagon,
   Loader2, 
   Sparkles, 
   TrendingDown, 
@@ -15,7 +17,6 @@ import {
   Grid, 
   Filter, 
   RefreshCw, 
-  Trophy, 
   Flame, 
   CalendarDays,
   CheckCircle2
@@ -441,43 +442,111 @@ export default function MotivosBajasBI() {
     return formadoresData.slice(0, 8);
   }, [formadoresData, formadorViewAll]);
 
-  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) ──
+  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) en Cohorte Real ──
   const embudoData = useMemo(() => {
-    const dayMap = new Map();
+    // 1. Mapear fechas reales de clase por grupo para numerar sesiones (Día 1, Día 2...)
+    const groupDatesMap = new Map();
 
     filteredData.forEach((row) => {
-      let dRel = row._diaRelativo;
-      if (!dRel || dRel < 1 || dRel > 15) return;
-
-      if (!dayMap.has(dRel)) {
-        dayMap.set(dRel, { dia: `Día ${dRel}`, diaNum: dRel, activosSet: new Set(), bajasSet: new Set() });
+      const gKey = `${row._campana}|${row._gpe}`;
+      if (!groupDatesMap.has(gKey)) {
+        groupDatesMap.set(gKey, new Set());
       }
-      const entry = dayMap.get(dRel);
-      if (row._doc) {
-        if (row._isBaja) {
-          entry.bajasSet.add(row._doc);
-        } else {
-          entry.activosSet.add(row._doc);
+      if (row.fecha_registro_asistencia) {
+        groupDatesMap.get(gKey).add(row.fecha_registro_asistencia);
+      }
+    });
+
+    const sessionNumMap = new Map();
+    groupDatesMap.forEach((dateSet, gKey) => {
+      const sortedDates = Array.from(dateSet).sort((a, b) => {
+        const da = parseLocalDate(a);
+        const db = parseLocalDate(b);
+        return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+      });
+      sortedDates.forEach((dStr, idx) => {
+        sessionNumMap.set(`${gKey}|${dStr}`, idx + 1);
+      });
+    });
+
+    // 2. Determinar para cada persona: Día de inicio y Primer día de Baja
+    const personInfoMap = new Map();
+
+    filteredData.forEach((row) => {
+      const doc = row._doc;
+      if (!doc) return;
+      const gKey = `${row._campana}|${row._gpe}`;
+      const sNum = sessionNumMap.get(`${gKey}|${row.fecha_registro_asistencia}`) || row._diaRelativo;
+      if (!sNum || sNum < 1 || sNum > 15) return;
+
+      if (!personInfoMap.has(doc)) {
+        personInfoMap.set(doc, {
+          gKey,
+          startDay: sNum,
+          firstBajaDay: null,
+          sessionsAttended: new Set()
+        });
+      }
+
+      const pInfo = personInfoMap.get(doc);
+      if (sNum < pInfo.startDay) pInfo.startDay = sNum;
+      pInfo.sessionsAttended.add(sNum);
+
+      if (row._isBaja) {
+        if (pInfo.firstBajaDay === null || sNum < pInfo.firstBajaDay) {
+          pInfo.firstBajaDay = sNum;
         }
       }
     });
 
-    const result = Array.from(dayMap.values())
-      .map(entry => {
-        const activos = entry.activosSet.size;
-        const bajas = entry.bajasSet.size;
-        const total = activos + bajas;
-        const retencion = total > 0 ? Math.round((activos / total) * 100) : 100;
-        return {
-          dia: entry.dia,
-          diaNum: entry.diaNum,
+    // 3. Población inicial de la cohorte (Día 1)
+    const allPersons = Array.from(personInfoMap.values());
+    const initialPopulation = allPersons.filter(p => p.startDay <= 2).length || allPersons.length || 1;
+
+    let maxDay = 0;
+    sessionNumMap.forEach((dayNum) => {
+      if (dayNum > maxDay && dayNum <= 15) maxDay = dayNum;
+    });
+    if (maxDay < 5) maxDay = 5;
+
+    // 4. Construir cohorte decreciente día por día
+    const result = [];
+    for (let day = 1; day <= maxDay; day++) {
+      let activos = 0;
+      let bajas = 0;
+
+      allPersons.forEach((p) => {
+        if (p.startDay > day) return; // Aún no empezaba
+        if (p.firstBajaDay !== null && p.firstBajaDay < day) return; // Ya desertó en día anterior, sale del embudo
+
+        if (p.firstBajaDay === day) {
+          bajas++;
+        } else {
+          activos++;
+        }
+      });
+
+      const totalEnProceso = activos + bajas;
+      if (totalEnProceso > 0 || day <= 5) {
+        const retencionAcumulada = initialPopulation > 0 
+          ? Math.min(100, Math.round((activos / initialPopulation) * 100)) 
+          : 100;
+        const retencionDiaria = totalEnProceso > 0 
+          ? Math.round((activos / totalEnProceso) * 100) 
+          : 100;
+
+        result.push({
+          dia: `Día ${day}`,
+          diaNum: day,
           activos,
           bajas,
-          total,
-          retencion
-        };
-      })
-      .sort((a, b) => a.diaNum - b.diaNum);
+          total: totalEnProceso,
+          retencionAcumulada,
+          retencionDiaria,
+          initialPopulation
+        });
+      }
+    }
 
     return result;
   }, [filteredData]);
@@ -647,21 +716,23 @@ export default function MotivosBajasBI() {
               </span>
             </div>
 
-            {/* Podio Badges */}
+            {/* Severity Alert Badges (Top 3) */}
             <div className="flex items-center gap-1">
               {top3Motivos.map((m, idx) => (
                 <div 
                   key={m.motivo}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase border truncate max-w-[120px] ${
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase border truncate max-w-[130px] ${
                     idx === 0 
-                      ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' 
+                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' 
                       : idx === 1 
-                        ? 'bg-slate-400/15 text-slate-400 border-slate-400/30' 
-                        : 'bg-orange-500/15 text-orange-500 border-orange-500/30'
+                        ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' 
+                        : 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
                   }`}
-                  title={`${idx === 0 ? '🥇 #1' : idx === 1 ? '🥈 #2' : '🥉 #3'} ${m.motivo} (${m.value} bajas · ${m.pct}%)`}
+                  title={`${idx === 0 ? '🔴 CRÍTICO' : idx === 1 ? '🟠 ALTO' : '🟡 MODERADO'} · ${m.motivo} (${m.value} bajas · ${m.pct}%)`}
                 >
-                  <span>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
+                  {idx === 0 && <Flame size={10} className="text-rose-400 shrink-0" />}
+                  {idx === 1 && <AlertTriangle size={10} className="text-amber-400 shrink-0" />}
+                  {idx === 2 && <AlertOctagon size={10} className="text-yellow-400 shrink-0" />}
                   <span className="truncate">{m.motivo}</span>
                   <span className="font-mono">({m.value})</span>
                 </div>
@@ -702,7 +773,7 @@ export default function MotivosBajasBI() {
                     return null;
                   }}
                 />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={13} isAnimationActive={false}>
                   {rankingMotivosData.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
@@ -814,7 +885,7 @@ export default function MotivosBajasBI() {
                         return null;
                       }}
                     />
-                    <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} barSize={13} isAnimationActive={false}>
                       {displayedFormadores.map((entry, index) => (
                         <Cell
                           key={`cell-form-${index}`}
@@ -889,19 +960,28 @@ export default function MotivosBajasBI() {
                       if (active && payload && payload.length) {
                         const d = payload[0].payload;
                         return (
-                          <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
-                            <p className="font-black text-[var(--text-primary)]">{d.dia}</p>
+                          <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-xl space-y-1.5">
+                            <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-1">
+                              <span className="font-black text-[var(--text-primary)]">{d.dia}</span>
+                              <span className="text-[10px] font-mono text-[var(--text-muted)]">Total: {d.total} postulantes</span>
+                            </div>
                             <div className="flex items-center justify-between gap-3 text-emerald-400 font-mono">
-                              <span>Activos:</span>
+                              <span>Activos en sesión:</span>
                               <span className="font-bold">{d.activos}</span>
                             </div>
-                            <div className="flex items-center justify-between gap-3 text-rose-500 font-mono">
-                              <span>Bajas en jornada:</span>
+                            <div className="flex items-center justify-between gap-3 text-rose-400 font-mono">
+                              <span>Bajas en esta sesión:</span>
                               <span className="font-bold">{d.bajas}</span>
                             </div>
-                            <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
-                              <span>Retención acumulada:</span>
-                              <span className="font-mono text-cyan-400">{d.retencion}%</span>
+                            <div className="pt-1 border-t border-[var(--border-subtle)] space-y-0.5">
+                              <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
+                                <span>Retención Acumulada (vs Día 1):</span>
+                                <span className="font-mono text-cyan-400 font-black">{d.retencionAcumulada}%</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[9px] text-[var(--text-muted)]">
+                                <span>Supervivencia Diaria:</span>
+                                <span className="font-mono text-purple-400">{d.retencionDiaria}%</span>
+                              </div>
                             </div>
                           </div>
                         );
@@ -914,6 +994,7 @@ export default function MotivosBajasBI() {
                     <LabelList
                       dataKey="total"
                       position="top"
+                      formatter={(val, entry) => `${val} (${entry?.retencionAcumulada || 0}%)`}
                       style={{ fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 'bold' }}
                     />
                   </Bar>
