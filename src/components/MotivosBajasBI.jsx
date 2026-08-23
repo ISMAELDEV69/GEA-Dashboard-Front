@@ -994,7 +994,7 @@ export default function MotivosBajasBI() {
                     <LabelList
                       dataKey="total"
                       position="top"
-                      formatter={(val, entry) => `${val} (${entry?.retencionAcumulada || 0}%)`}
+                      formatter={(val, entry) => `${val} (${entry?.payload?.retencionAcumulada ?? entry?.retencionAcumulada ?? 0}%)`}
                       style={{ fill: 'var(--text-muted)', fontSize: 8.5, fontWeight: 'bold' }}
                     />
                   </Bar>
