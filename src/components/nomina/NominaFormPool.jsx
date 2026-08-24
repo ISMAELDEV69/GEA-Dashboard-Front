@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   fetchGoogleSpreadsheetWorkbookData,
   parseSheetMatrixCandidates,
-  fetchGoogleFormsPool
+  fetchGoogleFormsPool,
+  invalidateCache
 } from '../../lib/dataService'
 import { NOMINA_DB_FIELDS } from '../../lib/nominaConsolidadoSchema'
 import { parseExcelDate } from '../../lib/capacidadRysSchema'
@@ -11,7 +12,8 @@ import {
   Loader2, Search, CheckSquare, Square, DownloadCloud,
   AlertTriangle, Trash2, RefreshCw, Users, UserCheck,
   CheckCircle2, X, ChevronDown, ChevronLeft, ChevronRight, Link2, FileSpreadsheet,
-  Layers, Sparkles, ExternalLink, ArrowRight, ShieldAlert, Check, Lock, Calendar, Tag, Activity
+  Layers, Sparkles, ExternalLink, ArrowRight, ShieldAlert, Check, Lock, Calendar, Tag, Activity,
+  AlertCircle
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -613,6 +615,33 @@ export default function NominaFormPool({
       setError('Selecciona al menos un postulante disponible para importar o actualizar.')
       return
     }
+
+    const cleanTargetGrupo = String(bulkGrupo || '').split(' - ')[0].trim().toUpperCase()
+    const selectedPoolItems = poolData.filter(d =>
+      selectedDocs.has(`${String(d.documento || '').trim()}|${d.marca_temporal}`)
+    )
+
+    // Detectar quiénes ya existen en este grupo (Advertencia no bloqueante)
+    const existingInThisGroup = []
+    selectedPoolItems.forEach(d => {
+      const cleanDoc = String(d.documento || '').trim()
+      const assignment = latestAssignedDocs.get(cleanDoc)
+      if (assignment && String(assignment.grupo_codigo || '').trim().toUpperCase() === cleanTargetGrupo) {
+        existingInThisGroup.push({
+          documento: cleanDoc,
+          nombre: `${d.apellido_paterno || ''} ${d.nombres || ''}`.trim() || d.nombre_completo || 'Postulante'
+        })
+      }
+    })
+
+    if (existingInThisGroup.length > 0) {
+      setDuplicateWarningData({
+        candidates: existingInThisGroup,
+        totalSelected: selectedPoolItems.length
+      })
+      return
+    }
+
     executeSave()
   }
 
@@ -680,8 +709,27 @@ export default function NominaFormPool({
           }
         }
 
-        if (existingAssignment && existingAssignment.grupo_codigo === cleanTargetGrupo) {
-          toUpdate.push({ doc: cleanDoc, row: cleanRow })
+        if (existingAssignment && String(existingAssignment.grupo_codigo || '').trim().toUpperCase() === String(cleanTargetGrupo).trim().toUpperCase()) {
+          // Para registros existentes en este grupo:
+          // 1. Proteger campos de seguimiento operativo y documentación para NO pisarlos con nulos
+          // 2. Solo actualizar campos demográficos / contacto que tengan valor real en el formulario
+          const OPERATIONAL_FIELDS_TO_PRESERVE = new Set([
+            'dia_0', 'dia_0_obs', 'dia_1', 'dia_1_obs', 'status_dia_1',
+            'doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios',
+            'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final',
+            'evaluar', 'obs_evaluar', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso',
+            'estado', 'observacion_estado', 'activo', 'created_at'
+          ])
+
+          const updatePayload = {}
+          for (const [k, v] of Object.entries(cleanRow)) {
+            if (!OPERATIONAL_FIELDS_TO_PRESERVE.has(k) && v !== null && v !== undefined && String(v).trim() !== '') {
+              updatePayload[k] = v
+            }
+          }
+          updatePayload.updated_at = new Date().toISOString()
+
+          toUpdate.push({ doc: cleanDoc, row: updatePayload })
         } else {
           // Postulante nuevo O Reingreso a un nuevo grupo
           toInsert.push(cleanRow)
@@ -717,20 +765,28 @@ export default function NominaFormPool({
         if (dbErr) throw dbErr
       }
 
-      // 2. Update existing candidates in current group
+      // 2. Update existing candidates in current group (Sin pisar seguimiento operativo)
       if (toUpdate.length > 0) {
         for (const item of toUpdate) {
-          const { error: updErr } = await supabase
-            .from('nominas')
-            .update(item.row)
-            .eq('documento', item.doc)
-            .eq('grupo_codigo', bulkGrupo)
-          if (updErr) console.warn('Error updating candidate:', item.doc, updErr)
+          if (Object.keys(item.row).length > 0) {
+            const { error: updErr } = await supabase
+              .from('nominas')
+              .update(item.row)
+              .eq('documento', item.doc)
+              .eq('grupo_codigo', cleanTargetGrupo)
+            if (updErr) console.warn('Error updating candidate:', item.doc, updErr)
+          }
         }
       }
 
       clearInterval(progressInterval)
       setImportProgress(100)
+
+      // Invalidar caché en cascada
+      invalidateCache('all_consolidado')
+      invalidateCache('resumen_cap_')
+      invalidateCache('grupos_con_metas')
+      invalidateCache('all_asistencias_bajas')
 
       const msgParts = []
       if (toInsert.length > 0) msgParts.push(`${toInsert.length} asignado${toInsert.length !== 1 ? 's' : ''}`)
@@ -1349,6 +1405,60 @@ export default function NominaFormPool({
           <span>Adjudicar a mi Grupo {selectedDocs.size > 0 ? `(${selectedDocs.size})` : ''}</span>
         </button>
       </div>
+
+      {/* ── MODAL ADVERTENCIA DE DUPLICADOS (PREVENCIÓN EN ORIGEN) ── */}
+      {duplicateWarningData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-amber-400">
+              <div className="bg-amber-500/20 p-2 rounded-xl">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[var(--text-primary)]">
+                  Postulantes ya registrados en este grupo
+                </h3>
+                <span className="text-[11px] text-amber-400/90 font-medium">
+                  {duplicateWarningData.candidates.length} de {duplicateWarningData.totalSelected} seleccionados ya existen en {bulkGrupo}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-[var(--bg-muted)]/60 rounded-xl p-3 border border-[var(--border-subtle)] max-h-48 overflow-y-auto space-y-1.5">
+              {duplicateWarningData.candidates.map((c, i) => (
+                <div key={i} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                  <span className="font-bold text-[var(--text-primary)] uppercase truncate max-w-[240px]">{c.nombre}</span>
+                  <span className="font-mono text-[11px] text-cyan-400 font-semibold">{c.documento}</span>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              ¿Deseas continuar? Se completarán sus datos demográficos y de contacto en el grupo <strong className="text-[var(--text-primary)]">{bulkGrupo}</strong> <span className="text-cyan-300 font-bold">sin sobrescribir asistencias ni documentos ya registrados</span>.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDuplicateWarningData(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[var(--bg-muted)] hover:bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-all cursor-pointer"
+              >
+                Cancelar y Revisar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateWarningData(null)
+                  executeSave()
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 transition-all cursor-pointer flex items-center gap-1.5 font-black"
+              >
+                Continuar y Actualizar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

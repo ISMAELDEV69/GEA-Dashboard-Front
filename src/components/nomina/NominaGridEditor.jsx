@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
-import { checkCalibracionDia1, fetchReclutadoresFull } from '../../lib/dataService'
+import { checkCalibracionDia1, fetchReclutadoresFull, invalidateCache } from '../../lib/dataService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
-import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
@@ -135,6 +135,85 @@ export default function NominaGridEditor({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
 
+  // ── Duplicate Detection & Delete Management ─────────────────────
+  const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
+  const [rowToDelete, setRowToDelete] = useState(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteFeedback, setDeleteFeedback] = useState(null)
+
+  const duplicateDocsSet = useMemo(() => {
+    const counts = new Map()
+    data.forEach(r => {
+      const doc = String(r.documento || '').trim()
+      if (doc) {
+        counts.set(doc, (counts.get(doc) || 0) + 1)
+      }
+    })
+    const dups = new Set()
+    for (const [doc, count] of counts.entries()) {
+      if (count > 1) dups.add(doc)
+    }
+    return dups
+  }, [data])
+
+  const totalDuplicates = useMemo(() => {
+    return data.filter(r => {
+      const doc = String(r.documento || '').trim()
+      return doc && duplicateDocsSet.has(doc)
+    }).length
+  }, [data, duplicateDocsSet])
+
+  const handleDeleteRow = async () => {
+    if (!rowToDelete) return
+    setIsDeleting(true)
+    try {
+      const { error: delErr } = await supabase
+        .from('nominas')
+        .delete()
+        .eq('id', rowToDelete.id)
+
+      if (delErr) {
+        if (delErr.code === '23503') { // foreign_key_violation
+          const { error: softErr } = await supabase
+            .from('nominas')
+            .update({ activo: false, estado: 'DESASIGNADO', updated_at: new Date().toISOString() })
+            .eq('id', rowToDelete.id)
+          if (softErr) throw softErr
+
+          setDeleteFeedback({
+            type: 'info',
+            message: `ℹ️ Se desasignó a ${rowToDelete.nombre} de la nómina (tenía asistencias u operaciones vinculadas).`
+          })
+        } else {
+          throw delErr
+        }
+      } else {
+        setDeleteFeedback({
+          type: 'success',
+          message: `🗑️ ${rowToDelete.nombre} (DNI ${rowToDelete.documento}) ha sido eliminado de la nómina.`
+        })
+      }
+
+      // Optimistic update
+      setData(prev => prev.filter(r => r.id !== rowToDelete.id))
+      setRowToDelete(null)
+      
+      // Invalidate cache across all dashboards
+      invalidateCache('all_consolidado')
+      invalidateCache('all_asistencias_bajas')
+      invalidateCache('resumen_cap_')
+      invalidateCache('grupos_con_metas')
+
+      if (onSaveComplete) onSaveComplete()
+      setTimeout(() => setDeleteFeedback(null), 5000)
+    } catch (err) {
+      console.error('Error eliminando postulante de nomina:', err)
+      alert('Error al eliminar: ' + err.message)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const visibleColumns = useMemo(() => {
     if (columnTab === 'POSTULANTE') return POSTULANTE_COLUMNS
     if (columnTab === 'OPERATIVO') return OPERACION_COLUMNS
@@ -167,6 +246,10 @@ export default function NominaGridEditor({
 
   const filteredData = useMemo(() => {
     return data.filter(row => {
+      if (onlyDuplicatesFilter) {
+        const doc = String(row.documento || '').trim()
+        if (!doc || !duplicateDocsSet.has(doc)) return false
+      }
       for (const key in filters) {
         const selections = filters[key];
         if (!selections || selections.length === 0) continue;
@@ -184,7 +267,7 @@ export default function NominaGridEditor({
       }
       return true
     })
-  }, [data, filters])
+  }, [data, filters, onlyDuplicatesFilter, duplicateDocsSet])
 
   const userFullName = userProfile?.nombre_completo || userProfile?.nombre || ''
 
@@ -197,6 +280,7 @@ export default function NominaGridEditor({
       let query = supabase
         .from('nominas')
         .select('*')
+        .eq('activo', true)
         .order('apellido_paterno', { ascending: true })
         .limit(5000)
 
@@ -624,6 +708,48 @@ export default function NominaGridEditor({
         </div>
       </div>
 
+      {/* Duplicate detection banner (Non-intrusive) */}
+      {totalDuplicates > 0 && (
+        <div className="mx-4 my-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-amber-300 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-amber-500/20 p-1.5 rounded-lg text-amber-400 shrink-0">
+              <AlertTriangle size={16} />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-amber-200">
+                {totalDuplicates} {totalDuplicates === 1 ? 'duplicado detectado' : 'duplicados detectados'}
+              </h4>
+              <p className="text-[11px] text-amber-300/80">
+                Hay DNIs repetidos en este grupo. Revisa y elimina el registro sobrante.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOnlyDuplicatesFilter(prev => !prev)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer border ${
+              onlyDuplicatesFilter
+                ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
+                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40'
+            }`}
+          >
+            {onlyDuplicatesFilter ? 'Mostrar todos' : 'Ver solo duplicados'}
+          </button>
+        </div>
+      )}
+
+      {/* Delete Feedback Banner */}
+      {deleteFeedback && (
+        <div className={`mx-4 my-2 p-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-between gap-2 border animate-in fade-in duration-200 ${
+          deleteFeedback.type === 'success'
+            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+            : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+        }`}>
+          <span>{deleteFeedback.message}</span>
+          <button onClick={() => setDeleteFeedback(null)} className="text-white/60 hover:text-white cursor-pointer">✕</button>
+        </div>
+      )}
+
       {/* External concurrency alert */}
       {externalChangeDetected && (
         <div className="p-3 mx-4 mt-3 rounded-xl bg-cyan-900/30 border border-cyan-500/30 flex items-center justify-between text-xs text-cyan-200">
@@ -743,61 +869,143 @@ export default function NominaGridEditor({
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
-              {filteredData.map(row => (
-                <tr key={row.id} className="hover:bg-[var(--bg-muted)] transition-colors">
-                  <td className="p-2.5 border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--bg-surface)] z-10 shadow-sm flex flex-col">
-                    <span className="font-bold text-[var(--text-primary)] uppercase">
-                      {[row.apellido_paterno, row.apellido_materno, row.nombres].filter(Boolean).join(' ') || row.nombre_completo || 'SIN NOMBRE'}
-                    </span>
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
-                  </td>
-                  {visibleColumns.map(col => {
-                    const val = row[col.key] || '';
-                    let badgeClass = 'text-[var(--text-primary)]';
-                    if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO') {
-                      badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
-                    } else if (val === 'PENDIENTE' || val === 'FALTA' || val === 'DESAPROBADO' || val === 'CESE' || val === 'OBSERVADO') {
-                      badgeClass = 'bg-red-500/10 text-red-400 font-bold';
-                    }
+              {filteredData.map(row => {
+                const docClean = String(row.documento || '').trim()
+                const isDuplicate = docClean && duplicateDocsSet.has(docClean)
+                const fullName = [row.apellido_paterno, row.apellido_materno, row.nombres].filter(Boolean).join(' ') || row.nombre_completo || 'SIN NOMBRE'
 
-                    return (
-                      <td key={col.key} className={`p-0 border-r border-[var(--border-subtle)] ${badgeClass}`}>
-                        {col.type === 'select' ? (
-                          <select
-                            value={val}
-                            onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
-                            onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
-                            onFocus={() => setSelectedColumn(col.key)}
-                            className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
-                          >
-                            <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
-                            {(col.key === 'reclutador' ? reclutadorOptions : col.options || []).map(opt => (
-                              <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            type={col.type || 'text'}
-                            value={val}
-                            onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
-                            onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
-                            onFocus={() => setSelectedColumn(col.key)}
-                            onKeyDown={e => e.key === 'Enter' && e.target.blur()}
-                            className="w-full h-full p-2 bg-transparent text-xs font-medium outline-none focus:ring-1 focus:ring-cyan-400 transition-colors placeholder:text-[var(--text-muted)]/40"
-                            placeholder="..."
-                          />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                return (
+                  <tr 
+                    key={row.id} 
+                    className={`transition-colors ${
+                      isDuplicate 
+                        ? 'bg-amber-500/5 hover:bg-amber-500/10 border-l-2 border-l-amber-400' 
+                        : 'hover:bg-[var(--bg-muted)]'
+                    }`}
+                  >
+                    <td className={`p-2.5 border-r border-[var(--border-subtle)] sticky left-0 z-10 shadow-sm flex flex-col justify-center ${
+                      isDuplicate ? 'bg-[var(--bg-surface)]' : 'bg-[var(--bg-surface)]'
+                    }`}>
+                      <span className="font-bold text-[var(--text-primary)] uppercase">
+                        {fullName}
+                      </span>
+                      <div className="flex items-center justify-between gap-2 mt-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
+                          {isDuplicate && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
+                              Repetido
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setRowToDelete({
+                            id: row.id,
+                            nombre: fullName,
+                            documento: row.documento
+                          })}
+                          title={`Eliminar a ${fullName} de esta nómina`}
+                          className={`p-1 rounded-md transition-all cursor-pointer ${
+                            isDuplicate
+                              ? 'text-red-400 hover:text-red-300 hover:bg-red-500/20 opacity-100'
+                              : 'text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/15 opacity-30 hover:opacity-100'
+                          }`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                    {visibleColumns.map(col => {
+                      const val = row[col.key] || '';
+                      let badgeClass = 'text-[var(--text-primary)]';
+                      if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO') {
+                        badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
+                      } else if (val === 'PENDIENTE' || val === 'FALTA' || val === 'DESAPROBADO' || val === 'CESE' || val === 'OBSERVADO') {
+                        badgeClass = 'bg-red-500/10 text-red-400 font-bold';
+                      }
+
+                      return (
+                        <td key={col.key} className={`p-0 border-r border-[var(--border-subtle)] ${badgeClass}`}>
+                          {col.type === 'select' ? (
+                            <select
+                              value={val}
+                              onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
+                              onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
+                              onFocus={() => setSelectedColumn(col.key)}
+                              className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
+                            >
+                              <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
+                              {(col.key === 'reclutador' ? reclutadorOptions : col.options || []).map(opt => (
+                                <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={col.type || 'text'}
+                              value={val}
+                              onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
+                              onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
+                              onFocus={() => setSelectedColumn(col.key)}
+                              onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+                              className="w-full h-full p-2 bg-transparent text-xs font-medium outline-none focus:ring-1 focus:ring-cyan-400 transition-colors placeholder:text-[var(--text-muted)]/40"
+                              placeholder="..."
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </div>
+
+      {/* ── MODAL CONFIRMACIÓN DE ELIMINACIÓN ── */}
+      {rowToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] w-full max-w-sm rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-[var(--text-primary)]">
+                Eliminar de la nómina
+              </h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                ¿Eliminar a <strong className="text-[var(--text-primary)]">{rowToDelete.nombre}</strong> (DNI <span className="font-mono text-cyan-400 font-bold">{rowToDelete.documento}</span>)? Esta acción no se puede deshacer.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setRowToDelete(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[var(--bg-muted)] hover:bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteRow}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/30 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    Eliminando...
+                  </>
+                ) : (
+                  'Eliminar'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
