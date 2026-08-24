@@ -51,15 +51,10 @@ export default function NominaCompletar({
   postulantes = [],
   reclutadores = []
 }) {
-  const isReclutador = currentRole === 'reclutador'
-
+  // Permitir que todos los roles (incluidos reclutadores) vean todos los grupos disponibles
   const effectiveGrupos = useMemo(() => {
-    if (!isReclutador) return grupos
-    const myPostulantes = filterPostulantesReclutador(postulantes, userProfile, reclutadores)
-    const myGroupCodes = new Set(myPostulantes.map(p => p.grupo_codigo ? String(p.grupo_codigo).trim() : null).filter(Boolean))
-    const filtered = grupos.filter(g => myGroupCodes.has(String(g.codigo).trim()))
-    return filtered.length > 0 ? filtered : grupos.slice(0, 10)
-  }, [grupos, isReclutador, postulantes, userProfile, reclutadores])
+    return grupos
+  }, [grupos])
 
   const getPeriodoVal = (g) => g?.periodo ? String(g.periodo).trim() : ''
   const getSemanaVal = (g) => g ? String(g.semana_label || g.semana_trabajo || g.semana || '').trim() : ''

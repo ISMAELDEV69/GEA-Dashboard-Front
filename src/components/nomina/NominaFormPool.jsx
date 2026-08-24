@@ -538,13 +538,17 @@ export default function NominaFormPool({
     return availableData.slice(start, start + pageSize)
   }, [availableData, page, pageSize])
 
-  // Postulantes seleccionables: Nuevos disponibles O ya asignados al grupo actual (para actualizar sus datos operativos)
+  // Postulantes seleccionables: Nuevos disponibles, reingresos (cesados/inactivos en grupos anteriores) O ya asignados al grupo actual
   const selectableData = useMemo(() =>
     availableData.filter(d => {
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment) return true
-      return assignment.grupo_codigo === bulkGrupo
+      if (assignment.grupo_codigo === bulkGrupo) return true
+      const est = getEstadoDisplay(assignment)
+      const isActivo = assignment.activo !== false && est === 'ACTIVO'
+      // Si no está activo en otro grupo, es seleccionable (Reingreso)
+      return !isActivo
     })
   , [availableData, latestAssignedDocs, bulkGrupo])
 
@@ -554,7 +558,10 @@ export default function NominaFormPool({
     yaIngresados: poolData.filter(d => {
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
-      return assignment && assignment.grupo_codigo !== bulkGrupo
+      if (!assignment) return false
+      if (assignment.grupo_codigo === bulkGrupo) return false
+      const est = getEstadoDisplay(assignment)
+      return assignment.activo !== false && est === 'ACTIVO'
     }).length,
     seleccionados: selectedDocs.size,
   }), [poolData, selectableData, latestAssignedDocs, selectedDocs, bulkGrupo])
@@ -562,8 +569,12 @@ export default function NominaFormPool({
   const toggleSelect = (doc, marca) => {
     const cleanDoc = String(doc || '').trim()
     const assignment = latestAssignedDocs.get(cleanDoc)
-    // Bloquear solo si está asignado a OTRO grupo diferente al destino seleccionado
-    if (assignment && assignment.grupo_codigo !== bulkGrupo && bulkGrupo) return
+    // Bloquear solo si está actualmente ACTIVO en OTRO grupo diferente al destino seleccionado
+    if (assignment && assignment.grupo_codigo !== bulkGrupo && bulkGrupo) {
+      const est = getEstadoDisplay(assignment)
+      const isActivo = assignment.activo !== false && est === 'ACTIVO'
+      if (isActivo) return
+    }
     const key = `${cleanDoc}|${marca}`
     const next = new Set(selectedDocs)
     if (next.has(key)) next.delete(key)
@@ -583,7 +594,10 @@ export default function NominaFormPool({
     const pageSelectable = paginatedData.filter(d => {
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
-      return !assignment || (bulkGrupo && assignment.grupo_codigo === bulkGrupo)
+      if (!assignment || (bulkGrupo && assignment.grupo_codigo === bulkGrupo)) return true
+      const est = getEstadoDisplay(assignment)
+      const isActivo = assignment.activo !== false && est === 'ACTIVO'
+      return !isActivo
     })
     const next = new Set(selectedDocs)
     pageSelectable.forEach(d => next.add(`${String(d.documento || '').trim()}|${d.marca_temporal}`))
@@ -668,7 +682,8 @@ export default function NominaFormPool({
 
         if (existingAssignment && existingAssignment.grupo_codigo === cleanTargetGrupo) {
           toUpdate.push({ doc: cleanDoc, row: cleanRow })
-        } else if (!existingAssignment) {
+        } else {
+          // Postulante nuevo O Reingreso a un nuevo grupo
           toInsert.push(cleanRow)
         }
       })
@@ -682,8 +697,22 @@ export default function NominaFormPool({
         setImportProgress(p => Math.min(p + 20, 90))
       }, 150)
 
-      // 1. Insert new candidates
+      // 1. Insert new candidates / reingresos
       if (toInsert.length > 0) {
+        // Desactivar procesos previos de estos postulantes para respetar la unicidad de proceso activo
+        const docsToInsert = toInsert.map(r => String(r.documento).trim()).filter(Boolean)
+        if (docsToInsert.length > 0) {
+          try {
+            await supabase
+              .from('nominas')
+              .update({ activo: false })
+              .in('documento', docsToInsert)
+              .neq('grupo_codigo', cleanTargetGrupo)
+          } catch (deactErr) {
+            console.warn('Advertencia al desactivar procesos anteriores:', deactErr)
+          }
+        }
+
         const { error: dbErr } = await supabase.from('nominas').insert(toInsert)
         if (dbErr) throw dbErr
       }
@@ -719,26 +748,48 @@ export default function NominaFormPool({
   }
 
   const handleDesadjudicar = async (assignment, candidate) => {
+    const cleanDoc = String(candidate.documento || assignment.documento || '').trim()
+    const targetGrupo = assignment.grupo_codigo || 'Sin Grupo'
+    
     if (!window.confirm(
-      `¿Desadjudicar a ${candidate.nombres} ${candidate.apellido_paterno} (DNI: ${candidate.documento}) del grupo "${assignment.grupo_codigo || 'Sin Grupo'}"?`
+      `¿Desadjudicar / habilitar a ${candidate.nombres || ''} ${candidate.apellido_paterno || ''} (DNI: ${cleanDoc}) para asignarlo al grupo actual?\n(Se liberará del grupo previo "${targetGrupo}")`
     )) return
 
     try {
       setLoading(true)
       setError(null)
-      let query = supabase.from('nominas').delete()
+
+      // 1. Intentar eliminar o marcar inactivo el registro previo en Supabase
       if (assignment.id) {
-        query = query.eq('id', assignment.id)
+        const { error: delErr } = await supabase.from('nominas').delete().eq('id', assignment.id)
+        if (delErr) {
+          await supabase.from('nominas').update({ activo: false, estado: 'CESADO' }).eq('id', assignment.id)
+        }
       } else {
-        query = query.eq('documento', assignment.documento)
-        if (assignment.grupo_codigo) query = query.eq('grupo_codigo', assignment.grupo_codigo)
+        const { error: delErr } = await supabase.from('nominas').delete().eq('documento', cleanDoc).eq('grupo_codigo', targetGrupo)
+        if (delErr) {
+          await supabase.from('nominas').update({ activo: false, estado: 'CESADO' }).eq('documento', cleanDoc).eq('grupo_codigo', targetGrupo)
+        }
       }
-      const { error: delErr } = await query
-      if (delErr) throw delErr
-      setSuccess(`Postulante desadjudicado del grupo ${assignment.grupo_codigo || ''}.`)
-      setTimeout(() => setSuccess(null), 4000)
-      await loadSheetCandidates(workbookData, selectedSheet)
+
+      // 2. Actualizar estado local inmediatamente para desbloquear al postulante
+      setLatestAssignedDocs(prev => {
+        const next = new Map(prev)
+        next.delete(cleanDoc)
+        return next
+      })
+
+      // 3. Auto-seleccionar al postulante para el grupo actual
+      setSelectedDocs(prev => {
+        const next = new Set(prev)
+        next.add(`${cleanDoc}|${candidate.marca_temporal}`)
+        return next
+      })
+
+      setSuccess(`✅ Postulante ${cleanDoc} liberado y listo para asignarse a ${bulkGrupo || 'este grupo'}.`)
+      setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
+      console.error('Error al desadjudicar:', err)
       setError(`Error al desadjudicar: ${err.message}`)
     } finally {
       setLoading(false)
@@ -1025,9 +1076,16 @@ export default function NominaFormPool({
                 const latestAssignment = latestAssignedDocs.get(cleanDoc)
                 const isAssigned = Boolean(latestAssignment)
                 const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
-                const isOtherGroup = isAssigned && !isCurrentGroup
+                const estadoAssignment = isAssigned ? getEstadoDisplay(latestAssignment) : null
+                const isAssignmentActivo = isAssigned && latestAssignment.activo !== false && estadoAssignment === 'ACTIVO'
+
+                // Bloqueante solo si está actualmente ACTIVO en otro grupo
+                const isOtherGroup = isAssigned && !isCurrentGroup && isAssignmentActivo
+                // Reingreso disponible si estuvo en un grupo anterior pero ya está inactivo/cesado
+                const isReingreso = isAssigned && !isCurrentGroup && !isAssignmentActivo
+
                 const isSelected = selectedDocs.has(key)
-                const strikeClass = isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'
+                const strikeClass = isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'
 
                 return (
                   <tr
@@ -1042,13 +1100,15 @@ export default function NominaFormPool({
                           ? 'bg-cyan-500/10 cursor-pointer'
                           : isCurrentGroup
                             ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
-                            : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
+                            : isReingreso
+                              ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
+                              : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
                     }`}
                   >
                     {/* Selection Checkbox */}
                     <td className="p-3 text-center align-top sticky left-0 z-10 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)]" onClick={e => e.stopPropagation()}>
                       {isOtherGroup ? (
-                        <div className="flex items-center justify-center pt-1" title={`Postulante ya asignado a ${latestAssignment.grupo_codigo}`}>
+                        <div className="flex items-center justify-center pt-1" title={`Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic en "Quitar" para habilitarlo.`}>
                           <span className="p-1 rounded-md bg-slate-200/80 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
                             <Lock size={13} />
                           </span>
@@ -1071,11 +1131,23 @@ export default function NominaFormPool({
                         {cleanDoc}
                       </div>
 
-                      {/* Si está disponible y sin asignar */}
+                      {/* Si está disponible y sin historial */}
                       {!isAssigned && (
                         <span className="inline-flex items-center gap-1 text-[8.5px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 mt-1">
                           <Check size={10} /> Disponible
                         </span>
+                      )}
+
+                      {/* Si es un Reingreso disponible (estuvo en grupo anterior pero fue cesado/inactivo) */}
+                      {isReingreso && (
+                        <div className="mt-1 flex flex-col gap-0.5" onClick={e => e.stopPropagation()}>
+                          <span className="inline-flex items-center gap-1 text-[8.5px] font-bold px-1.5 py-0.2 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                            🔄 Reingreso disponible
+                          </span>
+                          <span className="text-[8px] text-[var(--text-muted)]">
+                            Antiguo: <b className="font-mono">{latestAssignment.grupo_codigo}</b> ({estadoAssignment})
+                          </span>
+                        </div>
                       )}
 
                       {/* Si ya pertenece a este mismo grupo */}
@@ -1085,7 +1157,7 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Si ya está registrado en OTRO grupo diferente */}
+                      {/* Si ya está registrado como ACTIVO en OTRO grupo diferente */}
                       {isOtherGroup && (
                         <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 text-amber-600 dark:text-amber-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
@@ -1134,7 +1206,7 @@ export default function NominaFormPool({
 
                     {/* Nombre Completo */}
                     <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[220px]">
-                      <span className={isAssigned ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'}>
+                      <span className={isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'}>
                         {[d.apellido_paterno, d.apellido_materno, d.nombres].filter(Boolean).join(' ') || d.documento}
                       </span>
                     </td>

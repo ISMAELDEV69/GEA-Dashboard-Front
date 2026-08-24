@@ -225,22 +225,11 @@ export default function NominaGridEditor({
         query = query.ilike('campana', `%${String(campana).trim()}%`)
       }
 
-      if (currentRole === 'reclutador') {
-        if (userFullName) {
-          query = query.ilike('reclutador', `%${userFullName.trim()}%`)
-        }
-      }
-
       const { data: rows, error: err } = await query
 
       if (err) throw err
       
       let finalRows = rows || []
-      if (currentRole === 'reclutador') {
-        if (userFullName) {
-          finalRows = finalRows.filter(r => nameMatches(r.reclutador, userFullName))
-        }
-      }
 
       setData(finalRows)
       lastLoadedAtRef.current = new Date().toISOString()
