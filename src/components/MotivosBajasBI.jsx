@@ -185,6 +185,15 @@ export default function MotivosBajasBI() {
     loadData();
   }, [loadData]);
 
+  // Listener para el botón global Refrescar del Header
+  useEffect(() => {
+    const handleGlobalRefresh = () => {
+      loadData(true);
+    };
+    window.addEventListener('gea-global-refresh', handleGlobalRefresh);
+    return () => window.removeEventListener('gea-global-refresh', handleGlobalRefresh);
+  }, [loadData]);
+
   // ── 1. Indexar capacidades y nóminas en O(1) ──
   const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
     const byKey = new Map();

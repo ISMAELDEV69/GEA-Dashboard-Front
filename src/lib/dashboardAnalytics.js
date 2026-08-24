@@ -55,35 +55,406 @@ export function getConsecutiveFIs(doc, asistencias) {
   return count
 }
 
+export function parseDateIso(val) {
+  if (!val) return null
+  const s = String(val).trim()
+  if (!s || s === '-' || s === '0' || s === 'null' || s === 'undefined') return null
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10)
+  if (s.includes('/')) {
+    const parts = s.split('/')
+    if (parts.length === 3) {
+      const d = parts[0].padStart(2, '0')
+      const m = parts[1].padStart(2, '0')
+      let y = parts[2].split(' ')[0]
+      y = y.length === 2 ? `20${y}` : y
+      return `${y}-${m}-${d}`
+    }
+  }
+  const d = new Date(val)
+  if (!isNaN(d.getTime())) {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  return null
+}
+
+export function normalizeGroupCodeExact(val) {
+  if (!val) return ''
+  return String(val).trim().toUpperCase().replace(/[-\s]/g, '_')
+}
+
+export function parseSemanaNum(val) {
+  if (!val) return null
+  const num = parseInt(String(val).replace(/\D/g, ''), 10)
+  return isNaN(num) ? null : num
+}
+
+export function normalizePeriodo(val) {
+  if (!val) return ''
+  return String(val).replace(/\D/g, '')
+}
+
+export function getExactGrupoMetasOps(c, exactGroupOpsMap, fallbackMap) {
+  if (!c) return 0
+  const rawCode = c.grupo_codigo || c.codigo || ''
+  if (exactGroupOpsMap) {
+    if (exactGroupOpsMap.has(rawCode)) return exactGroupOpsMap.get(rawCode)
+    const norm = normalizeGroupCodeExact(rawCode)
+    if (exactGroupOpsMap.has(norm)) return exactGroupOpsMap.get(norm)
+    const compKey = `${rawCode}__${normalizePeriodo(c.periodo)}__${parseSemanaNum(c.semana || c.semana_label)}`
+    if (exactGroupOpsMap.has(compKey)) return exactGroupOpsMap.get(compKey)
+  }
+  return fallbackMap?.get(rawCode) || 0
+}
+
+// ── Índice Hash O(1) Compartido para Dashboards ───────────────
+export function buildAttendanceIndexes(asistencias = [], postulantes = [], campanasMetas = []) {
+  const opDocsSet = new Set()
+  const bajasDocsSet = new Set()
+  const docAttendanceByDate = new Map() // doc -> Map<isoDate, sigla>
+
+  for (let i = 0; i < asistencias.length; i++) {
+    const a = asistencias[i]
+    const doc = a.postulante_documento || a.documento
+    if (!doc) continue
+    const sigla = a.sigla_asistencia
+    if (sigla === 'I-OP') {
+      opDocsSet.add(doc)
+    } else if (sigla === 'B') {
+      bajasDocsSet.add(doc)
+    }
+
+    const isoDate = parseDateIso(a.fecha_asistencia || a.fecha_registro_asistencia)
+    if (isoDate) {
+      if (!docAttendanceByDate.has(doc)) {
+        docAttendanceByDate.set(doc, new Map())
+      }
+      docAttendanceByDate.get(doc).set(isoDate, sigla)
+    }
+  }
+
+  // Descriptores para Metas RQ (Cohortes exactas sin colapso de sufijos)
+  const metaDescriptors = (campanasMetas || []).map(c => {
+    const rawCode = c.grupo_codigo || c.codigo || ''
+    return {
+      rawCode,
+      normCode: normalizeGroupCodeExact(rawCode),
+      periodo: normalizePeriodo(c.periodo),
+      semana: parseSemanaNum(c.semana || c.semana_label),
+      campana: String(c.campana_nombre || c.campana || '').toUpperCase().trim(),
+      matchedDocs: new Set()
+    }
+  })
+
+  // Pre-indexar candidatos por grupo y grupo_codigo base
+  const groupOpsCountMap = new Map()
+  const exactGroupOpsCountMap = new Map()
+  const groupDocsMap = new Map()
+
+  for (let i = 0; i < postulantes.length; i++) {
+    const p = postulantes[i]
+    const doc = p.documento
+    const rawGroup = p.grupo_codigo
+    if (!rawGroup || !doc) continue
+    const baseGroup = String(rawGroup).replace(/_\d+$/, '')
+
+    // Indexar docs por grupo general
+    if (!groupDocsMap.has(rawGroup)) groupDocsMap.set(rawGroup, new Set())
+    groupDocsMap.get(rawGroup).add(doc)
+    if (baseGroup !== rawGroup) {
+      if (!groupDocsMap.has(baseGroup)) groupDocsMap.set(baseGroup, new Set())
+      groupDocsMap.get(baseGroup).add(doc)
+    }
+
+    // Si el postulante tiene I-OP confirmado en asistencias o estado EN_OPERACION
+    const isOp = Boolean(opDocsSet.has(doc) || p.estado === 'EN_OPERACION')
+    if (isOp) {
+      // 1. Conteo con colapso de sufijos para Formadores / General
+      if (!groupOpsCountMap.has(rawGroup)) groupOpsCountMap.set(rawGroup, new Set())
+      groupOpsCountMap.get(rawGroup).add(doc)
+
+      if (baseGroup !== rawGroup) {
+        if (!groupOpsCountMap.has(baseGroup)) groupOpsCountMap.set(baseGroup, new Set())
+        groupOpsCountMap.get(baseGroup).add(doc)
+      }
+
+      // 2. Conteo EXACTO acotado por cohorte para Metas RQ
+      const pNormCode = normalizeGroupCodeExact(rawGroup)
+      const pPeriodo = normalizePeriodo(p.periodo_reclutado || p.periodo)
+      const pSemana = parseSemanaNum(p.semana_trabajo || p.semana)
+      const pCampana = String(p.campana || p.campaign || '').toUpperCase().trim()
+
+      if (metaDescriptors.length > 0) {
+        for (let m = 0; m < metaDescriptors.length; m++) {
+          const desc = metaDescriptors[m]
+          // A. Coincidencia EXACTA de código (sin colapsar sufijos _1, _2)
+          if (desc.normCode !== pNormCode) continue
+
+          // B. Filtro por Periodo (si ambos tienen periodo)
+          if (desc.periodo && pPeriodo) {
+            if (desc.periodo !== pPeriodo && !desc.periodo.includes(pPeriodo) && !pPeriodo.includes(desc.periodo)) {
+              continue
+            }
+          }
+
+          // C. Filtro por Semana (si ambos tienen semana)
+          if (desc.semana !== null && pSemana !== null) {
+            if (desc.semana !== pSemana) continue
+          }
+
+          // D. Filtro por Campaña (si ambos tienen campaña)
+          if (desc.campana && pCampana) {
+            if (!pCampana.includes(desc.campana) && !desc.campana.includes(pCampana)) {
+              continue
+            }
+          }
+
+          desc.matchedDocs.add(doc)
+        }
+      } else {
+        if (!exactGroupOpsCountMap.has(rawGroup)) exactGroupOpsCountMap.set(rawGroup, new Set())
+        exactGroupOpsCountMap.get(rawGroup).add(doc)
+      }
+    }
+  }
+
+  // Convertir sets a counts numéricos para acceso directo O(1)
+  const groupOpsMap = new Map()
+  groupOpsCountMap.forEach((docs, gCode) => {
+    groupOpsMap.set(gCode, docs.size)
+  })
+
+  const exactGroupOpsMap = new Map()
+  if (metaDescriptors.length > 0) {
+    metaDescriptors.forEach(desc => {
+      exactGroupOpsMap.set(desc.rawCode, desc.matchedDocs.size)
+      exactGroupOpsMap.set(desc.normCode, desc.matchedDocs.size)
+      exactGroupOpsMap.set(`${desc.rawCode}__${desc.periodo}__${desc.semana}`, desc.matchedDocs.size)
+    })
+  } else {
+    exactGroupOpsCountMap.forEach((docs, gCode) => {
+      exactGroupOpsMap.set(gCode, docs.size)
+    })
+  }
+
+  return {
+    opDocsSet,
+    bajasDocsSet,
+    groupOpsMap,
+    exactGroupOpsMap,
+    groupDocsMap,
+    docAttendanceByDate,
+  }
+}
+
+// ── Heatmap de Retención Campaña × Etapa ──────────────────────
+export function buildCampanaEtapaHeatmap(postulantes = [], asistencias = [], campanasMetas = [], indexes = null) {
+  const attIndexes = indexes || buildAttendanceIndexes(asistencias, postulantes)
+  const { opDocsSet, docAttendanceByDate } = attIndexes
+
+  // 1. Mapeo de grupos y agregación de metas por campaña
+  const groupMap = new Map()
+  const campanaMetasSum = new Map()
+
+  for (let i = 0; i < (campanasMetas || []).length; i++) {
+    const g = campanasMetas[i]
+    const code = g.grupo_codigo || g.codigo
+    if (code) {
+      groupMap.set(code, g)
+      const baseCode = String(code).replace(/_\d+$/, '')
+      if (!groupMap.has(baseCode)) groupMap.set(baseCode, g)
+    }
+
+    const cName = String(g.campana_nombre || g.campana || '').trim().toUpperCase()
+    if (cName) {
+      if (!campanaMetasSum.has(cName)) {
+        campanaMetasSum.set(cName, { metaDia1: 0, metaOp: 0, metaDia0: 0, countGrupos: 0 })
+      }
+      const cm = campanaMetasSum.get(cName)
+      cm.metaDia1 += Number(g.meta_dia_1) || 0
+      cm.metaOp += Number(g.rq_solicitado) || 0
+      cm.metaDia0 += Number(g.meta_dia_0) || 0
+      cm.countGrupos++
+    }
+  }
+
+  // 2. Acumuladores por campaña
+  const campanaMap = new Map()
+
+  for (let i = 0; i < (postulantes || []).length; i++) {
+    const p = postulantes[i]
+    const g = groupMap.get(p.grupo_codigo) || groupMap.get(String(p.grupo_codigo || '').replace(/_\d+$/, ''))
+    const rawCampana = p.campana || g?.campana_nombre || g?.campana || 'Sin Campaña'
+    const campanaKey = String(rawCampana).trim().toUpperCase()
+    if (!campanaKey || campanaKey === '-' || campanaKey === 'NULL' || campanaKey === 'UNDEFINED') continue
+
+    if (!campanaMap.has(campanaKey)) {
+      campanaMap.set(campanaKey, {
+        campana: rawCampana.trim(),
+        totalReclutados: 0,
+        dia1Count: 0,
+        ojtCount: 0,
+        ojtEligibleCount: 0,
+        opCount: 0,
+        gruposTotal: new Set(),
+        gruposMissingOjt: new Set(),
+      })
+    }
+
+    const row = campanaMap.get(campanaKey)
+    row.totalReclutados++
+    if (p.grupo_codigo) row.gruposTotal.add(p.grupo_codigo)
+
+    const doc = p.documento
+    const docDates = doc ? docAttendanceByDate.get(doc) : null
+
+    // ── Etapa 2: Conexión Día 1 ──
+    const isDia1Present =
+      p.dia_1 === 'ASISTIO' ||
+      p.dia_0 === 'ASISTIO' ||
+      (docDates && docDates.size > 0)
+    if (isDia1Present) {
+      row.dia1Count++
+    }
+
+    // ── Etapa 3: Conexión OJT (corte en fecha_inicio_ojt) ──
+    const rawOjtDate = g?.fecha_inicio_ojt || p.fecha_conexion_ojt
+    const ojtIso = parseDateIso(rawOjtDate)
+    const isOp = opDocsSet.has(doc) || p.estado === 'EN_OPERACION'
+
+    if (!ojtIso) {
+      if (p.grupo_codigo) row.gruposMissingOjt.add(p.grupo_codigo)
+      // Si no hay fecha_inicio_ojt pero ya llegó a OP o tiene marca directa de OJT, se cuenta como éxito
+      if (isOp || Boolean(p.fecha_conexion_ojt)) {
+        row.ojtEligibleCount++
+        row.ojtCount++
+      }
+    } else {
+      row.ojtEligibleCount++
+      if (isOp || Boolean(p.fecha_conexion_ojt)) {
+        row.ojtCount++
+      } else if (docDates) {
+        let activeOnOrAfterOjt = false
+        for (const [dateKey, sigla] of docDates.entries()) {
+          if (dateKey >= ojtIso && sigla !== 'B') {
+            activeOnOrAfterOjt = true
+            break
+          }
+        }
+        if (activeOnOrAfterOjt) {
+          row.ojtCount++
+        }
+      }
+    }
+
+    // ── Etapa 4: Conexión OP ──
+    if (isOp) {
+      row.opCount++
+    }
+  }
+
+  // 3. Formateo y cálculo de cumplimiento vs. Requerimiento (RQ) y Retención
+  let totalMissingOjtCampanas = 0
+  const rows = Array.from(campanaMap.values())
+    .filter(c => c.totalReclutados > 0 && c.campana !== 'Sin Campaña')
+    .map(c => {
+      const campanaKey = c.campana.trim().toUpperCase()
+      const metaInfo = campanaMetasSum.get(campanaKey) || { metaDia1: 0, metaOp: 0, metaDia0: 0 }
+
+      const hasMissingOjt = c.gruposMissingOjt.size > 0 && c.ojtEligibleCount === 0
+      if (hasMissingOjt) totalMissingOjtCampanas++
+
+      // A. Requerimientos / Metas
+      const rqDia1 = metaInfo.metaDia1 > 0 ? metaInfo.metaDia1 : c.totalReclutados
+      const rqOp = metaInfo.metaOp > 0 ? metaInfo.metaOp : (c.dia1Count || c.totalReclutados)
+
+      // B. Cumplimiento contra Requerimiento RQ
+      const pctDia1VsRq = rqDia1 > 0 ? Math.round((c.dia1Count / rqDia1) * 100) : 0
+      const pctOpVsRq = rqOp > 0 ? Math.round((c.opCount / rqOp) * 100) : 0
+
+      // C. Retención del Embudo contra Postulantes
+      const pctDia1VsRec = c.totalReclutados > 0 ? Math.round((c.dia1Count / c.totalReclutados) * 100) : 0
+      const pctOpVsRec = c.totalReclutados > 0 ? Math.round((c.opCount / c.totalReclutados) * 100) : 0
+
+      const pctOjt = c.ojtEligibleCount > 0 
+        ? Math.min(100, Math.round((c.ojtCount / c.ojtEligibleCount) * 100))
+        : null
+
+      return {
+        campana: c.campana,
+        totalReclutados: c.totalReclutados,
+        // Día 1
+        dia1Count: c.dia1Count,
+        rqDia1,
+        pctDia1VsRq,
+        pctDia1VsRec,
+        // OJT
+        ojtCount: c.ojtCount,
+        ojtEligibleCount: c.ojtEligibleCount,
+        pctOjt,
+        hasMissingOjt,
+        missingOjtGruposCount: c.gruposMissingOjt.size,
+        // OP
+        opCount: c.opCount,
+        rqOp,
+        pctOpVsRq,
+        pctOpVsRec,
+      }
+    })
+    .sort((a, b) => b.totalReclutados - a.totalReclutados)
+
+  return {
+    rows,
+    totalMissingOjtCampanas,
+  }
+}
+
 // ── Métricas globales (consolidado nómina) ────────────────────
-export function computeGlobalMetrics(postulantes = [], asistencias = [], grupos = []) {
+export function computeGlobalMetrics(postulantes = [], asistencias = [], grupos = [], indexes = null) {
   const total = postulantes.length
-  const inCapacitacion = postulantes.filter(p =>
-    p.estado === 'EN_CAPACITACION' || p.fecha_inicio_capacitacion
-  ).length
-  const inOps = postulantes.filter(p =>
-    p.estado === 'EN_OPERACION' || p.fecha_conexion_op ||
-    asistencias.some(a => a.postulante_documento === p.documento && a.sigla_asistencia === 'I-OP')
-  ).length
-  const enOjt = postulantes.filter(p => p.fecha_conexion_ojt && !p.fecha_conexion_op).length
+  const opDocs = indexes?.opDocsSet || new Set(
+    asistencias.filter(a => a.sigla_asistencia === 'I-OP').map(a => a.postulante_documento || a.documento)
+  )
+
+  let inCapacitacion = 0
+  let inOps = 0
+  let enOjt = 0
+  let testPsicoDone = 0
+  let evalDia0Pending = 0
+  let dia0Asistio = 0
+  let dia1Cese = 0
+  let totalRemuneracion = 0
+  let totalBonos = 0
+  let pagoCapCount = 0
+
+  for (let i = 0; i < total; i++) {
+    const p = postulantes[i]
+    if (p.estado === 'EN_CAPACITACION' || p.fecha_inicio_capacitacion) inCapacitacion++
+    if (p.estado === 'EN_OPERACION' || opDocs.has(p.documento)) inOps++
+    if (p.fecha_conexion_ojt && p.estado !== 'EN_OPERACION' && !opDocs.has(p.documento)) enOjt++
+    if (isDone(p.test_psicologico)) testPsicoDone++
+    if (isPending(p.evaluacion_dia_0)) evalDia0Pending++
+    if (isDone(p.dia_0_obs) || p.dia_0) dia0Asistio++
+    if (isCese(p.status_dia_1)) dia1Cese++
+    if (p.remuneracion) totalRemuneracion += (Number(p.remuneracion) || 0)
+    if (p.bono_variable || p.bono_movilidad || p.bono_bienvenida || p.bono_permanencia || p.bono_asistencia_perfecta) {
+      totalBonos += (Number(p.bono_variable) || 0) + (Number(p.bono_movilidad) || 0) +
+        (Number(p.bono_bienvenida) || 0) + (Number(p.bono_permanencia) || 0) +
+        (Number(p.bono_asistencia_perfecta) || 0)
+    }
+    if (p.pago_capacitacion) pagoCapCount++
+  }
 
   const totalAsist = asistencias.length
-  const presentCount = asistencias.filter(a => ATTENDANCE_PRESENT.includes(a.sigla_asistencia)).length
+  let presentCount = 0
+  for (let i = 0; i < totalAsist; i++) {
+    if (ATTENDANCE_PRESENT.includes(asistencias[i].sigla_asistencia)) presentCount++
+  }
+
   const attendanceRate = totalAsist > 0 ? Math.round((presentCount / totalAsist) * 100) : 0
   const conversionRate = total > 0 ? Math.round((inOps / total) * 100) : 0
-
-  const testPsicoDone = postulantes.filter(p => isDone(p.test_psicologico)).length
-  const evalDia0Pending = postulantes.filter(p => isPending(p.evaluacion_dia_0)).length
-  const dia0Asistio = postulantes.filter(p => isDone(p.dia_0_obs) || p.dia_0).length
-  const dia1Cese = postulantes.filter(p => isCese(p.status_dia_1)).length
-
-  const totalRemuneracion = postulantes.reduce((s, p) => s + (Number(p.remuneracion) || 0), 0)
-  const totalBonos = postulantes.reduce((s, p) =>
-    s + (Number(p.bono_variable) || 0) + (Number(p.bono_movilidad) || 0) +
-    (Number(p.bono_bienvenida) || 0) + (Number(p.bono_permanencia) || 0) +
-    (Number(p.bono_asistencia_perfecta) || 0), 0)
-
-  const pagoCapCount = postulantes.filter(p => p.pago_capacitacion).length
 
   return {
     total,
@@ -104,16 +475,28 @@ export function computeGlobalMetrics(postulantes = [], asistencias = [], grupos 
 }
 
 // Embudo alineado al consolidado Excel
-export function buildConsolidadoFunnel(postulantes = [], asistencias = []) {
+export function buildConsolidadoFunnel(postulantes = [], asistencias = [], indexes = null) {
   const total = postulantes.length
-  const conTest = postulantes.filter(p => isDone(p.test_psicologico)).length
-  const inicioCap = postulantes.filter(p => p.fecha_inicio_capacitacion).length
-  const evalD0 = postulantes.filter(p => !isPending(p.evaluacion_dia_0) && p.evaluacion_dia_0).length
-  const conOjt = postulantes.filter(p => p.fecha_conexion_ojt).length
-  const conOp = postulantes.filter(p =>
-    p.fecha_conexion_op ||
-    asistencias.some(a => a.postulante_documento === p.documento && a.sigla_asistencia === 'I-OP')
-  ).length
+  const opDocs = indexes?.opDocsSet || new Set(
+    asistencias.filter(a => a.sigla_asistencia === 'I-OP').map(a => a.postulante_documento || a.documento)
+  )
+
+  let conTest = 0
+  let inicioCap = 0
+  let evalD0 = 0
+  let conOjt = 0
+  let conOp = 0
+
+  for (let i = 0; i < total; i++) {
+    const p = postulantes[i]
+    if (isDone(p.test_psicologico)) conTest++
+    const doc = p.documento
+    const hasAttendance = doc && indexes?.docAttendanceByDate?.get(doc)?.size > 0
+    if (p.dia_0 === 'ASISTIO' || p.dia_1 === 'ASISTIO' || hasAttendance) inicioCap++
+    if (!isPending(p.evaluacion_dia_0) && p.evaluacion_dia_0) evalD0++
+    if (p.fecha_conexion_ojt) conOjt++
+    if (p.estado === 'EN_OPERACION' || opDocs.has(p.documento)) conOp++
+  }
 
   return [
     { etapa: '1. Reclutados', cantidad: total, fill: '#6366f1', pct: 100 },

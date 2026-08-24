@@ -1,9 +1,10 @@
+import React, { memo } from 'react'
 import AdminDashboard from './dashboard/AdminDashboard'
 import ReclutadorDashboard from './dashboard/ReclutadorDashboard'
 import FormadorDashboard from './dashboard/FormadorDashboard'
 import VisorDashboard from './dashboard/VisorDashboard'
 
-export default function Dashboard({
+function Dashboard({
   postulantes = [],
   asistencias = [],
   grupos = [],
@@ -28,3 +29,4 @@ export default function Dashboard({
   }
 }
 
+export default memo(Dashboard)

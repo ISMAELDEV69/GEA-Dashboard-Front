@@ -1015,23 +1015,36 @@ export async function fetchCapacidadRysOperativo() {
   return fetchGrupos()
 }
 
-/** Suscripción realtime a cambios de grupos y nóminas con debounce de seguridad */
+/** 
+ * Suscripción realtime a cambios de grupos y nóminas con invalidación de caché.
+ * 
+ * NOTA DE ARQUITECTURA / PROTECCIÓN DE CARGA (2026-08-23):
+ * Se DESACTIVA el auto-reload masivo automático ante eventos postgres_changes de otros clientes.
+ * MOTIVO: Con ~100 usuarios concurrentes, un solo insert disparaba loadAllData() completo
+ * (17 requests HTTP simultáneas) en cada cliente al mismo milisegundo (Thundering Herd de 1,700 req/s),
+ * saturando el connection pooler y el API gateway de Supabase.
+ * 
+ * ESTRATEGIA APLICADA:
+ * 1. La invalidación de caché local se mantiene intacta para que la próxima lectura traiga datos frescos.
+ * 2. Las acciones de guardado propio del usuario (asistencias, nóminas, grupos) siguen actualizando su propia vista de inmediato.
+ * 3. Los cambios de terceros se sincronizan mediante polling suave (cada 5 min con jitter) y botón manual "Refrescar".
+ */
 export function subscribeOperationalData(onChange) {
   if (DB_MODE !== 'supabase') return () => {}
 
-  let debounceTimer = null;
   const handleChange = () => {
-    // Limpiar caché antes de recargar para garantizar datos frescos de Supabase
+    // Invalida caché local para asegurar datos frescos en la siguiente consulta del usuario
     invalidateCache('all_consolidado');
     invalidateCache('all_asistencias_bajas');
     invalidateCache('all_motivos_bajas');
     invalidateCache('grupos_con_metas');
     invalidateCache('resumen_cap_');
     
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
+    // Auto-reload masivo desactivado para mitigar picos de carga concurrentes (>100 usuarios)
+    // Si se requiere callback específico manual forzado, se puede invocar condicionalmente:
+    if (typeof onChange === 'function' && onChange.__allowDirectRealtimeReload) {
       onChange();
-    }, 1500);
+    }
   };
 
   const channel = supabase
@@ -1440,17 +1453,22 @@ export async function fetchAsistencias() {
       if (isoDate) {
         const key = `${row.documento}_${isoDate}`;
         map.set(key, {
+          documento: row.documento,
           postulante_documento: row.documento,
           nombres: row.nombres,
           apellido_paterno: row.apellido_paterno,
           apellido_materno: row.apellido_materno,
           celular: row.celular,
           condicion_laboral: row.condicion_laboral,
+          codigo_grupo: row.codigo_grupo,
           grupo_codigo: row.codigo_grupo,
           campana: row.campana,
+          fecha_registro_asistencia: isoDate,
           fecha_asistencia: isoDate,
+          sigla: row.sigla,
           sigla_asistencia: row.sigla,
           motivo_baja: row.motivo_baja,
+          estado: row.estado || 'ACTIVO',
           formador: row.nombre_formador,
         });
       }
@@ -1652,7 +1670,7 @@ export function fetchGruposConMetas() {
       const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
         supabase
           .from('capacidad_rys')
-          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_ingreso_op')
+          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
           .order('codigo'),
         supabase
           .from('grupo_reclutadores')
@@ -1760,10 +1778,12 @@ export function fetchGruposConMetas() {
         modalidad: g.modalidad || '',
         horario: g.rango_horario || '',
         fecha_inicio: g.fecha_registro || '',
+        fecha_inicio_ojt: g.fecha_inicio_ojt || '',
         fecha_ingreso_op: g.fecha_ingreso_op || '',
         meta_dia_0_grupal: g.meta_dia_0 || 0,
         meta_dia_1_grupal: g.meta_dia_1 || 0,
         rq_solicitado: g.rq_solicitado || 0,
+        rq_ftes_solicitado: g.rq_ftes_solicitado || 0,
         reclutadores_metas: reclutadoresConStats,
         sede,
         lista_actual: listaActual,
@@ -3498,6 +3518,364 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
     return true;
   }
   return false;
+}
+
+/**
+ * Cálculo Ultrarrápido de Métricas de Calibración Día 1 en Memoria (O(1) Map indexing).
+ * Reutiliza postulantes y asistencias ya cargados en RAM sin repaginar Supabase.
+ */
+export async function calculateMetricasReporteCalibracionFast(gruposInfo, postulantes = [], asistencias = []) {
+  if (!gruposInfo || gruposInfo.length === 0) return []
+
+  const norm = (val) => String(val || '').trim().toUpperCase();
+  const codigos = [...new Set(gruposInfo.map(g => g.codigo))];
+  const campanas = [...new Set(gruposInfo.map(g => g.campana))];
+
+  // 1. Consultas puntuales indispensables de configuración que NO vienen en memoria
+  let configAll = [];
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data } = await supabase.from('grupos_dia1')
+        .select('estado_calibracion, fecha_dia1, grupo_codigo, campana')
+        .in('grupo_codigo', codigos)
+        .in('campana', campanas);
+      configAll = data || [];
+    } catch (e) {
+      console.warn('Error fetching grupos_dia1 config:', e);
+    }
+  }
+
+  const descSet = await getDescuentosSetGlobal();
+
+  const configMap = new Map();
+  if (configAll) {
+    configAll.forEach(c => {
+      configMap.set(`${norm(c.campana)}|${norm(c.grupo_codigo)}`, c);
+    });
+  }
+
+  // 2. Indexación O(1) de Nóminas / Postulantes en memoria
+  const nominasGrouped = new Map();
+  (postulantes || []).forEach(n => {
+    const key = `${norm(n.campana)}|${norm(n.grupo_codigo)}`;
+    if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
+    nominasGrouped.get(key).push(n);
+  });
+
+  // 3. Indexación O(1) de Asistencias en memoria
+  const formAsisGrouped = new Map();
+  (asistencias || []).forEach(f => {
+    const groupCode = f.grupo_codigo || f.codigo_grupo;
+    const key = `${norm(f.campana)}|${norm(groupCode)}`;
+    if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
+    formAsisGrouped.get(key).push(f);
+  });
+
+  const results = [];
+  for (const grupoInfo of gruposInfo) {
+    const { codigo: grupo_codigo, campana } = grupoInfo;
+    const groupKey = `${norm(campana)}|${norm(grupo_codigo)}`;
+    
+    let totalNomina = 0;
+    let totalDia0 = 0;
+    let countRec = 0;
+    
+    const nominas = nominasGrouped.get(groupKey) || [];
+    const validNominas = descSet.size > 0 
+      ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
+      : nominas;
+      
+    totalNomina = validNominas.length;
+    totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+
+    for (const n of validNominas) {
+      if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
+        const docKey = n.documento;
+        const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === docKey);
+        const isBajaDia1 = records.some(r => {
+          const m = String(r.motivo_baja || '').toUpperCase();
+          const e = String(r.estado || '').toUpperCase();
+          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
+        });
+        if (!isBajaDia1) {
+          countRec++;
+        }
+      }
+    }
+
+    const config = configMap.get(groupKey);
+    let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
+    let fecha_dia1_ref = config?.fecha_dia1 || null;
+
+    if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
+       let earliestIso = null;
+       let earliestRaw = null;
+       
+       for (const row of groupFormAsisRaw) {
+         const dateVal = row.fecha_registro_asistencia || row.fecha_asistencia;
+         if (dateVal) {
+            const iso = parseFechaAsistencia(dateVal);
+            if (iso && (!earliestIso || iso < earliestIso)) {
+              earliestIso = iso;
+              earliestRaw = dateVal;
+            }
+         }
+       }
+       fecha_dia1_ref = earliestRaw;
+    }
+
+    let countForm = 0;
+    if (fecha_dia1_ref) {
+      const formAsis = groupFormAsisRaw
+        .filter(f => (f.fecha_registro_asistencia || f.fecha_asistencia))
+        .map(row => {
+          return {
+            postulante_documento: row.documento || row.postulante_documento,
+            sigla_asistencia: row.sigla || row.sigla_asistencia,
+            motivo_baja: row.motivo_baja,
+            estado: row.estado,
+            fecha_asistencia: row.fecha_registro_asistencia || row.fecha_asistencia
+          }
+        });
+
+      const mapFormFull = new Map();
+      const isBajaGlobal = new Map();
+      
+      for (const f of formAsis) {
+        const doc = f.postulante_documento;
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
+        isBajaGlobal.set(doc, isBaja);
+        
+        if (f.fecha_asistencia === fecha_dia1_ref) {
+          mapFormFull.set(doc, f);
+        }
+      }
+      
+      for (const f of formAsis) {
+        const doc = f.postulante_documento;
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
+        if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
+          mapFormFull.set(doc, f);
+        }
+      }
+      
+      for (const [doc, f] of mapFormFull.entries()) {
+        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
+        if (isBaja && !isBajaGlobal.get(doc)) {
+          mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
+        }
+      }
+
+      const mapRec = new Map(validNominas.map(r => [r.documento, r.dia_1]))
+      const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
+      let isCalibrated = true
+      for (const doc of allDocs) {
+        const formRecord = mapFormFull.get(doc)
+        const recSigla = mapRec.get(doc) 
+        
+        const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
+        const isBajaDia1 = formRecord && (
+          String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+          String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
+          (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
+        )
+        const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
+        
+        const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
+        const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
+        
+        if (isFormAsistencia) countForm++;
+
+        if (isFormAsistencia !== isRecAsistencia) {
+          isCalibrated = false
+        }
+      }
+    }
+
+    if (estado_calibracion === 'PENDIENTE' && fecha_dia1_ref) {
+      if (countRec !== countForm) {
+        estado_calibracion = 'DESCALIBRADO';
+      } else if (countRec > 0 || countForm > 0) {
+        estado_calibracion = 'CALIBRADO';
+      }
+    }
+
+    results.push({
+      grupo_codigo: grupo_codigo,
+      campana: campana || '',
+      segmento: grupoInfo.segmento || '',
+      periodo: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
+      semana_label: grupoInfo.semana_label ? String(grupoInfo.semana_label).trim() : '',
+      fecha_inicio: grupoInfo.fecha_inicio || '',
+      fecha_dia1: fecha_dia1_ref || 'No definida',
+      estado: estado_calibracion,
+      total_nomina: totalNomina,
+      total_dia0: totalDia0,
+      total_reclutador: countRec,
+      total_formador: countForm
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Cálculo Ultrarrápido de Métricas de Resumen Capacitación en Memoria (O(1) Map indexing).
+ * Reutiliza postulantes y asistencias ya cargados en RAM sin consultas redundantes a Supabase.
+ */
+export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postulantes = [], asistencias = []) {
+  if (!gruposInfo || gruposInfo.length === 0) return [];
+
+  const norm = (val) => String(val || '').trim().toUpperCase();
+  const descSet = await getDescuentosSetGlobal();
+
+  const nominasGrouped = new Map();
+  (postulantes || []).forEach(n => {
+    const key = `${norm(n.campana)}|${norm(n.grupo_codigo)}`;
+    if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
+    nominasGrouped.get(key).push(n);
+  });
+
+  const formAsisGrouped = new Map();
+  (asistencias || []).forEach(f => {
+    const groupCode = f.grupo_codigo || f.codigo_grupo;
+    const key = `${norm(f.campana)}|${norm(groupCode)}`;
+    if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
+    formAsisGrouped.get(key).push(f);
+  });
+
+  const results = [];
+  for (const grupoInfo of gruposInfo) {
+    const { codigo: grupo_codigo, campana, fecha_inicio_ojt } = grupoInfo;
+    const groupKey = `${norm(campana)}|${norm(grupo_codigo)}`;
+    
+    const nominas = nominasGrouped.get(groupKey) || [];
+    const validNominas = descSet.size > 0 
+      ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
+      : nominas;
+      
+    const total_nomina = validNominas.length;
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+
+    let asistio_dia0 = 0;
+    let asistio_dia1 = 0;
+
+    for (const n of validNominas) {
+      const doc = n.documento;
+      const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
+      const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
+
+      const d0 = String(n.dia_0 || '').toUpperCase().trim();
+      if (d0 === 'ASISTIO' || tieneIngreso) {
+        asistio_dia0++;
+      }
+      
+      const d1 = String(n.dia_1 || '').toUpperCase().trim();
+      if (d1 === 'ASISTIO' || tieneIngreso) {
+        const isBajaDia1 = records.some(r => {
+          const m = String(r.motivo_baja || '').toUpperCase();
+          const e = String(r.estado || '').toUpperCase();
+          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
+        });
+        if (!isBajaDia1) {
+          asistio_dia1++;
+        }
+      }
+    }
+
+    const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
+    const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
+    const isGrupoCerrado = estadoGrupo === 'CERRADO' || estadoGrupo === 'CANCELADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO' || periodoRys === 'CANCELADO';
+
+    let activos_actuales = 0;
+    let activos_ojt = 0;
+    let ingresos_iop = 0;
+
+    for (const n of validNominas) {
+      const doc = n.documento;
+      const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
+      
+      // Tiene I-OP?
+      const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
+      if (tieneIngreso) {
+        ingresos_iop++;
+      }
+
+      const dia1Asistio = String(n.dia_1 || '').toUpperCase().trim() === 'ASISTIO' || tieneIngreso;
+      let currentState = '';
+      let isBajaDia1 = false;
+      let isBajaGeneral = false;
+      
+      if (records.length > 0) {
+        const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || a.fecha_asistencia || 0) - new Date(b.fecha_registro_asistencia || b.fecha_asistencia || 0));
+        const lastRecord = sortedRecords[sortedRecords.length - 1];
+        currentState = String(lastRecord.estado || '').toUpperCase();
+        
+        const txtEstado = String(lastRecord.estado || '').toUpperCase();
+        const txtMotivo = String(lastRecord.motivo_baja || '').toUpperCase();
+        const txtSigla = String(lastRecord.sigla || lastRecord.sigla_asistencia || '').toUpperCase().trim();
+        const txtObs = String(lastRecord.observacion_estado || '').toUpperCase();
+        
+        isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
+        isBajaGeneral = txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO';
+      }
+
+      // Activo en OJT? (Cualquiera que haya llegado a I-OP, o que tenga asistencia >= fecha_inicio_ojt sin baja)
+      let isOjtActive = false;
+      if (tieneIngreso) {
+        isOjtActive = true;
+      } else if (dia1Asistio && !isBajaDia1) {
+        if (fecha_inicio_ojt) {
+          const targetDateStr = parseFechaAsistencia(fecha_inicio_ojt);
+          isOjtActive = records.some(r => {
+            const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
+            if (!rawDate) return false;
+            const recordDateStr = parseFechaAsistencia(rawDate);
+            const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+            const estado = String(r.estado || '').toUpperCase().trim();
+            const motivo = String(r.motivo_baja || '').toUpperCase().trim();
+            const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado.includes('BAJA') || estado === 'CESADO' || estado === 'INACTIVO';
+            return recordDateStr >= targetDateStr && !isBaja;
+          });
+        } else if (records.length > 1 && !isBajaGeneral) {
+          isOjtActive = true;
+        }
+      }
+
+      if (isOjtActive) {
+        activos_ojt++;
+      }
+
+      // Activo Actual? (Postulantes que pasaron Día 1, no son baja, no han salido a I-OP, y el grupo sigue abierto)
+      if (!isGrupoCerrado && dia1Asistio && !isBajaDia1 && !isBajaGeneral && !tieneIngreso) {
+        activos_actuales++;
+      }
+    }
+
+    results.push({
+      grupo_codigo,
+      campana: campana || '',
+      periodo: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
+      semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
+      segmento: grupoInfo.segmento || '',
+      estado: estadoGrupo || 'EN CURSO',
+      is_cerrado: isGrupoCerrado,
+      modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
+      fecha_inicio_ojt: fecha_inicio_ojt || 'No definida',
+      requerimiento: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || grupoInfo.requerimiento || 0) || total_nomina || 0,
+      rq_solicitado: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || 0) || 0,
+      total_nomina,
+      asistio_dia0,
+      asistio_dia1,
+      activos_actuales,
+      activos_ojt,
+      ingresos_iop,
+      asistencias_raw: groupFormAsisRaw || []
+    });
+  }
+
+  return results;
 }
 
 export async function getMetricasReporteCalibracionBulk(gruposInfo) {

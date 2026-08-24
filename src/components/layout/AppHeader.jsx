@@ -144,10 +144,11 @@ export default function AppHeader({
           <button
             onClick={onRefreshData}
             disabled={isRefreshing}
-            title="Recargar datos de Supabase"
-            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors cursor-pointer disabled:opacity-50"
+            title="Recargar datos de Supabase manualmente"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-all cursor-pointer disabled:opacity-50 text-xs font-semibold shadow-2xs group"
           >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin text-[var(--accent)]' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-cyan-400' : 'group-hover:text-cyan-400 transition-colors'}`} />
+            <span className="hidden sm:inline">Refrescar</span>
           </button>
         )}
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { fetchCapacidadRysOperativo, getMetricasResumenCapacitacion, agruparMetricasPorModalidad, parseFechaAsistencia, invalidateCache } from '../lib/dataService';
+import { calculateMetricasResumenCapacitacionFast, agruparMetricasPorModalidad, parseFechaAsistencia, invalidateCache } from '../lib/dataService';
 import { 
   BarChart3, 
   Users, 
@@ -43,17 +43,14 @@ import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogClose, Dial
 import { chartColors } from '../lib/chart-theme';
 import ViewLoadingSkeleton from './ui/ViewLoadingSkeleton';
 
-// In-Memory Cache for Instant 0ms Tab Switching
-let memoryCacheCapacidad = null;
-let memoryCacheMetricas = null;
-
-export default function ResumenCapacitacion() {
-  const [capacidadRys, setCapacidadRys] = useState(() => memoryCacheCapacidad || []);
-  const [data, setData] = useState(() => memoryCacheMetricas || []);
-  const [loading, setLoading] = useState(() => !memoryCacheCapacidad || !memoryCacheMetricas);
+export default function ResumenCapacitacion({ grupos = [], postulantes = [], asistencias = [] }) {
+  const [capacidadRys, setCapacidadRys] = useState(grupos);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const [filters, setFilters] = useState({
     periodo: 'Todos',
@@ -63,40 +60,80 @@ export default function ResumenCapacitacion() {
     grupo: 'Todos'
   });
 
+  // Helpers de normalización robusta
+  const norm = (val) => String(val || '').trim().toUpperCase();
+  const getSemanaRaw = (g) => g?.semana_label || g?.semana_trabajo || g?.semana || '';
+  
+  const formatSemana = (val) => {
+    if (!val) return '';
+    const s = String(val).trim().toUpperCase();
+    if (s.startsWith('SEM')) return s;
+    const num = parseInt(s.replace(/\D/g, ''), 10);
+    return !isNaN(num) ? `SEM ${num}` : s;
+  };
+
+  const matchSemana = (valA, valB) => {
+    if (!valA || !valB) return false;
+    const strB = String(valB).trim().toUpperCase();
+    if (strB === 'TODAS' || strB === 'TODOS') return true;
+    
+    const numA = parseInt(String(valA).replace(/\D/g, ''), 10);
+    const numB = parseInt(String(valB).replace(/\D/g, ''), 10);
+    if (!isNaN(numA) && !isNaN(numB)) return numA === numB;
+    return norm(valA) === norm(valB);
+  };
+
+  // Auto-selección inicial al montar con el periodo y semana más reciente disponible
+  useEffect(() => {
+    if (grupos.length > 0 && !isInitialized) {
+      const uniquePeriodos = [...new Set(grupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort().reverse();
+      if (uniquePeriodos.length > 0) {
+        const latestPeriodo = uniquePeriodos[0];
+        const filteredByPeriodo = grupos.filter(g => String(g.periodo || '').trim() === latestPeriodo);
+        const uniqueSemanas = [...new Set(filteredByPeriodo.map(g => formatSemana(getSemanaRaw(g))).filter(Boolean))].sort((a, b) => {
+          const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
+          const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
+          return numB - numA;
+        });
+        const latestSemana = uniqueSemanas.length > 0 ? uniqueSemanas[0] : 'Todas';
+
+        setFilters(prev => ({
+          ...prev,
+          periodo: latestPeriodo,
+          semana: latestSemana
+        }));
+      }
+      setIsInitialized(true);
+    }
+  }, [grupos, isInitialized]);
 
   const loadData = useCallback(async (force = false) => {
+    if (grupos.length === 0) return;
     try {
-      if (force || (!memoryCacheCapacidad && !memoryCacheMetricas)) {
+      if (force || data.length === 0) {
         setLoading(true);
       } else {
         setIsRefreshing(true);
       }
       setError(null);
-      if (force) {
-        invalidateCache('resumen_cap_');
-      }
-      const gruposInfo = await fetchCapacidadRysOperativo();
-      const metricas = await getMetricasResumenCapacitacion(gruposInfo || []);
-      
-      memoryCacheCapacidad = gruposInfo || [];
-      memoryCacheMetricas = metricas || [];
-      
-      setCapacidadRys(gruposInfo || []);
+
+      const metricas = await calculateMetricasResumenCapacitacionFast(grupos, postulantes, asistencias);
+      setCapacidadRys(grupos);
       setData(metricas || []);
     } catch (err) {
-      console.error('Error fetching resumen:', err);
-      if (!memoryCacheMetricas) {
-        setError(err.message || 'Error cargando datos de resumen');
-      }
+      console.error('Error calculating resumen metrics in memory:', err);
+      setError(err.message || 'Error cargando datos de resumen');
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [grupos, postulantes, asistencias, data.length]);
 
   useEffect(() => {
-    loadData(false);
-  }, [loadData]);
+    if (grupos.length > 0) {
+      loadData(false);
+    }
+  }, [grupos.length, postulantes.length, asistencias.length]);
 
   // Verificar si hay filtros activos
   const hasActiveFilters = useMemo(() => {
@@ -119,21 +156,25 @@ export default function ResumenCapacitacion() {
 
   // Opciones de filtros cruzados
   const filterOptions = useMemo(() => {
-    const getSemana = g => g.semana_trabajo || g.semana_label || g.semana || '';
+    const periodos = new Set(capacidadRys.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean));
+    const subSemanas = capacidadRys.filter(g => filters.periodo === 'Todos' || String(g.periodo || '').trim() === String(filters.periodo || '').trim());
+    const semanas = new Set(subSemanas.map(g => formatSemana(getSemanaRaw(g))).filter(Boolean));
+    const subSegmentos = subSemanas.filter(g => filters.semana === 'Todas' || matchSemana(getSemanaRaw(g), filters.semana));
+    const segmentos = new Set(subSegmentos.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean));
+    const subCampanas = subSegmentos.filter(g => filters.segmento === 'Todos' || norm(g.segmento) === norm(filters.segmento));
+    const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
+    const subGrupos = subCampanas.filter(g => filters.campana === 'Todas' || norm(g.campana) === norm(filters.campana));
+    const grupos = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
 
-    const periodos = new Set(capacidadRys.map(g => g.periodo).filter(Boolean));
-    const subSemanas = capacidadRys.filter(g => filters.periodo === 'Todos' || g.periodo === filters.periodo);
-    const semanas = new Set(subSemanas.map(g => getSemana(g)).filter(Boolean));
-    const subSegmentos = subSemanas.filter(g => filters.semana === 'Todas' || getSemana(g) === filters.semana);
-    const segmentos = new Set(subSegmentos.map(g => g.segmento).filter(Boolean));
-    const subCampanas = subSegmentos.filter(g => filters.segmento === 'Todos' || g.segmento === filters.segmento);
-    const campanas = new Set(subCampanas.map(g => g.campana).filter(Boolean));
-    const subGrupos = subCampanas.filter(g => filters.campana === 'Todas' || g.campana === filters.campana);
-    const grupos = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo).filter(Boolean));
+    const sortedSemanas = Array.from(semanas).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
+      return numB - numA;
+    });
 
     return {
       periodos: Array.from(periodos).sort().reverse(),
-      semanas: Array.from(semanas).sort(),
+      semanas: sortedSemanas,
       segmentos: Array.from(segmentos).sort(),
       campanas: Array.from(campanas).sort(),
       grupos: Array.from(grupos).sort()
@@ -143,11 +184,11 @@ export default function ResumenCapacitacion() {
   // Datos filtrados
   const filteredData = useMemo(() => {
     return data.filter(d => {
-      if (filters.periodo !== 'Todos' && d.periodo !== filters.periodo) return false;
-      if (filters.semana !== 'Todas' && d.semana !== filters.semana) return false;
-      if (filters.segmento !== 'Todos' && d.segmento !== filters.segmento) return false;
-      if (filters.campana !== 'Todas' && d.campana !== filters.campana) return false;
-      if (filters.grupo !== 'Todos' && d.grupo_codigo !== filters.grupo) return false;
+      if (filters.periodo !== 'Todos' && String(d.periodo || '').trim() !== String(filters.periodo || '').trim()) return false;
+      if (filters.semana !== 'Todas' && !matchSemana(d.semana, filters.semana)) return false;
+      if (filters.segmento !== 'Todos' && norm(d.segmento) !== norm(filters.segmento)) return false;
+      if (filters.campana !== 'Todas' && norm(d.campana) !== norm(filters.campana)) return false;
+      if (filters.grupo !== 'Todos' && norm(d.grupo_codigo) !== norm(filters.grupo)) return false;
       return true;
     });
   }, [data, filters]);
@@ -234,22 +275,23 @@ export default function ResumenCapacitacion() {
     const seenBajas = new Set();
 
     const sortedForBajas = [...allAsistencias].sort((a, b) => {
-      const dateA = parseFechaAsistencia(a.fecha_registro_asistencia || '');
-      const dateB = parseFechaAsistencia(b.fecha_registro_asistencia || '');
+      const dateA = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || '');
+      const dateB = parseFechaAsistencia(b.fecha_registro_asistencia || b.fecha_asistencia || '');
       return new Date(dateA) - new Date(dateB);
     });
 
     sortedForBajas.forEach(a => {
-      const sigla = String(a.sigla || '').toUpperCase().trim();
+      const doc = a.documento || a.postulante_documento;
+      const sigla = String(a.sigla || a.sigla_asistencia || '').toUpperCase().trim();
       const estado = String(a.estado || '').toUpperCase().trim();
       const motivo = String(a.motivo_baja || '').toUpperCase().trim();
 
       const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado === 'CESADO' || estado === 'BAJA' || estado === 'INACTIVO';
 
-      if (isBaja && a.documento) {
-        if (!seenBajas.has(a.documento)) {
-          seenBajas.add(a.documento);
-          const date = parseFechaAsistencia(a.fecha_registro_asistencia || '');
+      if (isBaja && doc) {
+        if (!seenBajas.has(doc)) {
+          seenBajas.add(doc);
+          const date = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || '');
           if (date && date.length === 10) {
             if (!dailyBajas[date]) dailyBajas[date] = 0;
             dailyBajas[date]++;
@@ -674,45 +716,56 @@ export default function ResumenCapacitacion() {
             </Badge>
           </div>
           <div className="flex-1 min-h-0 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={groupedData.slice(0, 8).map(g => ({ name: g.campana, activos: g.activos_actuales })).sort((a, b) => b.activos - a.activos)}
-                layout="vertical"
-                margin={{ top: 5, right: 15, left: 10, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.2} horizontal={false} />
-                <XAxis 
-                  type="number" 
-                  tick={{ fontSize: 10, fill: 'var(--text-muted)' }} 
-                  axisLine={false} 
-                  tickLine={false} 
-                />
-                <YAxis 
-                  dataKey="name" 
-                  type="category" 
-                  tick={{ fontSize: 9.5, fill: 'var(--text-muted)' }} 
-                  axisLine={false} 
-                  tickLine={false} 
-                  width={115}
-                  tickFormatter={(name) => (name.length > 16 ? `${name.substring(0, 15)}…` : name)}
-                />
-                <RechartsTooltip 
-                  content={<ChartTooltipContent 
-                    labelFormatter={(label) => `Campaña: ${label}`}
-                    formatter={(val) => [`${val} activos`, 'Personas']}
-                  />}
-                  cursor={{ fill: 'var(--bg-elevated)', opacity: 0.4, radius: 4 }}
-                />
-                <Bar 
-                  dataKey="activos" 
-                  fill={chartColors.campaignPrimary} 
-                  radius={[0, 5, 5, 0]} 
-                  barSize={14} 
-                  animationDuration={700}
-                  className="hover:opacity-85 cursor-pointer"
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            {groupedData.length === 0 || groupedData.every(g => (g.activos_actuales || 0) === 0) ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                <Users className="h-7 w-7 text-[var(--text-muted)] opacity-30 mb-1.5" />
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">Sin alumnos activos en aula</p>
+                <p className="text-[10px] text-[var(--text-muted)] mt-0.5 max-w-[260px]">
+                  Los grupos de este filtro ya culminaron su formación o completaron su ingreso a operación (I-OP).
+                </p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={groupedData.slice(0, 8).map(g => ({ name: g.campana, activos: g.activos_actuales })).filter(g => g.activos > 0).sort((a, b) => b.activos - a.activos)}
+                  layout="vertical"
+                  margin={{ top: 5, right: 25, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.2} horizontal={false} />
+                  <XAxis 
+                    type="number" 
+                    tick={{ fontSize: 10, fill: 'var(--text-muted)' }} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    allowDecimals={false}
+                  />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    tick={{ fontSize: 9.5, fill: 'var(--text-muted)' }} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    width={115}
+                    tickFormatter={(name) => (name.length > 16 ? `${name.substring(0, 15)}…` : name)}
+                  />
+                  <RechartsTooltip 
+                    content={<ChartTooltipContent 
+                      labelFormatter={(label) => `Campaña: ${label}`}
+                      formatter={(val) => [`${val} activos`, 'Personas']}
+                    />}
+                    cursor={{ fill: 'var(--bg-elevated)', opacity: 0.4, radius: 4 }}
+                  />
+                  <Bar 
+                    dataKey="activos" 
+                    fill={chartColors.campaignPrimary} 
+                    radius={[0, 5, 5, 0]} 
+                    barSize={14} 
+                    animationDuration={700}
+                    className="hover:opacity-85 cursor-pointer"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </Card>
 
@@ -817,6 +870,7 @@ export default function ResumenCapacitacion() {
                 const maxActivos = groupedData[0]?.activos_actuales || 1;
                 const barPct = Math.round((c.activos_actuales / maxActivos) * 100);
                 const retRate = c.total_nomina > 0 ? Math.round((c.activos_actuales / c.total_nomina) * 100) : 0;
+                const retColor = retRate >= 80 ? 'text-emerald-500' : retRate >= 50 ? 'text-amber-500' : 'text-rose-500';
 
                 return (
                   <div key={c.campana} className="p-2 rounded-lg bg-[var(--bg-elevated)]/40 hover:bg-[var(--bg-elevated)] transition-colors border border-[var(--border-subtle)]">
@@ -825,7 +879,7 @@ export default function ResumenCapacitacion() {
                         {i + 1}. {c.campana}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-emerald-500 font-semibold">
+                        <span className={`text-[10px] font-mono font-semibold ${retColor}`}>
                           {retRate}% ret.
                         </span>
                         <span className="text-xs font-black tabular-nums text-[var(--text-primary)]">

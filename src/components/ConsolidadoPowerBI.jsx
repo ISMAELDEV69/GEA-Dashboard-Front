@@ -114,6 +114,16 @@ function parseLocalDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+function formatCanonicalDate(value) {
+  if (!value) return '';
+  const d = parseLocalDate(value);
+  if (!d) return String(value).trim();
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 function sortOptions(values) {
   const list = [...values].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), 'es'));
   return ['Todas', ...list];
@@ -498,6 +508,15 @@ export default function ConsolidadoPowerBI() {
     loadData();
   }, [loadData]);
 
+  // Listener para el botón global Refrescar del Header
+  useEffect(() => {
+    const handleGlobalRefresh = () => {
+      loadData();
+    };
+    window.addEventListener('gea-global-refresh', handleGlobalRefresh);
+    return () => window.removeEventListener('gea-global-refresh', handleGlobalRefresh);
+  }, [loadData]);
+
   // ── 1. Indexar capacidades por clave compuesta y por código directo para búsqueda ultra-rápida O(1) ──
   const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
     const byKey = new Map();
@@ -712,20 +731,20 @@ export default function ConsolidadoPowerBI() {
   }, [kpiFilteredData, filters.estado, lastStateMap]);
 
   const uniqueDates = useMemo(() => {
-    const dates = new Set();
+    const datesMap = new Map();
     for (let i = 0; i < filteredData.length; i++) {
-      const row = filteredData[i];
-      if (row.fecha_registro_asistencia) {
-        dates.add(row.fecha_registro_asistencia);
+      const rawDate = filteredData[i].fecha_registro_asistencia;
+      if (rawDate) {
+        const canonical = formatCanonicalDate(rawDate);
+        const parsed = parseLocalDate(rawDate);
+        if (canonical && parsed) {
+          datesMap.set(canonical, parsed.getTime());
+        }
       }
     }
-    return Array.from(dates).sort((a, b) => {
-      const dateA = parseLocalDate(a);
-      const dateB = parseLocalDate(b);
-      const ta = dateA ? dateA.getTime() : 0;
-      const tb = dateB ? dateB.getTime() : 0;
-      return ta - tb;
-    });
+    return Array.from(datesMap.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([canonical]) => canonical);
   }, [filteredData]);
 
   const pivotRows = useMemo(() => {
@@ -754,7 +773,10 @@ export default function ConsolidadoPowerBI() {
       }
       
       if (row.fecha_registro_asistencia) {
-        entry.fechas[row.fecha_registro_asistencia] = normalizeSigla(row.sigla);
+        const canonical = formatCanonicalDate(row.fecha_registro_asistencia);
+        if (canonical) {
+          entry.fechas[canonical] = normalizeSigla(row.sigla);
+        }
       }
     }
 

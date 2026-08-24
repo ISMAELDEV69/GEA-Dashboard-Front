@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useTransition } from 'react'
 import {
   LayoutDashboard,
   BarChart3,
@@ -75,6 +75,14 @@ export default function AppSidebar({
   onLogout,
   onOpenProfile
 }) {
+  const [, startTransition] = useTransition()
+
+  const handleSelectView = (id) => {
+    startTransition(() => {
+      setActiveView(id)
+    })
+  }
+
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem('gea-sidebar-collapsed') === 'true'
@@ -151,7 +159,7 @@ export default function AppSidebar({
                 // Botón interactivo base
                 const buttonContent = (
                   <button
-                    onClick={() => setActiveView(item.id)}
+                    onClick={() => handleSelectView(item.id)}
                     className={`
                       w-full flex items-center rounded-xl font-medium text-xs
                       transition-all duration-200 cursor-pointer relative group

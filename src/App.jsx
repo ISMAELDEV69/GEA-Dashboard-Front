@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, useTransition } from 'react'
 import {
   LayoutDashboard, UserPlus, ClipboardCheck, History,
   Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio
@@ -41,6 +41,7 @@ import {
   subscribeOperationalData,
   fetchModulePermissions,
   fetchAppRoles,
+  invalidateCache,
 } from './lib/dataService'
 
 import { lazyWithRetry } from './lib/lazyWithRetry'
@@ -197,11 +198,18 @@ export default function App() {
     })
   }, [navPermissions, currentRole])
 
-  // ── Estado de Vista ──────────────────────────────────────────────────────────
+  // ── Estado de Vista & Transiciones Ultrarrápidas ────────────────────────────
   const [activeView, setActiveView] = useState('resumen_capacitacion')
+  const [, startTransition] = useTransition()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+
+  const handleNavigate = useCallback((viewId) => {
+    startTransition(() => {
+      setActiveView(viewId)
+    })
+  }, [startTransition])
 
   const SPECIAL_VIEWS = ['perfil']
 
@@ -219,9 +227,9 @@ export default function App() {
 
   useEffect(() => {
     if (navItems.length && !navItems.find(i => i.id === activeView) && !SPECIAL_VIEWS.includes(activeView)) {
-      setActiveView(navItems[0].id)
+      handleNavigate(navItems[0].id)
     }
-  }, [currentRole, navItems, activeView])
+  }, [currentRole, navItems, activeView, handleNavigate])
 
   // ── Datos Globales ───────────────────────────────────────────────────────────
   const [postulantes, setPostulantes] = useState([])
@@ -236,6 +244,7 @@ export default function App() {
   const [motivosBaja, setMotivosBaja] = useState([])
   const [opcionesHomologadas, setOpcionesHomologadas] = useState([])
   const [appRoles, setAppRoles] = useState([])
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false)
 
   const hasLoadedOnceRef = useRef(false)
 
@@ -295,21 +304,74 @@ export default function App() {
     }
   }, [])
 
+  // ── REFRESH MANUAL ON-DEMAND (Limpia toda la caché RAM y recarga de Supabase) ──
+  const handleManualRefresh = useCallback(async () => {
+    try {
+      setIsManualRefreshing(true)
+      invalidateCache() // 1. Purga inmediatamente todo el apiCache en memoria RAM
+      window.dispatchEvent(new CustomEvent('gea-global-refresh')) // 2. Notifica a vistas independientes (ConsolidadoPowerBI, MotivosBajas, etc.)
+      await loadAllData({ silent: true }) // 3. Recarga datos frescos de la BD
+    } catch (err) {
+      console.error('Error in manual refresh:', err)
+    } finally {
+      setIsManualRefreshing(false)
+    }
+  }, [loadAllData])
+
+  // ── JITTER DE ARRANQUE Y POLLING SUAVE (Mitigación Thundering Herd 100+ usuarios concurrentes - 2026-08-23) ──
+  
+  // 1. Jitter de arranque inicial (0 a 8 segundos): dispersa el login masivo de las 8:00 AM
   useEffect(() => {
     if (!effectiveSession) {
       hasLoadedOnceRef.current = false
       return
     }
-    loadAllData()
+
+    // Si ya cargó una vez en la sesión, no aplicar jitter
+    if (hasLoadedOnceRef.current) {
+      loadAllData()
+      return
+    }
+
+    // Delay aleatorio inicial entre 0 y 8 segundos para evitar que 100 usuarios golpeen a Supabase en el mismo segundo exacto al montar
+    const startupJitterMs = Math.floor(Math.random() * 8000)
+    const startupTimer = setTimeout(() => {
+      loadAllData()
+    }, startupJitterMs)
+
+    return () => clearTimeout(startupTimer)
   }, [effectiveSession, loadAllData])
+
+  // 2. Polling suave cada 5 minutos con jitter fijo por sesión (offset aleatorio de 0 a 60s)
+  const sessionPollOffsetMs = useRef(Math.floor(Math.random() * 60000)).current
 
   useEffect(() => {
     if (!effectiveSession || DB_MODE !== 'supabase') return undefined
-    const unsubscribe = subscribeOperationalData(() => {
-      loadAllData()
-    })
+
+    const FIVE_MINUTES_MS = 5 * 60 * 1000
+    let intervalId = null
+
+    // Primer poll se ejecuta a los (5 min + offset de sesión)
+    const initialPollTimer = setTimeout(() => {
+      loadAllData({ silent: true })
+      // Configurar polling recurrente cada 5 minutos
+      intervalId = setInterval(() => {
+        loadAllData({ silent: true })
+      }, FIVE_MINUTES_MS)
+    }, FIVE_MINUTES_MS + sessionPollOffsetMs)
+
+    return () => {
+      clearTimeout(initialPollTimer)
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [effectiveSession, loadAllData, sessionPollOffsetMs])
+
+  // 3. Suscripción Realtime (invalida caché local sin disparar auto-refetch masivo)
+  useEffect(() => {
+    if (!effectiveSession || DB_MODE !== 'supabase') return undefined
+    const unsubscribe = subscribeOperationalData()
     return unsubscribe
-  }, [effectiveSession, loadAllData])
+  }, [effectiveSession])
 
   const refreshCatalogs = useCallback(async () => {
     const p = postulantes.length ? postulantes : await fetchPostulantes()
@@ -426,11 +488,11 @@ export default function App() {
               {/* Sidebar Inteligente */}
               <AppSidebar
                 activeView={activeView}
-                setActiveView={setActiveView}
+                setActiveView={handleNavigate}
                 navItems={navItems}
                 userProfile={effectiveProfile}
                 onLogout={handleSignOut}
-                onOpenProfile={() => setActiveView('perfil')}
+                onOpenProfile={() => handleNavigate('perfil')}
               />
 
               {/* Contenedor Principal con Header Global */}
@@ -440,10 +502,10 @@ export default function App() {
                   theme={theme}
                   setTheme={setTheme}
                   onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-                  onRefreshData={loadAllData}
-                  isRefreshing={loading}
+                  onRefreshData={handleManualRefresh}
+                  isRefreshing={isManualRefreshing}
                   userProfile={effectiveProfile}
-                  onOpenProfile={() => setActiveView('perfil')}
+                  onOpenProfile={() => handleNavigate('perfil')}
                   isOnline={isSupabase}
                   realRole={realRole}
                   currentRole={currentRole}
@@ -494,7 +556,7 @@ export default function App() {
                       {/* 1. Resumen Capacitación (Looker Studio) */}
                       <KeepAliveView viewId="resumen_capacitacion" activeView={activeView}>
                         {navItems.some(i => i.id === 'resumen_capacitacion') && (
-                          <ResumenCapacitacion />
+                          <ResumenCapacitacion grupos={grupos} postulantes={postulantes} asistencias={asistencias} />
                         )}
                       </KeepAliveView>
 
@@ -720,7 +782,7 @@ export default function App() {
               <CommandPalette
                 isOpen={isCommandPaletteOpen}
                 onClose={() => setIsCommandPaletteOpen(false)}
-                onSelectView={(viewId) => setActiveView(viewId)}
+                onSelectView={handleNavigate}
                 postulantes={postulantes}
                 grupos={grupos}
                 userProfile={effectiveProfile}

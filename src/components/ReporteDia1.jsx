@@ -3,7 +3,7 @@ import {
   fetchGruposDia1,
   fetchAsistenciasReclutador,
   getDetalleCalibracion,
-  getMetricasReporteCalibracionBulk,
+  calculateMetricasReporteCalibracionFast,
   DB_MODE
 } from '../lib/dataService'
 import { supabase } from '../lib/supabase'
@@ -14,8 +14,23 @@ import {
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
+import { useToast } from '../context/ToastContext'
 
-const ReporteDia1 = ({ grupos = [] }) => {
+function KPICardSkeleton() {
+  return (
+    <Card className="p-4 flex items-center justify-between shadow-xs border-[var(--border-subtle)] animate-pulse">
+      <div className="flex flex-col gap-2 w-full pr-4">
+        <div className="h-2.5 w-20 bg-slate-300 dark:bg-slate-700/50 rounded" />
+        <div className="h-7 w-28 bg-slate-300 dark:bg-slate-700/60 rounded" />
+        <div className="h-2.5 w-36 bg-slate-300 dark:bg-slate-700/40 rounded" />
+      </div>
+      <div className="h-10 w-10 rounded-xl bg-slate-300 dark:bg-slate-700/50 shrink-0" />
+    </Card>
+  )
+}
+
+const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
+  const toast = useToast()
   // Dataset crudo en memoria cargado desde Supabase
   const [rawReportData, setRawReportData] = useState([])
   const [loading, setLoading] = useState(false)
@@ -35,7 +50,6 @@ const ReporteDia1 = ({ grupos = [] }) => {
   })
 
   const reqIdRef = useRef(0)
-  const prevGruposLengthRef = useRef(0)
 
   // Auto-selección inicial al montar con el periodo y semana más reciente
   useEffect(() => {
@@ -57,7 +71,7 @@ const ReporteDia1 = ({ grupos = [] }) => {
     }
   }, [grupos, isInitialized])
 
-  // Carga inicial y sincronización en segundo plano (sin interrumpir la UI)
+  // Carga inicial y sincronización ultrarrápida en memoria
   const loadReport = async (forceInitial = false) => {
     if (grupos.length === 0) return
     const currentReqId = ++reqIdRef.current
@@ -71,7 +85,7 @@ const ReporteDia1 = ({ grupos = [] }) => {
 
     try {
       if (DB_MODE === 'supabase') {
-        const bulkResults = await getMetricasReporteCalibracionBulk(grupos)
+        const bulkResults = await calculateMetricasReporteCalibracionFast(grupos, postulantes, asistencias)
         if (currentReqId === reqIdRef.current) {
           setRawReportData(bulkResults.sort((a, b) => String(b.fecha_inicio || '').localeCompare(String(a.fecha_inicio || ''))))
         }
@@ -82,6 +96,7 @@ const ReporteDia1 = ({ grupos = [] }) => {
       }
     } catch (err) {
       console.error("Error al cargar el reporte del Día 1:", err)
+      toast.error('Error al cargar reporte Día 1', err.message || 'No se pudo procesar la información.')
     } finally {
       if (currentReqId === reqIdRef.current) {
         setLoading(false)
@@ -90,13 +105,12 @@ const ReporteDia1 = ({ grupos = [] }) => {
     }
   }
 
-  // Ejecutar solo si cambia la cantidad de grupos o en el primer montaje
+  // Ejecutar cuando lleguen grupos, postulantes o asistencias
   useEffect(() => {
-    if (grupos.length > 0 && grupos.length !== prevGruposLengthRef.current) {
-      prevGruposLengthRef.current = grupos.length
+    if (grupos.length > 0) {
       loadReport()
     }
-  }, [grupos.length])
+  }, [grupos.length, postulantes.length, asistencias.length])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 2. OPCIONES DE DROPDOWNS EN CASCADA (Derivación pura en memoria)
@@ -309,8 +323,8 @@ const ReporteDia1 = ({ grupos = [] }) => {
       const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana)
       setDiscrepancias(detalles || [])
     } catch (err) {
-      console.error(err)
-      alert('Error al cargar detalles')
+      console.error('Error al cargar detalles de discrepancia:', err)
+      toast.error('Error al cargar detalles', err.message || 'No se pudo obtener el desglose de discrepancias.')
     } finally {
       setLoadingDetails(false)
     }
@@ -411,109 +425,118 @@ const ReporteDia1 = ({ grupos = [] }) => {
           2. INDICADORES CLAVE DE CALIBRACIÓN (KPIS DIRECTOS)
           ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        
-        {/* KPI 1: TOTAL GRUPOS */}
-        <Card className="p-4 flex items-center justify-between shadow-xs border-[var(--border-subtle)]">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
-              Total Grupos
-            </span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-black text-[var(--text-primary)] font-mono">
-                {kpis.totalGruposUnicos.toLocaleString()}
-              </span>
-              <span className="text-xs text-[var(--text-muted)] font-semibold">
-                {kpis.totalFilas !== kpis.totalGruposUnicos ? `(${kpis.totalFilas} asignaciones)` : 'activos'}
-              </span>
-            </div>
-            <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-              {kpis.totalNomina.toLocaleString()} postulantes en nómina
-            </span>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center border border-cyan-500/20">
-            <Layers size={20} />
-          </div>
-        </Card>
-
-        {/* KPI 2: CALIBRADOS */}
-        <Card className="p-4 flex items-center justify-between shadow-xs border-emerald-500/20">
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                Calibrados
-              </span>
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                {kpis.pctCalibracion}%
-              </span>
-            </div>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
-                {kpis.calibrados.toLocaleString()}
-              </span>
-              <span className="text-xs text-emerald-600/80 dark:text-emerald-400/80 font-semibold">100% OK</span>
-            </div>
-            <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
-              Sin desvíos Recl. vs Form.
-            </span>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-            <CheckCircle2 size={20} />
-          </div>
-        </Card>
-
-        {/* KPI 3: DESCALIBRADOS */}
-        <Card className={`p-4 flex items-center justify-between shadow-xs ${
-          kpis.descalibrados > 0 ? 'border-rose-500/30 bg-rose-500/[0.02]' : 'border-[var(--border-subtle)]'
-        }`}>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
-              {kpis.descalibrados > 0 && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />}
-              Descalibrados
-            </span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className={`text-2xl font-black font-mono ${kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--text-primary)]'}`}>
-                {kpis.descalibrados.toLocaleString()}
-              </span>
-              <span className={`text-xs font-semibold ${kpis.descalibrados > 0 ? 'text-rose-600/80 dark:text-rose-400/80' : 'text-[var(--text-muted)]'}`}>
-                {kpis.descalibrados > 0 ? 'por auditar' : '0 desvíos'}
-              </span>
-            </div>
-            <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
-              {kpis.descalibrados > 0 ? 'Clic en fila para ver DNI' : 'Calibración en regla'}
-            </span>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center border border-rose-500/20">
-            <AlertTriangle size={20} />
-          </div>
-        </Card>
-
-        {/* KPI 4: ASISTENCIAS DÍA 1 */}
-        <Card className="p-4 flex items-center justify-between shadow-xs border-purple-500/20">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400">
-              Asistencias Día 1
-            </span>
-            <div className="flex items-baseline gap-1.5 font-mono mt-1">
-              <span className="text-2xl font-black text-cyan-600 dark:text-cyan-400">{kpis.sumRec}</span>
-              <span className="text-sm text-[var(--text-muted)] font-bold">/</span>
-              <span className="text-2xl font-black text-purple-600 dark:text-purple-400">{kpis.sumForm}</span>
-              {kpis.delta !== 0 && (
-                <span className={`text-[10px] px-1 py-0.5 rounded font-black ${
-                  kpis.delta > 0 ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-rose-500/20 text-rose-600 dark:text-rose-300'
-                }`}>
-                  Δ{kpis.delta > 0 ? `+${kpis.delta}` : kpis.delta}
+        {loading && rawReportData.length === 0 ? (
+          <>
+            <KPICardSkeleton />
+            <KPICardSkeleton />
+            <KPICardSkeleton />
+            <KPICardSkeleton />
+          </>
+        ) : (
+          <>
+            {/* KPI 1: TOTAL GRUPOS */}
+            <Card className="p-4 flex items-center justify-between shadow-xs border-[var(--border-subtle)]">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                  Total Grupos
                 </span>
-              )}
-            </div>
-            <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-              Reclutador vs Formador
-            </span>
-          </div>
-          <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center border border-purple-500/20">
-            <Users size={20} />
-          </div>
-        </Card>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black text-[var(--text-primary)] font-mono">
+                    {kpis.totalGruposUnicos.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-[var(--text-muted)] font-semibold">
+                    {kpis.totalFilas !== kpis.totalGruposUnicos ? `(${kpis.totalFilas} asignaciones)` : 'activos'}
+                  </span>
+                </div>
+                <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  {kpis.totalNomina.toLocaleString()} postulantes en nómina
+                </span>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center border border-cyan-500/20">
+                <Layers size={20} />
+              </div>
+            </Card>
 
+            {/* KPI 2: CALIBRADOS */}
+            <Card className="p-4 flex items-center justify-between shadow-xs border-emerald-500/20">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                    Calibrados
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                    {kpis.pctCalibracion}%
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                    {kpis.calibrados.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-emerald-600/80 dark:text-emerald-400/80 font-semibold">100% OK</span>
+                </div>
+                <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  Sin desvíos Recl. vs Form.
+                </span>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                <CheckCircle2 size={20} />
+              </div>
+            </Card>
+
+            {/* KPI 3: DESCALIBRADOS */}
+            <Card className={`p-4 flex items-center justify-between shadow-xs ${
+              kpis.descalibrados > 0 ? 'border-rose-500/30 bg-rose-500/[0.02]' : 'border-[var(--border-subtle)]'
+            }`}>
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  {kpis.descalibrados > 0 && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />}
+                  Descalibrados
+                </span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className={`text-2xl font-black font-mono ${kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--text-primary)]'}`}>
+                    {kpis.descalibrados.toLocaleString()}
+                  </span>
+                  <span className={`text-xs font-semibold ${kpis.descalibrados > 0 ? 'text-rose-600/80 dark:text-rose-400/80' : 'text-[var(--text-muted)]'}`}>
+                    {kpis.descalibrados > 0 ? 'por auditar' : '0 desvíos'}
+                  </span>
+                </div>
+                <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  {kpis.descalibrados > 0 ? 'Clic en fila para ver DNI' : 'Calibración en regla'}
+                </span>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center border border-rose-500/20">
+                <AlertTriangle size={20} />
+              </div>
+            </Card>
+
+            {/* KPI 4: ASISTENCIAS DÍA 1 */}
+            <Card className="p-4 flex items-center justify-between shadow-xs border-purple-500/20">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400">
+                  Asistencias Día 1
+                </span>
+                <div className="flex items-baseline gap-1.5 font-mono mt-1">
+                  <span className="text-2xl font-black text-cyan-600 dark:text-cyan-400">{kpis.sumRec}</span>
+                  <span className="text-sm text-[var(--text-muted)] font-bold">/</span>
+                  <span className="text-2xl font-black text-purple-600 dark:text-purple-400">{kpis.sumForm}</span>
+                  {kpis.delta !== 0 && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded font-black ${
+                      kpis.delta > 0 ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-rose-500/20 text-rose-600 dark:text-rose-300'
+                    }`}>
+                      Δ{kpis.delta > 0 ? `+${kpis.delta}` : kpis.delta}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Reclutador vs Formador
+                </span>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center border border-purple-500/20">
+                <Users size={20} />
+              </div>
+            </Card>
+          </>
+        )}
       </div>
 
       {/* ─────────────────────────────────────────────────────────────

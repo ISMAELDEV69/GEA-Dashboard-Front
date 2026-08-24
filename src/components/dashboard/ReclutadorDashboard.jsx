@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, memo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import {
   PhoneCall, ThumbsUp, Target, Users, Percent, Award, AlertTriangle, Sparkles,
@@ -55,7 +55,7 @@ function matchSemana(s1, s2) {
   return String(s1).trim().toUpperCase() === String(s2).trim().toUpperCase()
 }
 
-export default function ReclutadorDashboard({
+function ReclutadorDashboard({
   postulantes = [],
   asistencias = [],
   userProfile = null,
@@ -744,3 +744,6 @@ export default function ReclutadorDashboard({
     </div>
   )
 }
+
+export default memo(ReclutadorDashboard)
+

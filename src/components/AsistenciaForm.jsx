@@ -125,17 +125,22 @@ const AttendanceRow = React.memo(function AttendanceRow({
             <select
               value={item.motivo_baja}
               onChange={e => onMotiveChange(item.documento, e.target.value)}
-              disabled={item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1')}
-              className={`w-full max-w-[200px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
-                item.isLockedBaja || (item.isFirstRecordGroup && item.motivo_baja === 'BAJA DIA 1') ? 'opacity-70 cursor-not-allowed' : ''
-              }`}
+              disabled={item.isLockedBaja}
+              className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
             >
-              {item.isFirstRecordGroup ? (
-                <option value="BAJA DIA 1">BAJA DIA 1</option>
+              {item.isEligibleBajaD1 ? (
+                <>
+                  <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 2 Días)</option>
+                  {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
+                    <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                      {m.motivo}
+                    </option>
+                  ))}
+                </>
               ) : (
                 <>
-                  <option value="">-- Seleccionar Motivo --</option>
-                  {motivosBaja.map(m => (
+                  <option value="">-- Seleccionar Motivo de Formación --</option>
+                  {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
                     <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                       {m.motivo}
                     </option>
@@ -432,12 +437,14 @@ export default function AsistenciaForm({
       (async () => {
         try {
           // Búsqueda delimitada por Grupo + Semana + Periodo para evitar cruces entre semanas
+          // IMPORTANTE: Se usan filtros eq() separados (AND lógico) en vez de .or() encadenado
+          // para evitar que el OR rompa el filtro de grupo_codigo y jale otros grupos del mismo período.
           let q1 = supabase
             .from('v_nominas_consolidado')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+            .eq('grupo_codigo', targetGrupoCodigo)
           if (targetPeriodo) {
-            q1 = q1.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
+            q1 = q1.eq('periodo_reclutado', targetPeriodo)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             q1 = q1.eq('semana_trabajo', targetSemanaNum)
@@ -449,9 +456,9 @@ export default function AsistenciaForm({
           let qNom = supabase
             .from('nominas')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo_codigo.ilike.%${targetGrupoCodigo}%`)
+            .eq('grupo_codigo', targetGrupoCodigo)
           if (targetPeriodo) {
-            qNom = qNom.or(`periodo_reclutado.eq.${targetPeriodo},periodo_reclutado.ilike.%${targetPeriodo}%`)
+            qNom = qNom.eq('periodo_reclutado', targetPeriodo)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             qNom = qNom.eq('semana_trabajo', targetSemanaNum)
@@ -487,13 +494,15 @@ export default function AsistenciaForm({
           if (!isMounted) return;
 
           const isRowMatchWeekAndPeriod = (row) => {
-            if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && row.semana_trabajo) {
-              const rSem = parseInt(String(row.semana_trabajo).replace(/\D/g, ''), 10)
-              if (!isNaN(rSem) && rSem !== targetSemanaNum) return false
+            // FIX: aplicar filtro de semana siempre, incluso si el campo es null/vacío en el row.
+            // Antes, si row.semana_trabajo era null/0/undefined la condición no filtraba y pasaba todo.
+            if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
+              const rSem = parseInt(String(row.semana_trabajo || '').replace(/\D/g, ''), 10)
+              if (isNaN(rSem) || rSem !== targetSemanaNum) return false
             }
-            if (targetPeriodo && row.periodo_reclutado) {
-              const rPer = String(row.periodo_reclutado).replace(/\D/g, '')
-              if (rPer && !rPer.includes(targetPeriodo) && !targetPeriodo.includes(rPer)) return false
+            if (targetPeriodo) {
+              const rPer = String(row.periodo_reclutado || '').replace(/\D/g, '')
+              if (!rPer || (!rPer.includes(targetPeriodo) && !targetPeriodo.includes(rPer))) return false
             }
             return true
           }
@@ -526,9 +535,18 @@ export default function AsistenciaForm({
           });
 
           // 3. Postulantes de consolidado_asistencias (SOLO como fallback para grupos legacy sin nómina digital)
+          // FIX: Ya no se hardcodea dia_0/dia_1 como 'ASISTIO' para todos.
+          // Se infiere a partir del sigla del último registro: 'A' o 'I-OP' = asistió.
+          // Los grupos legacy no tienen distinción día 0 / día 1, así que todos los que
+          // tienen sigla activa se marcan como asistentes (para mantener comportamiento legacy).
           if (!hasNominaData) {
             dataQ2.forEach(row => {
               if (row.documento && !docMap.has(row.documento)) {
+                const siglaLegacy = (row.sigla || '').toString().toUpperCase().trim()
+                // Para legacy, solo incluir a quienes tienen al menos un registro activo (A o I-OP)
+                // y no están dados de baja en el último corte.
+                const eraActivoLegacy = siglaLegacy === 'A' || siglaLegacy === 'I-OP'
+                const eraBajaLegacy = siglaLegacy === 'B'
                 docMap.set(row.documento, {
                   documento: row.documento,
                   nombres: row.nombres || '',
@@ -541,8 +559,9 @@ export default function AsistenciaForm({
                   grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
                   semana_trabajo: targetSemanaNum || null,
                   periodo_reclutado: targetPeriodo || null,
-                  dia_0: 'ASISTIO',
-                  dia_1: 'ASISTIO',
+                  // FIX: ya no se asume 'ASISTIO' para todos. Solo para activos.
+                  dia_0: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
+                  dia_1: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
                   status_dia_1: row.tipo_reclutado || 'APTO',
                   estado: row.estado || 'ACTIVO',
                   formador_documento: row.documento_formador || '',
@@ -566,10 +585,11 @@ export default function AsistenciaForm({
 
   const effectivePostulantes = useMemo(() => {
     if (groupPostulantesDirect.length > 0) {
-      const map = new Map();
-      postulantes.forEach(p => map.set(p.documento, p));
-      groupPostulantesDirect.forEach(p => map.set(p.documento, p));
-      return Array.from(map.values());
+      // FIX CRÍTICO: Ya NO se mezcla con el prop global `postulantes` (que contiene TODOS los
+      // postulantes de la app). Antes, ese merge sembraba registros sin dia_0/dia_1 que luego
+      // podían pasar el filtro y mostrar personas que no pertenecen al grupo/semana actual.
+      // Ahora: si tenemos datos específicos del grupo (de nóminas o consolidado), los usamos SOLOS.
+      return groupPostulantesDirect;
     }
     return postulantes;
   }, [postulantes, groupPostulantesDirect]);
@@ -678,30 +698,46 @@ export default function AsistenciaForm({
       // Para grupos con nómina, solo deben llegar los que Reclutamiento marcó como ASISTIO en Día 1
       // o con status_dia_1 AGREGADO / RECUPERADO
       if (hasGroupNomina) {
+        const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
         const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
-        const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
         
+        const asistioD0 = dia0Val === 'ASISTIO'
         const asistioD1 = dia1Val === 'ASISTIO'
-        const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+        const faltoD1 = dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO' || dia1Val === 'BAJA'
         
-        if (!asistioD1 && !agregadoD1) {
+        // 1. Si en Día 1 se registró falta/deserción, NO ingresa a formación con el Formador
+        if (faltoD1) {
           return false
         }
+        
+        // 2. Si asistió a Día 1 (sea regular que vino de inducción D0 o agregado directo): PASA AL AULA
+        if (asistioD1) {
+          return true
+        }
+        
+        // 3. Si Día 1 aún no se ha marcado (está vacío/pendiente), pasan los que asistieron a Día 0 (inducción)
+        if (!dia1Val && asistioD0) {
+          return true
+        }
+        
+        // Cualquier otro caso (faltó a D0 y no asistió a D1, o sin registro): NO PASA
+        return false
       } else {
         // Para grupos legacy sin nómina digital
         const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
         const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
-        const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
         
-        const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
         const asistioD1 = dia1Val === 'ASISTIO'
+        const asistioD0 = dia0Val === 'ASISTIO'
+        const faltoD1 = dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO' || dia1Val === 'BAJA'
         
-        const rechazadoD1 = (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO') && !agregadoD1
-        const rechazadoD0 = (dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || dia0Val === 'NO') && !agregadoD1 && !asistioD1
-        
-        if (rechazadoD1 || rechazadoD0) {
+        if (faltoD1) {
           return false
         }
+        if (asistioD1 || (!dia1Val && asistioD0)) {
+          return true
+        }
+        return false
       }
 
       return true
@@ -738,10 +774,24 @@ export default function AsistenciaForm({
     // Formadores lookup map for O(1) name resolution
     const formadoresMap = new Map(formadores.map(f => [f.documento, f.nombre_completo]))
 
+    const groupDates = Array.from(new Set(groupRecordsAll.map(a => a.fecha_asistencia).filter(Boolean))).sort()
+    const allDates = Array.from(new Set([...groupDates, fecha])).sort()
+    const trainingDayIndex = allDates.indexOf(fecha) + 1
+
     const list = uniquePostulantes.map(p => {
       const isLateInclusion = false
       const existing = recordsByDocOnDate.get(p.documento)
-      const tipoReclutado = (p.status_dia_1 || '').toString().toUpperCase().trim() || 'APTO'
+      
+      let rawTipo = (p.status_dia_1 || '').toString().toUpperCase().trim() || 'APTO'
+      const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
+      const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
+      if ((dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || !dia0Val) && dia1Val === 'ASISTIO' && rawTipo === 'APTO') {
+        rawTipo = 'AGREGADO'
+      }
+      const tipoReclutado = rawTipo
+
+      const isAgregadoOrRecuperado = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO'
+      const isEligibleBajaD1 = isFirstRecordGroup || (isAgregadoOrRecuperado && trainingDayIndex <= 2)
 
       const docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
       const nombreFormador = formadoresMap.get(docFormador) || activeGrupoObj?.formador_nombre || ''
@@ -759,7 +809,7 @@ export default function AsistenciaForm({
           inheritedMotivo = prevList[0].motivo_baja || ''
         } else if (p.estado === 'CESADO') {
           inheritedSigla = 'B'
-          inheritedMotivo = 'BAJA DIA 1'
+          inheritedMotivo = isEligibleBajaD1 ? 'BAJA DIA 1' : ''
         } else if (tipoReclutado === 'AGREGADO' && isFirstRecordGroup) {
           inheritedSigla = 'FI'
         }
@@ -773,7 +823,7 @@ export default function AsistenciaForm({
         const localEdit = userEditsRef.current.get(p.documento)
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
-      } else if (isFirstRecordGroup && sigla === 'B' && !motivo_baja) {
+      } else if (sigla === 'B' && !motivo_baja && isEligibleBajaD1) {
         motivo_baja = 'BAJA DIA 1'
       }
 
@@ -792,6 +842,8 @@ export default function AsistenciaForm({
         docFormador,
         nombreFormador,
         tipoReclutado,
+        trainingDayIndex,
+        isEligibleBajaD1,
         sigla,
         motivo_baja,
         isLateInclusion,
@@ -810,8 +862,10 @@ export default function AsistenciaForm({
       let newMotivo = item.motivo_baja
       if (newSigla !== 'B') {
         newMotivo = ''
-      } else if (!newMotivo && item.isFirstRecordGroup) {
-        newMotivo = 'BAJA DIA 1'
+      } else if (!newMotivo) {
+        if (item.isEligibleBajaD1) {
+          newMotivo = 'BAJA DIA 1'
+        }
       }
       userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }

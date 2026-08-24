@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { Layers, Eye, ArrowRight, Sparkles, Loader2, RefreshCw } from 'lucide-react'
+import { Layers, Eye, ArrowRight, FolderOpen, Loader2, RefreshCw } from 'lucide-react'
 import NominaGridEditor from '../components/nomina/NominaGridEditor'
 import NominaFullPreview from '../components/nomina/NominaFullPreview'
 import { inferSegmento, SEGMENTOS_SIU } from '../lib/capacidadRysSync'
@@ -486,7 +486,7 @@ export default function NominaCompletar({
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
-                <Sparkles size={20} />
+                <FolderOpen size={20} />
               </div>
               <div>
                 <h3 className="text-base font-extrabold text-[var(--text-primary)]">Grupos Recientes / Pendientes</h3>
