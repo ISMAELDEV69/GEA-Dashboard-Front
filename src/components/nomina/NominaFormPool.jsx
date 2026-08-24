@@ -240,6 +240,7 @@ export default function NominaFormPool({
   const [success, setSuccess]               = useState(null)
   const [importing, setImporting]           = useState(false)
   const [importProgress, setImportProgress] = useState(0)
+  const [duplicateWarningData, setDuplicateWarningData] = useState(null)
 
   // Carga directa de archivo .xlsx desde el disco
   const handleFileUpload = async (e) => {
