@@ -94,7 +94,7 @@ export const DOCUMENTOS_COLUMNS = [
   { key: 'doc_recibo_servicios', label: 'RECIBO SERV.', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'doc_ficha_datos', label: 'FICHA DATOS', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'doc_autorizacion', label: 'AUTORIZACIÓN', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
-  { key: 'status_final', label: 'STATUS FINAL', width: 120, type: 'select', options: ['COMPLETO', 'PENDIENTE'] },
+  { key: 'status_final', label: 'STATUS FINAL', width: 120, type: 'select', options: ['COMPLETO', 'PENDIENTE', 'DESISTE', 'NO PROCEDE'] },
   { key: 'observacion_final', label: 'OBS. FINAL', width: 200 },
   { key: 'validacion_reingreso', label: 'VALIDACIÓN DE REINGRESO', width: 160, type: 'select', options: ['REINGRESO', 'NO REINGRESO'] },
   { key: 'fecha_validacion', label: 'FECHA DE VALIDACIÓN', width: 150, type: 'date' },
@@ -923,6 +923,8 @@ export default function NominaGridEditor({
                         badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
                       } else if (val === 'PENDIENTE' || val === 'FALTA' || val === 'DESAPROBADO' || val === 'CESE' || val === 'OBSERVADO') {
                         badgeClass = 'bg-red-500/10 text-red-400 font-bold';
+                      } else if (val === 'DESISTE' || val === 'NO PROCEDE') {
+                        badgeClass = 'bg-amber-500/10 text-amber-400 font-bold';
                       }
 
                       return (

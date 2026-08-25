@@ -9,7 +9,8 @@ import {
 import { supabase } from '../lib/supabase'
 import {
   RefreshCw, FileText, CheckCircle2, AlertTriangle, Users,
-  Layers, ArrowUpRight, ArrowDownRight, Sparkles, TrendingUp
+  Layers, ArrowUpRight, ArrowDownRight, Sparkles, TrendingUp,
+  SlidersHorizontal, Calendar, Clock, Target, ChevronDown, X, Search
 } from 'lucide-react'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
@@ -330,101 +331,249 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     }
   }
 
-  const getStatusBadge = (estado) => {
-    if (estado === 'CALIBRADO') return <span className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full text-xs font-bold">🟢 CALIBRADO</span>
-    if (estado === 'DESCALIBRADO') return <span className="bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-500/30 px-3 py-1 rounded-full text-xs font-bold shadow-xs">🔴 DESCALIBRADO</span>
-    return <span className="bg-slate-500/20 text-slate-600 dark:text-slate-300 border border-slate-500/30 px-3 py-1 rounded-full text-xs font-bold">⚪ PENDIENTE</span>
+  // Buscador rápido en tabla (in-memory)
+  const [tableSearch, setTableSearch] = useState('')
+
+  const displayedReportData = useMemo(() => {
+    if (!tableSearch.trim()) return filteredReportData
+    const q = tableSearch.toLowerCase().trim()
+    return filteredReportData.filter(r => 
+      String(r.grupo_codigo || '').toLowerCase().includes(q) ||
+      String(r.campana || '').toLowerCase().includes(q)
+    )
+  }, [filteredReportData, tableSearch])
+
+  const handleResetFilters = () => {
+    setFilters({
+      periodo: '',
+      semana: '',
+      segmento: '',
+      campana: '',
+      grupo: ''
+    })
+    setTableSearch('')
   }
+
+  const getStatusBadge = (estado) => {
+    if (estado === 'CALIBRADO') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-tight bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 shrink-0" />
+          CALIBRADO
+        </span>
+      )
+    }
+    if (estado === 'DESCALIBRADO') {
+      return (
+        <div className="inline-flex flex-col items-center">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-tight bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/35 shadow-xs animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 dark:bg-rose-400 shrink-0" />
+            DESCALIBRADO
+          </span>
+          <span className="text-[9px] text-rose-600 dark:text-rose-400/80 font-medium tracking-tight mt-0.5">
+            Ver discrepancias →
+          </span>
+        </div>
+      )
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium tracking-tight bg-[var(--bg-muted)] text-[var(--text-muted)] border border-[var(--border-normal)]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)]/60 shrink-0" />
+        PENDIENTE
+      </span>
+    )
+  }
+
+  // Indicador de filtros activos
+  const activeFiltersCount = useMemo(() => {
+    let count = 0
+    if (filters.periodo) count++
+    if (filters.semana) count++
+    if (filters.segmento) count++
+    if (filters.campana) count++
+    if (filters.grupo) count++
+    return count
+  }, [filters])
 
   return (
     <PageLayout>
-      <PageHeader
-        title="REPORTE DE CALIBRACIÓN – DÍA 1"
-        subtitle="Métricas de asistencia iniciales"
-        icon={<FileText className="text-[var(--accent)]" />}
-        actions={
+      {/* ─────────────────────────────────────────────────────────────
+          HEADER HERO CON BADGE EN VIVO
+          ───────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6 pb-5 border-b border-[var(--border-normal)]">
+        <div>
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="p-2 rounded-xl bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/20 shadow-xs">
+              <FileText size={18} />
+            </div>
+            <h1 className="text-xl md:text-2xl font-black tracking-tight text-[var(--text-primary)]">
+              REPORTE DE CALIBRACIÓN <span className="text-[var(--accent)]">— DÍA 1</span>
+            </h1>
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-ping" />
+              Live Audit
+            </span>
+          </div>
+          <p className="text-xs text-[var(--text-muted)] font-medium flex items-center gap-2">
+            <span>Auditoría de asistencia inicial: Reclutamiento vs Formación</span>
+            <span className="text-[var(--border-normal)]">•</span>
+            <span className="font-mono font-bold text-[var(--text-secondary)]">{kpis.totalFilas} grupos procesados</span>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={() => loadReport(false)}
             disabled={loading || isSyncing}
-            className="btn btn-primary flex items-center gap-2"
+            className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-primary)] bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] border border-[var(--border-normal)] hover:border-[var(--accent)] transition-all flex items-center gap-2 shadow-xs cursor-pointer"
           >
-            <RefreshCw size={16} className={(loading || isSyncing) ? 'animate-spin' : ''} />
-            {isSyncing ? 'Sincronizando...' : 'Refrescar Reporte'}
+            <RefreshCw size={13} className={(loading || isSyncing) ? 'animate-spin text-[var(--accent)]' : 'text-[var(--text-muted)]'} />
+            <span>{isSyncing ? 'Sincronizando...' : 'Refrescar Datos'}</span>
           </button>
-        }
-      />
+        </div>
+      </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          1. FILTROS EN CASCADA CON ESTADO ATÓMICO
+          1. BARRA DE COMANDO DE FILTROS (THEME ENGINE SYNCED)
           ───────────────────────────────────────────────────────────── */}
-      <Card className="mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5 ml-1">Periodo</label>
-            <select
-              value={filters.periodo}
-              onChange={e => handlePeriodoChange(e.target.value)}
-              className="form-input w-full p-2.5"
-            >
-              <option value="">Todos</option>
-              {optPeriodo.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+      <div className="mb-6 bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-2xl p-4 shadow-xs">
+        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[var(--border-subtle)]">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal size={14} className="text-[var(--accent)]" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+              Filtros Operativos
+            </span>
+            {activeFiltersCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/30">
+                {activeFiltersCount} activos
+              </span>
+            )}
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5 ml-1">Semana</label>
-            <select
-              value={filters.semana}
-              onChange={e => handleSemanaChange(e.target.value)}
-              className="form-input w-full p-2.5"
+          {activeFiltersCount > 0 && (
+            <button
+              onClick={handleResetFilters}
+              className="text-[11px] font-bold text-[var(--text-muted)] hover:text-rose-500 flex items-center gap-1 transition-colors cursor-pointer"
             >
-              <option value="">Todas</option>
-              {optSemana.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+              <X size={12} />
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Periodo */}
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
+              <Calendar size={11} className="text-[var(--text-muted)]" />
+              Periodo
+            </label>
+            <div className="relative">
+              <select
+                value={filters.periodo}
+                onChange={e => handlePeriodoChange(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] transition-all cursor-pointer appearance-none pr-8"
+              >
+                <option value="" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todos los Periodos</option>
+                {optPeriodo.map(o => (
+                  <option key={o} value={o} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">{o}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5 ml-1">Segmento</label>
-            <select
-              value={filters.segmento}
-              onChange={e => handleSegmentoChange(e.target.value)}
-              className="form-input w-full p-2.5"
-            >
-              <option value="">Todos</option>
-              {optSegmento.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+
+          {/* Semana */}
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
+              <Clock size={11} className="text-[var(--text-muted)]" />
+              Semana
+            </label>
+            <div className="relative">
+              <select
+                value={filters.semana}
+                onChange={e => handleSemanaChange(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] transition-all cursor-pointer appearance-none pr-8"
+              >
+                <option value="" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todas las Semanas</option>
+                {optSemana.map(o => (
+                  <option key={o} value={o} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">{o}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5 ml-1">Campaña</label>
-            <select
-              value={filters.campana}
-              onChange={e => handleCampanaChange(e.target.value)}
-              className="form-input w-full p-2.5"
-            >
-              <option value="">Todas</option>
-              {optCampana.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+
+          {/* Segmento */}
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
+              <Target size={11} className="text-[var(--text-muted)]" />
+              Segmento
+            </label>
+            <div className="relative">
+              <select
+                value={filters.segmento}
+                onChange={e => handleSegmentoChange(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] transition-all cursor-pointer appearance-none pr-8"
+              >
+                <option value="" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todos los Segmentos</option>
+                {optSegmento.map(o => (
+                  <option key={o} value={o} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">{o}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-[var(--text-muted)] mb-1.5 ml-1">Grupo (GPE)</label>
-            <select
-              value={filters.grupo}
-              onChange={e => handleGrupoChange(e.target.value)}
-              className="form-input w-full p-2.5"
-            >
-              <option value="">Todos</option>
-              {optGrupo.map(g => (
-                <option key={g.codigo} value={g.codigo}>
-                  {String(g.codigo).startsWith('PROY-') ? '—' : String(g.codigo).replace(/_\d+$/, '')}
-                </option>
-              ))}
-            </select>
+
+          {/* Campaña */}
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1 truncate">
+              <Sparkles size={11} className="text-[var(--text-muted)]" />
+              Campaña
+            </label>
+            <div className="relative">
+              <select
+                value={filters.campana}
+                onChange={e => handleCampanaChange(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] transition-all cursor-pointer appearance-none pr-8 truncate"
+              >
+                <option value="" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todas las Campañas</option>
+                {optCampana.map(o => (
+                  <option key={o} value={o} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">{o}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Grupo */}
+          <div className="flex flex-col">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1">
+              <Users size={11} className="text-[var(--text-muted)]" />
+              Grupo GPE
+            </label>
+            <div className="relative">
+              <select
+                value={filters.grupo}
+                onChange={e => handleGrupoChange(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] transition-all cursor-pointer appearance-none pr-8 truncate"
+              >
+                <option value="" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todos los Grupos</option>
+                {optGrupo.map(g => (
+                  <option key={g.codigo} value={g.codigo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                    {String(g.codigo).startsWith('PROY-') ? '—' : String(g.codigo).replace(/_\d+$/, '')}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+            </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. INDICADORES CLAVE DE CALIBRACIÓN (KPIS DIRECTOS)
+          2. KPIS EJECUTIVOS (CALIBRACIÓN DINÁMICA POR TEMA)
           ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {loading && rawReportData.length === 0 ? (
           <>
             <KPICardSkeleton />
@@ -435,199 +584,372 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
         ) : (
           <>
             {/* KPI 1: TOTAL GRUPOS */}
-            <Card className="p-4 flex items-center justify-between shadow-xs border-[var(--border-subtle)]">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
-                  Total Grupos
-                </span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-black text-[var(--text-primary)] font-mono">
+            <div className="relative overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:border-[var(--accent)] rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-all group">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-[var(--accent-glow)] rounded-full blur-2xl pointer-events-none transition-colors" />
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+                    <Layers size={13} className="text-[var(--accent)]" />
+                    Total Grupos
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)]/30">
+                    {kpis.totalFilas} asignaciones
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mt-3">
+                  <span className="text-3xl lg:text-4xl font-black text-[var(--text-primary)] font-mono tracking-tight">
                     {kpis.totalGruposUnicos.toLocaleString()}
                   </span>
-                  <span className="text-xs text-[var(--text-muted)] font-semibold">
-                    {kpis.totalFilas !== kpis.totalGruposUnicos ? `(${kpis.totalFilas} asignaciones)` : 'activos'}
+                  <span className="text-xs font-bold text-[var(--text-muted)]">
+                    grupos únicos
                   </span>
                 </div>
-                <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                  {kpis.totalNomina.toLocaleString()} postulantes en nómina
-                </span>
               </div>
-              <div className="h-10 w-10 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center border border-cyan-500/20">
-                <Layers size={20} />
+              <div className="text-[11px] font-medium text-[var(--text-muted)] mt-3 pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+                <span>Nómina Total:</span>
+                <span className="font-mono font-bold text-[var(--text-secondary)]">{kpis.totalNomina.toLocaleString()} post.</span>
               </div>
-            </Card>
+            </div>
 
             {/* KPI 2: CALIBRADOS */}
-            <Card className="p-4 flex items-center justify-between shadow-xs border-emerald-500/20">
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+            <div className="relative overflow-hidden bg-[var(--bg-surface)] border border-emerald-500/30 hover:border-emerald-500/60 rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-all group">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none transition-colors" />
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 size={13} className="text-emerald-500" />
                     Calibrados
                   </span>
-                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                    {kpis.pctCalibracion}%
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                    {kpis.pctCalibracion}% Éxito
                   </span>
                 </div>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                <div className="flex items-baseline gap-2 mt-3">
+                  <span className="text-3xl lg:text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
                     {kpis.calibrados.toLocaleString()}
                   </span>
-                  <span className="text-xs text-emerald-600/80 dark:text-emerald-400/80 font-semibold">100% OK</span>
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400/90">
+                    100% en regla
+                  </span>
                 </div>
-                <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                  Sin desvíos Recl. vs Form.
-                </span>
               </div>
-              <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-                <CheckCircle2 size={20} />
+              <div className="text-[11px] font-medium text-[var(--text-muted)] mt-3 pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+                <span>Estado Recl. vs Form.:</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">Sin desvíos</span>
               </div>
-            </Card>
+            </div>
 
             {/* KPI 3: DESCALIBRADOS */}
-            <Card className={`p-4 flex items-center justify-between shadow-xs ${
-              kpis.descalibrados > 0 ? 'border-rose-500/30 bg-rose-500/[0.02]' : 'border-[var(--border-subtle)]'
+            <div className={`relative overflow-hidden rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-all group ${
+              kpis.descalibrados > 0 
+                ? 'bg-[var(--bg-surface)] border border-rose-500/40 hover:border-rose-500/70 shadow-rose-500/5' 
+                : 'bg-[var(--bg-surface)] border border-[var(--border-normal)]'
             }`}>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                  {kpis.descalibrados > 0 && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />}
-                  Descalibrados
-                </span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className={`text-2xl font-black font-mono ${kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--text-primary)]'}`}>
-                    {kpis.descalibrados.toLocaleString()}
+              <div className={`absolute top-0 right-0 w-24 h-24 rounded-full blur-2xl pointer-events-none transition-colors ${
+                kpis.descalibrados > 0 ? 'bg-rose-500/10 dark:bg-rose-500/15' : 'bg-slate-500/5'
+              }`} />
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${
+                    kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--text-muted)]'
+                  }`}>
+                    <AlertTriangle size={13} className={kpis.descalibrados > 0 ? 'text-rose-500' : 'text-[var(--text-muted)]'} />
+                    Descalibrados
                   </span>
-                  <span className={`text-xs font-semibold ${kpis.descalibrados > 0 ? 'text-rose-600/80 dark:text-rose-400/80' : 'text-[var(--text-muted)]'}`}>
-                    {kpis.descalibrados > 0 ? 'por auditar' : '0 desvíos'}
-                  </span>
-                </div>
-                <span className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                  {kpis.descalibrados > 0 ? 'Clic en fila para ver DNI' : 'Calibración en regla'}
-                </span>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center border border-rose-500/20">
-                <AlertTriangle size={20} />
-              </div>
-            </Card>
-
-            {/* KPI 4: ASISTENCIAS DÍA 1 */}
-            <Card className="p-4 flex items-center justify-between shadow-xs border-purple-500/20">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400">
-                  Asistencias Día 1
-                </span>
-                <div className="flex items-baseline gap-1.5 font-mono mt-1">
-                  <span className="text-2xl font-black text-cyan-600 dark:text-cyan-400">{kpis.sumRec}</span>
-                  <span className="text-sm text-[var(--text-muted)] font-bold">/</span>
-                  <span className="text-2xl font-black text-purple-600 dark:text-purple-400">{kpis.sumForm}</span>
-                  {kpis.delta !== 0 && (
-                    <span className={`text-[10px] px-1 py-0.5 rounded font-black ${
-                      kpis.delta > 0 ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-rose-500/20 text-rose-600 dark:text-rose-300'
-                    }`}>
-                      Δ{kpis.delta > 0 ? `+${kpis.delta}` : kpis.delta}
+                  {kpis.descalibrados > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/35 animate-pulse">
+                      ¡Auditar!
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--bg-muted)] text-[var(--text-muted)] border border-[var(--border-normal)]">
+                      0 Desvíos
                     </span>
                   )}
                 </div>
-                <span className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                  Reclutador vs Formador
+                <div className="flex items-baseline gap-2 mt-3">
+                  <span className={`text-3xl lg:text-4xl font-black font-mono tracking-tight ${
+                    kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-[var(--text-primary)]'
+                  }`}>
+                    {kpis.descalibrados.toLocaleString()}
+                  </span>
+                  <span className={`text-xs font-bold ${
+                    kpis.descalibrados > 0 ? 'text-rose-600 dark:text-rose-400/90' : 'text-[var(--text-muted)]'
+                  }`}>
+                    {kpis.descalibrados > 0 ? 'grupos con desvío' : 'calibración óptima'}
+                  </span>
+                </div>
+              </div>
+              <div className="text-[11px] font-medium text-[var(--text-muted)] mt-3 pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
+                <span>Acción:</span>
+                <span className={kpis.descalibrados > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-[var(--text-muted)]'}>
+                  {kpis.descalibrados > 0 ? 'Clic en fila para ver DNI' : 'En regla'}
                 </span>
               </div>
-              <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center border border-purple-500/20">
-                <Users size={20} />
+            </div>
+
+            {/* KPI 4: ASISTENCIAS DÍA 1 */}
+            <div className="relative overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:border-purple-500/40 rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-all group">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl pointer-events-none transition-colors" />
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+                    <Users size={13} className="text-purple-500" />
+                    Asistencias Día 1
+                  </span>
+                  {kpis.delta !== 0 ? (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                      kpis.delta > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/35' : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/35'
+                    }`}>
+                      Δ {kpis.delta > 0 ? `+${kpis.delta}` : kpis.delta}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                      Exacto
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-baseline gap-1 mt-3 font-mono">
+                  <span className="text-3xl lg:text-4xl font-black text-[var(--accent)] tracking-tight">
+                    {kpis.sumRec}
+                  </span>
+                  <span className="text-lg text-[var(--text-muted)] font-normal mx-1">/</span>
+                  <span className="text-2xl font-black text-purple-600 dark:text-purple-400">
+                    {kpis.sumForm}
+                  </span>
+                </div>
+                {/* Micro barra dual de progreso */}
+                <div className="w-full bg-[var(--bg-muted)] h-2 rounded-full mt-2.5 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-[var(--accent)] to-purple-500 transition-all duration-500 rounded-full"
+                    style={{
+                      width: `${kpis.sumForm > 0 ? Math.min(100, Math.round((kpis.sumRec / kpis.sumForm) * 100)) : 0}%`
+                    }}
+                  />
+                </div>
               </div>
-            </Card>
+              <div className="text-[11px] font-medium text-[var(--text-muted)] mt-2.5 pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between">
+                <span>Reclutador vs Formador:</span>
+                <span className="font-mono text-xs font-bold text-[var(--text-secondary)]">
+                  {kpis.sumForm > 0 ? `${Math.round((kpis.sumRec / kpis.sumForm) * 100)}%` : '—'}
+                </span>
+              </div>
+            </div>
           </>
         )}
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          3. MATRIZ DE CALIBRACIÓN
+          3. MATRIZ DE CALIBRACIÓN (TABLA THEME-SYNCRONIZED)
           ───────────────────────────────────────────────────────────── */}
       {loading && rawReportData.length === 0 ? (
-        <div className="text-center py-10">
-          <div className="animate-spin h-8 w-8 border-4 border-[var(--accent)] border-t-transparent rounded-full mx-auto mb-2"></div>
-          <p className="text-[var(--text-muted)] font-bold tracking-widest">CARGANDO REPORTE...</p>
+        <div className="text-center py-20 bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-2xl">
+          <div className="animate-spin h-8 w-8 border-3 border-[var(--accent)] border-t-transparent rounded-full mx-auto mb-3"></div>
+          <p className="text-xs text-[var(--text-muted)] font-bold tracking-widest uppercase">Cargando matriz de calibración...</p>
         </div>
       ) : filteredReportData.length === 0 ? (
-        <Card className="text-center py-10">
-          <p className="text-[var(--text-muted)] font-bold">No hay grupos configurados con Día 1 para los filtros seleccionados.</p>
-        </Card>
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-2xl text-center py-16 px-4 shadow-xs">
+          <Layers size={32} className="mx-auto text-[var(--text-muted)] mb-3 opacity-50" />
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-1">Sin resultados</h3>
+          <p className="text-xs text-[var(--text-muted)] max-w-sm mx-auto">No se encontraron grupos con Día 1 para la combinación de filtros seleccionada.</p>
+          <button 
+            onClick={handleResetFilters}
+            className="mt-4 px-4 py-2 rounded-xl text-xs font-bold text-[var(--accent)] bg-[var(--accent-soft)] hover:bg-[var(--accent-soft)]/80 border border-[var(--accent)]/30 transition-all cursor-pointer"
+          >
+            Restablecer todos los filtros
+          </button>
+        </div>
       ) : (
-        <div className="space-y-6">
-          <Card noPadding className="overflow-hidden">
-            <div className="table-scroll overflow-x-auto max-h-[50vh]">
-              <table className="w-full text-sm text-left relative">
-                <thead className="bg-[var(--table-head-bg)] text-[var(--text-primary)] text-xs font-bold uppercase tracking-widest sticky top-0 z-10 border-b border-[var(--border-subtle)]">
+        <div className="space-y-4">
+          <div className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-2xl overflow-hidden shadow-xs">
+            {/* Toolbar de la tabla */}
+            <div className="p-3.5 border-b border-[var(--border-normal)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[var(--bg-elevated)]/50">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">
+                  Matriz de Grupos
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-normal)] shadow-2xs">
+                  {displayedReportData.length} de {filteredReportData.length}
+                </span>
+              </div>
+
+              {/* Buscador rápido */}
+              <div className="relative min-w-[240px]">
+                <input
+                  type="text"
+                  value={tableSearch}
+                  onChange={e => setTableSearch(e.target.value)}
+                  placeholder="Buscar grupo o campaña..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-[var(--accent)] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none transition-all"
+                />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                {tableSearch && (
+                  <button onClick={() => setTableSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Contenedor de la tabla con scroll suave */}
+            <div className="table-scroll overflow-x-auto max-h-[58vh]">
+              <table className="w-full text-xs text-left relative border-collapse">
+                <thead className="bg-[var(--table-head-bg)] text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider sticky top-0 z-10 border-b border-[var(--border-normal)] shadow-xs">
                   <tr>
-                    <th className="px-4 py-3">Grupo</th>
+                    <th className="px-4 py-3">Código Grupo</th>
                     <th className="px-4 py-3">Campaña</th>
-                    <th className="px-4 py-3">Fecha de Inicio</th>
-                    <th className="px-4 py-3">Fecha Día 1</th>
-                    <th className="px-4 py-3 text-center">Total Nómina</th>
-                    <th className="px-4 py-3 text-center">Asistió Día 0</th>
-                    <th className="px-4 py-3 text-center">Asistió Día 1</th>
-                    <th className="px-4 py-3 text-center">Asistencias Formador</th>
-                    <th className="px-4 py-3 text-center">Estado</th>
+                    <th className="px-3 py-3">F. Inicio</th>
+                    <th className="px-3 py-3">Fecha Día 1</th>
+                    <th className="px-3 py-3 text-right">Nómina Total</th>
+                    <th className="px-3 py-3 text-right">Asist. Día 0</th>
+                    <th className="px-3 py-3 text-right">Asist. Día 1 (Recl.)</th>
+                    <th className="px-3 py-3 text-right">Asist. Formador</th>
+                    <th className="px-4 py-3 text-center">Estado Calibración</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {filteredReportData.map((row, idx) => (
-                    <tr 
-                      key={`${row.grupo_codigo}-${row.campana}`} 
-                      onClick={() => handleRowClick(row)}
-                      className={`transition-colors ${idx % 2 === 0 ? 'bg-[var(--bg-surface)]' : 'bg-[var(--bg-base)]/20'} ${row.estado === 'DESCALIBRADO' ? 'cursor-pointer hover:bg-rose-500/10' : 'hover:bg-[var(--bg-muted)]'} ${selectedGroupDetail === row.grupo_codigo ? 'bg-rose-500/10' : ''}`}
-                    >
-                      <td className="px-4 py-3 font-bold text-[var(--text-primary)]">{row.grupo_codigo}</td>
-                      <td className="px-4 py-3 text-[var(--text-secondary)]">{row.campana}</td>
-                      <td className="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs">{row.fecha_inicio || '—'}</td>
-                      <td className="px-4 py-3 font-bold text-[var(--accent)] font-mono text-xs">{row.fecha_dia1}</td>
-                      <td className="px-4 py-3 text-center font-bold text-[var(--text-primary)]">{row.total_nomina}</td>
-                      <td className="px-4 py-3 text-center font-bold text-[var(--text-primary)]">{row.total_dia0}</td>
-                      <td className="px-4 py-3 text-center font-bold text-[var(--text-primary)]">{row.total_reclutador}</td>
-                      <td className="px-4 py-3 text-center font-bold text-[var(--text-primary)]">{row.total_formador}</td>
-                      <td className="px-4 py-3 text-center">
-                        {getStatusBadge(row.estado)}
-                        {row.estado === 'DESCALIBRADO' && (
-                          <div className="text-[10px] text-rose-500 font-bold mt-1 uppercase">Click para ver detalle</div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {displayedReportData.map((row) => {
+                    const pctDia1 = row.total_nomina > 0 ? Math.round((row.total_reclutador / row.total_nomina) * 100) : 0
+                    const isSelected = selectedGroupDetail === row.grupo_codigo
+                    
+                    return (
+                      <tr 
+                        key={`${row.grupo_codigo}-${row.campana}`} 
+                        onClick={() => handleRowClick(row)}
+                        className={`transition-all duration-150 ${
+                          row.estado === 'DESCALIBRADO' 
+                            ? 'cursor-pointer bg-rose-500/[0.03] hover:bg-rose-500/[0.08] active:scale-[0.998]' 
+                            : 'hover:bg-[var(--bg-elevated)]/50'
+                        } ${isSelected ? 'bg-rose-500/[0.12] ring-1 ring-inset ring-rose-500/40' : ''}`}
+                      >
+                        {/* Grupo */}
+                        <td className="px-4 py-2.5">
+                          <span className="font-mono font-bold text-xs text-[var(--accent)] bg-[var(--accent-soft)] border border-[var(--accent)]/30 px-2.5 py-0.5 rounded-md shadow-2xs">
+                            {row.grupo_codigo}
+                          </span>
+                        </td>
+
+                        {/* Campaña */}
+                        <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold max-w-[220px] truncate">
+                          {row.campana}
+                        </td>
+
+                        {/* Inicio */}
+                        <td className="px-3 py-2.5 text-[var(--text-muted)] font-mono text-[11px]">
+                          {row.fecha_inicio || '—'}
+                        </td>
+
+                        {/* Día 1 */}
+                        <td className="px-3 py-2.5 font-mono text-[11px]">
+                          {row.fecha_dia1 ? (
+                            <span className="text-[var(--text-secondary)] font-bold">{row.fecha_dia1}</span>
+                          ) : (
+                            <span className="text-[var(--text-muted)] italic">No definida</span>
+                          )}
+                        </td>
+
+                        {/* Nómina */}
+                        <td className="px-3 py-2.5 text-right font-mono font-black text-[var(--text-primary)] tabular-nums text-xs">
+                          {row.total_nomina}
+                        </td>
+
+                        {/* Día 0 */}
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-[var(--text-secondary)] tabular-nums text-xs">
+                          {row.total_dia0}
+                        </td>
+
+                        {/* Día 1 Reclutador */}
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          <div className="inline-flex items-center justify-end gap-2.5">
+                            <span className="font-mono font-black text-[var(--accent)] text-xs">
+                              {row.total_reclutador}
+                            </span>
+                            {row.total_nomina > 0 && (
+                              <div className="w-12 bg-[var(--bg-muted)] h-1.5 rounded-full overflow-hidden shrink-0" title={`${pctDia1}% de la nómina`}>
+                                <div 
+                                  className="h-full bg-gradient-to-r from-blue-500 to-[var(--accent)] rounded-full" 
+                                  style={{ width: `${Math.min(100, pctDia1)}%` }} 
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Asist Formador */}
+                        <td className="px-3 py-2.5 text-right font-mono font-black text-purple-600 dark:text-purple-400 tabular-nums text-xs">
+                          {row.total_formador}
+                        </td>
+
+                        {/* Estado */}
+                        <td className="px-4 py-2.5 text-center">
+                          {getStatusBadge(row.estado)}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </div>
 
+          {/* ─────────────────────────────────────────────────────────────
+              DETALLE DE DISCREPANCIAS (DRAWER / PANEL EN VIVO)
+              ───────────────────────────────────────────────────────────── */}
           {selectedGroupDetail && (
-            <Card className="bg-rose-500/5 border-rose-500/20 animate-fadeIn">
-              <h3 className="text-rose-500 font-black uppercase tracking-wider mb-4 border-b border-rose-500/20 pb-2">
-                Detalle de Descalibración: {selectedGroupDetail}
-              </h3>
+            <div className="bg-[var(--bg-surface)] border border-rose-500/40 rounded-2xl p-5 shadow-md shadow-rose-500/5 animate-fadeIn">
+              <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-[var(--border-normal)]">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                    <AlertTriangle size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
+                      Auditoría de Discrepancias — Grupo: <span className="font-mono text-rose-600 dark:text-rose-400">{selectedGroupDetail}</span>
+                    </h3>
+                    <p className="text-[11px] text-[var(--text-muted)] font-medium">Comparación uno a uno de marcas entre Reclutamiento y Formación</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedGroupDetail(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-rose-600 dark:hover:text-white bg-[var(--bg-elevated)] hover:bg-rose-500/20 border border-[var(--border-normal)] transition-all font-bold cursor-pointer"
+                >
+                  Cerrar Auditoría ✕
+                </button>
+              </div>
               
               {loadingDetails ? (
-                <div className="text-center py-4 text-rose-500 font-bold">Cargando discrepancias...</div>
+                <div className="text-center py-8">
+                  <div className="animate-spin h-5 w-5 border-2 border-rose-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                  <p className="text-xs text-[var(--text-muted)] font-mono">Cargando discrepancias del grupo...</p>
+                </div>
               ) : discrepancias.length === 0 ? (
-                <div className="text-center py-4 text-rose-500 font-bold">No se encontraron discrepancias directas (posible diferencia de cantidad total).</div>
+                <div className="text-center py-8 text-xs text-[var(--text-muted)] bg-[var(--bg-base)] rounded-xl p-4 border border-[var(--border-normal)]">
+                  No se encontraron discrepancias directas por documento (la descalibración puede deberse a una diferencia en la cantidad total de registros).
+                </div>
               ) : (
-                <div className="table-scroll overflow-x-auto rounded-xl overflow-hidden border border-rose-500/20">
-                  <table className="w-full text-left text-xs bg-[var(--bg-surface)]">
-                    <thead className="bg-rose-500/10 text-rose-500">
+                <div className="overflow-x-auto rounded-xl border border-[var(--border-normal)] shadow-xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[var(--table-head-bg)] text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider border-b border-[var(--border-normal)]">
                       <tr>
-                        <th className="px-3 py-2 font-bold uppercase">Documento</th>
-                        <th className="px-3 py-2 font-bold uppercase">Nombres</th>
-                        <th className="px-3 py-2 text-center font-bold uppercase border-l border-rose-500/20">Reclutador Marcó</th>
-                        <th className="px-3 py-2 text-center font-bold uppercase border-l border-rose-500/20">Formador Marcó</th>
+                        <th className="px-4 py-2.5">Documento</th>
+                        <th className="px-4 py-2.5">Postulante</th>
+                        <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Reclutador Marcó</th>
+                        <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Formador Marcó</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[var(--border-subtle)]">
+                    <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
                       {discrepancias.map(d => (
-                        <tr key={d.documento} className="hover:bg-[var(--bg-muted)] transition-colors">
-                          <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{d.documento}</td>
-                          <td className="px-3 py-2 text-[var(--text-primary)] font-medium">{d.nombre}</td>
-                          <td className="px-3 py-2 text-center border-l border-rose-500/20">
-                            <span className="bg-[var(--bg-elevated)] px-2 py-1 rounded font-bold text-[var(--text-primary)]">{d.sigla_reclutador}</span>
+                        <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
+                          <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
+                          <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
+                          <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                            <span className="px-2.5 py-1 rounded-md font-mono font-bold text-xs bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-normal)]">
+                              {d.sigla_reclutador || '—'}
+                            </span>
                           </td>
-                          <td className="px-3 py-2 text-center border-l border-rose-500/20">
-                            <span className="bg-amber-500/20 px-2 py-1 rounded font-bold text-amber-500 border border-amber-500/30">{d.sigla_formador}</span>
+                          <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                            <span className="px-2.5 py-1 rounded-md font-mono font-bold text-xs bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                              {d.sigla_formador || '—'}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -635,7 +957,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                   </table>
                 </div>
               )}
-            </Card>
+            </div>
           )}
         </div>
       )}

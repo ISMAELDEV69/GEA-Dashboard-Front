@@ -173,7 +173,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 
   const { data, error } = await supabase
     .from('perfiles')
-    .select('codigo, nombre, rol, cargo, telefono, avatar_url, reclutador_id, formador_documento')
+    .select('id, nombre, rol, cargo, telefono, avatar_url')
     .eq('id', userId)
     .maybeSingle()
   if (error) throw error
@@ -185,7 +185,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
     const { data: inserted, error: insErr } = await supabase
       .from('perfiles')
       .upsert(bootstrap)
-      .select('codigo, nombre, rol, cargo, telefono, avatar_url, reclutador_id, formador_documento')
+      .select('id, nombre, rol, cargo, telefono, avatar_url')
       .single()
     if (!insErr && inserted) return await attachNombreCompleto(inserted)
     return await attachNombreCompleto(bootstrap)
@@ -3464,7 +3464,7 @@ export async function addEquipoFormacion(payload) {
 
     const { data, error } = await supabase
       .from('equipo_formacion')
-      .insert([{ ...cleanPayload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }])
+      .upsert([{ ...cleanPayload, updated_at: new Date().toISOString() }], { onConflict: 'documento' })
       .select()
       .single();
     if (error) {
@@ -4388,9 +4388,23 @@ export function parseFechaAsistencia(raw) {
   if (raw.includes('/')) {
     const parts = raw.split('/');
     if (parts.length === 3) {
-      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      if (parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
     }
   } else if (raw.includes('-')) {
+    const parts = raw.split('-');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].substring(0, 2).padStart(2, '0')}`;
+      }
+      if (parts[2].length >= 4) {
+        return `${parts[2].substring(0, 4)}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
     return raw.substring(0, 10);
   }
   return raw;
