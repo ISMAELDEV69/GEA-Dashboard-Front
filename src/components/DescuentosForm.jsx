@@ -376,6 +376,38 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
             </tbody>
           </table>
         </div>
+
+        {/* FOOTER ACTION BAR */}
+        <div className="p-4 bg-[var(--bg-elevated)] border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={addRow}
+              className="btn-secondary flex items-center gap-2 text-xs font-bold"
+            >
+              <Plus size={15} /> Agregar Otra Fila
+            </button>
+            <button 
+              onClick={clearAll}
+              className="text-xs text-red-500 hover:text-red-600 font-semibold px-2 py-1"
+            >
+              Limpiar Tabla
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-[var(--text-muted)] font-medium">
+              {dataRows.filter(r => r.dni_ce || r.postulante).length} registros listos
+            </span>
+            <button 
+              onClick={handleSave}
+              disabled={loading}
+              className="btn-primary flex items-center gap-2 min-w-[180px] justify-center text-xs font-bold py-2 shadow-md bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              {loading ? <span className="animate-spin">⌛</span> : <Save size={16} />}
+              {loading ? 'Procesando...' : 'Procesar y Guardar Descuentos'}
+            </button>
+          </div>
+        </div>
       </Card>
     </PageLayout>
   )
