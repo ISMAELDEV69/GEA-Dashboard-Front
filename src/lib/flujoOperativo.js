@@ -300,3 +300,23 @@ export function gruposEntrantes(grupos, postulantes) {
   }).filter(g => g.alumnosCount > 0)
     .sort((a, b) => (b.alumnosCount || 0) - (a.alumnosCount || 0))
 }
+
+/**
+ * Extrae el código padre de un grupo si es un subgrupo derivado (ej. GPE-2026012-1 -> GPE-2026012).
+ * Si el grupo no es un subgrupo (ej. GPE-2026012), retorna el código intacto.
+ */
+export function getParentGroupCode(code) {
+  if (!code) return '';
+  const str = String(code).trim().toUpperCase();
+  const match = str.match(/^([A-Z0-9]+-\d+)[-_](\d{1,2})$/);
+  return match ? match[1] : str;
+}
+
+/**
+ * Valida si un código corresponde a un subgrupo derivado para bloquear doble split
+ */
+export function isSubgroupCode(code) {
+  if (!code) return false;
+  return /^([A-Z0-9]+-\d+)[-_](\d{1,2})$/.test(String(code).trim().toUpperCase());
+}
+

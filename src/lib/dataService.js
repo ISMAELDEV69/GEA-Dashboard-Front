@@ -3520,6 +3520,54 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
   return false;
 }
 
+export async function fetchPostulantesPorGrupo(grupo_codigo, campana) {
+  if (DB_MODE === 'supabase') {
+    let query = supabase
+      .from('nominas')
+      .select('documento, apellido_paterno, apellido_materno, nombres_completos, celular, condicion, campana, grupo_codigo, parent_grupo_codigo, formador_documento, estado')
+      .or(`grupo_codigo.eq.${grupo_codigo},parent_grupo_codigo.eq.${grupo_codigo}`)
+
+    if (campana && campana !== 'Sin Campaña') {
+      query = query.eq('campana', campana)
+    }
+
+    const { data, error } = await query.order('nombres_completos')
+    if (error) {
+      console.error('Error fetching postulantes por grupo:', error)
+      throw error
+    }
+    return data || []
+  }
+  return []
+}
+
+export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) {
+  if (DB_MODE !== 'supabase') throw new Error("Requiere conexión a Supabase")
+
+  const { data, error } = await supabase.rpc('dividir_grupo_transaccional', {
+    p_parent_codigo: parentCodigo,
+    p_campana: campana,
+    p_distribucion: distribucion
+  })
+
+  if (error) {
+    console.error("Error en dividir_grupo_transaccional:", error)
+    throw error
+  }
+
+  // Invalidar cachés operativas
+  invalidateCache('grupos_capacidad')
+  invalidateCache('grupos_con_metas')
+  invalidateCache('equipo_formacion')
+  invalidateCache('consolidado_asistencias')
+  invalidateCache('all_nominas')
+  invalidateCache('nominas_dataset')
+
+  mockAuditLog('nominas', 'SPLIT_GRUPO', parentCodigo, null, { campana, distribucion, resultado: data })
+  return data
+}
+
+
 /**
  * Cálculo Ultrarrápido de Métricas de Calibración Día 1 en Memoria (O(1) Map indexing).
  * Reutiliza postulantes y asistencias ya cargados en RAM sin repaginar Supabase.

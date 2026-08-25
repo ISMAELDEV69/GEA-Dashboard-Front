@@ -2,9 +2,11 @@ import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search, Users, Loader2, Check, UserCheck, AlertCircle,
   Calendar, Filter, X, GraduationCap, ChevronLeft, ChevronRight,
-  Sparkles, RefreshCw, CheckCircle2, ShieldAlert, Clock, ArrowRight
+  Sparkles, RefreshCw, CheckCircle2, ShieldAlert, Clock, ArrowRight, Split
 } from 'lucide-react'
 import { updateGrupoFormador, getEquipoFormacion } from '../lib/dataService'
+import { isSubgroupCode } from '../lib/flujoOperativo'
+import DividirGrupoModal from '../components/asignacion/DividirGrupoModal'
 
 const PAGE_SIZE = 40
 
@@ -20,6 +22,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
   const [savingRow, setSavingRow] = useState(null)
   const [successRow, setSuccessRow] = useState(null)
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
+  const [selectedGrupoForSplit, setSelectedGrupoForSplit] = useState(null)
 
   useEffect(() => {
     getEquipoFormacion().then(data => {
@@ -476,8 +479,21 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                     
                     {/* Grupo */}
                     <td className="px-3.5 py-2">
-                      <div className="font-mono font-black text-xs text-blue-400 flex items-center gap-1.5">
-                        <span>{g.codigo}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-xs text-blue-400">{g.codigo}</span>
+                        {!isSubgroupCode(g.codigo) ? (
+                          <button
+                            onClick={() => setSelectedGrupoForSplit(g)}
+                            className="px-2 py-0.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[9.5px] font-black flex items-center gap-1 transition-all shadow-2xs hover:scale-105 active:scale-95 cursor-pointer"
+                            title="Dividir este grupo en subgrupos con múltiples formadoras"
+                          >
+                            <Split size={11} /> Dividir
+                          </button>
+                        ) : (
+                          <span className="px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-400 border border-purple-500/30 text-[8.5px] font-black">
+                            SUBGRUPO
+                          </span>
+                        )}
                       </div>
                       <div className="text-[9.5px] text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                         <span className="font-semibold text-[var(--text-secondary)]">{g.modalidad || 'Presencial'}</span>
@@ -606,6 +622,19 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
           </table>
         </div>
       </div>
+
+      {/* MODAL DE DIVISIÓN DE GRUPOS */}
+      {selectedGrupoForSplit && (
+        <DividirGrupoModal
+          isOpen={!!selectedGrupoForSplit}
+          onClose={() => setSelectedGrupoForSplit(null)}
+          grupo={selectedGrupoForSplit}
+          formadores={formadoresActivos}
+          onSuccess={() => {
+            if (onRefresh) onRefresh()
+          }}
+        />
+      )}
     </div>
   )
 }
