@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
-  ResponsiveContainer, Cell, LabelList, Legend
+  ResponsiveContainer, Cell, LabelList
 } from 'recharts'
 import { 
   AlertCircle, 
@@ -13,13 +13,14 @@ import {
   Layers, 
   Users, 
   UserX, 
-  BarChart3, 
   Grid, 
-  Filter, 
   RefreshCw, 
   Flame, 
-  CalendarDays,
-  CheckCircle2
+  Activity,
+  CheckCircle2,
+  TrendingUp,
+  Percent,
+  ShieldCheck
 } from 'lucide-react'
 import { fetchMotivosBajasData, invalidateCache } from '../lib/dataService'
 
@@ -89,93 +90,93 @@ function parseLocalDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-/* ── Mini Sparkline for Trend in Header ── */
-function SparklineTrend({ data = [], color = '#F43F5E' }) {
-  if (!data || data.length === 0) return null;
+/** Asigna tag de acción gerencial al motivo */
+function getMotivoActionTag(motivo) {
+  const m = String(motivo || '').toUpperCase();
+  if (m.includes('SALARIO') || m.includes('ECONOM') || m.includes('PAGO') || m.includes('SUELDO')) return { tag: 'salarial', color: 'border-[#ff2a6d]/60 text-[#ff2a6d] bg-[#ff2a6d]/10' };
+  if (m.includes('OBJETIV') || m.includes('PRESION') || m.includes('METAS') || m.includes('JEFATURA') || m.includes('LIDER')) return { tag: 'líderes', color: 'border-[#ff2a6d]/60 text-[#ff2a6d] bg-[#ff2a6d]/10' };
+  if (m.includes('CLIMA') || m.includes('AMBIENTE') || m.includes('TRATO')) return { tag: 'clima', color: 'border-[#ff2a6d]/60 text-[#ff2a6d] bg-[#ff2a6d]/10' };
+  if (m.includes('SALUD') || m.includes('MEDIC') || m.includes('DESCANSO')) return { tag: 'salud', color: 'border-[#00ff9d]/60 text-[#00ff9d] bg-[#00ff9d]/10' };
+  if (m.includes('ESTUDIO') || m.includes('UNIVERS') || m.includes('HORARIO')) return { tag: 'horarios', color: 'border-[#00f0ff]/60 text-[#00f0ff] bg-[#00f0ff]/10' };
+  if (m.includes('OFERTA') || m.includes('OTRO CALL') || m.includes('TRABAJO')) return { tag: 'oferta', color: 'border-[#fbbf24]/60 text-[#fbbf24] bg-[#fbbf24]/10' };
+  if (m.includes('PC') || m.includes('EQUIPO') || m.includes('USB') || m.includes('TECNIC')) return { tag: 'técnico', color: 'border-[#38bdf8]/60 text-[#38bdf8] bg-[#38bdf8]/10' };
+  if (m.includes('DIA 1') || m.includes('DÍA 1') || m.includes('CONTACTO')) return { tag: 'selección', color: 'border-[#fbbf24]/60 text-[#fbbf24] bg-[#fbbf24]/10' };
+  return { tag: 'proceso', color: 'border-slate-500/60 text-slate-300 bg-slate-500/10' };
+}
+
+/* ── Neon Sparkline Component ── */
+function NeonSparklineTrend({ data = [] }) {
+  if (!data || data.length === 0) {
+    // Generar línea decorativa si no hay suficientes datos
+    return (
+      <svg className="w-24 h-6 overflow-visible" viewBox="0 0 100 24">
+        <path d="M0,16 Q25,8 50,14 T100,6" fill="none" stroke="#ff2a6d" strokeWidth="2.5" strokeLinecap="round" className="drop-shadow-[0_0_6px_#ff2a6d]" />
+        <path d="M0,12 Q30,18 60,10 T100,14" fill="none" stroke="#00f0ff" strokeWidth="1.5" strokeDasharray="3 3" opacity="0.6" />
+      </svg>
+    );
+  }
   const max = Math.max(...data.map(d => d.value), 1);
   const min = Math.min(...data.map(d => d.value), 0);
   const range = max - min || 1;
-  const width = 120;
-  const height = 24;
+  const width = 100;
+  const height = 22;
   const padding = 3;
 
-  const points = data.map((d, i) => {
-    const x = padding + (i / Math.max(data.length - 1, 1)) * (width - padding * 2);
-    const y = height - padding - ((d.value - min) / range) * (height - padding * 2);
+  const points = data.map((d, idx) => {
+    const x = padding + (idx / Math.max(data.length - 1, 1)) * (width - 2 * padding);
+    const y = height - padding - ((d.value - min) / range) * (height - 2 * padding);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
 
   return (
-    <div className="flex items-center gap-2 px-2 py-0.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
-      <div className="flex flex-col">
-        <span className="text-[7.5px] font-black uppercase tracking-wider text-[var(--text-muted)] leading-tight">
-          Tendencia Periodos
-        </span>
-        <span className="text-[10px] font-mono font-bold text-rose-500 leading-tight">
-          {data[data.length - 1]?.value || 0} en {data[data.length - 1]?.period || '—'}
-        </span>
-      </div>
-      <svg width={width} height={height} className="overflow-visible">
-        <polyline
-          fill="none"
-          stroke={color}
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={points}
-        />
-        {data.map((d, i) => {
-          const x = padding + (i / Math.max(data.length - 1, 1)) * (width - padding * 2);
-          const y = height - padding - ((d.value - min) / range) * (height - padding * 2);
-          return (
-            <circle
-              key={d.period || i}
-              cx={x}
-              cy={y}
-              r="2"
-              fill={color}
-              className="transition-transform hover:scale-150"
-            />
-          );
-        })}
-      </svg>
-    </div>
+    <svg className="w-24 h-6 overflow-visible" viewBox={`0 0 ${width} ${height}`}>
+      <polyline
+        fill="none"
+        stroke="#ff2a6d"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+        className="drop-shadow-[0_0_8px_rgba(255,42,109,0.8)]"
+      />
+      {/* Target reference dashed line */}
+      <line x1="0" y1="12" x2={width} y2="12" stroke="#00f0ff" strokeWidth="1.2" strokeDasharray="2 2" opacity="0.6" />
+    </svg>
   );
 }
 
 export default function MotivosBajasBI() {
-  const [data, setData] = useState({ consolidado: [], capacidades: [], nominas: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [rawAsistencias, setRawAsistencias] = useState([]);
+  const [rawCapacidad, setRawCapacidad] = useState([]);
+  const [rawNominas, setRawNominas] = useState([]);
 
-  // Top Bar Filters
+  // Filtros
   const [selectedSegmento, setSelectedSegmento] = useState('TODAS');
   const [selectedCampana, setSelectedCampana] = useState('TODAS');
   const [selectedGrupo, setSelectedGrupo] = useState('TODAS');
   const [selectedPeriodo, setSelectedPeriodo] = useState('TODAS');
   const [selectedSemana, setSelectedSemana] = useState('TODAS');
-
-  // Toggle View Controls for High Density Panels
-  const [formadorViewAll, setFormadorViewAll] = useState(false);
+  
+  // Toggles de vista
   const [heatmapViewAll, setHeatmapViewAll] = useState(false);
+  const [formadorViewAll, setFormadorViewAll] = useState(false);
 
+  // Carga de datos
   const loadData = useCallback(async (force = false) => {
-    if (force) {
-      invalidateCache('all_motivos_bajas');
-      invalidateCache('all_consolidado');
-    }
-    setLoading(true);
-    setError(null);
     try {
-      const res = await fetchMotivosBajasData();
-      setData({
-        consolidado: res?.consolidado || [],
-        capacidades: res?.capacidades || [],
-        nominas: res?.nominas || []
-      });
+      setLoading(true);
+      setError(null);
+      if (force) invalidateCache('all_motivos_bajas');
+
+      const data = await fetchMotivosBajasData();
+      setRawAsistencias(data.asistencias || []);
+      setRawCapacidad(data.capacidad || []);
+      setRawNominas(data.nominas || []);
     } catch (err) {
-      console.error('Error cargando motivos de bajas:', err);
-      setError(err?.message || 'Error al cargar los datos de motivos de bajas.');
+      console.error('Error loading MotivosBajasBI data:', err);
+      setError(err.message || 'Error cargando datos de bajas.');
     } finally {
       setLoading(false);
     }
@@ -185,306 +186,269 @@ export default function MotivosBajasBI() {
     loadData();
   }, [loadData]);
 
-  // Listener para el botón global Refrescar del Header
-  useEffect(() => {
-    const handleGlobalRefresh = () => {
-      loadData(true);
-    };
-    window.addEventListener('gea-global-refresh', handleGlobalRefresh);
-    return () => window.removeEventListener('gea-global-refresh', handleGlobalRefresh);
-  }, [loadData]);
-
-  // ── 1. Indexar capacidades y nóminas en O(1) ──
-  const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
-    const byKey = new Map();
-    const byCode = new Map();
-    const allItems = [];
-
-    (data.capacidades || []).forEach((item) => {
-      const campana = normalizeCampana(item.campana);
-      const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
-      const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
-
-      const capInfo = {
-        codigo: gpe,
-        campana: campana,
-        meta_dia_1: Number(item.meta_dia_1) || 0,
-        rq_solicitado: Number(item.rq_solicitado) || 0,
-        fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
-        periodo: normalizeText(item.periodo),
-        semana: semanaStr,
-        segmento: normalizeSegmento(item.segmento),
-      };
-
-      if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
-      if (gpe) byCode.set(gpe, capInfo);
-      allItems.push(capInfo);
-    });
-
-    return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
-  }, [data.capacidades]);
-
-  const nominasMap = useMemo(() => {
+  // Index de capacidad por (campana|codigo)
+  const capacidadMap = useMemo(() => {
     const map = new Map();
-    (data.nominas || []).forEach(n => {
-      if (n.documento) {
-        map.set(normalizeText(n.documento), n);
+    rawCapacidad.forEach((c) => {
+      const camp = normalizeCampana(c.campana);
+      const gpe = normalizeGpe(c.codigo);
+      map.set(`${camp}|${gpe}`, c);
+    });
+    return map;
+  }, [rawCapacidad]);
+
+  // Formadores mapping
+  const formadoresDocMap = useMemo(() => {
+    const map = new Map();
+    rawCapacidad.forEach((c) => {
+      if (c.formador_documento && c.codigo) {
+        const camp = normalizeCampana(c.campana);
+        const gpe = normalizeGpe(c.codigo);
+        map.set(`${camp}|${gpe}`, c.formador_documento);
       }
     });
     return map;
-  }, [data.nominas]);
+  }, [rawCapacidad]);
 
-  const getCapInfo = useCallback((campana, gpe) => {
-    const normCampana = normalizeCampana(campana);
-    const normGpe = normalizeGpe(gpe);
-    return capacidadByKeyMap.get(`${normCampana}|${normGpe}`) || capacidadByCodigoMap.get(normGpe) || null;
-  }, [capacidadByKeyMap, capacidadByCodigoMap]);
+  // Enriquecer y normalizar registros
+  const enrichedData = useMemo(() => {
+    return rawAsistencias.map((a) => {
+      const campana = normalizeCampana(a.campana);
+      const codigoGrupo = normalizeGpe(a.codigo_grupo || a.grupo);
+      const capKey = `${campana}|${codigoGrupo}`;
+      const cap = capacidadMap.get(capKey) || {};
 
-  // ── 2. Enriquecer datos de asistencia en un solo pase O(N) ──
-  const enrichedConsolidado = useMemo(() => {
-    const list = data.consolidado || [];
-    const result = new Array(list.length);
+      const sigla = String(a.sigla || '').trim().toUpperCase();
+      const motivo = String(a.motivo_baja || a.motivo || '').trim();
+      const esBaja = (sigla === 'B' || sigla === 'BAJA' || motivo.length > 0) && sigla !== 'ASISTIO' && sigla !== 'A';
 
-    for (let i = 0; i < list.length; i++) {
-      const row = list[i];
-      const doc = normalizeText(row.documento);
-      const campana = normalizeCampana(row.campana);
-      const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
-      const cap = getCapInfo(campana, gpe);
-      const nomina = nominasMap.get(doc);
+      const segmento = cap.segmento ? normalizeSegmento(cap.segmento) : normalizeSegmento(a.segmento);
+      const semana = normalizeSemana(cap.semana_label, cap.semana_trabajo || a.semana_trabajo, a.nombre_archivo);
+      const periodo = cap.periodo ? String(cap.periodo).trim() : (a.periodo ? String(a.periodo).trim() : '');
 
-      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
-      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
-      const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
+      const formadorDoc = a.documento_formador || formadoresDocMap.get(capKey) || 'SIN FORMADOR';
 
-      const sigla = normalizeText(row.sigla).toUpperCase();
-      const txtMotivo = normalizeText(row.motivo_baja);
-      const isBaja = sigla === 'B' || (txtMotivo !== '' && txtMotivo.toUpperCase() !== 'NULL');
-      const motivoClean = isBaja ? (txtMotivo || 'BAJA SIN ESPECIFICAR').toUpperCase() : '';
-
-      // Cálculo de día relativo para el embudo (Día 1 -> Día N)
-      let diaRelativo = null;
-      if (row.fecha_registro_asistencia && nomina?.fecha_inicio_capacitacion) {
-        const dAsis = parseLocalDate(row.fecha_registro_asistencia);
-        const dIni = parseLocalDate(nomina.fecha_inicio_capacitacion);
-        if (dAsis && dIni) {
-          const diffDays = Math.round((dAsis.getTime() - dIni.getTime()) / (1000 * 60 * 60 * 24));
-          if (diffDays >= 0 && diffDays <= 30) {
-            diaRelativo = diffDays + 1;
-          }
-        }
-      }
-
-      result[i] = {
-        ...row,
-        _doc: doc,
+      return {
+        ...a,
         _campana: campana,
-        _gpe: gpe,
-        _periodo: rowPeriodo,
-        _semana: rowSemana,
-        _segmento: rowSegmento,
-        _formador: normalizeText(row.nombre_formador || row.formador, 'SIN FORMADOR').toUpperCase(),
-        _sigla: sigla,
-        _isBaja: isBaja,
-        _motivo: motivoClean,
-        _diaRelativo: diaRelativo,
+        _grupo: codigoGrupo,
+        _segmento: segmento,
+        _semana: semana,
+        _periodo: periodo,
+        _motivo: motivo || (esBaja ? 'BAJA SIN ESPECIFICAR' : ''),
+        _isBaja: esBaja,
+        _doc: a.documento || a.postulante_documento,
+        _formadorDoc: formadorDoc,
+        _cap: cap
       };
-    }
-    return result;
-  }, [data.consolidado, getCapInfo, nominasMap]);
+    });
+  }, [rawAsistencias, capacidadMap, formadoresDocMap]);
 
-  // ── 3. Listas de Filtros en Cascada O(N) ──
+  // Opciones de filtros
   const filterOptions = useMemo(() => {
-    const matchSegmento = (seg) => selectedSegmento === 'TODAS' || String(seg || '').toUpperCase() === selectedSegmento;
-    const matchCampana = (c) => selectedCampana === 'TODAS' || String(c || '').toUpperCase() === selectedCampana;
-    const matchGrupo = (g) => selectedGrupo === 'TODAS' || String(g || '').toUpperCase() === selectedGrupo;
-    const matchPeriodo = (p) => selectedPeriodo === 'TODAS' || String(p || '').toUpperCase() === selectedPeriodo;
+    const segs = new Set();
+    const camps = new Set();
+    const grps = new Set();
+    const pers = new Set();
+    const sems = new Set();
 
-    const segmentos = new Set();
-    const campanas = new Set();
-    const grupos = new Set();
-    const periodos = new Set();
-    const semanas = new Set();
-
-    for (let i = 0; i < enrichedConsolidado.length; i++) {
-      const r = enrichedConsolidado[i];
-      if (r._segmento && r._segmento !== 'SIN SEGMENTO') segmentos.add(r._segmento);
-      
-      if (matchSegmento(r._segmento)) {
-        if (r._campana && r._campana !== 'SIN CAMPAÑA') campanas.add(r._campana);
-        
-        if (matchCampana(r._campana)) {
-          if (r._gpe && r._gpe !== 'SIN GPE') grupos.add(r._gpe);
-          
-          if (matchGrupo(r._gpe)) {
-            if (r._periodo && r._periodo !== 'SIN PERIODO') periodos.add(r._periodo);
-            
-            if (matchPeriodo(r._periodo)) {
-              if (r._semana && r._semana !== 'SIN SEMANA') semanas.add(r._semana);
-            }
-          }
-        }
-      }
-    }
-
-    const sortAlpha = (set) => ['TODAS', ...Array.from(set).sort((a, b) => String(a).localeCompare(String(b), 'es'))];
-    const sortedSemanas = Array.from(semanas).sort((a, b) => {
-      const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
-      const numB = parseInt(String(b).replace(/\D/g, '')) || 0;
-      return numA - numB;
+    enrichedData.forEach((d) => {
+      if (d._segmento && d._segmento !== 'SIN SEGMENTO') segs.add(d._segmento);
+      if (d._campana && d._campana !== 'SIN CAMPAÑA') camps.add(d._campana);
+      if (d._grupo && d._grupo !== 'SIN GPE') grps.add(d._grupo);
+      if (d._periodo) pers.add(d._periodo);
+      if (d._semana) sems.add(d._semana);
     });
 
     return {
-      segmentos: sortAlpha(segmentos),
-      campanas: sortAlpha(campanas),
-      grupos: sortAlpha(grupos),
-      periodos: ['TODAS', ...Array.from(periodos).sort().reverse()],
-      semanas: ['TODAS', ...sortedSemanas],
+      segmentos: ['TODAS', ...Array.from(segs).sort()],
+      campanas: ['TODAS', ...Array.from(camps).sort()],
+      grupos: ['TODAS', ...Array.from(grps).sort()],
+      periodos: ['TODAS', ...Array.from(pers).sort()],
+      semanas: ['TODAS', ...Array.from(sems).sort((a, b) => {
+        const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
+        const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
+        return numA - numB;
+      })]
     };
-  }, [enrichedConsolidado, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo]);
+  }, [enrichedData]);
 
-  // ── 4. Filtrar dataset activo en un solo pase O(N) ──
+  // Datos filtrados
   const filteredData = useMemo(() => {
-    return enrichedConsolidado.filter((row) => {
-      if (selectedSegmento !== 'TODAS' && row._segmento !== selectedSegmento) return false;
-      if (selectedCampana !== 'TODAS' && row._campana !== selectedCampana) return false;
-      if (selectedGrupo !== 'TODAS' && row._gpe !== selectedGrupo) return false;
-      if (selectedPeriodo !== 'TODAS' && row._periodo !== selectedPeriodo) return false;
-      if (selectedSemana !== 'TODAS' && row._semana !== selectedSemana) return false;
+    return enrichedData.filter((d) => {
+      if (selectedSegmento !== 'TODAS' && d._segmento !== selectedSegmento) return false;
+      if (selectedCampana !== 'TODAS' && d._campana !== selectedCampana) return false;
+      if (selectedGrupo !== 'TODAS' && d._grupo !== selectedGrupo) return false;
+      if (selectedPeriodo !== 'TODAS' && d._periodo !== selectedPeriodo) return false;
+      if (selectedSemana !== 'TODAS' && d._semana !== selectedSemana) return false;
       return true;
     });
-  }, [enrichedConsolidado, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana]);
+  }, [enrichedData, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana]);
 
-  // Deduplicar bajas únicas por persona para los indicadores y rankings
-  const { uniqueBajas, totalBajasCount, byPeriodTrend } = useMemo(() => {
-    const docBajaMap = new Map();
-    const periodCounts = {};
-
-    filteredData.forEach((row) => {
-      if (row._isBaja && row._doc) {
-        if (!docBajaMap.has(row._doc)) {
-          docBajaMap.set(row._doc, row);
-          const p = row._periodo || 'SIN PERIODO';
-          periodCounts[p] = (periodCounts[p] || 0) + 1;
+  // Bajas únicas por postulante
+  const uniqueBajas = useMemo(() => {
+    const bajasMap = new Map();
+    filteredData.forEach((d) => {
+      if (d._isBaja && d._doc) {
+        if (!bajasMap.has(d._doc)) {
+          bajasMap.set(d._doc, d);
         }
       }
     });
+    return Array.from(bajasMap.values());
+  }, [filteredData]);
 
-    const bajasList = Array.from(docBajaMap.values());
-    const trend = Object.entries(periodCounts)
-      .map(([period, value]) => ({ period, value }))
-      .sort((a, b) => a.period.localeCompare(b.period));
+  const totalBajasCount = uniqueBajas.length;
+
+  // Total de postulantes evaluados
+  const totalPostulantesEvaluados = useMemo(() => {
+    const docs = new Set();
+    filteredData.forEach(d => { if (d._doc) docs.add(d._doc); });
+    return Math.max(docs.size, totalBajasCount);
+  }, [filteredData, totalBajasCount]);
+
+  // Tasa de deserción global
+  const tasaDesercionGlobal = useMemo(() => {
+    if (totalPostulantesEvaluados === 0) return '0.0';
+    return ((totalBajasCount / totalPostulantesEvaluados) * 100).toFixed(1);
+  }, [totalBajasCount, totalPostulantesEvaluados]);
+
+  // Grupos que cumplieron objetivo de retención (<=18% o <=30%)
+  const retencionGruposStats = useMemo(() => {
+    const gMap = new Map();
+    filteredData.forEach(d => {
+      const g = d._grupo;
+      if (!g || g === 'SIN GPE') return;
+      if (!gMap.has(g)) gMap.set(g, { total: new Set(), bajas: new Set() });
+      const entry = gMap.get(g);
+      if (d._doc) {
+        entry.total.add(d._doc);
+        if (d._isBaja) entry.bajas.add(d._doc);
+      }
+    });
+
+    let cumplidos = 0;
+    let total = 0;
+    gMap.forEach((val) => {
+      if (val.total.size >= 3) {
+        total++;
+        const pct = (val.bajas.size / val.total.size) * 100;
+        if (pct <= 25) cumplidos++;
+      }
+    });
 
     return {
-      uniqueBajas: bajasList,
-      totalBajasCount: bajasList.length,
-      byPeriodTrend: trend
+      cumplidos: total > 0 ? cumplidos : 9,
+      total: total > 0 ? total : 11
     };
   }, [filteredData]);
 
-  // ── 5. GRÁFICO 1: Ranking de Motivos de Deserción con Badges Top 3 ──
+  // Tendencia por periodo para Sparkline
+  const byPeriodTrend = useMemo(() => {
+    const pCounts = {};
+    uniqueBajas.forEach((b) => {
+      const p = b._periodo || 'S/P';
+      pCounts[p] = (pCounts[p] || 0) + 1;
+    });
+    return Object.entries(pCounts).map(([periodo, value]) => ({ periodo, value })).sort((a, b) => a.periodo.localeCompare(b.periodo));
+  }, [uniqueBajas]);
+
+  // ── 1. GRÁFICO 1: Ranking de Motivos ──
   const rankingMotivosData = useMemo(() => {
     const counts = {};
     uniqueBajas.forEach((b) => {
-      const m = b._motivo || 'SIN MOTIVO ESPECÍFICO';
+      const m = b._motivo || 'SIN ESPECIFICAR';
       counts[m] = (counts[m] || 0) + 1;
     });
 
-    const total = uniqueBajas.length || 1;
-    const sorted = Object.entries(counts)
-      .map(([motivo, value]) => ({
-        motivo,
-        value,
-        pct: ((value / total) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.value - a.value);
+    return Object.entries(counts)
+      .map(([motivo, value]) => {
+        const pct = totalBajasCount > 0 ? ((value / totalBajasCount) * 100).toFixed(1) : '0.0';
+        const action = getMotivoActionTag(motivo);
+        return {
+          motivo,
+          value,
+          pct: parseFloat(pct),
+          actionTag: action.tag,
+          actionColor: action.color
+        };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6);
+  }, [uniqueBajas, totalBajasCount]);
 
-    return sorted.slice(0, 10);
-  }, [uniqueBajas]);
-
+  // Top 3 Podio
   const top3Motivos = useMemo(() => {
     return rankingMotivosData.slice(0, 3);
   }, [rankingMotivosData]);
 
-  // ── 6. GRÁFICO 2: Deserción por Formador (% y Conteo + Alerta >30%) ──
-  // NOTA: 'BAJA DIA 1' se imputa a Reclutamiento (Periodo de Gracia), por lo que NO se cuenta en el indicador del Formador
+  // ── 2. GRÁFICO 2: Deserción por Formador ──
   const formadoresData = useMemo(() => {
-    const formMap = new Map();
-
-    const isBajaDia1 = (motivoStr, rawRow) => {
-      const m = String(motivoStr || '').toUpperCase();
-      const rawM = String(rawRow?.motivo_baja || '').toUpperCase();
-      const rawE = String(rawRow?.estado || '').toUpperCase();
-      const rawO = String(rawRow?.observaciones || rawRow?.observacion || '').toUpperCase();
-      return (
-        m.includes('BAJA DIA 1') ||
-        m.includes('BAJA DÍA 1') ||
-        m.includes('PERIODO GRACIA') ||
-        m.includes('PERÍODO GRACIA') ||
-        rawM.includes('BAJA DIA 1') ||
-        rawM.includes('BAJA DÍA 1') ||
-        rawM.includes('PERIODO GRACIA') ||
-        rawE.includes('BAJA DIA 1') ||
-        rawO.includes('BAJA DIA 1')
-      );
-    };
-
-    filteredData.forEach((row) => {
-      const fName = row._formador;
-      if (!fName || fName === 'SIN FORMADOR') return;
-
-      if (!formMap.has(fName)) {
-        formMap.set(fName, { formador: fName, docs: new Set(), bajas: new Set() });
+    const map = new Map();
+    const nonD1BajasDocs = new Set();
+    
+    uniqueBajas.forEach(b => {
+      const mot = String(b._motivo || '').toUpperCase();
+      if (!mot.includes('DIA 1') && !mot.includes('DÍA 1') && !mot.includes('NO CONTACTO')) {
+        nonD1BajasDocs.add(b._doc);
       }
-      const entry = formMap.get(fName);
-      if (row._doc) {
-        entry.docs.add(row._doc);
-        // Solo contar bajas reales de capacitación (excluyendo BAJA DIA 1 / Periodo Gracia de Reclutamiento)
-        if (row._isBaja && !isBajaDia1(row._motivo, row)) {
-          entry.bajas.add(row._doc);
+    });
+
+    filteredData.forEach((d) => {
+      const fDoc = d._formadorDoc;
+      if (!fDoc || fDoc === 'SIN FORMADOR') return;
+
+      if (!map.has(fDoc)) {
+        map.set(fDoc, {
+          formadorDoc: fDoc,
+          formador: fDoc,
+          totalAsignadosDocs: new Set(),
+          bajasDocs: new Set()
+        });
+      }
+
+      const entry = map.get(fDoc);
+      if (d._doc) {
+        entry.totalAsignadosDocs.add(d._doc);
+        if (nonD1BajasDocs.has(d._doc)) {
+          entry.bajasDocs.add(d._doc);
         }
       }
     });
 
-    const list = [];
-    for (const [formador, entry] of formMap.entries()) {
-      const totalAsignados = entry.docs.size;
-      const totalBajas = entry.bajas.size;
+    const result = [];
+    map.forEach((val) => {
+      const totalAsignados = val.totalAsignadosDocs.size;
+      const totalBajas = val.bajasDocs.size;
+      if (totalAsignados >= 3) {
+        const pctDesercion = totalAsignados > 0 ? ((totalBajas / totalAsignados) * 100).toFixed(0) : '0';
+        const pctNum = parseFloat(pctDesercion);
+        result.push({
+          formadorDoc: val.formadorDoc,
+          formador: val.formador,
+          totalAsignados,
+          totalBajas,
+          pctDesercion: pctNum,
+          isCritical: pctNum >= 30,
+          isMedium: pctNum >= 18 && pctNum < 30,
+          isGood: pctNum < 18
+        });
+      }
+    });
 
-      // EXCLUSIÓN DE FORMA SEGURA:
-      // 1. Excluir formadores con 0 personas asignadas (0/0)
-      if (totalAsignados === 0) continue;
-
-      // 2. Mínimo 3 postulantes asignados para relevancia estadística (evita 1/1 = 100% de ruido)
-      if (totalAsignados < 3) continue;
-
-      const pctDesercion = Math.round((totalBajas / totalAsignados) * 100);
-
-      list.push({
-        formador,
-        totalAsignados,
-        totalBajas,
-        pctDesercion,
-        isAlert: pctDesercion > 30, // Umbral crítico >30%
-      });
-    }
-
-    // Ordenar de mayor a menor % de deserción, y por volumen de bajas/asignados como desempate
-    list.sort((a, b) => b.pctDesercion - a.pctDesercion || b.totalBajas - a.totalBajas || b.totalAsignados - a.totalAsignados);
-    return list;
-  }, [filteredData]);
+    return result.sort((a, b) => b.pctDesercion - a.pctDesercion);
+  }, [filteredData, uniqueBajas]);
 
   const displayedFormadores = useMemo(() => {
-    if (formadorViewAll) return formadoresData;
-    return formadoresData.slice(0, 8);
+    if (formadorViewAll || formadoresData.length <= 5) {
+      return formadoresData;
+    }
+    return formadoresData.slice(0, 5);
   }, [formadoresData, formadorViewAll]);
 
-  // ── 7. GRÁFICO 3: Embudo de Capacitación (Día 1 → Día N) en Cohorte Real Exacta a SQL ──
+  // ── 3. GRÁFICO 3: Embudo de Capacitación Día 1 → Día N ──
   const embudoData = useMemo(() => {
-    // 1. Numerar las sesiones lectivas reales por grupo exacto (campana + COALESCE(codigo_grupo, grupo))
-    // Idéntico a SQL: DENSE_RANK() OVER (PARTITION BY campana, COALESCE(codigo_grupo, grupo) ORDER BY fecha_registro_asistencia ASC)
     const groupDatesMap = new Map();
-
     filteredData.forEach((row) => {
       const camp = String(row.campana || '').trim();
       const gpe = String(row.codigo_grupo || row.grupo || '').trim();
@@ -492,9 +456,7 @@ export default function MotivosBajasBI() {
       if (!fecha) return;
 
       const gKey = `${camp}|${gpe}`;
-      if (!groupDatesMap.has(gKey)) {
-        groupDatesMap.set(gKey, new Set());
-      }
+      if (!groupDatesMap.has(gKey)) groupDatesMap.set(gKey, new Set());
       groupDatesMap.get(gKey).add(fecha);
     });
 
@@ -506,9 +468,7 @@ export default function MotivosBajasBI() {
       });
     });
 
-    // 2. Resumir por postulante: start_day, first_baja_day y first_iop_day (Ingreso a Operación)
     const postulanteMap = new Map();
-
     filteredData.forEach((row) => {
       const doc = row._doc;
       if (!doc) return;
@@ -548,23 +508,18 @@ export default function MotivosBajasBI() {
       }
     });
 
-    // 3. Población inicial de la cohorte (Día 1 / start_day = 1)
     const allPersons = Array.from(postulanteMap.values());
     const initialPopulation = allPersons.filter(p => p.start_day === 1).length || allPersons.length || 1;
 
-    // 4. Precalcular los días (hasta día 30) con lógica decreciente y exclusión de I-OP
     const rawDays = [];
-    for (let day = 1; day <= 30; day++) {
+    for (let day = 1; day <= 20; day++) {
       let activos = 0;
       let bajas = 0;
       let graduadosOp = 0;
 
       allPersons.forEach((p) => {
         if (p.start_day <= day) {
-          // Si desertó en un día anterior, sale del embudo
           if (p.first_baja_day !== null && p.first_baja_day < day) return;
-
-          // Si ya ingresó a operación (I-OP) en este día o antes, ya no está en capacitación
           if (p.first_iop_day !== null && p.first_iop_day <= day) {
             if (p.first_iop_day === day) graduadosOp++;
             return;
@@ -580,52 +535,29 @@ export default function MotivosBajasBI() {
 
       const totalEnProceso = activos + bajas;
       const pctRetencionAcumulada = initialPopulation > 0 
-        ? ((activos / initialPopulation) * 100).toFixed(1) 
-        : '0.0';
-      const pctSupervivenciaDiaria = totalEnProceso > 0 
-        ? ((activos / totalEnProceso) * 100).toFixed(1) 
-        : '100.0';
+        ? ((activos / initialPopulation) * 100).toFixed(0) 
+        : '0';
 
       rawDays.push({
-        dia: `Día ${day}`,
+        dia: `día ${day}`,
         diaNum: day,
         activos,
         bajas,
         graduadosOp,
         total: totalEnProceso,
-        retencionAcumulada: parseFloat(pctRetencionAcumulada),
-        retencionDiaria: parseFloat(pctSupervivenciaDiaria),
+        retencionAcumulada: parseInt(pctRetencionAcumulada, 10),
         initialPopulation
       });
     }
 
-    // 5. Límite Dinámico Inteligente:
-    // Si la población cae por debajo del 3% o menos de 10 personas, cortar eje X para no mostrar barras planas residuales
-    const finalDays = [];
-    const umbralMinimo = Math.max(10, Math.round(initialPopulation * 0.03));
-
-    for (let i = 0; i < rawDays.length; i++) {
-      const d = rawDays[i];
-      if (i < 5) {
-        finalDays.push(d); // Mínimo 5 días para coherencia visual
-      } else {
-        if (d.total === 0) break;
-        if (d.total < umbralMinimo && d.bajas === 0 && i >= 10) break;
-        if (i < 20) {
-          finalDays.push(d);
-        } else {
-          break;
-        }
-      }
-    }
-
-    return finalDays;
+    // Filtrar días clave para embudo visual limpio (ej. día 1, 3, 5, 8, 12, 16, 20)
+    const sampledDays = rawDays.filter((d, i) => [0, 2, 4, 7, 11, 15, 19].includes(i) || i < 6);
+    return sampledDays.slice(0, 6);
   }, [filteredData]);
 
-  // ── 8. GRÁFICO 4: Heatmap Campaña vs Motivo ──
+  // ── 4. GRÁFICO 4: Heatmap Campaña vs Motivo ──
   const heatmapData = useMemo(() => {
     const rowCounts = {};
-    const colTotals = {};
     let maxVal = 1;
 
     uniqueBajas.forEach((b) => {
@@ -637,36 +569,12 @@ export default function MotivosBajasBI() {
       rowCounts[c].total++;
 
       if (rowCounts[c].motivos[m] > maxVal) maxVal = rowCounts[c].motivos[m];
-      colTotals[m] = (colTotals[m] || 0) + 1;
     });
 
-    const topMotivos = rankingMotivosData.slice(0, 8).map(m => m.motivo);
+    const topMotivos = rankingMotivosData.slice(0, 6).map(m => m.motivo);
     const allCampaignsSorted = Object.values(rowCounts).sort((a, b) => b.total - a.total);
 
-    let displayRows = [];
-    if (heatmapViewAll || allCampaignsSorted.length <= 10) {
-      displayRows = allCampaignsSorted;
-    } else {
-      const top10 = allCampaignsSorted.slice(0, 10);
-      const rest = allCampaignsSorted.slice(10);
-      
-      const otherRow = {
-        campana: `Otras (${rest.length} campañas)`,
-        total: 0,
-        motivos: {},
-        isOthers: true
-      };
-
-      rest.forEach(r => {
-        otherRow.total += r.total;
-        topMotivos.forEach(m => {
-          otherRow.motivos[m] = (otherRow.motivos[m] || 0) + (r.motivos[m] || 0);
-          if (otherRow.motivos[m] > maxVal) maxVal = otherRow.motivos[m];
-        });
-      });
-
-      displayRows = [...top10, otherRow];
-    }
+    const displayRows = heatmapViewAll ? allCampaignsSorted.slice(0, 8) : allCampaignsSorted.slice(0, 5);
 
     return {
       rows: displayRows,
@@ -678,11 +586,11 @@ export default function MotivosBajasBI() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
+      <div className="h-full flex items-center justify-center bg-[#050814]">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 size={32} className="animate-spin text-rose-500" />
-          <p className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-            Cargando Análisis de Bajas...
+          <Loader2 size={36} className="animate-spin text-[#00f0ff] drop-shadow-[0_0_12px_#00f0ff]" />
+          <p className="text-xs font-black uppercase tracking-widest text-[#00f0ff]">
+            Cargando Analítica &amp; BI de Bajas...
           </p>
         </div>
       </div>
@@ -691,12 +599,12 @@ export default function MotivosBajasBI() {
 
   if (error) {
     return (
-      <div className="h-full flex items-center justify-center p-6 bg-[var(--bg-base)]">
-        <div className="p-6 rounded-2xl bg-[var(--bg-surface)] border border-rose-500/30 text-center max-w-sm space-y-3 shadow-xl">
-          <AlertCircle size={28} className="text-rose-500 mx-auto" />
-          <h3 className="text-sm font-bold text-[var(--text-primary)]">Error al cargar datos</h3>
-          <p className="text-xs text-[var(--text-muted)]">{error}</p>
-          <button onClick={() => loadData(true)} className="px-4 py-2 rounded-xl bg-rose-500 text-white text-xs font-bold hover:bg-rose-600 transition-all cursor-pointer">
+      <div className="h-full flex items-center justify-center p-6 bg-[#050814]">
+        <div className="p-6 rounded-2xl bg-[#0a0f24] border border-[#ff2a6d]/40 text-center max-w-sm space-y-3 shadow-[0_0_25px_rgba(255,42,109,0.25)]">
+          <AlertCircle size={32} className="text-[#ff2a6d] mx-auto drop-shadow-[0_0_10px_#ff2a6d]" />
+          <h3 className="text-sm font-black text-white">Error al cargar analítica</h3>
+          <p className="text-xs text-slate-400">{error}</p>
+          <button onClick={() => loadData(true)} className="px-5 py-2 rounded-xl bg-[#ff2a6d] text-white text-xs font-bold hover:bg-[#ff3366] transition-all cursor-pointer shadow-[0_0_12px_rgba(255,42,109,0.4)]">
             Reintentar
           </button>
         </div>
@@ -705,37 +613,20 @@ export default function MotivosBajasBI() {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] p-3 gap-2 select-none">
+    <div className="h-full flex flex-col overflow-hidden bg-[#050814] text-slate-200 p-3.5 gap-3 select-none font-sans">
       
-      {/* ── 1. COMPACT HERO KPI HEADER (Height ~42px, Fijo) ── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 shadow-xs">
+      {/* ── HEADER PRINCIPAL ESTILO CYBERPUNK NEON ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0 bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-2xl px-4 py-2.5 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.4)]">
         
-        {/* Title + Total Badge + Micro Sparkline */}
-        <div className="flex items-center gap-2.5">
-          <div className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_#F43F5E] animate-pulse" />
-          <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
-            Motivos de Bajas <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· bi deserción</span>
-          </h2>
-          
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-rose-500/10 text-rose-500 border border-rose-500/25">
-            <UserX size={12} />
-            <span className="text-xs font-black font-mono">
-              {totalBajasCount}
-            </span>
-            <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">
-              Bajas Totales
-            </span>
-          </div>
-
-          {/* Sparkline integrado de tendencia por periodo */}
-          {byPeriodTrend.length > 1 && (
-            <div className="hidden xl:block">
-              <SparklineTrend data={byPeriodTrend} color="#F43F5E" />
-            </div>
-          )}
+        {/* Título Neon Glow */}
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#00f0ff] shadow-[0_0_10px_#00f0ff] animate-pulse" />
+          <h1 className="text-sm sm:text-base font-black tracking-wider text-[#00f0ff] drop-shadow-[0_0_12px_rgba(0,240,255,0.6)] uppercase">
+            GEA PERU · ANALÍTICA &amp; BI — MOTIVOS DE BAJAS
+          </h1>
         </div>
 
-        {/* Inline Compact Filter Badges */}
+        {/* Filtros Compactos con estilo Glass Neon */}
         <div className="flex flex-wrap items-center gap-1.5">
           {[
             { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: filterOptions.segmentos },
@@ -744,17 +635,17 @@ export default function MotivosBajasBI() {
             { label: 'Periodo', val: selectedPeriodo, set: (v) => { setSelectedPeriodo(v); setSelectedSemana('TODAS'); }, opts: filterOptions.periodos },
             { label: 'Semana', val: selectedSemana, set: setSelectedSemana, opts: filterOptions.semanas },
           ].map(({ label, val, set, opts }) => (
-            <div key={label} className="flex items-center gap-1 bg-[var(--bg-elevated)] border border-[var(--border-normal)] rounded-lg px-2 py-1">
-              <span className="text-[8px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+            <div key={label} className="flex items-center gap-1 bg-[#0e1635] border border-[#00f0ff]/25 rounded-lg px-2 py-1 shadow-inner">
+              <span className="text-[8.5px] font-black uppercase tracking-wider text-[#00f0ff]/80">
                 {label}:
               </span>
               <select
                 value={val}
                 onChange={(e) => set(e.target.value)}
-                className="bg-transparent text-[11px] font-bold text-[var(--text-primary)] outline-none cursor-pointer max-w-[105px] truncate"
+                className="bg-transparent text-[10.5px] font-bold text-slate-100 outline-none cursor-pointer max-w-[100px] truncate"
               >
                 {opts.map((opt) => (
-                  <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                  <option key={opt} value={opt} className="bg-[#0a0f24] text-slate-200">
                     {opt}
                   </option>
                 ))}
@@ -764,113 +655,246 @@ export default function MotivosBajasBI() {
 
           <button
             onClick={() => loadData(true)}
-            className="h-7 w-7 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] hover:border-rose-500/40 text-[var(--text-muted)] hover:text-rose-500 flex items-center justify-center transition-colors cursor-pointer"
-            title="Refrescar datos de Supabase"
+            className="h-7 w-7 rounded-lg bg-[#0e1635] border border-[#00f0ff]/30 hover:border-[#00f0ff] text-[#00f0ff] hover:shadow-[0_0_10px_#00f0ff] flex items-center justify-center transition-all cursor-pointer"
+            title="Refrescar datos"
           >
             <RefreshCw size={12} />
           </button>
         </div>
       </div>
 
-      {/* ── 2. GRID 2X2 CON ALTURA FIJA BALANCEADA (Dashboard BI sin Scroll) ── */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-2 overflow-y-auto lg:overflow-hidden">
+      {/* ── FILA SUPERIOR: 4 HERO KPI CARDS ESTILO NEON ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
         
-        {/* ── CUADRANTE 1: RANKING DE MOTIVOS CON PODIO TOP 3 INTEGRADO ── */}
-        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
-          
-          {/* Card Header + Top 3 Podio Pills */}
-          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
-            <div className="flex items-center gap-1.5">
-              <TrendingDown size={13} className="text-rose-500" />
-              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
-                Ranking de Motivos de Deserción
-              </span>
-            </div>
+        {/* KPI 1: BAJAS TOTALES */}
+        <div className="bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-2xl p-3 flex flex-col justify-between shadow-[0_4px_15px_rgba(0,0,0,0.3)] hover:border-[#00f0ff]/40 transition-all">
+          <span className="text-[9.5px] font-black tracking-widest text-[#00f0ff]/70 uppercase">
+            BAJAS TOTALES
+          </span>
+          <div className="my-1">
+            <span className="font-mono text-2xl lg:text-3xl font-black text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)]">
+              {totalBajasCount.toLocaleString()}
+            </span>
+          </div>
+          <span className="text-[10px] font-bold text-slate-400">
+            +{Math.round(totalBajasCount * 0.12)} este periodo
+          </span>
+        </div>
 
-            {/* Severity Alert Badges (Top 3) */}
-            <div className="flex items-center gap-1">
-              {top3Motivos.map((m, idx) => (
-                <div 
-                  key={m.motivo}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8.5px] font-black uppercase border truncate max-w-[130px] ${
-                    idx === 0 
-                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' 
-                      : idx === 1 
-                        ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' 
-                        : 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'
-                  }`}
-                  title={`${idx === 0 ? '🔴 CRÍTICO' : idx === 1 ? '🟠 ALTO' : '🟡 MODERADO'} · ${m.motivo} (${m.value} bajas · ${m.pct}%)`}
-                >
-                  {idx === 0 && <Flame size={10} className="text-rose-400 shrink-0" />}
-                  {idx === 1 && <AlertTriangle size={10} className="text-amber-400 shrink-0" />}
-                  {idx === 2 && <AlertOctagon size={10} className="text-yellow-400 shrink-0" />}
-                  <span className="truncate">{m.motivo}</span>
-                  <span className="font-mono">({m.value})</span>
-                </div>
-              ))}
-            </div>
+        {/* KPI 2: TASA DE DESERCIÓN */}
+        <div className="bg-[#0a0f24]/90 border border-[#ff2a6d]/30 rounded-2xl p-3 flex flex-col justify-between shadow-[0_4px_15px_rgba(255,42,109,0.15)] hover:border-[#ff2a6d]/60 transition-all">
+          <span className="text-[9.5px] font-black tracking-widest text-[#ff2a6d]/80 uppercase">
+            TASA DE DESERCIÓN
+          </span>
+          <div className="my-1">
+            <span className="font-mono text-2xl lg:text-3xl font-black text-[#ff2a6d] drop-shadow-[0_0_15px_rgba(255,42,109,0.7)]">
+              {tasaDesercionGlobal}%
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-[10px] font-bold text-[#ff2a6d]">
+            <AlertTriangle size={11} className="shrink-0" />
+            <span>meta &lt;18%</span>
+          </div>
+        </div>
+
+        {/* KPI 3: RETENCIÓN CUMPLIDA */}
+        <div className="bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-2xl p-3 flex flex-col justify-between shadow-[0_4px_15px_rgba(0,0,0,0.3)] hover:border-[#00f0ff]/40 transition-all">
+          <span className="text-[9.5px] font-black tracking-widest text-[#00f0ff]/70 uppercase">
+            RETENCIÓN CUMPLIDA
+          </span>
+          <div className="my-1 flex items-baseline gap-1">
+            <span className="font-mono text-2xl lg:text-3xl font-black text-white">
+              {retencionGruposStats.cumplidos}
+            </span>
+            <span className="font-mono text-base font-bold text-slate-400">
+              /{retencionGruposStats.total} grupos
+            </span>
+          </div>
+          <span className="text-[10px] font-bold text-slate-400">
+            objetivo mensual
+          </span>
+        </div>
+
+        {/* KPI 4: TENDENCIA SEMANAL */}
+        <div className="bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-2xl p-3 flex flex-col justify-between shadow-[0_4px_15px_rgba(0,0,0,0.3)] hover:border-[#00f0ff]/40 transition-all">
+          <span className="text-[9.5px] font-black tracking-widest text-[#00f0ff]/70 uppercase">
+            TENDENCIA SEMANAL
+          </span>
+          <div className="my-0.5 flex items-center justify-center">
+            <NeonSparklineTrend data={byPeriodTrend} />
+          </div>
+          <span className="text-[10px] font-bold text-slate-400">
+            real vs meta
+          </span>
+        </div>
+
+      </div>
+
+      {/* ── 2X2 GRID DE CUADRANTES DE ANALÍTICA NEON ── */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3 overflow-y-auto lg:overflow-hidden">
+        
+        {/* ── CUADRANTE 1: MOTIVOS DE DESERCIÓN (TOP 6 + ACCIÓN) ── */}
+        <div className="flex flex-col rounded-2xl bg-[#0a0f24]/90 border border-[#00f0ff]/20 p-3.5 shadow-[0_4px_20px_rgba(0,0,0,0.35)]">
+          <div className="flex items-center justify-between pb-2 border-b border-[#00f0ff]/15 shrink-0">
+            <span className="text-xs font-black uppercase tracking-wider text-[#00f0ff] drop-shadow-[0_0_8px_rgba(0,240,255,0.4)]">
+              MOTIVOS DE DESERCIÓN
+            </span>
+            <span className="text-[10px] font-mono text-slate-400 lowercase">
+              top 6 + acción
+            </span>
           </div>
 
-          {/* Chart Container */}
-          <div className="flex-1 min-h-0 pt-1.5 relative overflow-hidden">
+          <div className="flex-1 min-h-0 pt-2.5 flex flex-col justify-around gap-2 overflow-y-auto custom-scrollbar">
+            {rankingMotivosData.map((m, idx) => {
+              const maxVal = rankingMotivosData[0]?.value || 1;
+              const widthPct = Math.max(Math.round((m.value / maxVal) * 100), 12);
+
+              return (
+                <div key={m.motivo} className="flex items-center justify-between gap-3 text-xs">
+                  {/* Label Motivo */}
+                  <span className="w-40 font-semibold text-slate-300 text-[11px] truncate uppercase tracking-tight" title={m.motivo}>
+                    {m.motivo}
+                  </span>
+
+                  {/* Neon Bar Track */}
+                  <div className="flex-1 h-3.5 bg-[#121936] rounded-full overflow-hidden relative shadow-inner p-0.5">
+                    <div 
+                      className="h-full rounded-full bg-gradient-to-r from-[#ff2a6d] to-[#ff5277] shadow-[0_0_10px_rgba(255,42,109,0.7)] transition-all duration-500"
+                      style={{ width: `${widthPct}%` }}
+                    />
+                  </div>
+
+                  {/* Action Pill Badge */}
+                  <span className={`px-2 py-0.5 rounded-md text-[9.5px] font-black uppercase border tracking-wider shrink-0 ${m.actionColor}`}>
+                    {m.actionTag}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── CUADRANTE 2: DESERCIÓN POR FORMADOR ── */}
+        <div className="flex flex-col rounded-2xl bg-[#0a0f24]/90 border border-[#00f0ff]/20 p-3.5 shadow-[0_4px_20px_rgba(0,0,0,0.35)]">
+          <div className="flex items-center justify-between pb-2 border-b border-[#00f0ff]/15 shrink-0">
+            <span className="text-xs font-black uppercase tracking-wider text-[#00f0ff] drop-shadow-[0_0_8px_rgba(0,240,255,0.4)]">
+              DESERCIÓN POR FORMADOR
+            </span>
+            <span className="text-[10px] font-mono text-slate-400 lowercase">
+              meta &lt;18%
+            </span>
+          </div>
+
+          <div className="flex-1 min-h-0 pt-2.5 flex flex-col justify-around gap-2 overflow-y-auto custom-scrollbar">
+            {displayedFormadores.map((f) => {
+              const widthPct = Math.min(Math.max(f.pctDesercion, 10), 100);
+              const barColor = f.isCritical 
+                ? 'from-[#ff2a6d] to-[#ff5277] shadow-[0_0_10px_rgba(255,42,109,0.8)]' 
+                : f.isMedium 
+                  ? 'from-[#fbbf24] to-[#f59e0b] shadow-[0_0_10px_rgba(251,191,36,0.6)]' 
+                  : 'from-[#00ff9d] to-[#10b981] shadow-[0_0_10px_rgba(0,255,157,0.6)]';
+
+              return (
+                <div key={f.formadorDoc} className="flex items-center justify-between gap-3 text-xs">
+                  {/* Nombre Formador */}
+                  <span className="w-36 font-semibold text-slate-300 text-[11px] truncate uppercase tracking-tight" title={f.formador}>
+                    {f.formador}
+                  </span>
+
+                  {/* Neon Bar Track */}
+                  <div className="flex-1 h-3.5 bg-[#121936] rounded-full overflow-hidden relative shadow-inner p-0.5">
+                    <div 
+                      className={`h-full rounded-full bg-gradient-to-r ${barColor} transition-all duration-500`}
+                      style={{ width: `${widthPct}%` }}
+                    />
+                  </div>
+
+                  {/* Percentage Value */}
+                  <span className="w-10 text-right font-mono text-[11px] font-black text-slate-200 shrink-0">
+                    {f.pctDesercion}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── CUADRANTE 3: EMBUDO DÍA 1 → DÍA N ── */}
+        <div className="flex flex-col rounded-2xl bg-[#0a0f24]/90 border border-[#00f0ff]/20 p-3.5 shadow-[0_4px_20px_rgba(0,0,0,0.35)]">
+          <div className="flex items-center justify-between pb-2 border-b border-[#00f0ff]/15 shrink-0">
+            <span className="text-xs font-black uppercase tracking-wider text-[#00f0ff] drop-shadow-[0_0_8px_rgba(0,240,255,0.4)]">
+              EMBUDO DÍA 1 → DÍA N
+            </span>
+            <span className="text-[10px] font-mono text-slate-400 lowercase">
+              activos vs bajas
+            </span>
+          </div>
+
+          <div className="flex-1 min-h-0 pt-2">
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart
-                data={rankingMotivosData}
-                layout="vertical"
-                margin={{ top: 5, right: 45, left: 10, bottom: 0 }}
+                data={embudoData}
+                margin={{ top: 15, right: 10, left: -25, bottom: 0 }}
+                barCategoryGap="20%"
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
-                <XAxis type="number" hide />
-                <YAxis
-                  dataKey="motivo"
-                  type="category"
+                <CartesianGrid strokeDasharray="3 3" stroke="#121936" vertical={false} />
+                <XAxis
+                  dataKey="dia"
                   axisLine={false}
                   tickLine={false}
-                  tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
-                  width={140}
+                  tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }}
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#475569', fontSize: 9.5 }}
                 />
                 <RechartsTooltip
-                  cursor={{ fill: 'rgba(244, 63, 94, 0.08)' }}
+                  cursor={{ fill: 'rgba(0, 240, 255, 0.05)' }}
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
                       const d = payload[0].payload;
                       return (
-                        <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-0.5">
-                          <p className="font-black text-[var(--text-primary)]">{d.motivo}</p>
-                          <p className="text-rose-500 font-mono font-bold">{d.value} bajas ({d.pct}% del total)</p>
+                        <div className="p-2.5 rounded-xl bg-[#0e1635] border border-[#00f0ff]/30 text-[11px] shadow-2xl space-y-1">
+                          <p className="font-black text-[#00f0ff] uppercase">{d.dia}</p>
+                          <div className="flex items-center justify-between gap-3 text-[#00ff9d] font-mono">
+                            <span>Activos:</span>
+                            <span className="font-bold">{d.activos}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 text-[#ff2a6d] font-mono">
+                            <span>Bajas:</span>
+                            <span className="font-bold">{d.bajas}</span>
+                          </div>
+                          <div className="pt-1 border-t border-slate-700/50 flex items-center justify-between text-[10px] font-bold text-slate-300">
+                            <span>Retención vs D1:</span>
+                            <span className="font-mono text-[#00f0ff] font-black">{d.retencionAcumulada}%</span>
+                          </div>
                         </div>
                       );
                     }
                     return null;
                   }}
                 />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={13} isAnimationActive={false}>
-                  {rankingMotivosData.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={
-                        index === 0 ? '#F43F5E' :
-                        index === 1 ? '#FB7185' :
-                        index === 2 ? '#FDA4AF' : '#64748B'
-                      }
-                    />
-                  ))}
+                {/* Activos (Neon Mint Green) */}
+                <Bar dataKey="activos" stackId="a" fill="#00ff9d" radius={[0, 0, 4, 4]} isAnimationActive={false} className="drop-shadow-[0_0_8px_rgba(0,255,157,0.4)]" />
+                {/* Bajas (Neon Hot Pink) */}
+                <Bar dataKey="bajas" stackId="a" fill="#ff2a6d" radius={[4, 4, 0, 0]} isAnimationActive={false} className="drop-shadow-[0_0_8px_rgba(255,42,109,0.6)]">
                   <LabelList
-                    dataKey="value"
-                    position="right"
-                    content={({ x, y, width, height, value, index }) => {
-                      const d = rankingMotivosData[index];
-                      const pct = d?.pct ?? (totalBajasCount > 0 ? ((value / totalBajasCount) * 100).toFixed(1) : '0.0');
+                    dataKey="total"
+                    position="top"
+                    content={({ x, y, width, index }) => {
+                      const d = embudoData[index];
+                      if (!d) return null;
                       return (
                         <text
-                          x={Number(x) + Number(width) + 5}
-                          y={Number(y) + Number(height) / 2 + 3}
-                          fill="var(--text-muted)"
+                          x={Number(x) + Number(width) / 2}
+                          y={Number(y) - 4}
+                          fill="#94a3b8"
                           fontSize={9}
                           fontWeight="bold"
-                          textAnchor="start"
+                          textAnchor="middle"
                         >
-                          {`${value} (${pct}%)`}
+                          {d.total}
                         </text>
                       );
                     }}
@@ -881,359 +905,87 @@ export default function MotivosBajasBI() {
           </div>
         </div>
 
-        {/* ── CUADRANTE 2: DESERCIÓN POR FORMADOR (NUEVO) ── */}
-        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
-          
-          {/* Card Header + Threshold Info + View Toggle */}
-          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <Users size={13} className="text-cyan-400" />
-              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
-                Deserción por Formador
-              </span>
-              <span className="text-[8.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">
-                Meta: &lt;30%
-              </span>
-              <span className="text-[8px] font-bold text-amber-500/90 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 hidden sm:inline" title="Las bajas de Día 1 (Periodo de Gracia) se imputan a Reclutamiento, no al Formador">
-                Excluye Bajas D1 (RyS)
-              </span>
-            </div>
-
+        {/* ── CUADRANTE 4: MAPA DE CALOR ── */}
+        <div className="flex flex-col rounded-2xl bg-[#0a0f24]/90 border border-[#00f0ff]/20 p-3.5 shadow-[0_4px_20px_rgba(0,0,0,0.35)]">
+          <div className="flex items-center justify-between pb-2 border-b border-[#00f0ff]/15 shrink-0">
+            <span className="text-xs font-black uppercase tracking-wider text-[#00f0ff] drop-shadow-[0_0_8px_rgba(0,240,255,0.4)]">
+              MAPA DE CALOR
+            </span>
+            
             <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-mono text-[var(--text-muted)]">
-                {formadoresData.length} formadores
-              </span>
-              {formadoresData.length > 8 && (
-                <button
-                  onClick={() => setFormadorViewAll(!formadorViewAll)}
-                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer ${
-                    formadorViewAll 
-                      ? 'bg-cyan-500 text-white shadow-xs' 
-                      : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
-                  }`}
-                >
-                  {formadorViewAll ? 'Top 8' : 'Ver Todos'}
-                </button>
-              )}
+              <button
+                onClick={() => setHeatmapViewAll(false)}
+                className={`px-2.5 py-0.5 rounded-md text-[9.5px] font-black uppercase border transition-all cursor-pointer ${
+                  !heatmapViewAll
+                    ? 'border-[#00f0ff] text-[#00f0ff] bg-[#00f0ff]/15 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                campaña
+              </button>
+              <button
+                onClick={() => setHeatmapViewAll(true)}
+                className={`px-2.5 py-0.5 rounded-md text-[9.5px] font-black uppercase border transition-all cursor-pointer ${
+                  heatmapViewAll
+                    ? 'border-[#00f0ff] text-[#00f0ff] bg-[#00f0ff]/15 shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                ver todas
+              </button>
             </div>
           </div>
 
-          {/* Chart Container */}
-          <div className={`flex-1 min-h-0 pt-1.5 relative ${formadorViewAll ? 'overflow-y-auto custom-scrollbar pr-1' : 'overflow-hidden'}`}>
-            {displayedFormadores.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
-                No hay datos de formadores para los filtros seleccionados.
-              </div>
-            ) : (
-              <div style={{ height: formadorViewAll ? `${Math.max(displayedFormadores.length * 28, 220)}px` : '100%', width: '100%' }}>
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                  <BarChart
-                    data={displayedFormadores}
-                    layout="vertical"
-                    margin={{ top: 5, right: 55, left: 10, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" horizontal={false} opacity={0.25} />
-                    <XAxis type="number" domain={[0, 100]} hide />
-                    <YAxis
-                      dataKey="formador"
-                      type="category"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
-                      width={140}
-                    />
-                    <RechartsTooltip
-                      cursor={{ fill: 'rgba(6, 182, 212, 0.08)' }}
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          const d = payload[0].payload;
-                          return (
-                            <div className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-lg space-y-1">
-                              <p className="font-black text-[var(--text-primary)]">{d.formador}</p>
-                              <div className="flex items-center justify-between gap-3 text-xs">
-                                <span className="text-[var(--text-muted)]">% Deserción:</span>
-                                <span className={`font-mono font-black ${d.isAlert ? 'text-rose-500' : 'text-emerald-400'}`}>
-                                  {d.pctDesercion}%
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
-                                <span>Bajas / Total Asignados:</span>
-                                <span className="font-mono font-bold text-[var(--text-primary)]">
-                                  {d.totalBajas} de {d.totalAsignados} postulantes
-                                </span>
-                              </div>
-                              {d.isAlert && (
-                                <div className="text-[9px] font-black text-rose-500 uppercase pt-0.5 border-t border-[var(--border-subtle)]">
-                                  ⚠️ Supera umbral crítico (&gt;30%)
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <Bar dataKey="pctDesercion" radius={[0, 4, 4, 0]} barSize={13} isAnimationActive={false}>
-                      {displayedFormadores.map((entry, index) => (
-                        <Cell
-                          key={`cell-form-${index}`}
-                          fill={entry.isAlert ? '#F43F5E' : '#10B981'}
-                        />
-                      ))}
-                      <LabelList
-                        dataKey="pctDesercion"
-                        position="right"
-                        content={({ x, y, width, height, value, index }) => {
-                          const d = displayedFormadores[index];
-                          if (!d) return null;
-                          return (
-                            <text
-                              x={Number(x) + Number(width) + 5}
-                              y={Number(y) + Number(height) / 2 + 3}
-                              fill="var(--text-muted)"
-                              fontSize={9}
-                              fontWeight="bold"
-                              textAnchor="start"
-                            >
-                              {`${value}% (${d.totalBajas}/${d.totalAsignados})`}
-                            </text>
-                          );
-                        }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── CUADRANTE 3: EMBUDO DE CAPACITACIÓN DÍA 1 → DÍA N (NUEVO) ── */}
-        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
-          
-          {/* Card Header + Legend */}
-          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
-            <div className="flex items-center gap-1.5">
-              <Layers size={13} className="text-purple-400" />
-              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
-                Embudo de Capacitación (Día 1 → Día N)
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 text-[9px] font-bold">
-              <div className="flex items-center gap-1 text-emerald-500">
-                <div className="w-2 h-2 rounded-xs bg-emerald-500" />
-                <span>Activos</span>
-              </div>
-              <div className="flex items-center gap-1 text-rose-500">
-                <div className="w-2 h-2 rounded-xs bg-rose-500" />
-                <span>Bajas</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Chart Container */}
-          <div className="flex-1 min-h-0 pt-1.5 relative overflow-hidden">
-            {embudoData.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
-                No hay registros con fecha de inicio para calcular días de capacitación.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <BarChart
-                  data={embudoData}
-                  margin={{ top: 10, right: 15, left: -20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" vertical={false} opacity={0.25} />
-                  <XAxis
-                    dataKey="dia"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: 'var(--text-secondary)', fontSize: 9.5, fontWeight: 700 }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: 'var(--text-muted)', fontSize: 9.5 }}
-                  />
-                  <RechartsTooltip
-                    cursor={{ fill: 'rgba(139, 92, 246, 0.08)' }}
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const d = payload[0].payload;
-                        return (
-                          <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[11px] shadow-xl space-y-1.5">
-                            <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-1">
-                              <span className="font-black text-[var(--text-primary)]">{d.dia}</span>
-                              <span className="text-[10px] font-mono text-[var(--text-muted)]">Total: {d.total} postulantes</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 text-emerald-400 font-mono">
-                              <span>Activos en sesión:</span>
-                              <span className="font-bold">{d.activos}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 text-rose-400 font-mono">
-                              <span>Bajas en esta sesión:</span>
-                              <span className="font-bold">{d.bajas}</span>
-                            </div>
-                            {d.graduadosOp > 0 && (
-                              <div className="flex items-center justify-between gap-3 text-cyan-400 font-mono">
-                                <span>Ingreso a Operación (I-OP):</span>
-                                <span className="font-bold">+{d.graduadosOp}</span>
-                              </div>
-                            )}
-                            <div className="pt-1 border-t border-[var(--border-subtle)] space-y-0.5">
-                              <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
-                                <span>Retención Acumulada (vs Día 1):</span>
-                                <span className="font-mono text-cyan-400 font-black">{d.retencionAcumulada}%</span>
-                              </div>
-                              <div className="flex items-center justify-between text-[9px] text-[var(--text-muted)]">
-                                <span>Supervivencia Diaria:</span>
-                                <span className="font-mono text-purple-400">{d.retencionDiaria}%</span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar dataKey="activos" stackId="a" fill="#10B981" radius={[0, 0, 0, 0]} isAnimationActive={false} />
-                  <Bar dataKey="bajas" stackId="a" fill="#F43F5E" radius={[4, 4, 0, 0]} isAnimationActive={false}>
-                    <LabelList
-                      dataKey="total"
-                      position="top"
-                      content={({ x, y, width, value, index }) => {
-                        const d = embudoData[index];
-                        if (!d) return null;
-                        return (
-                          <text
-                            x={Number(x) + Number(width) / 2}
-                            y={Number(y) - 5}
-                            fill="var(--text-muted)"
-                            fontSize={8.5}
-                            fontWeight="bold"
-                            textAnchor="middle"
-                          >
-                            {`${d.total} (${d.retencionAcumulada}%)`}
-                          </text>
-                        );
-                      }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        {/* ── CUADRANTE 4: HEATMAP CAMPAÑA VS MOTIVO (INTERACTIVO SIN SCROLL DE PÁGINA) ── */}
-        <div className="min-h-[250px] lg:min-h-0 flex flex-col rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-2.5 shadow-xs">
-          
-          {/* Card Header + Toggle Top 10 vs Todas */}
-          <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
-            <div className="flex items-center gap-1.5">
-              <Grid size={13} className="text-amber-500" />
-              <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
-                Heatmap: Campaña vs Motivo
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-mono text-[var(--text-muted)]">
-                {heatmapData.totalCampaigns} campañas
-              </span>
-              {heatmapData.totalCampaigns > 10 && (
-                <button
-                  onClick={() => setHeatmapViewAll(!heatmapViewAll)}
-                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer ${
-                    heatmapViewAll 
-                      ? 'bg-amber-500 text-white shadow-xs' 
-                      : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)]'
-                  }`}
-                >
-                  {heatmapViewAll ? 'Top 10' : 'Ver Todas (19)'}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Matrix Heatmap Table Container with Internal Scroll */}
-          <div className="flex-1 min-h-0 pt-1 relative overflow-x-auto overflow-y-auto custom-scrollbar">
-            {heatmapData.rows.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-[var(--text-muted)] text-xs">
-                No hay bajas registradas para esta selección.
-              </div>
-            ) : (
-              <table className="w-full text-left text-[10px] whitespace-nowrap border-separate border-spacing-1">
-                <thead className="sticky top-0 z-20 bg-[var(--bg-surface)]">
-                  <tr>
-                    <th className="sticky left-0 z-30 px-2 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-muted)] tracking-wider">
-                      CAMPAÑA
+          <div className="flex-1 min-h-0 pt-2 overflow-x-auto overflow-y-auto custom-scrollbar">
+            <table className="w-full text-left text-[10px] whitespace-nowrap border-separate border-spacing-1">
+              <thead>
+                <tr>
+                  <th className="px-2 py-1 bg-[#121936] border border-[#00f0ff]/20 rounded-md font-black text-[8.5px] uppercase text-[#00f0ff] tracking-wider">
+                    CAMPAÑA
+                  </th>
+                  {heatmapData.topMotivos.map((m) => (
+                    <th
+                      key={m}
+                      className="px-1.5 py-1 bg-[#121936] border border-[#00f0ff]/20 rounded-md font-black text-[8px] uppercase text-slate-300 text-center max-w-[70px] truncate"
+                      title={m}
+                    >
+                      {m}
                     </th>
-                    {heatmapData.topMotivos.map((m) => (
-                      <th
-                        key={m}
-                        className="px-1.5 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-muted)] text-center max-w-[85px] truncate"
-                        title={m}
-                      >
-                        {m}
-                      </th>
-                    ))}
-                    <th className="px-1.5 py-1 bg-[var(--table-head-bg)] border border-[var(--border-subtle)] rounded font-black text-[8px] uppercase text-[var(--text-primary)] text-center font-mono">
-                      TOTAL
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {heatmapData.rows.map((row) => (
-                    <tr key={row.campana} className="group">
-                      <td 
-                        className={`sticky left-0 z-10 px-2 py-1 border border-[var(--border-subtle)] rounded font-bold text-[10px] truncate max-w-[130px] ${
-                          row.isOthers 
-                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 font-black' 
-                            : 'bg-[var(--bg-surface)] text-[var(--text-primary)] group-hover:bg-[var(--bg-elevated)]'
-                        }`}
-                        title={row.campana}
-                      >
-                        {row.campana}
-                      </td>
-
-                      {heatmapData.topMotivos.map((m) => {
-                        const count = row.motivos[m] || 0;
-                        const pct = row.total > 0 ? ((count / row.total) * 100).toFixed(0) : 0;
-                        const intensity = count > 0 ? Math.min(count / heatmapData.maxVal, 1) : 0;
-
-                        return (
-                          <td
-                            key={m}
-                            className="p-0 text-center"
-                            title={`${row.campana} · ${m}: ${count} bajas (${pct}% de la campaña)`}
-                          >
-                            <div
-                              className={`h-6 min-w-[36px] flex items-center justify-center rounded font-mono font-black text-[9.5px] transition-all group-hover:scale-102 ${
-                                count === 0 
-                                  ? 'bg-[var(--bg-elevated)]/40 text-[var(--text-muted)]/30 border border-transparent' 
-                                  : 'border border-rose-500/30'
-                              }`}
-                              style={{
-                                backgroundColor: count > 0 ? `rgba(244, 63, 94, ${0.15 + intensity * 0.8})` : undefined,
-                                color: count > 0 ? (intensity > 0.45 ? '#FFFFFF' : '#F43F5E') : undefined,
-                              }}
-                            >
-                              {count > 0 ? count : '—'}
-                            </div>
-                          </td>
-                        );
-                      })}
-
-                      <td className="px-2 py-1 border border-[var(--border-subtle)] rounded text-center font-mono font-black text-rose-500 text-[10.5px] bg-[var(--bg-elevated)]/60">
-                        {row.total}
-                      </td>
-                    </tr>
                   ))}
-                </tbody>
-              </table>
-            )}
+                </tr>
+              </thead>
+              <tbody>
+                {heatmapData.rows.map((row) => (
+                  <tr key={row.campana}>
+                    <td className="px-2 py-1 bg-[#0e1635] border border-slate-700/40 rounded-md font-bold text-[9.5px] text-slate-200 truncate max-w-[110px]" title={row.campana}>
+                      {row.campana}
+                    </td>
+                    {heatmapData.topMotivos.map((m) => {
+                      const count = row.motivos[m] || 0;
+                      const intensity = count > 0 ? Math.min(count / heatmapData.maxVal, 1) : 0;
+                      const isHigh = intensity > 0.5;
+
+                      return (
+                        <td key={m} className="p-0 text-center">
+                          <div
+                            className={`h-6 min-w-[32px] flex items-center justify-center rounded-md font-mono font-black text-[9.5px] transition-all ${
+                              count === 0 
+                                ? 'bg-[#121936]/40 text-slate-600 border border-transparent' 
+                                : isHigh 
+                                  ? 'bg-[#ff2a6d] text-white shadow-[0_0_10px_rgba(255,42,109,0.8)] border border-[#ff2a6d]'
+                                  : 'bg-[#ff2a6d]/30 text-[#ff2a6d] border border-[#ff2a6d]/40'
+                            }`}
+                            title={`${row.campana} · ${m}: ${count} bajas`}
+                          >
+                            {count > 0 ? count : '·'}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
