@@ -129,10 +129,10 @@ const AttendanceRow = React.memo(function AttendanceRow({
               disabled={item.isLockedBaja}
               className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
             >
-              {(item.isEligibleBajaD1 || String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(item.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')) && (
-                <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 2 Días)</option>
+              {(item.isEligibleBajaD1 || item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO' || String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(item.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')) && (
+                <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 3 Días)</option>
               )}
-              {(!item.motivo_baja || (!item.isEligibleBajaD1 && !String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))) && (
+              {(!item.motivo_baja || (!item.isEligibleBajaD1 && item.tipoReclutado !== 'AGREGADO' && item.tipoReclutado !== 'RECUPERADO' && item.tipoReclutado !== 'OBSERVADO' && !String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))) && (
                 <option value="">-- Seleccionar Motivo de Formación --</option>
               )}
               <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
@@ -790,11 +790,12 @@ export default function AsistenciaForm({
       const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
       
       const prevList = previousRecordsByDoc.get(p.documento) || []
-      const hadPriorAttendance = prevList.some(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP')
+      const effectiveAttendedDays = prevList.filter(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP').length
 
+      // Agregados, Recuperados y Observados tienen un plazo de gracia de hasta 3 días
       const isEligibleBajaD1 = 
         isFirstRecordGroup || 
-        (isIngresoEspecial && !hadPriorAttendance) ||
+        (isIngresoEspecial && effectiveAttendedDays <= 3) ||
         String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
         String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')
 
@@ -867,7 +868,7 @@ export default function AsistenciaForm({
       if (newSigla !== 'B') {
         newMotivo = ''
       } else if (!newMotivo) {
-        if (item.isEligibleBajaD1) {
+        if (item.isEligibleBajaD1 || item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO') {
           newMotivo = 'BAJA DIA 1'
         }
       }
