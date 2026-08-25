@@ -128,25 +128,17 @@ const AttendanceRow = React.memo(function AttendanceRow({
               disabled={item.isLockedBaja}
               className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
             >
-              {item.isEligibleBajaD1 ? (
-                <>
-                  <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 2 Días)</option>
-                  {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
-                    <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                      {m.motivo}
-                    </option>
-                  ))}
-                </>
-              ) : (
-                <>
-                  <option value="">-- Seleccionar Motivo de Formación --</option>
-                  {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
-                    <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                      {m.motivo}
-                    </option>
-                  ))}
-                </>
+              {(item.isEligibleBajaD1 || String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(item.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')) && (
+                <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 2 Días)</option>
               )}
+              {(!item.motivo_baja || (!item.isEligibleBajaD1 && !String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))) && (
+                <option value="">-- Seleccionar Motivo de Formación --</option>
+              )}
+              {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
+                <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                  {m.motivo}
+                </option>
+              ))}
             </select>
           </div>
         ) : (
