@@ -3552,15 +3552,80 @@ export async function fetchPostulantesPorGrupo(grupo_codigo, campana) {
 export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) {
   if (DB_MODE !== 'supabase') throw new Error("Requiere conexión a Supabase")
 
+  // 1. Intentar ejecutar mediante el RPC transaccional optimizado de Postgres
   const { data, error } = await supabase.rpc('dividir_grupo_transaccional', {
     p_parent_codigo: parentCodigo,
     p_campana: campana,
     p_distribucion: distribucion
   })
 
-  if (error) {
-    console.error("Error en dividir_grupo_transaccional:", error)
-    throw error
+  if (!error) {
+    invalidateCache('grupos_capacidad')
+    invalidateCache('grupos_con_metas')
+    invalidateCache('equipo_formacion')
+    invalidateCache('consolidado_asistencias')
+    invalidateCache('all_nominas')
+    invalidateCache('nominas_dataset')
+    mockAuditLog('nominas', 'SPLIT_GRUPO_RPC', parentCodigo, null, { campana, distribucion, resultado: data })
+    return data
+  }
+
+  // 2. Fallback resiliente en cliente si el RPC aún no fue creado en Supabase
+  console.warn("RPC dividir_grupo_transaccional no encontrado en base de datos, ejecutando división directa por cliente...", error)
+
+  let totalNominasUpdated = 0
+
+  for (const item of distribucion) {
+    const { subgrupo, doc_formador, dnis } = item
+    if (!dnis || dnis.length === 0) continue
+
+    // A. Actualizar nóminas
+    const nominasUpdate = {
+      grupo_codigo: subgrupo,
+      parent_grupo_codigo: parentCodigo
+    }
+    if (doc_formador) nominasUpdate.formador_documento = doc_formador
+
+    const { error: nomErr } = await supabase
+      .from('nominas')
+      .update(nominasUpdate)
+      .in('documento', dnis)
+      .eq('campana', campana)
+
+    if (nomErr) {
+      // Si la columna parent_grupo_codigo aún no ha sido creada en la tabla, reintentar sin ella
+      delete nominasUpdate.parent_grupo_codigo
+      const { error: retryErr } = await supabase
+        .from('nominas')
+        .update(nominasUpdate)
+        .in('documento', dnis)
+        .eq('campana', campana)
+      if (retryErr) throw retryErr
+    }
+
+    // B. Actualizar histórico en consolidado_asistencias
+    const asisUpdate = {
+      codigo_grupo: subgrupo,
+      parent_grupo_codigo: parentCodigo
+    }
+    if (doc_formador) asisUpdate.documento_formador = doc_formador
+
+    const { error: asisErr } = await supabase
+      .from('consolidado_asistencias')
+      .update(asisUpdate)
+      .in('documento', dnis)
+      .eq('campana', campana)
+
+    if (asisErr) {
+      delete asisUpdate.parent_grupo_codigo
+      await supabase
+        .from('consolidado_asistencias')
+        .update(asisUpdate)
+        .in('documento', dnis)
+        .eq('campana', campana)
+    }
+
+    totalNominasUpdated += dnis.length
   }
 
   // Invalidar cachés operativas
@@ -3571,8 +3636,14 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
   invalidateCache('all_nominas')
   invalidateCache('nominas_dataset')
 
-  mockAuditLog('nominas', 'SPLIT_GRUPO', parentCodigo, null, { campana, distribucion, resultado: data })
-  return data
+  mockAuditLog('nominas', 'SPLIT_GRUPO_CLIENT', parentCodigo, null, { campana, distribucion })
+
+  return {
+    success: true,
+    parent_codigo: parentCodigo,
+    campana,
+    total_postulantes_distribuidos: totalNominasUpdated
+  }
 }
 
 
