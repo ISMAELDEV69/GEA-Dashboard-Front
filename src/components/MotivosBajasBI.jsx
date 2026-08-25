@@ -407,8 +407,27 @@ export default function MotivosBajasBI() {
   }, [rankingMotivosData]);
 
   // ── 6. GRÁFICO 2: Deserción por Formador (% y Conteo + Alerta >30%) ──
+  // NOTA: 'BAJA DIA 1' se imputa a Reclutamiento (Periodo de Gracia), por lo que NO se cuenta en el indicador del Formador
   const formadoresData = useMemo(() => {
     const formMap = new Map();
+
+    const isBajaDia1 = (motivoStr, rawRow) => {
+      const m = String(motivoStr || '').toUpperCase();
+      const rawM = String(rawRow?.motivo_baja || '').toUpperCase();
+      const rawE = String(rawRow?.estado || '').toUpperCase();
+      const rawO = String(rawRow?.observaciones || rawRow?.observacion || '').toUpperCase();
+      return (
+        m.includes('BAJA DIA 1') ||
+        m.includes('BAJA DÍA 1') ||
+        m.includes('PERIODO GRACIA') ||
+        m.includes('PERÍODO GRACIA') ||
+        rawM.includes('BAJA DIA 1') ||
+        rawM.includes('BAJA DÍA 1') ||
+        rawM.includes('PERIODO GRACIA') ||
+        rawE.includes('BAJA DIA 1') ||
+        rawO.includes('BAJA DIA 1')
+      );
+    };
 
     filteredData.forEach((row) => {
       const fName = row._formador;
@@ -420,7 +439,8 @@ export default function MotivosBajasBI() {
       const entry = formMap.get(fName);
       if (row._doc) {
         entry.docs.add(row._doc);
-        if (row._isBaja) {
+        // Solo contar bajas reales de capacitación (excluyendo BAJA DIA 1 / Periodo Gracia de Reclutamiento)
+        if (row._isBaja && !isBajaDia1(row._motivo, row)) {
           entry.bajas.add(row._doc);
         }
       }
@@ -866,13 +886,16 @@ export default function MotivosBajasBI() {
           
           {/* Card Header + Threshold Info + View Toggle */}
           <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0 gap-2">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <Users size={13} className="text-cyan-400" />
               <span className="text-[11px] font-black uppercase tracking-tight text-[var(--text-primary)]">
                 Deserción por Formador
               </span>
               <span className="text-[8.5px] font-bold text-[var(--text-muted)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">
                 Meta: &lt;30%
+              </span>
+              <span className="text-[8px] font-bold text-amber-500/90 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 hidden sm:inline" title="Las bajas de Día 1 (Periodo de Gracia) se imputan a Reclutamiento, no al Formador">
+                Excluye Bajas D1 (RyS)
               </span>
             </div>
 

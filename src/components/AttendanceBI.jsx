@@ -381,7 +381,11 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
         if (!formadoresMap[formador]) formadoresMap[formador] = { name: formador, total: 0, bajas: 0, op: 0 }
         formadoresMap[formador].total++
         if (bajasMap.has(p.documento) || p.estado === 'CESADO') {
-          formadoresMap[formador].bajas++
+          const motivo = String(bajasMap.get(p.documento) || p.motivo_baja || '').toUpperCase()
+          const isBajaDia1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA DÍA 1') || motivo.includes('PERIODO GRACIA')
+          if (!isBajaDia1) {
+            formadoresMap[formador].bajas++
+          }
         }
         if (p.estado === 'I-OP' || p.estado === 'ACTIVO' || p.fecha_conexion_op) {
           formadoresMap[formador].op++
@@ -395,7 +399,13 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
         const cohort = p.grupo_codigo || p.campana || 'Grupo General'
         if (!formadoresMap[cohort]) formadoresMap[cohort] = { name: cohort, total: 0, bajas: 0, op: 0 }
         formadoresMap[cohort].total++
-        if (bajasMap.has(p.documento) || p.estado === 'CESADO') formadoresMap[cohort].bajas++
+        if (bajasMap.has(p.documento) || p.estado === 'CESADO') {
+          const motivo = String(bajasMap.get(p.documento) || p.motivo_baja || '').toUpperCase()
+          const isBajaDia1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA DÍA 1') || motivo.includes('PERIODO GRACIA')
+          if (!isBajaDia1) {
+            formadoresMap[cohort].bajas++
+          }
+        }
         if (p.estado === 'I-OP' || p.estado === 'ACTIVO' || p.fecha_conexion_op) formadoresMap[cohort].op++
       })
     }

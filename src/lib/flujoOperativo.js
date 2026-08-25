@@ -21,7 +21,7 @@ const CAPACITADOR_KEYWORDS = [
 ]
 
 export const MOTIVOS_BAJA_OPERATIVOS = [
-  { motivo: 'BAJA DIA 1', atribucion: 'NEUTRO' },
+  { motivo: 'BAJA DIA 1', atribucion: 'RECLUTADOR' },
   { motivo: 'NO CONTACTO', atribucion: 'NEUTRO' },
   { motivo: 'FAMILIAR', atribucion: 'CAPACITADOR' },
   { motivo: 'SALUD', atribucion: 'CAPACITADOR' },

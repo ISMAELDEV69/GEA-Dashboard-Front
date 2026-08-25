@@ -1056,11 +1056,17 @@ export default function AsistenciaForm({
     const diaCapacitacion = allDatesUntilNow.size;
     
     const total = attendanceList.length;
-    const bajas = attendanceList.filter(r => r.sigla === 'B').length;
-    const activos = total - bajas;
+    const isB1 = (r) => {
+      const m = String(r.motivo_baja || '').toUpperCase();
+      return m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('PERIODO GRACIA');
+    };
+    const bajasFormacion = attendanceList.filter(r => r.sigla === 'B' && !isB1(r)).length;
+    const bajasDia1 = attendanceList.filter(r => r.sigla === 'B' && isB1(r)).length;
+    const totalBajas = bajasFormacion + bajasDia1;
+    const activos = total - totalBajas;
     const faltas = attendanceList.filter(r => r.sigla === 'FI' || r.sigla === 'FJ').length;
     
-    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapacitacion}\n📄 Q Día 0: ${total}\n👥 Q Día 1 (Activos al corte): ${activos}\n❌ Q Desertores (DIA 0): ${bajas}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
+    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapacitacion}\n📄 Q Día 0: ${total}\n👥 Q Día 1 (Activos al corte): ${activos}\n❌ Q Bajas Formación: ${bajasFormacion}${bajasDia1 > 0 ? `\n⚠️ Q Bajas Día 1 (Reclutamiento): ${bajasDia1}` : ''}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
 
     const asistentes = attendanceList.filter(r => r.sigla !== 'B');
     if (asistentes.length > 0) {
@@ -1097,7 +1103,15 @@ export default function AsistenciaForm({
   const kpis = useMemo(() => {
     const total = displayedList.length
     const asistieron = displayedList.filter(item => item.sigla === 'A' || item.sigla === 'I-OP').length
-    const bajas = displayedList.filter(item => item.sigla === 'B').length
+    
+    // Bajas de Formación (Excluye 'BAJA DIA 1' / 'Periodo Gracia' imputadas a Reclutamiento)
+    const isBajaDia1Item = (item) => {
+      const m = String(item.motivo_baja || '').toUpperCase()
+      return m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('PERIODO GRACIA')
+    }
+
+    const bajas = displayedList.filter(item => item.sigla === 'B' && !isBajaDia1Item(item)).length
+    const bajasDia1 = displayedList.filter(item => item.sigla === 'B' && isBajaDia1Item(item)).length
     const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
     const pctAsistencia = total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0'
 
@@ -1105,6 +1119,7 @@ export default function AsistenciaForm({
       total,
       asistieron,
       bajas,
+      bajasDia1,
       faltas,
       pctAsistencia
     }
@@ -1588,12 +1603,19 @@ export default function AsistenciaForm({
           {/* Bajas [B] */}
           <div className="p-2 rounded-xl bg-[var(--bg-surface)] border border-rose-500/25 shadow-xs flex items-center justify-between min-w-0" style={{ borderLeft: '3px solid #F43F5E' }}>
             <div className="min-w-0 truncate">
-              <div className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 truncate">Bajas [B]</div>
+              <div className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 truncate">
+                Bajas Formación [B]
+              </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-base sm:text-lg font-black text-rose-600 dark:text-rose-400 leading-tight font-mono tabular-nums">
                   {kpis.bajas}
                 </span>
-                <span className="text-[9px] text-rose-600/80 dark:text-rose-400/80 font-semibold truncate">deserciones</span>
+                <span 
+                  className="text-[9px] text-rose-600/80 dark:text-rose-400/80 font-semibold truncate"
+                  title={kpis.bajasDia1 > 0 ? `${kpis.bajasDia1} bajas Día 1 (Periodo Gracia) asignadas a Reclutamiento` : 'Bajas ocurridas durante la capacitación'}
+                >
+                  {kpis.bajasDia1 > 0 ? `(+${kpis.bajasDia1} D1 RyS)` : 'deserciones'}
+                </span>
               </div>
             </div>
             <div className="h-7 w-7 rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400 flex items-center justify-center border border-rose-500/30 shrink-0 ml-1">
