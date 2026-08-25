@@ -3573,56 +3573,95 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
   // 2. Fallback resiliente en cliente si el RPC aún no fue creado en Supabase
   console.warn("RPC dividir_grupo_transaccional no encontrado en base de datos, ejecutando división directa por cliente...", error)
 
+  // Obtener metadata del grupo padre de capacidad_rys
+  let parentCap = null
+  try {
+    const { data: capData } = await supabase
+      .from('capacidad_rys')
+      .select('*')
+      .eq('codigo', parentCodigo)
+      .eq('campana', campana)
+      .maybeSingle()
+    parentCap = capData
+  } catch (cErr) {
+    console.warn("No se pudo obtener metadata de capacidad_rys para el padre:", cErr)
+  }
+
   let totalNominasUpdated = 0
 
   for (const item of distribucion) {
     const { subgrupo, doc_formador, dnis } = item
     if (!dnis || dnis.length === 0) continue
 
-    // A. Actualizar nóminas
-    const nominasUpdate = {
-      grupo_codigo: subgrupo,
-      parent_grupo_codigo: parentCodigo
-    }
-    if (doc_formador) nominasUpdate.formador_documento = doc_formador
-
-    const { error: nomErr } = await supabase
-      .from('nominas')
-      .update(nominasUpdate)
-      .in('documento', dnis)
-      .eq('campana', campana)
-
-    if (nomErr) {
-      // Si la columna parent_grupo_codigo aún no ha sido creada en la tabla, reintentar sin ella
-      delete nominasUpdate.parent_grupo_codigo
-      const { error: retryErr } = await supabase
+    // A. Actualizar nóminas (solo grupo_codigo)
+    try {
+      const { error: nomErr } = await supabase
         .from('nominas')
-        .update(nominasUpdate)
+        .update({ grupo_codigo: subgrupo, parent_grupo_codigo: parentCodigo })
         .in('documento', dnis)
         .eq('campana', campana)
-      if (retryErr) throw retryErr
+
+      if (nomErr) {
+        // Si parent_grupo_codigo no existe como columna, actualizar solo grupo_codigo
+        await supabase
+          .from('nominas')
+          .update({ grupo_codigo: subgrupo })
+          .in('documento', dnis)
+          .eq('campana', campana)
+      }
+    } catch (nErr) {
+      await supabase
+        .from('nominas')
+        .update({ grupo_codigo: subgrupo })
+        .in('documento', dnis)
+        .eq('campana', campana)
     }
 
     // B. Actualizar histórico en consolidado_asistencias
-    const asisUpdate = {
-      codigo_grupo: subgrupo,
-      parent_grupo_codigo: parentCodigo
-    }
-    if (doc_formador) asisUpdate.documento_formador = doc_formador
+    try {
+      const asisPayload = {
+        codigo_grupo: subgrupo,
+        parent_grupo_codigo: parentCodigo
+      }
+      if (doc_formador) asisPayload.documento_formador = doc_formador
 
-    const { error: asisErr } = await supabase
-      .from('consolidado_asistencias')
-      .update(asisUpdate)
-      .in('documento', dnis)
-      .eq('campana', campana)
-
-    if (asisErr) {
-      delete asisUpdate.parent_grupo_codigo
-      await supabase
+      const { error: asisErr } = await supabase
         .from('consolidado_asistencias')
-        .update(asisUpdate)
+        .update(asisPayload)
         .in('documento', dnis)
         .eq('campana', campana)
+
+      if (asisErr) {
+        delete asisPayload.parent_grupo_codigo
+        await supabase
+          .from('consolidado_asistencias')
+          .update(asisPayload)
+          .in('documento', dnis)
+          .eq('campana', campana)
+      }
+    } catch (aErr) {
+      console.warn("Aviso actualizando consolidado_asistencias:", aErr)
+    }
+
+    // C. Crear / Actualizar subgrupo en capacidad_rys con su respectiva formadora
+    try {
+      const subgrupoCapRow = {
+        codigo: subgrupo,
+        campana: campana,
+        periodo: parentCap?.periodo || null,
+        segmento: parentCap?.segmento || null,
+        modalidad: parentCap?.modalidad || 'PRESENCIAL',
+        semana_label: parentCap?.semana_label || null,
+        semana_trabajo: parentCap?.semana_trabajo || null,
+        fecha_inicio_ojt: parentCap?.fecha_inicio_ojt || null,
+        fecha_ingreso_op: parentCap?.fecha_ingreso_op || null,
+        formador_documento: doc_formador || parentCap?.formador_documento || null,
+        estado: parentCap?.estado || 'ACTIVO',
+        observacion: `Subgrupo derivado de ${parentCodigo}`
+      }
+      await supabase.from('capacidad_rys').upsert(subgrupoCapRow, { onConflict: 'campana,codigo' })
+    } catch (capUpsertErr) {
+      console.warn("Aviso creando subgrupo en capacidad_rys:", capUpsertErr)
     }
 
     totalNominasUpdated += dnis.length
