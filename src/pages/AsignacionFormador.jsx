@@ -99,16 +99,35 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
   }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana, selectedSemana, filterStatus, searchTerm])
 
   const formadoresActivos = useMemo(() => {
-    return equipoFormacionData
-      .filter(f => 
-        f.estado?.trim().toUpperCase() === 'ACTIVO' && 
-        (
-          f.cargo_funcional?.trim().toUpperCase().includes('FORMADOR') || 
-          f.cargo_contractual?.trim().toUpperCase().includes('FORMADOR')
-        )
-      )
-      .sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
-  }, [equipoFormacionData])
+    const map = new Map()
+
+    // 1. Desde equipo_formacion
+    equipoFormacionData.forEach(f => {
+      if (f.estado?.trim().toUpperCase() === 'ACTIVO' && f.documento) {
+        map.set(String(f.documento).trim(), {
+          documento: String(f.documento).trim(),
+          nombres_completos: f.datos_completos || f.nombres_completos || '',
+          segmento: f.segmento || '',
+          estado: f.estado || 'ACTIVO'
+        })
+      }
+    })
+
+    // 2. Complementar con formadores prop (perfiles / auth)
+    formadores.forEach(f => {
+      const doc = String(f.documento || f.id || '').trim()
+      if (doc && !map.has(doc)) {
+        map.set(doc, {
+          documento: doc,
+          nombres_completos: f.nombre_completo || f.nombres_completos || f.nombre || '',
+          segmento: f.segmento || '',
+          estado: f.estado || 'ACTIVO'
+        })
+      }
+    })
+
+    return Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
+  }, [equipoFormacionData, formadores])
 
   const totalGrupos = grupos.length
   const totalConFormador = useMemo(() => grupos.filter(g => g.formador_documento).length, [grupos])
@@ -510,25 +529,43 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                             ● [PENDIENTE] Sin Formador Asignado
                           </option>
                           {(() => {
-                            const currentFormador = equipoFormacionData.find(
-                              f => String(f.documento).trim() === String(g.formador_documento).trim()
+                            const currentDoc = String(g.formador_documento || '').trim();
+                            const currentFormador = formadoresActivos.find(
+                              f => String(f.documento).trim() === currentDoc
                             );
-                            
-                            let opciones = formadoresActivos.filter(f => {
+
+                            const formadoresDelSegmento = formadoresActivos.filter(f => {
                               if (!g.segmento) return true;
-                              if (!f.segmento) return false;
-                              return f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
+                              return f.segmento && f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
                             });
-                            
-                            if (currentFormador && !opciones.some(f => String(f.documento) === String(currentFormador.documento))) {
-                              opciones = [currentFormador, ...opciones];
-                            }
-                            
-                            return opciones.map(f => (
-                              <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                ✓ {f.datos_completos || f.nombres_completos} {f.estado?.toUpperCase() !== 'ACTIVO' ? '(Inactivo)' : ''}
-                              </option>
-                            ));
+
+                            const otrosFormadores = formadoresActivos.filter(f => {
+                              if (!g.segmento) return false;
+                              return !f.segmento || f.segmento.trim().toUpperCase() !== g.segmento.trim().toUpperCase();
+                            });
+
+                            return (
+                              <>
+                                {formadoresDelSegmento.length > 0 && (
+                                  <optgroup label={`Formadores de ${g.segmento || 'Segmento'}`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
+                                    {formadoresDelSegmento.map(f => (
+                                      <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                                        ✓ {f.nombres_completos}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {otrosFormadores.length > 0 && (
+                                  <optgroup label="Otros Formadores Activos" className="bg-[var(--bg-surface)] font-bold text-[var(--text-muted)]">
+                                    {otrosFormadores.map(f => (
+                                      <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                                        ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </>
+                            );
                           })()}
                         </select>
                         
