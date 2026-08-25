@@ -80,6 +80,7 @@ const AttendanceRow = React.memo(function AttendanceRow({
         <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wide ${
           item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
           item.tipoReclutado === 'RECUPERADO' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30' :
+          item.tipoReclutado === 'OBSERVADO' ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30' :
           'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'
         }`}>
           {item.tipoReclutado}
@@ -94,9 +95,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
       </td>
       <td className="px-3 py-2 text-center whitespace-nowrap">
         {item.isLateInclusion ? (
-          <span className="text-[var(--text-muted)] font-bold text-xs bg-[var(--bg-elevated)] px-2 py-0.5 rounded-md border border-[var(--border-subtle)]">N/A</span>
+          <span className="text-[10px] font-semibold text-[var(--text-muted)] bg-[var(--bg-elevated)] px-2 py-1 rounded">No aplica</span>
         ) : (
-          <div className="relative inline-block w-full min-w-[65px]">
+          <div className="w-16 mx-auto">
             <select
               value={item.sigla}
               onChange={(e) => onStatusChange(item.documento, e.target.value)}
@@ -134,7 +135,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
               {(!item.motivo_baja || (!item.isEligibleBajaD1 && !String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))) && (
                 <option value="">-- Seleccionar Motivo de Formación --</option>
               )}
-              {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1').map(m => (
+              <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
+              {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1' && m.motivo !== 'OBSERVADO').map(m => (
                 <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                   {m.motivo}
                 </option>
@@ -774,16 +776,27 @@ export default function AsistenciaForm({
       const isLateInclusion = false
       const existing = recordsByDocOnDate.get(p.documento)
       
-      let rawTipo = (p.status_dia_1 || '').toString().toUpperCase().trim() || 'APTO'
+      let rawTipo = (p.tipo_reclutado || p.status_dia_1 || p.tipo || '').toString().toUpperCase().trim() || 'APTO'
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
       if ((dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || !dia0Val) && dia1Val === 'ASISTIO' && rawTipo === 'APTO') {
         rawTipo = 'AGREGADO'
       }
+      if (String(p.estado || '').toUpperCase().includes('OBSERVAD') || String(p.condicion || '').toUpperCase().includes('OBSERVAD')) {
+        if (rawTipo === 'APTO') rawTipo = 'OBSERVADO'
+      }
       const tipoReclutado = rawTipo
 
-      const isAgregadoOrRecuperado = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO'
-      const isEligibleBajaD1 = isFirstRecordGroup || (isAgregadoOrRecuperado && trainingDayIndex <= 2)
+      const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
+      
+      const prevList = previousRecordsByDoc.get(p.documento) || []
+      const hadPriorAttendance = prevList.some(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP')
+
+      const isEligibleBajaD1 = 
+        isFirstRecordGroup || 
+        (isIngresoEspecial && !hadPriorAttendance) ||
+        String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+        String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')
 
       const docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
       const nombreFormador = formadoresMap.get(docFormador) || activeGrupoObj?.formador_nombre || ''
@@ -795,14 +808,13 @@ export default function AsistenciaForm({
         inheritedSigla = existing.sigla_asistencia
         inheritedMotivo = existing.motivo_baja || ''
       } else {
-        const prevList = previousRecordsByDoc.get(p.documento)
         if (prevList && prevList.length > 0) {
           inheritedSigla = prevList[0].sigla_asistencia
           inheritedMotivo = prevList[0].motivo_baja || ''
         } else if (p.estado === 'CESADO') {
           inheritedSigla = 'B'
-          inheritedMotivo = isEligibleBajaD1 ? 'BAJA DIA 1' : ''
-        } else if (tipoReclutado === 'AGREGADO' && isFirstRecordGroup) {
+          inheritedMotivo = isEligibleBajaD1 ? 'BAJA DIA 1' : (p.motivo_baja || '')
+        } else if (isIngresoEspecial && isFirstRecordGroup) {
           inheritedSigla = 'FI'
         }
       }
