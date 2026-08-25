@@ -3522,21 +3522,29 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
 
 export async function fetchPostulantesPorGrupo(grupo_codigo, campana) {
   if (DB_MODE === 'supabase') {
-    let query = supabase
-      .from('nominas')
-      .select('documento, apellido_paterno, apellido_materno, nombres_completos, celular, condicion, campana, grupo_codigo, parent_grupo_codigo, formador_documento, estado')
-      .or(`grupo_codigo.eq.${grupo_codigo},parent_grupo_codigo.eq.${grupo_codigo}`)
+    try {
+      let query = supabase
+        .from('nominas')
+        .select('documento, apellido_paterno, apellido_materno, nombres, celular, condicion, campana, grupo_codigo, estado')
+        .eq('grupo_codigo', grupo_codigo)
 
-    if (campana && campana !== 'Sin Campaña') {
-      query = query.eq('campana', campana)
-    }
+      if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
+        query = query.eq('campana', campana)
+      }
 
-    const { data, error } = await query.order('nombres_completos')
-    if (error) {
-      console.error('Error fetching postulantes por grupo:', error)
-      throw error
+      const { data, error } = await query
+      if (error) {
+        console.error('Error fetching postulantes por grupo:', error)
+        throw error
+      }
+      return (data || []).map(p => ({
+        ...p,
+        nombres_completos: `${p.nombres || ''} ${p.apellido_paterno || ''} ${p.apellido_materno || ''}`.trim()
+      })).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
+    } catch (err) {
+      console.error('fetchPostulantesPorGrupo error:', err)
+      throw err
     }
-    return data || []
   }
   return []
 }
