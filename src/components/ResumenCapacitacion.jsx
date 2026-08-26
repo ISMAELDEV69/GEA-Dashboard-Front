@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { calculateMetricasResumenCapacitacionFast, agruparMetricasPorModalidad, parseFechaAsistencia, invalidateCache } from '../lib/dataService';
+import { calculateMetricasResumenCapacitacionFast, agruparMetricasPorModalidad, parseFechaAsistencia, invalidateCache, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import { 
   BarChart3, 
   Users, 
@@ -282,13 +282,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
     sortedForBajas.forEach(a => {
       const doc = a.documento || a.postulante_documento;
-      const sigla = String(a.sigla || a.sigla_asistencia || '').toUpperCase().trim();
-      const estado = String(a.estado || '').toUpperCase().trim();
-      const motivo = String(a.motivo_baja || '').toUpperCase().trim();
 
-      const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado === 'CESADO' || estado === 'BAJA' || estado === 'INACTIVO';
-
-      if (isBaja && doc) {
+      if (isBajaCapacitacion(a) && doc) {
         if (!seenBajas.has(doc)) {
           seenBajas.add(doc);
           const date = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || '');

@@ -2,15 +2,17 @@ import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search, Users, Loader2, Check, UserCheck, AlertCircle,
   Calendar, Filter, X, GraduationCap, ChevronLeft, ChevronRight,
-  Sparkles, RefreshCw, CheckCircle2, ShieldAlert, Clock, ArrowRight, Split
+  Sparkles, RefreshCw, CheckCircle2, ShieldAlert, Clock, ArrowRight, Split,
+  Shield
 } from 'lucide-react'
 import { updateGrupoFormador, getEquipoFormacion } from '../lib/dataService'
 import { isSubgroupCode } from '../lib/flujoOperativo'
+import { inferSegmento } from '../lib/capacidadRysSync'
 import DividirGrupoModal from '../components/asignacion/DividirGrupoModal'
 
 const PAGE_SIZE = 40
 
-export default function AsignacionFormador({ grupos = [], formadores = [], onRefresh }) {
+export default function AsignacionFormador({ grupos = [], formadores = [], userProfile = null, onRefresh }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedPeriodo, setSelectedPeriodo] = useState('')
   const [selectedSegmento, setSelectedSegmento] = useState('')
@@ -24,6 +26,9 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
   const [selectedGrupoForSplit, setSelectedGrupoForSplit] = useState(null)
 
+  const isSupervisor = userProfile?.rol === 'supervisor_capacitacion'
+  const supervisorSegmento = isSupervisor && userProfile?.segmento ? String(userProfile.segmento).trim().toUpperCase() : null
+
   useEffect(() => {
     getEquipoFormacion().then(data => {
       setEquipoFormacionData(data || [])
@@ -36,32 +41,53 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
   }, [grupos])
 
   const segmentos = useMemo(() => {
+    if (supervisorSegmento) return [supervisorSegmento]
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
     return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo])
+  }, [grupos, selectedPeriodo, supervisorSegmento])
 
   const campanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
+    if (supervisorSegmento) {
+      filtered = filtered.filter(g => {
+        const s = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
+        return s === supervisorSegmento
+      })
+    }
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento && !supervisorSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSegmento])
+  }, [grupos, selectedPeriodo, selectedSegmento, supervisorSegmento])
 
   const semanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
+    if (supervisorSegmento) {
+      filtered = filtered.filter(g => {
+        const s = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
+        return s === supervisorSegmento
+      })
+    }
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento && !supervisorSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     return [...new Set(filtered.map(g => g.semana_label ? String(g.semana_label).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana])
+  }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana, supervisorSegmento])
 
   // Filtrar grupos para la tabla
   const filteredGrupos = useMemo(() => {
     let res = [...grupos]
+
+    // Restricción estricta de segmento para supervisor_capacitacion
+    if (supervisorSegmento) {
+      res = res.filter(g => {
+        const gSeg = String(g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()
+        return gSeg === supervisorSegmento
+      })
+    }
     
     if (selectedPeriodo) res = res.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSegmento) res = res.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento && !supervisorSegmento) res = res.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) res = res.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     if (selectedSemana) res = res.filter(g => String(g.semana_label).trim() === String(selectedSemana).trim())
     
@@ -99,7 +125,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
     }
     
     return unique
-  }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana, selectedSemana, filterStatus, searchTerm])
+  }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana, selectedSemana, filterStatus, searchTerm, supervisorSegmento])
 
   const formadoresActivos = useMemo(() => {
     const map = new Map()
@@ -129,8 +155,14 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
       }
     })
 
-    return Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
-  }, [equipoFormacionData, formadores])
+    const allList = Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
+
+    if (supervisorSegmento) {
+      return allList.filter(f => f.segmento && f.segmento.trim().toUpperCase() === supervisorSegmento)
+    }
+
+    return allList
+  }, [equipoFormacionData, formadores, supervisorSegmento])
 
   const totalGrupos = grupos.length
   const totalConFormador = useMemo(() => grupos.filter(g => g.formador_documento).length, [grupos])
@@ -199,9 +231,15 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
               <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30">
                 {filteredGrupos.length} grupos
               </span>
+              {supervisorSegmento && (
+                <span className="text-[9.5px] font-black px-2.5 py-0.5 rounded-full bg-teal-500/10 text-teal-300 border border-teal-500/30 flex items-center gap-1">
+                  <Shield size={11} className="text-teal-400" />
+                  SEGMENTO: {supervisorSegmento}
+                </span>
+              )}
             </div>
             <p className="text-[10.5px] text-[var(--text-muted)]">
-              Distribución ejecutiva de capacitadores por cohorte y fechas de pase a operación
+              {supervisorSegmento ? `Gestión y asignación de formadores para el segmento ${supervisorSegmento}` : 'Distribución ejecutiva de capacitadores por cohorte y fechas de pase a operación'}
             </p>
           </div>
         </div>
@@ -545,11 +583,19 @@ export default function AsignacionFormador({ grupos = [], formadores = [], onRef
                             ● [PENDIENTE] Sin Formador Asignado
                           </option>
                           {(() => {
-                            const currentDoc = String(g.formador_documento || '').trim();
-                            const currentFormador = formadoresActivos.find(
-                              f => String(f.documento).trim() === currentDoc
-                            );
+                            if (supervisorSegmento) {
+                              return (
+                                <optgroup label={`Formadores de ${supervisorSegmento}`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
+                                  {formadoresActivos.map(f => (
+                                    <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                                      ✓ {f.nombres_completos}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              );
+                            }
 
+                            const currentDoc = String(g.formador_documento || '').trim();
                             const formadoresDelSegmento = formadoresActivos.filter(f => {
                               if (!g.segmento) return true;
                               return f.segmento && f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();

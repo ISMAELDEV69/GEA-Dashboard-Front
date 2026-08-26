@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { createUserAccount, adminResetUserPassword, updateUserRole, getEquipoReclutamiento, getEquipoFormacion, updateEquipoFormacion, updateEquipoReclutamiento, fetchAppRoles } from '../lib/dataService'
+import { SEGMENTOS_SIU } from '../lib/capacidadRysSync'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
@@ -319,8 +320,17 @@ export default function UserManagement({ navPermissions = [] }) {
                   </div>
 
                   {/* Rol (si tiene cuenta) */}
-                  <div className="flex justify-center">
-                    {hasAccount ? <RoleBadge rol={emp.perfil.rol} appRoles={appRoles} /> : <span className="text-[10px] text-[var(--text-muted)] italic text-rose-400">Falta crear clave</span>}
+                  <div className="flex flex-col items-center gap-1">
+                    {hasAccount ? (
+                      <>
+                        <RoleBadge rol={emp.perfil.rol} appRoles={appRoles} />
+                        {emp.perfil.segmento && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/30">
+                            {emp.perfil.segmento}
+                          </span>
+                        )}
+                      </>
+                    ) : <span className="text-[10px] text-[var(--text-muted)] italic text-rose-400">Falta crear clave</span>}
                   </div>
 
                   {/* Usuario */}
@@ -363,9 +373,9 @@ export default function UserManagement({ navPermissions = [] }) {
                     ) : (
                       <button
                         onClick={() => setShowCreate(emp)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors text-xs font-bold"
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500 text-white font-bold text-xs shadow-md hover:bg-emerald-600 transition-colors flex items-center gap-1.5"
                       >
-                        <UserPlus size={14} /> {emp.usuario ? 'Crear Acceso' : 'Asignar Usuario'}
+                        <UserPlus size={13} /> Asignar
                       </button>
                     )}
                   </div>
@@ -414,26 +424,25 @@ export default function UserManagement({ navPermissions = [] }) {
         </div>
       </Card>
 
+      {/* ── MODALS ── */}
       {showCreate && (
         <CreateUserModal 
           employee={showCreate} 
-          appRoles={appRoles}
-          onClose={() => setShowCreate(null)} 
+          appRoles={appRoles} 
           onCreated={loadData} 
+          onClose={() => setShowCreate(null)} 
         />
       )}
-      
+
       {showEditRole && (
         <EditRoleModal 
-          perfil={showEditRole}
-          appRoles={appRoles}
+          perfil={showEditRole} 
+          appRoles={appRoles} 
+          onUpdated={loadData} 
           onClose={() => setShowEditRole(null)} 
-          onUpdated={() => {
-            setShowEditRole(null)
-            loadData()
-          }} 
         />
       )}
+
       {showReset && (
         <ResetPasswordModal 
           perfil={showReset} 
@@ -451,6 +460,7 @@ function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
   const [usuario,  setUsuario]  = useState('')
   const [password, setPassword] = useState('')
   const [rol,      setRol]      = useState(appRoles[0]?.id || 'visor')
+  const [segmento, setSegmento] = useState(SEGMENTOS_SIU[0])
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState(null)
   const [success,  setSuccess]  = useState(false)
@@ -470,8 +480,12 @@ function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
       const displayName = employee.equipo === 'Externa / Otros' ? externalName.trim() : cleanUser
       
       // Crear en supabase
-      await createUserAccount({ email: generatedEmail, password, nombre: displayName, rol })
+      const resUser = await createUserAccount({ email: generatedEmail, password, nombre: displayName, rol })
       
+      if (rol === 'supervisor_capacitacion' && resUser?.id) {
+        await supabase.from('perfiles').update({ segmento }).eq('id', resUser.id)
+      }
+
       // Actualizar tabla de recursos humanos correspondiente
       if (employee.equipo === 'Formación') {
         await updateEquipoFormacion(employee.documento, { usuario_alix: cleanUser })
@@ -592,6 +606,27 @@ function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
             </div>
           </div>
 
+          {/* Selector de Segmento para Supervisor de Capacitación */}
+          {rol === 'supervisor_capacitacion' && (
+            <div className="p-3.5 rounded-xl bg-teal-500/10 border border-teal-500/30 space-y-2 animate-fadeIn">
+              <label className="block text-xs font-black text-teal-300">
+                Segmento Asignado al Supervisor:
+              </label>
+              <select
+                value={segmento}
+                onChange={e => setSegmento(e.target.value)}
+                className="form-input w-full px-3 py-2 rounded-lg text-xs font-bold bg-[var(--bg-surface)] text-[var(--text-primary)] border border-teal-500/40"
+              >
+                {SEGMENTOS_SIU.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-teal-400/80">
+                El supervisor solo podrá ver y asignar formadores pertenecientes a este segmento.
+              </p>
+            </div>
+          )}
+
           <div className="pt-2">
             <button type="submit" disabled={loading} className="btn-primary w-full py-3 rounded-xl font-bold flex justify-center items-center gap-2">
               {loading ? <Loader2 size={16} className="animate-spin" /> : 'Crear Acceso'}
@@ -704,6 +739,7 @@ function ResetPasswordModal({ perfil, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
   const [role, setRole] = useState(perfil.rol || 'visor')
+  const [segmento, setSegmento] = useState(perfil.segmento || SEGMENTOS_SIU[0])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -712,7 +748,7 @@ function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
     setLoading(true)
     setError(null)
     try {
-      await updateUserRole(perfil.id, role)
+      await updateUserRole(perfil.id, role, segmento)
       onUpdated()
     } catch (err) {
       setError(err.message || 'Error al actualizar el rol')
@@ -748,6 +784,28 @@ function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
               ))}
             </div>
           </div>
+
+          {/* Selector de Segmento para Supervisor de Capacitación */}
+          {role === 'supervisor_capacitacion' && (
+            <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/30 space-y-1.5 animate-fadeIn">
+              <label className="block text-xs font-black text-teal-300">
+                Segmento Asignado:
+              </label>
+              <select
+                value={segmento}
+                onChange={e => setSegmento(e.target.value)}
+                className="form-input w-full px-3 py-2 rounded-lg text-xs font-bold bg-[var(--bg-surface)] text-[var(--text-primary)] border border-teal-500/40"
+              >
+                {SEGMENTOS_SIU.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-teal-400/80">
+                El supervisor solo podrá ver y asignar formadores de este segmento.
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-xs text-rose-500 font-bold bg-rose-500/10 p-2 rounded">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>

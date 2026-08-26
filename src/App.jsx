@@ -721,7 +721,7 @@ export default function App() {
                       {/* 21. Asignación Formador */}
                       <KeepAliveView viewId="asignacion_formador" activeView={activeView}>
                         {navItems.some(i => i.id === 'asignacion_formador') && (
-                          <AsignacionFormador grupos={grupos} formadores={formadores} onRefresh={loadAllData} />
+                          <AsignacionFormador grupos={grupos} formadores={formadores} userProfile={effectiveProfile} onRefresh={loadAllData} />
                         )}
                       </KeepAliveView>
 

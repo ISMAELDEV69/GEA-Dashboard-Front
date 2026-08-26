@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { parseFechaAsistencia } from '../lib/dataService'
+import { parseFechaAsistencia, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, AreaChart, Area, Cell, PieChart, Pie, Legend, ScatterChart, Scatter, ZAxis
@@ -226,8 +226,9 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
     const presentCount = filteredAsistencias.filter(a => ['A', 'I-OP', 'FJ'].includes(a.sigla_asistencia || a.sigla)).length
     const attendanceRate = totalRecords > 0 ? Math.round((presentCount / totalRecords) * 100) : 0
     
-    const bajasMap = new Map() // doc -> motivo
+    const bajasMap = new Map() // doc -> motivo (solo bajas reales de capacitación)
     const bajasDatesMap = new Map() // doc -> earliest baja date
+    const bajasDia1Map = new Map() // doc -> motivo (bajas Día 1 separadas)
 
     // From Asistencias
     filteredAsistencias.forEach(a => {
@@ -236,9 +237,12 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       const sigla = a.sigla_asistencia || a.sigla
       const motivo = (a.motivo_baja || '').toUpperCase().trim()
       const estado = String(a.estado || '').toUpperCase().trim()
-      const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado === 'CESADO' || estado === 'BAJA' || estado === 'INACTIVO'
 
-      if (isBaja) {
+      if (isBajaDia1(motivo, sigla, a)) {
+        if (!bajasDia1Map.has(doc)) {
+          bajasDia1Map.set(doc, motivo || 'BAJA DIA 1')
+        }
+      } else if (isBajaCapacitacion(a)) {
         const m = motivo || (estado === 'CESADO' ? 'CESADO' : 'NO ESPECIFICADO')
         if (!bajasMap.has(doc)) {
           bajasMap.set(doc, m)
@@ -257,8 +261,12 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
     filteredPostulantes.forEach(p => {
       const doc = p.documento
       if (!doc) return
-      if ((p.estado === 'CESADO' || p.motivo_baja) && !bajasMap.has(doc)) {
-        const m = (p.motivo_baja || 'NO ESPECIFICADO').toUpperCase().trim()
+      if (isBajaDia1(p.motivo_baja, p.sigla, p)) {
+        if (!bajasDia1Map.has(doc)) {
+          bajasDia1Map.set(doc, (p.motivo_baja || 'BAJA DIA 1').toUpperCase().trim())
+        }
+      } else if (isBajaCapacitacion(p) && !bajasMap.has(doc)) {
+        const m = (p.motivo_baja || (p.estado === 'CESADO' ? 'CESADO' : 'NO ESPECIFICADO')).toUpperCase().trim()
         bajasMap.set(doc, m)
         const rawDate = p.fecha_baja || p.fecha_modificacion || p.fecha_creacion || p.created_at
         if (rawDate) {
@@ -270,14 +278,7 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       }
     })
 
-    // Conteo ÚNICO de Bajas Día 1 (1 por persona)
-    let bajasDia1Count = 0
-    bajasMap.forEach((motivo) => {
-      if (motivo.includes('BAJA DIA 1') || motivo.includes('BAJA DÍA 1')) {
-        bajasDia1Count++
-      }
-    })
-
+    const bajasDia1Count = bajasDia1Map.size
     const activeBajas = bajasMap.size
     const retentionRate = totalCount > 0 ? Math.round(((totalCount - activeBajas) / totalCount) * 100) : 0
 
@@ -380,12 +381,8 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
       if (formador && formador !== 'Sin Asignar') {
         if (!formadoresMap[formador]) formadoresMap[formador] = { name: formador, total: 0, bajas: 0, op: 0 }
         formadoresMap[formador].total++
-        if (bajasMap.has(p.documento) || p.estado === 'CESADO') {
-          const motivo = String(bajasMap.get(p.documento) || p.motivo_baja || '').toUpperCase()
-          const isBajaDia1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA DÍA 1') || motivo.includes('PERIODO GRACIA')
-          if (!isBajaDia1) {
-            formadoresMap[formador].bajas++
-          }
+        if (bajasMap.has(p.documento)) {
+          formadoresMap[formador].bajas++
         }
         if (p.estado === 'I-OP' || p.estado === 'ACTIVO' || p.fecha_conexion_op) {
           formadoresMap[formador].op++
@@ -399,12 +396,8 @@ export default function AttendanceBI({ grupos = [], postulantes = [], asistencia
         const cohort = p.grupo_codigo || p.campana || 'Grupo General'
         if (!formadoresMap[cohort]) formadoresMap[cohort] = { name: cohort, total: 0, bajas: 0, op: 0 }
         formadoresMap[cohort].total++
-        if (bajasMap.has(p.documento) || p.estado === 'CESADO') {
-          const motivo = String(bajasMap.get(p.documento) || p.motivo_baja || '').toUpperCase()
-          const isBajaDia1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA DÍA 1') || motivo.includes('PERIODO GRACIA')
-          if (!isBajaDia1) {
-            formadoresMap[cohort].bajas++
-          }
+        if (bajasMap.has(p.documento)) {
+          formadoresMap[cohort].bajas++
         }
         if (p.estado === 'I-OP' || p.estado === 'ACTIVO' || p.fecha_conexion_op) formadoresMap[cohort].op++
       })

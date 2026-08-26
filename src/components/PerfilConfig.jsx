@@ -37,10 +37,6 @@ const DENSITY_OPTIONS = [
 export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setTheme, themes = [] }) {
   const [activeTab, setActiveTab] = useState('cuenta')
   const [nombre, setNombre] = useState(userProfile?.nombre || '')
-  const [cargo, setCargo] = useState(userProfile?.cargo || '')
-  const [telefono, setTelefono] = useState(userProfile?.telefono || '')
-  const [avatarUrl, setAvatarUrl] = useState(userProfile?.avatar_url || null)
-  const [avatarPreview, setAvatarPreview] = useState(userProfile?.avatar_url || null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState(null)
@@ -59,16 +55,11 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
   const [density, setDensity] = useState(() => localStorage.getItem('gea-density') || 'comfortable')
   const [sidebarDefault, setSidebarDefault] = useState(() => localStorage.getItem('gea-sidebar') !== 'collapsed')
 
-  const fileInputRef = useRef(null)
   const rol = userProfile?.rol || 'visor'
   const rolColor = ROL_COLORS[rol] || ROL_COLORS.visor
 
   useEffect(() => {
     setNombre(userProfile?.nombre || '')
-    setCargo(userProfile?.cargo || '')
-    setTelefono(userProfile?.telefono || '')
-    setAvatarUrl(userProfile?.avatar_url || null)
-    setAvatarPreview(userProfile?.avatar_url || null)
   }, [userProfile])
 
   useEffect(() => {
@@ -80,30 +71,12 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
     localStorage.setItem('gea-sidebar', sidebarDefault ? 'open' : 'collapsed')
   }, [sidebarDefault])
 
-  const handleAvatarChange = useCallback((e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (file.size > 2 * 1024 * 1024) {
-      setError('La imagen no puede superar 2 MB.')
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      setAvatarPreview(ev.target.result)
-      setAvatarUrl(ev.target.result)
-    }
-    reader.readAsDataURL(file)
-  }, [])
-
   const handleSaveProfile = async () => {
     setSaving(true)
     setError(null)
     try {
       const updates = {
         nombre: nombre.trim(),
-        cargo: cargo.trim(),
-        telefono: telefono.trim(),
-        avatar_url: avatarUrl,
       }
 
       if (DB_MODE === 'supabase' && userProfile?.id) {
@@ -191,24 +164,11 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
 
           <div className="relative flex-shrink-0">
             <div
-              className="w-24 h-24 rounded-2xl shadow-xl overflow-hidden border-2 flex items-center justify-center"
+              className="w-20 h-20 rounded-2xl shadow-xl overflow-hidden border-2 flex items-center justify-center"
               style={{ borderColor: 'var(--accent-glow)', background: 'var(--accent-gradient)' }}
             >
-              {avatarPreview ? (
-                <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-3xl font-black text-white">{initials}</span>
-              )}
+              <span className="text-3xl font-black text-white">{initials}</span>
             </div>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute -bottom-2 -right-2 w-8 h-8 rounded-xl flex items-center justify-center shadow-lg transition-all hover:scale-110 active:scale-95"
-              style={{ background: 'var(--accent)', color: 'white' }}
-              title="Cambiar foto"
-            >
-              <Camera size={14} />
-            </button>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
           </div>
 
           <div className="flex-1 text-center sm:text-left">
@@ -216,7 +176,7 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
               {nombre || 'Sin nombre'}
             </h1>
             <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-              {cargo || 'Sin cargo definido'}
+              {userProfile?.segmento ? `Segmento asignado: ${userProfile.segmento}` : (ROL_LABELS[rol] ?? rol)}
             </p>
             <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
               <span
@@ -225,6 +185,11 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
               >
                 {ROL_LABELS[rol] ?? rol}
               </span>
+              {userProfile?.segmento && (
+                <span className="text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                  {userProfile.segmento}
+                </span>
+              )}
               {DB_MODE === 'supabase' ? (
                 <span className="text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   Cuenta activa
@@ -266,30 +231,24 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
         <div className="rounded-2xl border p-6 space-y-6" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
           <div className="flex items-center gap-2 mb-2">
             <Edit3 size={16} style={{ color: 'var(--accent)' }} />
-            <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Información Personal</h3>
+            <h3 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Información de la Cuenta</h3>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {[
-              { key: 'nombre', label: 'Nombre completo', value: nombre, set: setNombre, placeholder: 'Tu nombre completo' },
-              { key: 'cargo', label: 'Cargo / Posición', value: cargo, set: setCargo, placeholder: 'Ej: Formador Senior' },
-              { key: 'telefono', label: 'Teléfono / Celular', value: telefono, set: setTelefono, placeholder: '+51 999 999 999' },
-            ].map(field => (
-              <div key={field.key} className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                  {field.label}
-                </label>
-                <input
-                  value={field.value}
-                  onChange={e => field.set(e.target.value)}
-                  placeholder={field.placeholder}
-                  className="w-full rounded-xl px-4 py-2.5 text-sm font-medium border outline-none transition-all"
-                  style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-                  onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-                  onBlur={e => { e.target.style.borderColor = 'var(--border-subtle)' }}
-                />
-              </div>
-            ))}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Nombre de Usuario
+              </label>
+              <input
+                value={nombre}
+                onChange={e => setNombre(e.target.value)}
+                placeholder="Tu nombre completo"
+                className="w-full rounded-xl px-4 py-2.5 text-sm font-medium border outline-none transition-all"
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+                onBlur={e => { e.target.style.borderColor = 'var(--border-subtle)' }}
+              />
+            </div>
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
@@ -304,36 +263,30 @@ export default function PerfilConfig({ userProfile, onProfileUpdate, theme, setT
                 <span className="text-xs opacity-60 font-normal ml-auto">Solo admin puede cambiar</span>
               </div>
             </div>
-          </div>
 
-          <div
-            className="rounded-xl border border-dashed p-5 flex flex-col sm:flex-row items-center gap-4 cursor-pointer transition-all"
-            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-elevated)' }}
-            onClick={() => fileInputRef.current?.click()}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)' }}
-          >
-            <div className="w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0" style={{ background: 'var(--accent-gradient)' }}>
-              {avatarPreview ? (
-                <img src={avatarPreview} alt="Preview" className="w-full h-full object-cover" />
-              ) : (
-                <Camera size={22} className="text-white" />
-              )}
-            </div>
-            <div className="text-center sm:text-left">
-              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Cambiar foto de perfil</p>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>PNG, JPG o GIF · máximo 2 MB</p>
-            </div>
-            {avatarPreview && (
-              <button
-                className="ml-auto p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                onClick={e => { e.stopPropagation(); setAvatarPreview(null); setAvatarUrl(null) }}
-                title="Eliminar foto"
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Segmento asignado
+              </label>
+              <div
+                className="w-full rounded-xl px-4 py-2.5 text-sm font-bold border flex items-center gap-2"
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
               >
-                <X size={14} />
-              </button>
-            )}
+                {userProfile?.segmento || 'Acceso Global (Sin restricción)'}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Identificador de Usuario (UUID)
+              </label>
+              <div
+                className="w-full rounded-xl px-4 py-2.5 text-xs font-mono border flex items-center gap-2 truncate opacity-70"
+                style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+              >
+                {userProfile?.id || '—'}
+              </div>
+            </div>
           </div>
 
           {error && (

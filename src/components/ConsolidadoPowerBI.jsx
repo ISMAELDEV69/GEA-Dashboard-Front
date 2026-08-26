@@ -23,7 +23,7 @@ import {
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
-import { fetchDashboardData } from '../lib/dataService';
+import { fetchDashboardData, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import * as XLSX from 'xlsx';
 
 const STATUS_META = {
@@ -52,6 +52,7 @@ function normalizeGpe(value) {
 function normalizeEstado(value) {
   const text = normalizeText(value, '').toUpperCase();
   if (text.includes('ACTIVO')) return 'ACTIVO';
+  if (text.includes('BAJA DIA 1') || text.includes('BAJA DÍA 1')) return 'BAJA DIA 1';
   if (text.includes('CESADO') || text.includes('BAJA')) return 'CESADO';
   return text || 'SIN ESTADO';
 }
@@ -469,6 +470,9 @@ function CompactVolumeCard({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENTE PRINCIPAL: CONSOLIDADO POWER BI
+// ─────────────────────────────────────────────────────────────────────────────
 export default function ConsolidadoPowerBI() {
   const [data, setData] = useState([]);
   const [capacidades, setCapacidades] = useState([]);
@@ -572,7 +576,7 @@ export default function ConsolidadoPowerBI() {
       const txtMotivo = String(row.motivo_baja || '').toUpperCase();
       const txtObs = String(row.observacion_estado || '').toUpperCase();
       
-      const isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
+      const isBajaDia1Val = isBajaDia1(txtMotivo, row.sigla, row) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
       
       result[i] = {
         ...row,
@@ -581,7 +585,7 @@ export default function ConsolidadoPowerBI() {
         _periodo: rowPeriodo,
         _semana: rowSemana,
         _segmento: rowSegmento,
-        isBajaDia1,
+        isBajaDia1: isBajaDia1Val,
         isDescuento: false
       };
     }
@@ -607,9 +611,15 @@ export default function ConsolidadoPowerBI() {
 
     const result = new Map();
     for (const [doc, { row }] of latestDocMap.entries()) {
-      const txtEstado = normalizeEstado(row?.estado);
-      const isBaja = normalizeSigla(row?.sigla) === 'B' || txtEstado === 'CESADO';
-      result.set(doc, isBaja ? 'CESADO' : 'ACTIVO');
+      const motivo = row?.motivo_baja || row?.motivo;
+      const sigla = row?.sigla;
+      if (isBajaDia1(motivo, sigla, row)) {
+        result.set(doc, 'BAJA DIA 1');
+      } else if (isBajaCapacitacion(row)) {
+        result.set(doc, 'CESADO');
+      } else {
+        result.set(doc, 'ACTIVO');
+      }
     }
 
     return result;
@@ -658,7 +668,7 @@ export default function ConsolidadoPowerBI() {
       }
     }
 
-    const estados = new Set(['ACTIVO', 'CESADO']);
+    const estados = new Set(['ACTIVO', 'CESADO', 'BAJA DIA 1']);
 
     const sortedSemanas = Array.from(semanas).sort((a, b) => {
       const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
@@ -1211,7 +1221,7 @@ export default function ConsolidadoPowerBI() {
                     {row.nombre_completo}
                   </td>
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
-                    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
+                    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : row.ult_estado === 'BAJA DIA 1' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
                       {row.ult_estado}
                     </span>
                   </td>

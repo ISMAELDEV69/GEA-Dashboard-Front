@@ -54,9 +54,90 @@ export function invalidateCache(keyPrefix) {
   }
 }
 
-// ─────────────────────────────────────────────
-// AUTH & PERFIL
-// ─────────────────────────────────────────────
+export function isBajaDia1(motivo, sigla, row) {
+  const m = String(motivo || '').toUpperCase().trim();
+  const s = String(sigla || '').toUpperCase().trim();
+  const t = String(row?.tipo_baja || row?.tipo || '').toUpperCase().trim();
+  
+  if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1')) return true;
+  if (s === 'BD1' || s === 'D1') return true;
+  if (
+    m === 'BAJA DIA 1' || 
+    m === 'BAJA DÍA 1' || 
+    m === 'BAJA D1' || 
+    m === 'DÍA 1' || 
+    m === 'DIA 1' || 
+    m.includes('BAJA DIA 1') || 
+    m.includes('BAJA DÍA 1') || 
+    m.includes('BAJA D1') ||
+    m.includes('(BAJA DIA 1)') ||
+    m.includes('(BAJA DÍA 1)')
+  ) return true;
+  return false;
+}
+
+export function isBajaCapacitacion(row) {
+  if (!row) return false;
+  const motivo = row.motivo_baja || row.motivo || '';
+  const sigla = row.sigla || row.sigla_asistencia || '';
+  if (isBajaDia1(motivo, sigla, row)) return false;
+
+  const s = String(sigla || '').toUpperCase().trim();
+  const m = String(motivo || '').toUpperCase().trim();
+  const e = String(row.estado || '').toUpperCase().trim();
+
+  return (
+    s === 'B' || 
+    s === 'BAJA' || 
+    e === 'CESADO' || 
+    (e.includes('BAJA') && !e.includes('BAJA DIA 1') && !e.includes('BAJA DÍA 1')) ||
+    (m !== '' && m !== 'NULL' && m !== 'ASISTIO' && m !== 'ACTIVO')
+  ) && s !== 'ASISTIO' && s !== 'A' && s !== 'I-OP';
+}
+
+export function normalizarMotivo(motivoCrudo) {
+  if (!motivoCrudo) return 'SIN ESPECIFICAR';
+  const m = String(motivoCrudo).trim().toUpperCase();
+  if (!m || m === 'NULL' || m === 'UNDEFINED' || m === 'BAJA' || m === 'CESADO' || m === 'INACTIVO' || m === 'SIN ESPECIFICAR' || m === 'BAJA SIN ESPECIFICAR') {
+    return 'SIN ESPECIFICAR';
+  }
+
+  // Normalizaciones ortográficas y limpieza de typos preservando cada motivo específico
+  if (m === 'NO CONTACTO' || m.includes('NO CONTACTO')) return 'NO CONTACTO';
+  if (m.includes('FALTA DOUMENTACION') || m.includes('FALTA DOCUMENTACION') || m.includes('FALTA DOCUMENTACIÓN')) return 'FALTA DOCUMENTACIÓN';
+  if (m === 'FAMILIAR' || m.includes('FAMILIAR')) return 'FAMILIAR';
+  if (m === 'SALUD' || m.includes('SALUD')) return 'SALUD';
+  if (m === 'MEJOR OFERTA LABORAL') return 'MEJOR OFERTA LABORAL';
+  if (m === 'OFERTA NO FAVORABLE') return 'OFERTA NO FAVORABLE';
+  if (m.includes('OFERTA LABORAL')) return 'OFERTA LABORAL';
+  if (m === 'ESTUDIA DERECHO') return 'ESTUDIA DERECHO';
+  if (m.includes('ESTUDIO') || m.includes('ESTUDIOS')) return 'ESTUDIOS';
+  if (m.includes('VIAJE')) return 'VIAJE';
+  if (m.includes('FACILIDADES TECNICA') || m.includes('FACILIDADES TÉCNICA')) return 'FACILIDADES TÉCNICAS';
+  if (m.includes('FALTAS CONSECUTIVA') || m.includes('FALTAS CONSTANTE') || m.includes('FALTAS REITERADA')) return 'FALTAS CONSECUTIVAS';
+  if (m.includes('TARDANZAS CONSECUTIVA')) return 'TARDANZAS CONSECUTIVAS';
+  if (m.includes('BLACK LIST CLIENTE')) return 'BLACK LIST CLIENTE';
+  if (m.includes('BLACK LIST GEA') || m.includes('BLACKLIST')) return 'BLACK LIST GEA';
+  if (m.includes('HABILIDAD COMERCIAL')) return 'HABILIDAD COMERCIAL';
+  if (m.includes('HABILIDAD ATC')) return 'HABILIDAD ATC';
+  if (m.includes('DICCION') || m.includes('DICCIÓN')) return 'DICCIÓN';
+  if (m.includes('DESAPROBADO EN OJT')) return 'DESAPROBADO EN OJT';
+  if (m === 'DESAPROBADO') return 'DESAPROBADO';
+  if (m.includes('ECONOMICO') || m.includes('ECONÓMICO')) return 'ECONÓMICO';
+  if (m.includes('REINGRESO NO APTO')) return 'REINGRESO NO APTO';
+  if (m.includes('DESISTIMIENTO POR CONTRATO') || m.includes('DESISTIMIENTO')) return 'DESISTIMIENTO POR CONTRATO';
+  if (m.includes('DISTANCIA')) return 'DISTANCIA';
+  if (m.includes('ACTITUD')) return 'ACTITUD';
+  if (m.includes('MANEJO DE PC')) return 'MANEJO DE PC';
+  if (m.includes('EMBARAZO')) return 'EMBARAZO';
+  if (m.includes('USUARIO ACTIVO EN OTRO CALL')) return 'USUARIO ACTIVO EN OTRO CALL';
+  if (m.includes('USUARIOS SIN ACCESOS')) return 'USUARIOS SIN ACCESOS COMPLETOS';
+  if (m.includes('SOBREDOTACION') || m.includes('SOBREDOTACIÓN')) return 'SOBREDOTACIÓN';
+  if (m.includes('PERFIL DEL POSTULANTE')) return 'PERFIL DEL POSTULANTE';
+  if (m.includes('RETIRO APROBADO POR JEFATURA')) return 'RETIRO APROBADO POR JEFATURA';
+
+  return m;
+}
 
 const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion']
 
@@ -173,7 +254,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 
   const { data, error } = await supabase
     .from('perfiles')
-    .select('id, nombre, rol, cargo, telefono, avatar_url')
+    .select('id, nombre, rol')
     .eq('id', userId)
     .maybeSingle()
   if (error) throw error
@@ -185,7 +266,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
     const { data: inserted, error: insErr } = await supabase
       .from('perfiles')
       .upsert(bootstrap)
-      .select('id, nombre, rol, cargo, telefono, avatar_url')
+      .select('id, nombre, rol')
       .single()
     if (!insErr && inserted) return await attachNombreCompleto(inserted)
     return await attachNombreCompleto(bootstrap)
@@ -492,11 +573,13 @@ export async function createUserAccount({ email, password, nombre, rol }) {
   return data?.user
 }
 
-export async function updateUserRole(userId, newRole) {
+export async function updateUserRole(userId, newRole, segmento = null) {
   if (!VALID_ROLES.includes(newRole)) throw new Error('Rol inválido')
+  const payload = { rol: newRole }
+  payload.segmento = newRole === 'supervisor_capacitacion' ? (segmento || null) : null
   const { error } = await supabase
     .from('perfiles')
-    .update({ rol: newRole })
+    .update(payload)
     .eq('id', userId)
   if (error) throw error
 }
