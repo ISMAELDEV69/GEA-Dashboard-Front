@@ -248,15 +248,27 @@ export async function fetchUserProfile(userId, sessionUser = null) {
     return profile;
   };
 
-  // RPC que crea el perfil si falta (trigger falló o usuario creado manualmente)
+  // 1. Intentar RPC get_my_profile
   const { data: rpcData, error: rpcErr } = await supabase.rpc('get_my_profile')
   if (!rpcErr && rpcData) return await attachNombreCompleto(rpcData, sessionUser)
 
-  const { data, error } = await supabase
+  // 2. Consulta canónica a perfiles incluyendo segmento si existe
+  let { data, error } = await supabase
     .from('perfiles')
-    .select('id, nombre, rol')
+    .select('id, nombre, rol, segmento')
     .eq('id', userId)
     .maybeSingle()
+
+  if (error && (error.code === 'PGRST204' || error.message?.includes('segmento') || error.code === '42703')) {
+    const fallbackRes = await supabase
+      .from('perfiles')
+      .select('id, nombre, rol')
+      .eq('id', userId)
+      .maybeSingle()
+    data = fallbackRes.data
+    error = fallbackRes.error
+  }
+
   if (error) throw error
   if (data) return await attachNombreCompleto(data, sessionUser)
 
@@ -396,17 +408,15 @@ export async function getFirstDateFormador(grupo_codigo, campana) {
   if (!data || data.length === 0) return null;
   
   let earliestIso = null;
-  let earliestRaw = null;
   for (const row of data) {
     if (row.fecha_registro_asistencia) {
       const iso = parseFechaAsistencia(row.fecha_registro_asistencia);
       if (iso && (!earliestIso || iso < earliestIso)) {
         earliestIso = iso;
-        earliestRaw = row.fecha_registro_asistencia;
       }
     }
   }
-  return earliestRaw;
+  return earliestIso;
 }
 
 export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
@@ -575,13 +585,29 @@ export async function createUserAccount({ email, password, nombre, rol }) {
 
 export async function updateUserRole(userId, newRole, segmento = null) {
   if (!VALID_ROLES.includes(newRole)) throw new Error('Rol inválido')
+  
   const payload = { rol: newRole }
-  payload.segmento = newRole === 'supervisor_capacitacion' ? (segmento || null) : null
+  if (newRole === 'supervisor_capacitacion' && segmento) {
+    payload.segmento = segmento
+  }
+
   const { error } = await supabase
     .from('perfiles')
     .update(payload)
     .eq('id', userId)
-  if (error) throw error
+
+  if (error) {
+    // Si la columna segmento aún no fue agregada a la tabla perfiles vía SQL, guardar rol canónico
+    if (error.message?.includes('segmento') || error.code === 'PGRST204' || error.code === '42703') {
+      const { error: fallbackErr } = await supabase
+        .from('perfiles')
+        .update({ rol: newRole })
+        .eq('id', userId)
+      if (fallbackErr) throw fallbackErr
+      return
+    }
+    throw error
+  }
 }
 
 export async function signOut() {
@@ -1914,39 +1940,55 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
 
 export async function fetchFormadores() {
   if (DB_MODE === 'supabase') {
-    const [formRes, perfRes] = await Promise.all([
-      supabase
-        .from('equipo_formacion')
-        .select('documento, datos_completos, nombres_completos, estado')
-        .eq('estado', 'ACTIVO')
-        .order('nombres_completos'),
-      supabase
-        .from('perfiles')
-        .select('nombre')
-        .eq('rol', 'formador')
-        .order('nombre'),
-    ])
-    if (formRes.error) throw formRes.error
-    if (perfRes.error) throw perfRes.error
+    const { data: efData, error: efErr } = await supabase
+      .from('equipo_formacion')
+      .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+      .order('nombres_completos')
+
+    if (!efErr && efData && efData.length > 0) {
+      return efData.map(f => ({
+        documento: String(f.documento).trim(),
+        nombre_completo: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
+        sede: f.sede || '',
+        segmento: f.segmento || '',
+        subcampana: f.subcampana || '',
+        cargo_contractual: f.cargo_contractual || 'FORMADOR',
+        cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+        estado: (f.estado || 'Activo').trim()
+      }))
+    }
+
+    const { data, error } = await supabase
+      .from('formadores')
+      .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+      .order('nombre_completo')
+
+    if (!error && data && data.length > 0) {
+      return data.map(f => ({
+        documento: String(f.documento).trim(),
+        nombre_completo: (f.nombre_completo || '').trim().toUpperCase(),
+        sede: f.sede || '',
+        segmento: f.segmento || '',
+        subcampana: f.subcampana || '',
+        cargo_contractual: f.cargo_contractual || 'FORMADOR',
+        cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+        estado: (f.estado || 'Activo').trim()
+      }))
+    }
+
+    // Fallback: perfiles con rol formador si no hay registros
+    const { data: perfilesData } = await supabase
+      .from('perfiles_publico')
+      .select('nombre, rol')
+      .eq('rol', 'formador')
+      .order('nombre')
 
     const map = new Map()
-    for (const f of formRes.data || []) {
-      const nombreFinal = f.datos_completos || f.nombres_completos || ''
-      map.set(f.documento || nombreFinal, {
-        documento: f.documento,
-        nombre_completo: nombreFinal,
-        estado: 'ACTIVO'
-      })
-    }
-    for (const p of perfRes.data || []) {
+    for (const p of perfilesData || []) {
       const doc = `USR-${(p.nombre || 'FORMADOR').replace(/\s+/g, '').slice(0, 12).toUpperCase()}`
-      if (!map.has(doc)) {
-        map.set(doc, { documento: doc, nombre_completo: p.nombre, estado: 'Activo' })
-      }
+      map.set(doc, { documento: doc, nombre_completo: p.nombre, estado: 'Activo' })
     }
-    return [...map.values()].sort((a, b) =>
-      (a.nombre_completo || '').localeCompare(b.nombre_completo || '')
-    )
+    return [...map.values()]
   }
   // Local fallback
   const list = getFromStorage('formadores') || []
@@ -1956,6 +1998,7 @@ export async function fetchFormadores() {
     sede: f.sede || '',
     segmento: f.segmento || '',
     subcampana: f.subcampana || '',
+    cargo_funcional: f.cargo_funcional || 'FORMADOR',
     estado: f.estado || 'Activo'
   }))
 }
@@ -2214,13 +2257,13 @@ export async function fetchGruposDia1() {
 export async function upsertGrupoDia1(grupo_codigo, campana, fecha_dia1) {
   if (DB_MODE !== 'supabase') return
   
-  // Resolve grupo_id
+  const isoFecha = parseFechaAsistencia(fecha_dia1) || fecha_dia1;
   
   const { data: existing } = await supabase.from('grupos_dia1').select('grupo_codigo').eq('grupo_codigo', grupo_codigo).eq('campana', campana).limit(1).maybeSingle()
   
   if (existing) {
     const { error } = await supabase.from('grupos_dia1').update({
-      fecha_dia1,
+      fecha_dia1: isoFecha,
       estado_calibracion: 'PENDIENTE',
       updated_at: new Date().toISOString()
     }).eq('grupo_codigo', grupo_codigo).eq('campana', campana)
@@ -2229,7 +2272,7 @@ export async function upsertGrupoDia1(grupo_codigo, campana, fecha_dia1) {
     const { error } = await supabase.from('grupos_dia1').insert({
       grupo_codigo,
       campana,
-      fecha_dia1,
+      fecha_dia1: isoFecha,
       estado_calibracion: 'PENDIENTE',
       updated_at: new Date().toISOString()
     })
@@ -2494,7 +2537,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
-      fecha_asistencia: row.fecha_registro_asistencia
+      fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia)
     }
   })
 
@@ -3057,8 +3100,10 @@ export function fetchAllDescuentosBI() {
     let allData = [];
     let from = 0;
     const step = 2000;
+    let page = 0;
+    const MAX_PAGES = 50;
     
-    while (true) {
+    while (page++ < MAX_PAGES) {
       const { data, error } = await supabase
         .from('descuentos')
         .select('*')
@@ -3499,16 +3544,39 @@ export function getEquipoFormacion() {
         .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, usuario_alix')
         .order('nombres_completos');
         
-      if (error) {
-        console.error("Error fetching equipo_formacion:", error);
-        return [];
+      if (!error && data && data.length > 0) {
+        return data.map(f => ({
+          ...f,
+          documento: String(f.documento).trim(),
+          nombres_completos: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
+          datos_completos: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
+          cargo_contractual: f.cargo_contractual || 'FORMADOR',
+          cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+          estado: (f.estado || 'ACTIVO').trim().toUpperCase()
+        }));
       }
-      return (data || []).map(f => ({
-        ...f,
-        nombres_completos: (f.nombres_completos || '').trim().toUpperCase(),
-        cargo_funcional: (f.cargo_funcional || '').trim().toUpperCase(),
-        estado: (f.estado || '').trim().toUpperCase()
-      }));
+
+      // Fallback a formadores si equipo_formacion no devuelve datos
+      const { data: formData } = await supabase
+        .from('formadores')
+        .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese')
+        .order('nombre_completo');
+
+      if (formData && formData.length > 0) {
+        return formData.map(f => ({
+          documento: String(f.documento).trim(),
+          nombres_completos: (f.nombre_completo || '').trim().toUpperCase(),
+          datos_completos: (f.nombre_completo || '').trim().toUpperCase(),
+          sede: f.sede || '',
+          segmento: f.segmento || '',
+          subcampana: f.subcampana || '',
+          cargo_contractual: f.cargo_contractual || 'FORMADOR',
+          cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+          estado: (f.estado || 'ACTIVO').trim().toUpperCase(),
+          fecha_inicio: f.fecha_inicio || null,
+          fecha_cese: f.fecha_cese || null
+        }));
+      }
     }
     
     return [];
@@ -3768,6 +3836,112 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
   }
 }
 
+/**
+ * Migra una lista de postulantes (DNI) de un grupo/subgrupo a otro nuevo dentro de la misma campaña.
+ * Actualiza nóminas, asistencias e invalida cachés operativas.
+ */
+export async function migrarPostulantesEntreGrupos({ origenGrupoCodigo, destinoGrupoCodigo, campana, dnis, destinoFormadorDoc }) {
+  if (DB_MODE !== 'supabase') throw new Error("Requiere conexión a Supabase")
+  if (!destinoGrupoCodigo) throw new Error("El código del grupo destino es obligatorio")
+  if (!dnis || dnis.length === 0) throw new Error("Debes proporcionar al menos un DNI para migrar")
+
+  const cleanOrigen = origenGrupoCodigo ? String(origenGrupoCodigo).trim().toUpperCase() : null
+  const cleanDestino = String(destinoGrupoCodigo).trim().toUpperCase()
+  const cleanCampana = campana ? String(campana).trim().toUpperCase() : null
+
+  // 1. Actualizar tabla nominas
+  let nomQuery = supabase
+    .from('nominas')
+    .update({ 
+      grupo_codigo: cleanDestino,
+      updated_at: new Date().toISOString()
+    })
+    .in('documento', dnis)
+
+  if (cleanCampana) nomQuery = nomQuery.ilike('campana', `%${cleanCampana}%`)
+  if (cleanOrigen) nomQuery = nomQuery.eq('grupo_codigo', cleanOrigen)
+
+  const { error: nomErr, count: nomCount } = await nomQuery
+  if (nomErr) throw nomErr
+
+  // 2. Actualizar consolidado_asistencias
+  const asisPayload = {
+    codigo_grupo: cleanDestino
+  }
+  if (destinoFormadorDoc) asisPayload.documento_formador = destinoFormadorDoc
+
+  let asisQuery = supabase
+    .from('consolidado_asistencias')
+    .update(asisPayload)
+    .in('documento', dnis)
+
+  if (cleanCampana) asisQuery = asisQuery.ilike('campana', `%${cleanCampana}%`)
+  if (cleanOrigen) asisQuery = asisQuery.or(`codigo_grupo.eq.${cleanOrigen},grupo.eq.${cleanOrigen}`)
+
+  await asisQuery.catch(e => console.warn('Aviso al actualizar consolidado_asistencias en migración:', e))
+
+  // 3. Crear / asegurar registro del subgrupo destino en capacidad_rys si aún no existe
+  try {
+    const { data: existingCap } = await supabase
+      .from('capacidad_rys')
+      .select('*')
+      .eq('codigo', cleanDestino)
+      .maybeSingle()
+
+    if (!existingCap && cleanOrigen) {
+      const { data: parentCap } = await supabase
+        .from('capacidad_rys')
+        .select('*')
+        .or(`codigo.eq.${cleanOrigen},codigo.eq.${cleanOrigen.split('-')[0]}`)
+        .maybeSingle()
+
+      if (parentCap) {
+        await supabase.from('capacidad_rys').upsert({
+          codigo: cleanDestino,
+          campana: parentCap.campana || cleanCampana,
+          periodo: parentCap.periodo || null,
+          segmento: parentCap.segmento || null,
+          modalidad: parentCap.modalidad || 'PRESENCIAL',
+          semana_label: parentCap.semana_label || null,
+          semana_trabajo: parentCap.semana_trabajo || null,
+          fecha_inicio_ojt: parentCap.fecha_inicio_ojt || null,
+          fecha_ingreso_op: parentCap.fecha_ingreso_op || null,
+          formador_documento: destinoFormadorDoc || parentCap.formador_documento || null,
+          estado: 'ACTIVO',
+          observacion: `Derivado de migración desde ${cleanOrigen}`
+        }, { onConflict: 'campana,codigo' })
+      }
+    }
+  } catch (capErr) {
+    console.warn("Aviso asegurando subgrupo en capacidad_rys:", capErr)
+  }
+
+  // 4. Invalidar todas las cachés
+  invalidateCache('all_consolidado')
+  invalidateCache('all_asistencias_bajas')
+  invalidateCache('all_motivos_bajas')
+  invalidateCache('grupos_capacidad')
+  invalidateCache('grupos_con_metas')
+  invalidateCache('resumen_cap_')
+  invalidateCache('all_nominas')
+  invalidateCache('nominas_dataset')
+
+  mockAuditLog('nominas', 'MIGRATE_POSTULANTES_GRUPO', cleanDestino, null, {
+    origen: cleanOrigen,
+    destino: cleanDestino,
+    campana: cleanCampana,
+    total_dnis: dnis.length,
+    dnis
+  })
+
+  return {
+    success: true,
+    origen: cleanOrigen,
+    destino: cleanDestino,
+    total_migrados: dnis.length
+  }
+}
+
 
 /**
  * Cálculo Ultrarrápido de Métricas de Calibración Día 1 en Memoria (O(1) Map indexing).
@@ -3859,7 +4033,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
     if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
        let earliestIso = null;
-       let earliestRaw = null;
        
        for (const row of groupFormAsisRaw) {
          const dateVal = row.fecha_registro_asistencia || row.fecha_asistencia;
@@ -3867,11 +4040,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
             const iso = parseFechaAsistencia(dateVal);
             if (iso && (!earliestIso || iso < earliestIso)) {
               earliestIso = iso;
-              earliestRaw = dateVal;
             }
          }
        }
-       fecha_dia1_ref = earliestRaw;
+       fecha_dia1_ref = earliestIso;
     }
 
     let countForm = 0;
@@ -3884,7 +4056,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
             sigla_asistencia: row.sigla || row.sigla_asistencia,
             motivo_baja: row.motivo_baja,
             estado: row.estado,
-            fecha_asistencia: row.fecha_registro_asistencia || row.fecha_asistencia
+            fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia || row.fecha_asistencia)
           }
         });
 
@@ -4102,9 +4274,43 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
+    // Formador a cargo de la cohorte
+    let formador = String(grupoInfo.formador || grupoInfo.nombre_formador || grupoInfo.usuario_formador || '').trim();
+    if (!formador && groupFormAsisRaw.length > 0) {
+      const rec = groupFormAsisRaw.find(r => r.nombre_formador || r.formador || r.usuario_formador);
+      if (rec) {
+        formador = String(rec.nombre_formador || rec.formador || rec.usuario_formador || '').trim();
+      }
+    }
+
+    // Fecha más reciente en que se guardó asistencia
+    let ultima_fecha_asistencia = '';
+    if (groupFormAsisRaw.length > 0) {
+      const validDates = groupFormAsisRaw
+        .map(r => r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha || '')
+        .filter(f => Boolean(f) && String(f).trim() !== '')
+        .map(f => {
+          const str = String(f).trim();
+          if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+          const parts = str.split(/[\/\-]/);
+          if (parts.length === 3 && parts[2].length === 4) {
+            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          }
+          const dt = new Date(str);
+          return isNaN(dt.getTime()) ? str : dt.toISOString().slice(0, 10);
+        })
+        .filter(Boolean)
+        .sort();
+      if (validDates.length > 0) {
+        ultima_fecha_asistencia = validDates[validDates.length - 1];
+      }
+    }
+
     results.push({
       grupo_codigo,
       campana: campana || '',
+      formador: formador || 'Sin Asignar',
+      ultima_fecha_asistencia: ultima_fecha_asistencia || '-',
       periodo: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',
@@ -4240,18 +4446,16 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
 
     if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
        let earliestIso = null;
-       let earliestRaw = null;
        
        for (const row of groupFormAsisRaw) {
          if (row.fecha_registro_asistencia) {
             const iso = parseFechaAsistencia(row.fecha_registro_asistencia);
-      if (iso && (!earliestIso || iso < earliestIso)) {
-        earliestIso = iso;
-        earliestRaw = row.fecha_registro_asistencia;
-      }
+            if (iso && (!earliestIso || iso < earliestIso)) {
+              earliestIso = iso;
+            }
          }
        }
-       fecha_dia1_ref = earliestRaw;
+       fecha_dia1_ref = earliestIso;
     }
 
     let countForm = 0;
@@ -4262,7 +4466,7 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
           sigla_asistencia: row.sigla,
           motivo_baja: row.motivo_baja,
           estado: row.estado,
-          fecha_asistencia: row.fecha_registro_asistencia
+          fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia)
         }
       });
 

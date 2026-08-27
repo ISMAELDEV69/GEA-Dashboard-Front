@@ -130,13 +130,16 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
   const formadoresActivos = useMemo(() => {
     const map = new Map()
 
-    // 1. Desde equipo_formacion
+    // 1. Desde equipoFormacionData (tabla formadores de Supabase)
     equipoFormacionData.forEach(f => {
-      if (f.estado?.trim().toUpperCase() === 'ACTIVO' && f.documento) {
-        map.set(String(f.documento).trim(), {
-          documento: String(f.documento).trim(),
-          nombres_completos: f.datos_completos || f.nombres_completos || '',
+      const doc = String(f.documento || '').trim()
+      if (f.estado?.trim().toUpperCase() === 'ACTIVO' && doc) {
+        map.set(doc, {
+          documento: doc,
+          nombres_completos: f.datos_completos || f.nombres_completos || f.nombre_completo || '',
           segmento: f.segmento || '',
+          subcampana: f.subcampana || '',
+          cargo_funcional: f.cargo_funcional || '',
           estado: f.estado || 'ACTIVO'
         })
       }
@@ -150,6 +153,8 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
           documento: doc,
           nombres_completos: f.nombre_completo || f.nombres_completos || f.nombre || '',
           segmento: f.segmento || '',
+          subcampana: f.subcampana || '',
+          cargo_funcional: f.cargo_funcional || '',
           estado: f.estado || 'ACTIVO'
         })
       }
@@ -583,47 +588,44 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
                             ● [PENDIENTE] Sin Formador Asignado
                           </option>
                           {(() => {
-                            if (supervisorSegmento) {
-                              return (
-                                <optgroup label={`Formadores de ${supervisorSegmento}`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
-                                  {formadoresActivos.map(f => (
-                                    <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                      ✓ {f.nombres_completos}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              );
-                            }
-
+                            const targetSegmento = (supervisorSegmento || g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase();
                             const currentDoc = String(g.formador_documento || '').trim();
-                            const formadoresDelSegmento = formadoresActivos.filter(f => {
-                              if (!g.segmento) return true;
-                              return f.segmento && f.segmento.trim().toUpperCase() === g.segmento.trim().toUpperCase();
-                            });
 
-                            const otrosFormadores = formadoresActivos.filter(f => {
-                              if (!g.segmento) return false;
-                              return !f.segmento || f.segmento.trim().toUpperCase() !== g.segmento.trim().toUpperCase();
-                            });
+                            // 1. Filtrar formadores del segmento del grupo
+                            const formadoresDelSegmento = targetSegmento
+                              ? formadoresActivos.filter(f => (f.segmento || '').trim().toUpperCase() === targetSegmento)
+                              : formadoresActivos;
+
+                            // 2. Verificar si el formador actualmente asignado pertenece a otro segmento (caso legado)
+                            const currentAsignado = currentDoc ? formadoresActivos.find(f => f.documento === currentDoc) : null;
+                            const isCurrentInSegment = formadoresDelSegmento.some(f => f.documento === currentDoc);
 
                             return (
                               <>
-                                {formadoresDelSegmento.length > 0 && (
-                                  <optgroup label={`Formadores de ${g.segmento || 'Segmento'}`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
+                                {formadoresDelSegmento.length > 0 ? (
+                                  <optgroup label={`Formadores de ${targetSegmento || 'este segmento'} (${formadoresDelSegmento.length})`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
                                     {formadoresDelSegmento.map(f => (
                                       <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                        ✓ {f.nombres_completos}
+                                        ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : ''}
                                       </option>
                                     ))}
                                   </optgroup>
-                                )}
-                                {otrosFormadores.length > 0 && (
-                                  <optgroup label="Otros Formadores Activos" className="bg-[var(--bg-surface)] font-bold text-[var(--text-muted)]">
-                                    {otrosFormadores.map(f => (
+                                ) : (
+                                  <optgroup label={`Sin formadores registrados en ${targetSegmento || 'este grupo'}`} className="bg-[var(--bg-surface)] font-bold text-amber-400">
+                                    {formadoresActivos.map(f => (
                                       <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                                         ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''}
                                       </option>
                                     ))}
+                                  </optgroup>
+                                )}
+
+                                {/* Excepción visual: Si ya tenía asignado alguien de otro segmento, mantenerlo visible */}
+                                {currentAsignado && !isCurrentInSegment && (
+                                  <optgroup label="⚠️ Asignado Previamente (Otro Segmento)" className="bg-[var(--bg-surface)] font-bold text-amber-400">
+                                    <option value={currentAsignado.documento} className="bg-[var(--bg-surface)] text-amber-300 font-semibold">
+                                      ⚠ {currentAsignado.nombres_completos} ({currentAsignado.segmento || 'Sin Segmento'})
+                                    </option>
                                   </optgroup>
                                 )}
                               </>

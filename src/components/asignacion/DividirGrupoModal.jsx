@@ -13,13 +13,15 @@ export default function DividirGrupoModal({
   formadores = [],
   onSuccess
 }) {
-  const [numSubgrupos, setNumSubgrupos] = useState(2)
+  const [numSubgrupos, setNumSubgrupos] = useState(4)
   const [postulantes, setPostulantes] = useState([])
   const [loadingPostulantes, setLoadingPostulantes] = useState(false)
   const [subgrupoFormadores, setSubgrupoFormadores] = useState({
     1: '',
     2: '',
-    3: ''
+    3: '',
+    4: '',
+    5: ''
   })
   const [assignments, setAssignments] = useState({}) // { [dni]: subgrupoIndex (1, 2, 3) }
   const [submitting, setSubmitting] = useState(false)
@@ -90,7 +92,7 @@ export default function DividirGrupoModal({
 
   // Conteo por subgrupo
   const countsBySubgrupo = useMemo(() => {
-    const counts = { 1: 0, 2: 0, 3: 0, unassigned: 0 }
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unassigned: 0 }
     postulantes.forEach(p => {
       const s = assignments[p.documento]
       if (s && s <= numSubgrupos) {
@@ -238,8 +240,8 @@ export default function DividirGrupoModal({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {[2, 3].map(n => (
+            <div className="flex items-center gap-2 flex-wrap">
+              {[2, 3, 4, 5].map(n => (
                 <button
                   key={n}
                   onClick={() => handleNumSubgruposChange(n)}
@@ -298,11 +300,18 @@ export default function DividirGrupoModal({
                       className="form-input w-full py-1.5 px-2 text-xs rounded-lg font-semibold"
                     >
                       <option value="">● [Pendiente] Asignar Formador</option>
-                      {formadores.map(f => (
-                        <option key={f.documento} value={f.documento}>
-                          ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''}
-                        </option>
-                      ))}
+                      {(() => {
+                        const targetSeg = (grupo?.segmento || '').trim().toUpperCase();
+                        const list = targetSeg 
+                          ? formadores.filter(f => (f.segmento || '').trim().toUpperCase() === targetSeg)
+                          : formadores;
+                        const finalFormadores = list.length > 0 ? list : formadores;
+                        return finalFormadores.map(f => (
+                          <option key={f.documento} value={f.documento}>
+                            ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : ''}
+                          </option>
+                        ));
+                      })()}
                     </select>
                   </div>
                 </div>

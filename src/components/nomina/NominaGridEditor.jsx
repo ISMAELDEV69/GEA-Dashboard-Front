@@ -301,7 +301,7 @@ export default function NominaGridEditor({
       if (semana) {
         const semanaNum = parseInt(String(semana).replace(/\D/g, ''), 10)
         if (!isNaN(semanaNum)) {
-          query = query.eq('semana_trabajo', semanaNum)
+          query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
         }
       }
 

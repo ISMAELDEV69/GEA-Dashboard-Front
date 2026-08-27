@@ -10,6 +10,7 @@ export default function EquipoFormacion() {
   const [equipo, setEquipo] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [selectedSegmento, setSelectedSegmento] = useState('')
   
   // Inline edit state
   const [editingRow, setEditingRow] = useState(null)
@@ -22,7 +23,7 @@ export default function EquipoFormacion() {
       setLoading(true)
       const [data, perfilesRes] = await Promise.all([
         getEquipoFormacion(),
-        supabase.from('perfiles').select('id, nombre, rol')
+        supabase.from('perfiles_publico').select('id, nombre, rol')
       ])
       const profiles = perfilesRes?.data || []
       
@@ -49,23 +50,35 @@ export default function EquipoFormacion() {
     load()
   }, [])
 
+  const segmentos = useMemo(() => {
+    return [...new Set(equipo.map(e => (e.segmento || '').trim().toUpperCase()).filter(Boolean))].sort()
+  }, [equipo])
+
   const filtered = useMemo(() => {
+    let res = [...equipo]
+    if (selectedSegmento) {
+      res = res.filter(e => (e.segmento || '').trim().toUpperCase() === selectedSegmento)
+    }
     const q = search.trim().toUpperCase()
-    if (!q) return equipo
-    return equipo.filter(e => {
-      const hay = [
-        e.documento, 
-        e.datos_completos, 
-        e.sede, 
-        e.segmento, 
-        e.subcampana, 
-        e.cargo_funcional, 
-        e.estado, 
-        e.usuario_alix
-      ].join(' ').toUpperCase()
-      return hay.includes(q)
-    })
-  }, [equipo, search])
+    if (q) {
+      res = res.filter(e => {
+        const hay = [
+          e.documento, 
+          e.datos_completos, 
+          e.nombres_completos,
+          e.sede, 
+          e.segmento, 
+          e.subcampana, 
+          e.cargo_contractual,
+          e.cargo_funcional, 
+          e.estado, 
+          e.usuario_alix
+        ].join(' ').toUpperCase()
+        return hay.includes(q)
+      })
+    }
+    return res
+  }, [equipo, search, selectedSegmento])
 
   const kpis = useMemo(() => {
     const activos = filtered.filter(e => e.estado?.toUpperCase() === 'ACTIVO').length
@@ -206,24 +219,50 @@ export default function EquipoFormacion() {
       </div>
 
       {/* CONTROLES */}
-      <Card className="flex flex-col md:flex-row gap-4 mb-6">
-        <div className="flex-1 flex items-center px-4 py-2.5 rounded-xl border transition-colors focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent)]/10" style={{ background: 'var(--input-bg)', borderColor: 'var(--input-border)' }}>
+      <Card className="flex flex-col sm:flex-row items-center gap-3 mb-6">
+        <div className="flex-1 w-full flex items-center px-4 py-2.5 rounded-xl border transition-colors focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent)]/10" style={{ background: 'var(--input-bg)', borderColor: 'var(--input-border)' }}>
           <Search size={16} className="mr-3 text-[var(--accent)]" />
           <input
             type="text"
-            placeholder="Buscar por DNI, nombre, sede, segmento..."
+            placeholder="Buscar por DNI, nombre, sede, subcampaña..."
             className="w-full bg-transparent border-none focus:outline-none text-sm font-medium"
             style={{ color: 'var(--text-primary)' }}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          {search && (
+            <button onClick={() => setSearch('')} className="text-[var(--text-muted)] hover:text-white p-1">
+              <X size={14} />
+            </button>
+          )}
         </div>
+
+        {/* Filtro por Segmento */}
+        <div className="w-full sm:w-auto min-w-[200px]">
+          <select
+            value={selectedSegmento}
+            onChange={e => setSelectedSegmento(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-xl border text-xs font-bold transition-all focus:outline-none focus:border-[var(--accent)] cursor-pointer"
+            style={{ background: 'var(--input-bg)', borderColor: 'var(--input-border)', color: 'var(--text-primary)' }}
+          >
+            <option value="">Todos los Segmentos ({equipo.length})</option>
+            {segmentos.map(s => {
+              const count = equipo.filter(e => (e.segmento || '').trim().toUpperCase() === s).length
+              return (
+                <option key={s} value={s}>
+                  {s} ({count})
+                </option>
+              )
+            })}
+          </select>
+        </div>
+
         <button
           onClick={handleAddNew}
           disabled={editingRow !== null}
-          className="btn-primary flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+          className="btn-primary flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 shrink-0 w-full sm:w-auto"
         >
-          <Plus size={16} />
+          <Plus size={15} />
           Añadir Miembro
         </button>
       </Card>

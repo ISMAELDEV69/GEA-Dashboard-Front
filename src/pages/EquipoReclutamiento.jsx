@@ -22,7 +22,7 @@ export default function EquipoReclutamiento() {
       setLoading(true)
       const [data, perfilesRes] = await Promise.all([
         getEquipoReclutamiento(),
-        supabase.from('perfiles').select('id, nombre, rol')
+        supabase.from('perfiles_publico').select('id, nombre, rol')
       ])
       const profiles = perfilesRes?.data || []
       

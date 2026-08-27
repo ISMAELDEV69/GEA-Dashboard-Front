@@ -158,7 +158,7 @@ export default function NominaCompletar({
         }
         if (bulkSemana) {
           const semanaNum = parseInt(String(bulkSemana).replace(/\D/g, ''), 10)
-          if (!isNaN(semanaNum)) query = query.eq('semana_trabajo', semanaNum)
+          if (!isNaN(semanaNum)) query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
         }
         if (bulkCampana) {
           query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)
@@ -202,7 +202,7 @@ export default function NominaCompletar({
       }
       if (bulkSemana) {
         const semanaNum = parseInt(String(bulkSemana).replace(/\D/g, ''), 10)
-        if (!isNaN(semanaNum)) query = query.eq('semana_trabajo', semanaNum)
+        if (!isNaN(semanaNum)) query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
       }
       if (bulkCampana) {
         query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)

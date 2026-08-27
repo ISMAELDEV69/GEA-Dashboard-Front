@@ -590,10 +590,10 @@ export default function MotivosBajasBI() {
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center bg-[#060919]">
+      <div className="h-full flex items-center justify-center bg-[var(--bg-base)]">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 size={36} className="animate-spin text-[#00f0ff] drop-shadow-[0_0_12px_#00f0ff]" />
-          <p className="text-xs font-black uppercase tracking-widest text-[#00f0ff]">
+          <Loader2 size={36} className="animate-spin text-cyan-500" />
+          <p className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)]">
             Cargando Analítica &amp; BI de Bajas...
           </p>
         </div>
@@ -603,12 +603,12 @@ export default function MotivosBajasBI() {
 
   if (error) {
     return (
-      <div className="h-full flex items-center justify-center p-6 bg-[#060919]">
-        <div className="p-6 rounded-2xl bg-[#0a0f24] border border-[#ff2a6d]/40 text-center max-w-sm space-y-3 shadow-[0_0_25px_rgba(255,42,109,0.25)]">
-          <AlertCircle size={32} className="text-[#ff2a6d] mx-auto drop-shadow-[0_0_10px_#ff2a6d]" />
-          <h3 className="text-sm font-black text-white">Error al cargar analítica</h3>
-          <p className="text-xs text-slate-400">{error}</p>
-          <button onClick={() => loadData(true)} className="px-5 py-2 rounded-xl bg-[#ff2a6d] text-white text-xs font-bold hover:bg-[#ff3366] transition-all cursor-pointer shadow-[0_0_12px_rgba(255,42,109,0.4)]">
+      <div className="h-full flex items-center justify-center p-6 bg-[var(--bg-base)]">
+        <div className="p-6 rounded-2xl bg-[var(--bg-card)] border border-rose-500/40 text-center max-w-sm space-y-3 shadow-xl">
+          <AlertCircle size={32} className="text-rose-500 mx-auto" />
+          <h3 className="text-sm font-black text-[var(--text-primary)]">Error al cargar analítica</h3>
+          <p className="text-xs text-[var(--text-muted)]">{error}</p>
+          <button onClick={() => loadData(true)} className="px-5 py-2 rounded-xl bg-rose-500 text-white text-xs font-bold hover:bg-rose-600 transition-all cursor-pointer shadow-md">
             Reintentar
           </button>
         </div>
@@ -617,18 +617,18 @@ export default function MotivosBajasBI() {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-[#060919] text-slate-200 p-3 gap-2 select-none font-sans">
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-base)] text-[var(--text-primary)] p-3 gap-2 select-none font-sans">
       
       {/* ── HEADER PRINCIPAL CON FILTROS EN LÍNEA AMPLIADOS ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0 bg-[#0a0f24]/95 border border-[#00f0ff]/25 rounded-xl px-4 py-2 backdrop-blur-md shadow-[0_4px_25px_rgba(0,0,0,0.5)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0 bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-xl px-4 py-2 shadow-xs">
         <div className="flex items-center gap-2.5">
-          <div className="w-3 h-3 rounded-full bg-[#00f0ff] shadow-[0_0_12px_#00f0ff] animate-pulse" />
-          <h1 className="text-sm font-black tracking-wider text-[#00f0ff] drop-shadow-[0_0_12px_rgba(0,240,255,0.7)] uppercase">
+          <div className="w-3 h-3 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] animate-pulse" />
+          <h1 className="text-sm font-black tracking-wider text-[var(--text-primary)] uppercase">
             KPIs CLAVE DE DESERCIÓN
           </h1>
         </div>
 
-        {/* Filtros Visibles y Claros Glass Neon */}
+        {/* Filtros Visibles y Claros */}
         <div className="flex flex-wrap items-center gap-1.5">
           {[
             { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: filterOptions.segmentos, reset: () => setSelectedSegmento('TODAS') },
@@ -641,24 +641,22 @@ export default function MotivosBajasBI() {
             return (
               <div 
                 key={label} 
-                className={`flex items-center gap-1 rounded-lg px-2 py-0.5 transition-all duration-200 shadow-inner ${
+                className={`flex items-center gap-1 rounded-lg px-2 py-0.5 transition-all duration-200 ${
                   isActive 
-                    ? 'bg-[#00f0ff]/15 border border-[#00f0ff] shadow-[0_0_8px_rgba(0,240,255,0.35)]' 
-                    : 'bg-[#0e1635] border border-[#00f0ff]/30 hover:border-[#00f0ff]/60'
+                    ? 'bg-cyan-500/15 border border-cyan-500/70 shadow-xs' 
+                    : 'bg-[var(--bg-elevated)] border border-[var(--border-normal)] hover:border-cyan-500/50'
                 }`}
               >
-                <span className={`text-[8.5px] font-black uppercase tracking-wider ${isActive ? 'text-[#00f0ff] drop-shadow-[0_0_4px_#00f0ff]' : 'text-[#00f0ff]/80'}`}>
+                <span className={`text-[8.5px] font-black uppercase tracking-wider ${isActive ? 'text-cyan-600 dark:text-cyan-400' : 'text-[var(--text-muted)]'}`}>
                   {label}:
                 </span>
                 <select
                   value={val}
                   onChange={(e) => set(e.target.value)}
-                  className={`bg-transparent text-[11px] font-bold outline-none cursor-pointer min-w-[70px] max-w-[125px] truncate ${
-                    isActive ? 'text-white font-black' : 'text-slate-200'
-                  }`}
+                  className={`bg-transparent text-[11px] font-bold outline-none cursor-pointer min-w-[70px] max-w-[125px] truncate text-[var(--text-primary)]`}
                 >
                   {opts.map((opt) => (
-                    <option key={opt} value={opt} className="bg-[#0a0f24] text-slate-100 font-bold">
+                    <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)] font-bold">
                       {opt}
                     </option>
                   ))}
@@ -666,7 +664,7 @@ export default function MotivosBajasBI() {
                 {isActive && (
                   <button 
                     onClick={reset}
-                    className="w-3.5 h-3.5 rounded-full bg-[#ff2a6d]/20 text-[#ff2a6d] hover:bg-[#ff2a6d] hover:text-white flex items-center justify-center text-[9px] font-bold transition-all cursor-pointer"
+                    className="w-3.5 h-3.5 rounded-full bg-rose-500/20 text-rose-500 hover:bg-rose-500 hover:text-white flex items-center justify-center text-[9px] font-bold transition-all cursor-pointer"
                     title={`Restablecer ${label}`}
                   >
                     ×
@@ -685,7 +683,7 @@ export default function MotivosBajasBI() {
                 setSelectedPeriodo('TODAS');
                 setSelectedSemana('TODAS');
               }}
-              className="px-2.5 py-1 rounded-lg bg-[#ff2a6d]/20 border border-[#ff2a6d]/50 text-[#ff2a6d] hover:bg-[#ff2a6d] hover:text-white text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-[0_0_10px_rgba(255,42,109,0.3)]"
+              className="px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-600 dark:text-rose-400 hover:bg-rose-500 hover:text-white text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs"
               title="Limpiar todos los filtros"
             >
               Limpiar
@@ -694,7 +692,7 @@ export default function MotivosBajasBI() {
 
           <button
             onClick={() => loadData(true)}
-            className="h-7 w-7 rounded-lg bg-[#0e1635] border border-[#00f0ff]/40 hover:border-[#00f0ff] text-[#00f0ff] hover:shadow-[0_0_12px_#00f0ff] flex items-center justify-center transition-all cursor-pointer shrink-0"
+            className="h-7 w-7 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] hover:border-cyan-500 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/10 flex items-center justify-center transition-all cursor-pointer shrink-0"
             title="Refrescar datos"
           >
             <RefreshCw size={13} />
@@ -708,20 +706,20 @@ export default function MotivosBajasBI() {
         {/* ════════════════════ COLUMNA IZQUIERDA (4 cols): KPIS + MOTIVOS CRÍTICOS ════════════════════ */}
         <div className="xl:col-span-4 flex flex-col gap-2.5 h-full overflow-hidden">
           
-          {/* 1. 4 KPI CARDS (Compactas con sparklines neón) */}
+          {/* 1. 4 KPI CARDS */}
           <div className="grid grid-cols-2 gap-2 shrink-0">
             
             {/* KPI 1: BAJAS EN CAPACITACIÓN */}
-            <div className="bg-[#0a0f24]/95 border border-[#ff2a6d]/40 rounded-xl p-2 flex flex-col justify-between shadow-[0_0_15px_rgba(255,42,109,0.2)] hover:border-[#ff2a6d] transition-all">
+            <div className="bg-[var(--bg-card)] border border-rose-500/30 dark:border-rose-500/40 rounded-xl p-2.5 flex flex-col justify-between shadow-xs hover:border-rose-500 transition-all">
               <div className="flex items-center justify-between">
-                <span className="text-[8.5px] font-black tracking-wider text-[#ff2a6d] uppercase">
+                <span className="text-[8.5px] font-black tracking-wider text-rose-600 dark:text-rose-400 uppercase">
                   BAJAS EN CAPACITACIÓN
                 </span>
-                <UserX size={12} className="text-[#ff2a6d] drop-shadow-[0_0_6px_#ff2a6d]" />
+                <UserX size={12} className="text-rose-500" />
               </div>
 
               <div className="my-0">
-                <span className="font-mono text-xl sm:text-2xl font-black text-[#ff2a6d] drop-shadow-[0_0_14px_rgba(255,42,109,0.85)]">
+                <span className="font-mono text-xl sm:text-2xl font-black text-rose-600 dark:text-rose-400">
                   {metricasCapacitacionYOjt.totalBajasCapa.toLocaleString()}
                 </span>
               </div>
@@ -731,19 +729,19 @@ export default function MotivosBajasBI() {
                 <svg className="w-full h-4 overflow-visible" viewBox="0 0 100 24" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="pinkGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#ff2a6d" stopOpacity="0.45" />
-                      <stop offset="100%" stopColor="#ff2a6d" stopOpacity="0" />
+                      <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.35" />
+                      <stop offset="100%" stopColor="#f43f5e" stopOpacity="0" />
                     </linearGradient>
                   </defs>
                   <path d="M0,18 Q20,16 35,12 T70,8 T95,3 L95,24 L0,24 Z" fill="url(#pinkGrad)" />
-                  <path d="M0,18 Q20,16 35,12 T70,8 T95,3" fill="none" stroke="#ff2a6d" strokeWidth="2.2" strokeLinecap="round" />
-                  <circle cx="95" cy="3" r="2.5" fill="#ffffff" stroke="#ff2a6d" strokeWidth="2" className="drop-shadow-[0_0_6px_#ff2a6d]" />
+                  <path d="M0,18 Q20,16 35,12 T70,8 T95,3" fill="none" stroke="#f43f5e" strokeWidth="2.2" strokeLinecap="round" />
+                  <circle cx="95" cy="3" r="2.5" fill="#f43f5e" stroke="var(--bg-card)" strokeWidth="1.5" />
                 </svg>
               </div>
 
-              <div className="flex items-center justify-between text-[7px] font-bold text-slate-400">
+              <div className="flex items-center justify-between text-[7.5px] font-bold text-[var(--text-muted)]">
                 <span>de {metricasCapacitacionYOjt.totalIniciales} iniciales</span>
-                <span className="text-[#00f0ff] font-mono font-bold">Sin Día 1</span>
+                <span className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">Sin Día 1</span>
               </div>
             </div>
 
@@ -752,11 +750,10 @@ export default function MotivosBajasBI() {
               const val = metricasCapacitacionYOjt.tasaDesercionCapa;
               const isCrit = val > 25;
               const isMed = val >= 18 && val <= 25;
-              const kpiColor = isCrit ? '#ff2a6d' : isMed ? '#fbbf24' : '#00ff9d';
-              const kpiBorder = isCrit ? 'border-[#ff2a6d]/40 hover:border-[#ff2a6d]' : isMed ? 'border-[#fbbf24]/40 hover:border-[#fbbf24]' : 'border-[#00ff9d]/40 hover:border-[#00ff9d]';
-              const kpiShadow = isCrit ? 'shadow-[0_0_15px_rgba(255,42,109,0.2)]' : isMed ? 'shadow-[0_0_15px_rgba(251,191,36,0.2)]' : 'shadow-[0_0_15px_rgba(0,255,157,0.2)]';
+              const kpiColor = isCrit ? '#f43f5e' : isMed ? '#f59e0b' : '#10b981';
+              const kpiBorder = isCrit ? 'border-rose-500/40 hover:border-rose-500' : isMed ? 'border-amber-500/40 hover:border-amber-500' : 'border-emerald-500/40 hover:border-emerald-500';
               return (
-                <div className={`bg-[#0a0f24]/95 border rounded-xl p-2 flex flex-col justify-between transition-all ${kpiBorder} ${kpiShadow}`}>
+                <div className={`bg-[var(--bg-card)] border rounded-xl p-2.5 flex flex-col justify-between transition-all shadow-xs ${kpiBorder}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-[8.5px] font-black tracking-wider uppercase" style={{ color: kpiColor }} title="(Total bajas en capacitación / Total participantes iniciales) * 100">
                       DESERCIÓN CAPACITACIÓN
@@ -765,21 +762,21 @@ export default function MotivosBajasBI() {
                   </div>
 
                   <div className="my-0 flex items-center justify-between">
-                    <span className="font-mono text-xl sm:text-2xl font-black" style={{ color: kpiColor, filter: `drop-shadow(0 0 10px ${kpiColor}80)` }}>
+                    <span className="font-mono text-xl sm:text-2xl font-black" style={{ color: kpiColor }}>
                       {val}%
                     </span>
                     {isCrit ? (
-                      <AlertTriangle size={15} className="text-[#ff2a6d] animate-pulse" />
+                      <AlertTriangle size={15} className="text-rose-500 animate-pulse" />
                     ) : isMed ? (
-                      <AlertTriangle size={15} className="text-[#fbbf24]" />
+                      <AlertTriangle size={15} className="text-amber-500" />
                     ) : (
-                      <CheckCircle2 size={15} className="text-[#00ff9d]" />
+                      <CheckCircle2 size={15} className="text-emerald-500" />
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between text-[7px] font-bold text-slate-400 mt-0.5">
+                  <div className="flex items-center justify-between text-[7.5px] font-bold text-[var(--text-muted)] mt-0.5">
                     <span>{isCrit ? 'Crítico (>25%)' : isMed ? 'Alerta (18-25%)' : 'Óptimo (<18%)'}</span>
-                    <span className="px-1.5 py-0.2 rounded-full font-black text-[7.5px]" style={{ color: kpiColor, background: `${kpiColor}20`, border: `1px solid ${kpiColor}50` }}>
+                    <span className="px-1.5 py-0.2 rounded-full font-black text-[7.5px]" style={{ color: kpiColor, background: `${kpiColor}15`, border: `1px solid ${kpiColor}40` }}>
                       Meta: &le;{META_DESERCION}%
                     </span>
                   </div>
@@ -788,19 +785,19 @@ export default function MotivosBajasBI() {
             })()}
 
             {/* KPI 3: DESERCIÓN EN OJT / NESTING % */}
-            <div className="bg-[#0a0f24]/95 border border-[#00f0ff]/40 rounded-xl p-2 flex flex-col justify-between shadow-[0_0_15px_rgba(0,240,255,0.2)] hover:border-[#00f0ff] transition-all">
+            <div className="bg-[var(--bg-card)] border border-cyan-500/40 rounded-xl p-2.5 flex flex-col justify-between shadow-xs hover:border-cyan-500 transition-all">
               <div className="flex items-center justify-between">
-                <span className="text-[8.5px] font-black tracking-wider text-[#00f0ff] uppercase" title="(Bajas durante OJT / Participantes que iniciaron Nesting) * 100">
+                <span className="text-[8.5px] font-black tracking-wider text-cyan-600 dark:text-cyan-400 uppercase" title="(Bajas durante OJT / Participantes que iniciaron Nesting) * 100">
                   DESERCIÓN OJT / NESTING
                 </span>
-                <Activity size={12} className="text-[#00f0ff] drop-shadow-[0_0_6px_#00f0ff]" />
+                <Activity size={12} className="text-cyan-500" />
               </div>
 
               <div className="my-0 flex items-center justify-between">
-                <span className="font-mono text-xl sm:text-2xl font-black text-[#00f0ff] drop-shadow-[0_0_14px_rgba(0,240,255,0.85)]">
+                <span className="font-mono text-xl sm:text-2xl font-black text-cyan-600 dark:text-cyan-400">
                   {metricasCapacitacionYOjt.hasOjtData ? `${metricasCapacitacionYOjt.tasaDesercionOjt}%` : 'Sin datos'}
                 </span>
-                <span className="text-[7.5px] font-mono text-slate-300 font-black px-1 py-0.2 rounded bg-[#00f0ff]/10 border border-[#00f0ff]/30">
+                <span className="text-[7.5px] font-mono text-[var(--text-secondary)] font-black px-1 py-0.2 rounded bg-cyan-500/10 border border-cyan-500/30">
                   {metricasCapacitacionYOjt.hasOjtData ? `${metricasCapacitacionYOjt.totalBajasOjt}/${metricasCapacitacionYOjt.totalIniciaronOjt}` : '0/0'}
                 </span>
               </div>
@@ -810,33 +807,33 @@ export default function MotivosBajasBI() {
                 <svg className="w-full h-4 overflow-visible" viewBox="0 0 100 24" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="cyanGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.45" />
-                      <stop offset="100%" stopColor="#00f0ff" stopOpacity="0" />
+                      <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.35" />
+                      <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
                     </linearGradient>
                   </defs>
                   <path d="M0,16 Q25,20 45,10 T80,14 T95,4 L95,24 L0,24 Z" fill="url(#cyanGrad)" />
-                  <path d="M0,16 Q25,20 45,10 T80,14 T95,4" fill="none" stroke="#00f0ff" strokeWidth="2.2" strokeLinecap="round" />
-                  <circle cx="95" cy="4" r="2.5" fill="#ffffff" stroke="#00f0ff" strokeWidth="2" className="drop-shadow-[0_0_6px_#00f0ff]" />
+                  <path d="M0,16 Q25,20 45,10 T80,14 T95,4" fill="none" stroke="#06b6d4" strokeWidth="2.2" strokeLinecap="round" />
+                  <circle cx="95" cy="4" r="2.5" fill="#06b6d4" stroke="var(--bg-card)" strokeWidth="1.5" />
                 </svg>
               </div>
 
-              <div className="flex items-center justify-between text-[7px] font-bold text-slate-400">
+              <div className="flex items-center justify-between text-[7.5px] font-bold text-[var(--text-muted)]">
                 <span>Llamadas reales</span>
-                <span className="text-[#00f0ff] font-bold">Incubación</span>
+                <span className="text-cyan-600 dark:text-cyan-400 font-bold">Incubación</span>
               </div>
             </div>
 
             {/* KPI 4: OBJETIVO DE RETENCIÓN CUMPLIDO */}
-            <div className="bg-[#0a0f24]/95 border border-[#00ff9d]/40 rounded-xl p-2 flex flex-col justify-between shadow-[0_0_15px_rgba(0,255,157,0.2)] hover:border-[#00ff9d] transition-all">
+            <div className="bg-[var(--bg-card)] border border-emerald-500/40 rounded-xl p-2.5 flex flex-col justify-between shadow-xs hover:border-emerald-500 transition-all">
               <div className="flex items-center justify-between">
-                <span className="text-[8.5px] font-black tracking-wider text-[#00ff9d] uppercase">
+                <span className="text-[8.5px] font-black tracking-wider text-emerald-600 dark:text-emerald-400 uppercase">
                   RETENCIÓN CUMPLIDA
                 </span>
-                <Award size={12} className="text-[#00ff9d] drop-shadow-[0_0_6px_#00ff9d]" />
+                <Award size={12} className="text-emerald-500" />
               </div>
 
               <div className="my-0">
-                <span className="font-mono text-lg sm:text-xl font-black text-[#00ff9d] drop-shadow-[0_0_14px_rgba(0,255,157,0.85)]">
+                <span className="font-mono text-lg sm:text-xl font-black text-emerald-600 dark:text-emerald-400">
                   {retencionMeses.hasData ? `${retencionMeses.cumplidos}/${retencionMeses.total} GRUPOS` : 'Sin datos suficientes'}
                 </span>
               </div>
@@ -846,31 +843,31 @@ export default function MotivosBajasBI() {
                 <svg className="w-full h-4 overflow-visible" viewBox="0 0 100 24" preserveAspectRatio="none">
                   <defs>
                     <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#00ff9d" stopOpacity="0.45" />
-                      <stop offset="100%" stopColor="#00ff9d" stopOpacity="0" />
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
                     </linearGradient>
                   </defs>
                   <path d="M0,20 L12,14 L24,18 L36,8 L48,16 L60,6 L72,14 L84,4 L95,10 L95,24 L0,24 Z" fill="url(#greenGrad)" />
-                  <path d="M0,20 L12,14 L24,18 L36,8 L48,16 L60,6 L72,14 L84,4 L95,10" fill="none" stroke="#00ff9d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  <circle cx="84" cy="4" r="2.5" fill="#ffffff" stroke="#00ff9d" strokeWidth="2" className="drop-shadow-[0_0_6px_#00ff9d]" />
+                  <path d="M0,20 L12,14 L24,18 L36,8 L48,16 L60,6 L72,14 L84,4 L95,10" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="84" cy="4" r="2.5" fill="#10b981" stroke="var(--bg-card)" strokeWidth="1.5" />
                 </svg>
               </div>
 
-              <div className="flex items-center justify-between text-[7px] font-bold text-slate-400">
+              <div className="flex items-center justify-between text-[7.5px] font-bold text-[var(--text-muted)]">
                 <span>Meta mensual</span>
-                <span className="text-[#00ff9d] font-bold">≤{META_DESERCION}% deserción</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold">≤{META_DESERCION}% deserción</span>
               </div>
             </div>
 
           </div>
 
           {/* 2. MOTIVOS CRÍTICOS DE DESERCIÓN (flex-1: Toma todo el alto disponible sin compresión) */}
-          <div className="flex-1 min-h-0 bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-xl p-2.5 flex flex-col justify-between shadow-[0_4px_20px_rgba(0,0,0,0.35)] overflow-hidden">
-            <div className="flex items-center justify-between pb-1 border-b border-[#00f0ff]/15 shrink-0">
-              <span className="text-xs font-black uppercase tracking-wider text-[#ff2a6d] drop-shadow-[0_0_8px_rgba(255,42,109,0.5)]">
+          <div className="flex-1 min-h-0 bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-2.5 flex flex-col justify-between shadow-xs overflow-hidden">
+            <div className="flex items-center justify-between pb-1 border-b border-[var(--border-subtle)] shrink-0">
+              <span className="text-xs font-black uppercase tracking-wider text-rose-600 dark:text-rose-400">
                 MOTIVOS CRÍTICOS DE DESERCIÓN
               </span>
-              <span className="text-[9.5px] font-mono text-slate-400">
+              <span className="text-[9.5px] font-mono text-[var(--text-muted)]">
                 {totalBajasCount} bajas
               </span>
             </div>
@@ -878,25 +875,25 @@ export default function MotivosBajasBI() {
             <div className="flex-1 min-h-0 pt-1.5 flex flex-col gap-1.5 overflow-y-auto custom-scrollbar">
               
               {/* TOP 3 RED FLAGS HIGHLIGHT BOX */}
-              <div className="border border-[#ff2a6d]/60 bg-[#ff2a6d]/5 rounded-xl p-2 relative shadow-[0_0_15px_rgba(255,42,109,0.25)] shrink-0">
+              <div className="border border-rose-500/40 bg-rose-500/5 rounded-xl p-2 relative shrink-0">
                 <div className="space-y-1.5">
                   {top3Motivos.map((m, idx) => (
                     <div key={m.motivo} className="flex items-center justify-between gap-2 text-[9.5px]">
                       <div className="w-36 flex items-center gap-1.5 min-w-0">
-                        <span className="text-[7.5px] font-black uppercase tracking-wider text-[#ff2a6d] bg-[#ff2a6d]/20 px-1 py-0.2 rounded border border-[#ff2a6d]/50 shrink-0">
+                        <span className="text-[7.5px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 bg-rose-500/15 px-1 py-0.2 rounded border border-rose-500/30 shrink-0">
                           #{idx + 1}
                         </span>
-                        <span className="font-bold text-slate-200 truncate uppercase" title={m.motivo}>
+                        <span className="font-bold text-[var(--text-primary)] truncate uppercase" title={m.motivo}>
                           {m.motivo}
                         </span>
                       </div>
-                      <div className="flex-1 h-3 bg-[#121936] rounded-full overflow-hidden p-0.5 shadow-inner">
+                      <div className="flex-1 h-3 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-full overflow-hidden p-0.5">
                         <div 
-                          className="h-full rounded-full bg-gradient-to-r from-[#ff2a6d] to-[#ff5277] shadow-[0_0_10px_#ff2a6d]" 
+                          className="h-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 shadow-xs" 
                           style={{ width: `${m.pct}%` }}
                         />
                       </div>
-                      <span className="w-16 text-right font-mono font-black text-[#ff2a6d]">
+                      <span className="w-16 text-right font-mono font-black text-rose-600 dark:text-rose-400">
                         {m.pct}% ({m.value})
                       </span>
                     </div>
@@ -908,16 +905,16 @@ export default function MotivosBajasBI() {
               <div className="space-y-1 pt-0.5">
                 {otherMotivos.map((m) => (
                   <div key={m.motivo} className="flex items-center justify-between gap-2 text-[8.5px]">
-                    <span className="w-36 font-semibold text-slate-400 truncate uppercase" title={m.motivo}>
+                    <span className="w-36 font-semibold text-[var(--text-secondary)] truncate uppercase" title={m.motivo}>
                       {m.motivo}
                     </span>
-                    <div className="flex-1 h-2 bg-[#121936] rounded-full overflow-hidden p-0.5">
+                    <div className="flex-1 h-2 bg-[var(--bg-elevated)] rounded-full overflow-hidden p-0.5">
                       <div 
-                        className="h-full rounded-full bg-[#475569]" 
+                        className="h-full rounded-full bg-slate-400 dark:bg-slate-600" 
                         style={{ width: `${m.pct}%` }}
                       />
                     </div>
-                    <span className="w-16 text-right font-mono font-bold text-slate-400">
+                    <span className="w-16 text-right font-mono font-bold text-[var(--text-muted)]">
                       {m.pct}% ({m.value})
                     </span>
                   </div>
@@ -933,17 +930,17 @@ export default function MotivosBajasBI() {
         <div className="xl:col-span-8 flex flex-col gap-2.5 h-full overflow-hidden">
           
           {/* 3. DESERCIÓN POR FORMADOR (LIDERAZGO) - ALARGADO HACIA ABAJO (flex-[1.35]) */}
-          <div className="flex-[1.35] min-h-0 bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-xl p-3 flex flex-col justify-between shadow-[0_4px_20px_rgba(0,0,0,0.35)] overflow-hidden">
-            <div className="flex items-center justify-between pb-1.5 border-b border-[#00f0ff]/15 shrink-0">
+          <div className="flex-[1.35] min-h-0 bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-3 flex flex-col justify-between shadow-xs overflow-hidden">
+            <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border-subtle)] shrink-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-black uppercase tracking-wider text-[#00f0ff] drop-shadow-[0_0_8px_rgba(0,240,255,0.5)]">
+                <span className="text-xs sm:text-sm font-black uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
                   DESERCIÓN POR FORMADOR (LIDERAZGO)
                 </span>
-                <span className="text-[9px] font-bold text-slate-300 bg-[#121936] px-2 py-0.5 rounded border border-slate-700">
+                <span className="text-[9px] font-bold text-[var(--text-secondary)] bg-[var(--bg-elevated)] px-2 py-0.5 rounded border border-[var(--border-normal)]">
                   Meta: &lt;{META_DESERCION}%
                 </span>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">
+              <span className="text-[10px] font-mono text-[var(--text-muted)]">
                 {formadoresLiderazgo.length} formadores evaluados
               </span>
             </div>
@@ -951,10 +948,10 @@ export default function MotivosBajasBI() {
             <div className="flex-1 min-h-0 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={formadoresLiderazgo} margin={{ top: 22, right: 15, left: -25, bottom: 28 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#121936" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
                   <XAxis 
                     dataKey="shortName" 
-                    stroke="#cbd5e1" 
+                    stroke="var(--text-muted)" 
                     fontSize={9} 
                     fontWeight="bold"
                     tickLine={false} 
@@ -963,35 +960,35 @@ export default function MotivosBajasBI() {
                     textAnchor="end" 
                     height={32} 
                   />
-                  <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickLine={false} />
+                  <YAxis stroke="var(--text-muted)" fontSize={9} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickLine={false} />
                   <RechartsTooltip
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         const f = payload[0]?.payload;
-                        const statusColor = f?.isCritical ? '#ff2a6d' : f?.isMedium ? '#fbbf24' : '#00ff9d';
+                        const statusColor = f?.isCritical ? '#f43f5e' : f?.isMedium ? '#f59e0b' : '#10b981';
                         return (
-                          <div className="p-2.5 rounded-xl bg-[#0e1635] border border-[#00f0ff]/40 text-xs shadow-2xl space-y-1">
-                            <p className="font-black text-[#00f0ff] uppercase">{f?.formador}</p>
+                          <div className="p-2.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-normal)] text-[var(--text-primary)] text-xs shadow-2xl space-y-1">
+                            <p className="font-black text-cyan-600 dark:text-cyan-400 uppercase">{f?.formador}</p>
                             <p className="font-bold" style={{ color: statusColor }}>Deserción: {f?.pctDesercion}%</p>
-                            <p className="text-slate-300 font-medium">Bajas: {f?.totalBajas} de {f?.totalAsignados} alumnos</p>
+                            <p className="text-[var(--text-secondary)] font-medium">Bajas: {f?.totalBajas} de {f?.totalAsignados} alumnos</p>
                             {f?.isLowSample && (
-                              <p className="text-amber-400 font-bold text-[9.5px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                              <p className="text-amber-600 dark:text-amber-400 font-bold text-[9.5px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
                                 ⚠️ Muestra reducida (N = {f?.totalAsignados} &lt; 8). No estadísticamente representativo.
                               </p>
                             )}
-                            <p className="text-slate-400 text-[10px]">Meta corporativa: &le;{META_DESERCION}% (Escala: &lt;18% Óptimo, 18-25% Alerta, &gt;25% Crítico)</p>
+                            <p className="text-[var(--text-muted)] text-[10px]">Meta corporativa: &le;{META_DESERCION}% (Escala: &lt;18% Óptimo, 18-25% Alerta, &gt;25% Crítico)</p>
                           </div>
                         );
                       }
                       return null;
                     }}
                   />
-                  <ReferenceLine y={META_DESERCION} stroke="#00f0ff" strokeDasharray="3 3" strokeWidth={1.5} label={{ value: `Meta: ${META_DESERCION}%`, fill: '#00f0ff', fontSize: 9, position: 'insideTopLeft' }} />
+                  <ReferenceLine y={META_DESERCION} stroke="#06b6d4" strokeDasharray="3 3" strokeWidth={1.5} label={{ value: `Meta: ${META_DESERCION}%`, fill: '#06b6d4', fontSize: 9, position: 'insideTopLeft' }} />
                   <Bar dataKey="pctDesercion" radius={[4, 4, 0, 0]} maxBarSize={42}>
                     {formadoresLiderazgo.map((f, idx) => (
                       <Cell
                         key={`cell-${idx}`}
-                        fill={f.isCritical ? '#ff2a6d' : f.isMedium ? '#fbbf24' : '#00ff9d'}
+                        fill={f.isCritical ? '#f43f5e' : f.isMedium ? '#f59e0b' : '#10b981'}
                       />
                     ))}
                     <LabelList
@@ -1005,7 +1002,7 @@ export default function MotivosBajasBI() {
                             <text
                               x={Number(x) + Number(width) / 2}
                               y={Number(y) - 13}
-                              fill={f.isCritical ? '#ff2a6d' : f.isMedium ? '#fbbf24' : '#00ff9d'}
+                              fill={f.isCritical ? '#f43f5e' : f.isMedium ? '#f59e0b' : '#10b981'}
                               fontSize={9.5}
                               fontWeight="900"
                               textAnchor="middle"
@@ -1015,7 +1012,7 @@ export default function MotivosBajasBI() {
                             <text
                               x={Number(x) + Number(width) / 2}
                               y={Number(y) - 3}
-                              fill="#94a3b8"
+                              fill="var(--text-muted)"
                               fontSize={8}
                               fontWeight="bold"
                               textAnchor="middle"
@@ -1036,17 +1033,17 @@ export default function MotivosBajasBI() {
           <div className="flex-[0.75] min-h-[140px] grid grid-cols-1 md:grid-cols-2 gap-2.5 overflow-hidden">
             
             {/* 4. DESERCIÓN POR DÍA DE CAPACITACIÓN (EVOLUTIVO NO ACUMULADO) */}
-            <div className="bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-xl p-2 flex flex-col justify-between shadow-[0_4px_20px_rgba(0,0,0,0.35)] h-full overflow-hidden">
-              <div className="flex items-center justify-between pb-1 border-b border-[#00f0ff]/15 shrink-0">
-                <span className="text-[10.5px] font-black uppercase tracking-wider text-[#00f0ff]">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-2 flex flex-col justify-between shadow-xs h-full overflow-hidden">
+              <div className="flex items-center justify-between pb-1 border-b border-[var(--border-subtle)] shrink-0">
+                <span className="text-[10.5px] font-black uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
                   DESERCIÓN POR DÍA DE CAPACITACIÓN
                 </span>
                 <div className="flex items-center gap-2 text-[7.5px]">
-                  <span className="text-[#00f0ff] font-bold bg-[#121936] px-1.5 py-0.5 rounded border border-[#00f0ff]/30">
+                  <span className="text-cyan-600 dark:text-cyan-400 font-bold bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded border border-[var(--border-normal)]">
                     Sin Día 1
                   </span>
-                  <span className="text-[#ff2a6d] font-black flex items-center gap-1">
-                    <span className="w-2 h-0.5 bg-[#ff2a6d] inline-block"></span> Bajas / Día
+                  <span className="text-rose-600 dark:text-rose-400 font-black flex items-center gap-1">
+                    <span className="w-2 h-0.5 bg-rose-500 inline-block"></span> Bajas / Día
                   </span>
                 </div>
               </div>
@@ -1054,24 +1051,24 @@ export default function MotivosBajasBI() {
               <div className="flex-1 min-h-0 w-full pt-1">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={desercionPorDiaData} margin={{ top: 8, right: 10, left: -25, bottom: 2 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#121936" vertical={false} />
-                    <XAxis dataKey="dia" stroke="#94a3b8" fontSize={7.5} tickLine={false} interval={0} />
-                    <YAxis stroke="#64748b" fontSize={7.5} tickLine={false} allowDecimals={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
+                    <XAxis dataKey="dia" stroke="var(--text-muted)" fontSize={7.5} tickLine={false} interval={0} />
+                    <YAxis stroke="var(--text-muted)" fontSize={7.5} tickLine={false} allowDecimals={false} />
                     <RechartsTooltip
                       content={({ active, payload }) => {
                         if (active && payload && payload.length) {
                           const d = payload[0]?.payload;
                           return (
-                            <div className="p-2 rounded-lg bg-[#0e1635] border border-[#00f0ff]/30 text-xs shadow-xl space-y-0.5">
-                              <p className="font-bold text-[#00f0ff]">{d?.dia} de Capacitación</p>
-                              <p className="text-[#ff2a6d] font-black">
+                            <div className="p-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-[var(--text-primary)] text-xs shadow-xl space-y-0.5">
+                              <p className="font-bold text-cyan-600 dark:text-cyan-400">{d?.dia} de Capacitación</p>
+                              <p className="text-rose-600 dark:text-rose-400 font-black">
                                 Bajas del día: {d?.bajas} {d?.bajas === 1 ? 'persona' : 'personas'}
                               </p>
-                              <p className="text-slate-300 text-[10px]">
+                              <p className="text-[var(--text-secondary)] text-[10px]">
                                 Impacto: {d?.pct}% del grupo inicial
                               </p>
                               {d?.diaNum === 1 && (
-                                <p className="text-slate-400 text-[9px] italic">
+                                <p className="text-[var(--text-muted)] text-[9px] italic">
                                   (Bajas Día 1 no consideradas)
                                 </p>
                               )}
@@ -1084,10 +1081,10 @@ export default function MotivosBajasBI() {
                     <Line 
                       type="monotone" 
                       dataKey="bajas" 
-                      stroke="#ff2a6d" 
+                      stroke="#f43f5e" 
                       strokeWidth={2} 
-                      dot={{ fill: '#ff2a6d', r: 2.5 }} 
-                      activeDot={{ r: 4.5, stroke: '#ffffff', strokeWidth: 1.5 }} 
+                      dot={{ fill: '#f43f5e', r: 2.5 }} 
+                      activeDot={{ r: 4.5, stroke: 'var(--bg-surface)', strokeWidth: 1.5 }} 
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1095,12 +1092,12 @@ export default function MotivosBajasBI() {
             </div>
 
             {/* 5. MAPA DE CALOR: CAMPAÑA VS MOTIVO */}
-            <div className="bg-[#0a0f24]/90 border border-[#00f0ff]/20 rounded-xl p-2 flex flex-col justify-between shadow-[0_4px_20px_rgba(0,0,0,0.35)] h-full overflow-hidden">
-              <div className="flex items-center justify-between pb-1 border-b border-[#00f0ff]/15 shrink-0">
-                <span className="text-[10.5px] font-black uppercase tracking-wider text-[#00f0ff]">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-2 flex flex-col justify-between shadow-xs h-full overflow-hidden">
+              <div className="flex items-center justify-between pb-1 border-b border-[var(--border-subtle)] shrink-0">
+                <span className="text-[10.5px] font-black uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
                   MAPA DE CALOR: CAMPAÑAS
                 </span>
-                <span className="text-[8.5px] font-mono text-slate-400">
+                <span className="text-[8.5px] font-mono text-[var(--text-muted)]">
                   {heatmapCampanaData.rows.length} campañas
                 </span>
               </div>
@@ -1109,40 +1106,40 @@ export default function MotivosBajasBI() {
                 <table className="w-full text-left text-[7.5px] whitespace-nowrap border-separate border-spacing-0.5">
                   <thead>
                     <tr>
-                      <th className="px-1.5 py-0.5 bg-[#121936] text-[#00f0ff] font-bold rounded sticky top-0 z-10">CAMPAÑA</th>
+                      <th className="px-1.5 py-0.5 bg-[var(--bg-elevated)] text-cyan-600 dark:text-cyan-400 font-bold rounded sticky top-0 z-10">CAMPAÑA</th>
                       {heatmapCampanaData.topMotivos.slice(0, 4).map(m => (
-                        <th key={m} className="px-1 py-0.5 bg-[#121936] text-slate-400 text-center rounded truncate max-w-[40px] sticky top-0 z-10" title={m}>
+                        <th key={m} className="px-1 py-0.5 bg-[var(--bg-elevated)] text-[var(--text-muted)] text-center rounded truncate max-w-[40px] sticky top-0 z-10" title={m}>
                           {m.substring(0, 5)}..
                         </th>
                       ))}
-                      <th className="px-1 py-0.5 bg-[#121936] text-[#ff2a6d] text-center font-bold rounded sticky top-0 z-10">TOT</th>
+                      <th className="px-1 py-0.5 bg-[var(--bg-elevated)] text-rose-600 dark:text-rose-400 text-center font-bold rounded sticky top-0 z-10">TOT</th>
                     </tr>
                   </thead>
                   <tbody>
                     {heatmapCampanaData.rows.map(row => (
                       <tr key={row.campana}>
-                        <td className={`px-1.5 py-0.5 rounded font-bold truncate max-w-[85px] ${row.isOthers ? 'text-[#fbbf24] bg-[#fbbf24]/10' : 'text-slate-200 bg-[#0e1635]'}`} title={row.campana}>
+                        <td className={`px-1.5 py-0.5 rounded font-bold truncate max-w-[85px] ${row.isOthers ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10' : 'text-[var(--text-primary)] bg-[var(--bg-elevated)]'}`} title={row.campana}>
                           {row.campana}
                         </td>
                         {heatmapCampanaData.topMotivos.slice(0, 4).map(m => {
                           const count = row.motivos[m] || 0;
                           const pctRelativo = row.total > 0 ? (count / row.total) * 100 : 0;
-                          let cellColor = 'bg-[#121936]/40 text-slate-600';
+                          let cellColor = 'bg-[var(--bg-elevated)]/40 text-[var(--text-muted)]/50';
                           if (count > 0) {
                             if (pctRelativo >= 35) {
-                              cellColor = 'bg-[#ff2a6d] text-white shadow-[0_0_6px_#ff2a6d]';
+                              cellColor = 'bg-rose-500 text-white font-black shadow-xs';
                             } else if (pctRelativo >= 20) {
-                              cellColor = 'bg-[#ff2a6d]/60 text-white';
+                              cellColor = 'bg-rose-500/40 text-rose-800 dark:text-rose-200 font-bold';
                             } else if (pctRelativo >= 10) {
-                              cellColor = 'bg-[#fbbf24]/30 text-[#fbbf24]';
+                              cellColor = 'bg-amber-500/30 text-amber-800 dark:text-amber-300 font-bold';
                             } else {
-                              cellColor = 'bg-[#00f0ff]/15 text-[#00f0ff]';
+                              cellColor = 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 font-bold';
                             }
                           }
                           return (
                             <td key={m} className="p-0 text-center">
                               <div 
-                                className={`h-3 min-w-[20px] flex items-center justify-center rounded font-mono font-bold text-[7.5px] ${cellColor}`}
+                                className={`h-3 min-w-[20px] flex items-center justify-center rounded font-mono text-[7.5px] ${cellColor}`}
                                 title={`${count} bajas (${pctRelativo.toFixed(1)}% de las bajas de la campaña)`}
                               >
                                 {count > 0 ? count : '·'}
@@ -1150,7 +1147,7 @@ export default function MotivosBajasBI() {
                             </td>
                           );
                         })}
-                        <td className="px-1.5 py-0.5 text-center font-mono font-bold text-[#ff2a6d] bg-[#121936] rounded">
+                        <td className="px-1.5 py-0.5 text-center font-mono font-bold text-rose-600 dark:text-rose-400 bg-[var(--bg-elevated)] rounded">
                           {row.total}
                         </td>
                       </tr>
