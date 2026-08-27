@@ -458,7 +458,6 @@ export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
   }
   
   const { data: config } = await supabase.from('grupos_dia1').select('estado_calibracion, fecha_dia1').eq('grupo_codigo', grupo_codigo).eq('campana', campana).limit(1).maybeSingle();
-  let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
   let fecha_dia1_ref = config?.fecha_dia1 || null;
 
   if (!fecha_dia1_ref) {
@@ -467,12 +466,15 @@ export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
   const counts = await getCalibracionCounts(grupo_codigo, campana);
   const countForm = counts.form;
 
-  if (estado_calibracion === 'PENDIENTE' && fecha_dia1_ref) {
-    if (countRec !== countForm) {
-      estado_calibracion = 'DESCALIBRADO';
-    } else if (countRec > 0 || countForm > 0) {
-      estado_calibracion = 'CALIBRADO';
-    }
+  let estado_calibracion = 'PENDIENTE';
+  if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
+    estado_calibracion = 'PENDIENTE';
+  } else if (countRec !== countForm) {
+    estado_calibracion = 'DESCALIBRADO';
+  } else if (countRec > 0 && countForm > 0 && countRec === countForm) {
+    estado_calibracion = 'CALIBRADO';
+  } else {
+    estado_calibracion = 'PENDIENTE';
   }
 
   return {
@@ -2400,12 +2402,11 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
   
   let isCalibrated = true
+  let countRec = 0
+  let countForm = 0
   for (const doc of allDocs) {
     const formRecord = mapFormFull.get(doc)
-    const recSigla = mapRec.get(doc) // 'ASISTIO' or 'FALTA'
-    
-    // Si no está en nómina, no se cuenta
-    if (!recSigla) continue;
+    const recSigla = mapRec.get(doc) // 'ASISTIO' or 'FALTA' or undefined
 
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
     const isBajaDia1 = formRecord && (
@@ -2417,15 +2418,27 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     
     // Formador asistencia = A, FI, FJ, I-OP
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false
     
+    if (isRecAsistencia) countRec++
+    if (isFormAsistencia) countForm++
+
     if (isFormAsistencia !== isRecAsistencia) {
       isCalibrated = false
-      break
     }
   }
   
-  const newState = isCalibrated ? 'CALIBRADO' : 'DESCALIBRADO'
+  let newState = 'PENDIENTE'
+  if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
+    newState = 'PENDIENTE'
+  } else if (countRec !== countForm || !isCalibrated) {
+    newState = 'DESCALIBRADO'
+  } else if (isCalibrated && countRec === countForm && countRec > 0) {
+    newState = 'CALIBRADO'
+  } else {
+    newState = 'PENDIENTE'
+  }
+
   await supabase.from('grupos_dia1').upsert({
     grupo_codigo,
     campana,
@@ -2494,8 +2507,6 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const formRecord = mapFormFull.get(doc)
     const recSigla = mapRec.get(doc)
     
-    if (!recSigla) continue;
-
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
     const isBajaDia1 = formRecord && (
       String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
@@ -2505,7 +2516,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
     const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -3837,6 +3848,76 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
 }
 
 /**
+ * Adjudica postulantes desde el Pool/Bolsa al grupo destino de forma atómica y segura.
+ * Desactiva procesos previos en otros grupos (sin DELETE para preservar métricas históricas)
+ * e inserta el nuevo registro activo en nóminas.
+ */
+export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana, postulantes }) {
+  if (DB_MODE !== 'supabase') throw new Error("Requiere conexión a Supabase")
+  if (!targetGrupo) throw new Error("El código del grupo destino es obligatorio")
+  if (!postulantes || postulantes.length === 0) return { success: true, inserted: 0, updated: 0 }
+
+  const cleanGrupo = String(targetGrupo).trim().toUpperCase()
+  const cleanCampana = String(targetCampana || '').trim().toUpperCase()
+
+  // 1. Intentar ejecutar mediante el RPC transaccional de PostgreSQL
+  try {
+    const { data, error } = await supabase.rpc('adjudicar_postulantes_pool', {
+      p_target_grupo: cleanGrupo,
+      p_target_campana: cleanCampana,
+      p_postulantes: postulantes
+    })
+
+    if (!error && data) {
+      invalidateCache('all_consolidado')
+      invalidateCache('resumen_cap_')
+      invalidateCache('grupos_con_metas')
+      invalidateCache('all_asistencias_bajas')
+      invalidateCache('all_nominas')
+      invalidateCache('nominas_dataset')
+      return data
+    }
+  } catch (rpcErr) {
+    console.warn("RPC adjudicar_postulantes_pool no disponible, usando fallback cliente:", rpcErr)
+  }
+
+  // 2. Fallback resiliente en cliente si el RPC aún no fue desplegado en Supabase
+  const docs = postulantes.map(p => String(p.documento || '').trim()).filter(Boolean)
+  if (docs.length > 0) {
+    try {
+      await supabase
+        .from('nominas')
+        .update({ activo: false, updated_at: new Date().toISOString() })
+        .in('documento', docs)
+        .neq('grupo_codigo', cleanGrupo)
+    } catch (deactErr) {
+      console.warn("Aviso al desactivar procesos anteriores en fallback:", deactErr)
+    }
+  }
+
+  const { data: insData, error: insErr } = await supabase
+    .from('nominas')
+    .insert(postulantes)
+
+  if (insErr) throw insErr
+
+  invalidateCache('all_consolidado')
+  invalidateCache('resumen_cap_')
+  invalidateCache('grupos_con_metas')
+  invalidateCache('all_asistencias_bajas')
+  invalidateCache('all_nominas')
+  invalidateCache('nominas_dataset')
+
+  return {
+    success: true,
+    inserted: postulantes.length,
+    updated: 0,
+    grupo: cleanGrupo,
+    campana: cleanCampana
+  }
+}
+
+/**
  * Migra una lista de postulantes (DNI) de un grupo/subgrupo a otro nuevo dentro de la misma campaña.
  * Actualiza nóminas, asistencias e invalida cachés operativas.
  */
@@ -4112,14 +4193,18 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           isCalibrated = false
         }
       }
-    }
 
-    if (estado_calibracion === 'PENDIENTE' && fecha_dia1_ref) {
-      if (countRec !== countForm) {
+      if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
+        estado_calibracion = 'PENDIENTE';
+      } else if (countRec !== countForm || !isCalibrated) {
         estado_calibracion = 'DESCALIBRADO';
-      } else if (countRec > 0 || countForm > 0) {
+      } else if (countRec > 0 && countForm > 0 && isCalibrated && countRec === countForm) {
         estado_calibracion = 'CALIBRADO';
+      } else {
+        estado_calibracion = 'PENDIENTE';
       }
+    } else {
+      estado_calibracion = countRec > 0 ? 'DESCALIBRADO' : 'PENDIENTE';
     }
 
     results.push({
@@ -4522,14 +4607,18 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
           isCalibrated = false
         }
       }
-    }
 
-    if (estado_calibracion === 'PENDIENTE' && fecha_dia1_ref) {
-      if (countRec !== countForm) {
+      if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
+        estado_calibracion = 'PENDIENTE';
+      } else if (countRec !== countForm || !isCalibrated) {
         estado_calibracion = 'DESCALIBRADO';
-      } else if (countRec > 0 || countForm > 0) {
+      } else if (countRec > 0 && countForm > 0 && isCalibrated && countRec === countForm) {
         estado_calibracion = 'CALIBRADO';
+      } else {
+        estado_calibracion = 'PENDIENTE';
       }
+    } else {
+      estado_calibracion = countRec > 0 ? 'DESCALIBRADO' : 'PENDIENTE';
     }
 
     results.push({

@@ -629,13 +629,15 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                     {kpis.calibrados.toLocaleString()}
                   </span>
                   <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400/90">
-                    100% en regla
+                    {kpis.descalibrados === 0 && kpis.calibrados > 0 ? '100% en regla' : `${kpis.pctCalibracion}% en regla`}
                   </span>
                 </div>
               </div>
               <div className="text-[11px] font-medium text-[var(--text-muted)] mt-3 pt-2.5 border-t border-[var(--border-subtle)] flex items-center justify-between">
                 <span>Estado Recl. vs Form.:</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">Sin desvíos</span>
+                <span className={kpis.descalibrados > 0 ? 'font-bold text-rose-600 dark:text-rose-400' : 'font-bold text-emerald-600 dark:text-emerald-400'}>
+                  {kpis.descalibrados > 0 ? `${kpis.descalibrados} con desvío` : 'Sin desvíos'}
+                </span>
               </div>
             </div>
 
