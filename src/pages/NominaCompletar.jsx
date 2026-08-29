@@ -483,6 +483,7 @@ export default function NominaCompletar({
             currentRole={currentRole}
             reclutadores={reclutadores}
             refreshKey={refreshKey}
+            grupos={bulkGruposList}
             onSaveComplete={() => refreshGroupStat(bulkGrupo)}
           />
         </div>

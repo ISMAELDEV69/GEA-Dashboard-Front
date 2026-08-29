@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { checkCalibracionDia1, fetchReclutadoresFull, invalidateCache } from '../../lib/dataService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
-import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock, MessageSquare, Copy, Check, Sparkles, FileSpreadsheet, FileWarning, CheckCheck, Send } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
@@ -141,9 +141,23 @@ export default function NominaGridEditor({
 
   // ── Duplicate Detection & Delete Management ─────────────────────
   const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
+  const [onlyIncompleteDocsFilter, setOnlyIncompleteDocsFilter] = useState(false)
   const [rowToDelete, setRowToDelete] = useState(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFeedback, setDeleteFeedback] = useState(null)
+
+  // ── WhatsApp Report State ───────────────────────────────────────
+  const [showWhatsappModal, setShowWhatsappModal] = useState(false)
+  const [whatsappDia, setWhatsappDia] = useState('DIA_0') // 'DIA_0' | 'DIA_1'
+  const [whatsappRq, setWhatsappRq] = useState('')
+  const [whatsappAsistenciaFinal, setWhatsappAsistenciaFinal] = useState('')
+  const [whatsappMenciones, setWhatsappMenciones] = useState(() => {
+    return localStorage.getItem('gea_wa_menciones') || '@Tania @Cristina'
+  })
+  const [whatsappNota, setWhatsappNota] = useState(() => {
+    return localStorage.getItem('gea_wa_nota') || 'Se procede a llamar a las faltas y agregados'
+  })
+  const [copiedFeedback, setCopiedFeedback] = useState(false)
 
   // ── Candidate (DNI / Name) Edit Management with Audit ───────────
   const [candidateToEdit, setCandidateToEdit] = useState(null)
@@ -408,6 +422,17 @@ export default function NominaGridEditor({
         const doc = String(row.documento || '').trim()
         if (!doc || !duplicateDocsSet.has(doc)) return false
       }
+      if (onlyIncompleteDocsFilter) {
+        const isComplete = (row.status_final || '').toUpperCase() === 'COMPLETO' || (
+          (row.doc_cv || '').toUpperCase() === 'OK' &&
+          (row.doc_dni_adjunto || '').toUpperCase() === 'OK' &&
+          (row.doc_certijoven || '').toUpperCase() === 'OK' &&
+          (row.doc_recibo_servicios || '').toUpperCase() === 'OK' &&
+          (row.doc_ficha_datos || '').toUpperCase() === 'OK' &&
+          (row.doc_autorizacion || '').toUpperCase() === 'OK'
+        )
+        if (isComplete) return false
+      }
       for (const key in filters) {
         const selections = filters[key];
         if (!selections || selections.length === 0) continue;
@@ -621,6 +646,73 @@ export default function NominaGridEditor({
     }
   }
 
+  // Handle 1-click mark all 6 documents + status_final OK for a single candidate
+  const handleMarkAllDocsOk = async (rowId) => {
+    if (isReadOnly) return
+    const docsUpdate = {
+      doc_cv: 'OK',
+      doc_dni_adjunto: 'OK',
+      doc_certijoven: 'OK',
+      doc_recibo_servicios: 'OK',
+      doc_ficha_datos: 'OK',
+      doc_autorizacion: 'OK',
+      status_final: 'COMPLETO'
+    }
+
+    setData(prev => prev.map(r => r.id === rowId ? { ...r, ...docsUpdate } : r))
+    setSavingStatus('saving')
+
+    try {
+      const { error: err } = await supabase
+        .from('nominas')
+        .update(docsUpdate)
+        .eq('id', rowId)
+
+      if (err) throw err
+      setSavingStatus('saved')
+      setTimeout(() => setSavingStatus('idle'), 2000)
+      onSaveComplete?.()
+    } catch (err) {
+      console.error('Error al validar documentos:', err)
+      setSavingStatus('error')
+    }
+  }
+
+  // Handle bulk mark all 6 documents OK for all currently filtered candidates
+  const handleBulkMarkAllFilteredDocsOk = async () => {
+    if (isReadOnly || filteredData.length === 0) return
+    if (!window.confirm(`¿Deseas marcar todos los documentos como 'OK' para los ${filteredData.length} postulantes en la vista actual?`)) return
+
+    const docsUpdate = {
+      doc_cv: 'OK',
+      doc_dni_adjunto: 'OK',
+      doc_certijoven: 'OK',
+      doc_recibo_servicios: 'OK',
+      doc_ficha_datos: 'OK',
+      doc_autorizacion: 'OK',
+      status_final: 'COMPLETO'
+    }
+
+    const targetIds = filteredData.map(f => f.id)
+    setData(prev => prev.map(r => targetIds.includes(r.id) ? { ...r, ...docsUpdate } : r))
+    setSavingStatus('saving')
+
+    try {
+      const { error: bulkErr } = await supabase
+        .from('nominas')
+        .update(docsUpdate)
+        .in('id', targetIds)
+
+      if (bulkErr) throw bulkErr
+      setSavingStatus('saved')
+      setTimeout(() => setSavingStatus('idle'), 2000)
+      onSaveComplete?.()
+    } catch (err) {
+      console.error('Error masivo al validar documentos:', err)
+      setSavingStatus('error')
+    }
+  }
+
   // Fix docsOk: check ALL 7 doc columns per spec
   const kpis = useMemo(() => {
     const total = data.length
@@ -674,6 +766,48 @@ export default function NominaGridEditor({
     })
     return invalidList
   }, [data])
+
+  // ── WhatsApp Summary Generator Logic ────────────────────────────
+  const cleanGrupoCode = String(grupoCodigo || '').startsWith('PROY-') 
+    ? String(grupoCodigo) 
+    : String(grupoCodigo || '').replace(/_\d+$/, '')
+
+  const totalNomina = data.length
+  const asistieronVal = whatsappDia === 'DIA_0' ? kpis.asistieronD0 : kpis.asistieronD1
+  const faltasVal = Math.max(0, totalNomina - asistieronVal)
+  const diaLabel = whatsappDia === 'DIA_0' ? 'DÍA 0' : 'DIA 1'
+
+  const generatedWhatsappText = useMemo(() => {
+    const rqVal = whatsappRq ? whatsappRq.trim() : (data[0]?.rq || '—')
+    const asisArray = [
+      `📍 ${diaLabel}`,
+      `✅ CAMPAÑA: ${(campana || data[0]?.campana || 'CAMPAÑA').toUpperCase()}`,
+      `✅ ${cleanGrupoCode}`,
+      `✅ RQ: ${rqVal}`,
+      ``,
+      `• PERSONAS EN NOMINA: ${totalNomina} (${cleanGrupoCode})`,
+      `• PERSONAS EN ASISTENCIA INICIAL: ${asistieronVal}`,
+      `• ASISTENCIA FINAL : ${whatsappAsistenciaFinal ? whatsappAsistenciaFinal.trim() : '-'}`,
+      `• FALTAS: ${faltasVal}`,
+      ``,
+      whatsappMenciones ? whatsappMenciones.trim() : '',
+      whatsappNota ? whatsappNota.trim() : ''
+    ]
+    return asisArray.filter(l => l !== null && l !== undefined).join('\n')
+  }, [diaLabel, campana, cleanGrupoCode, whatsappRq, data, totalNomina, asistieronVal, whatsappAsistenciaFinal, faltasVal, whatsappMenciones, whatsappNota])
+
+  const handleCopyWhatsapp = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedWhatsappText)
+      localStorage.setItem('gea_wa_menciones', whatsappMenciones)
+      localStorage.setItem('gea_wa_nota', whatsappNota)
+      setCopiedFeedback(true)
+      setTimeout(() => setCopiedFeedback(false), 2500)
+    } catch (err) {
+      console.error('Clipboard copy error:', err)
+      alert('No se pudo copiar automáticamente al portapapeles.')
+    }
+  }
 
   if (!grupoCodigo) {
     return (
@@ -821,6 +955,48 @@ export default function NominaGridEditor({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Botón Resumen WhatsApp */}
+          <button
+            type="button"
+            onClick={() => setShowWhatsappModal(true)}
+            className="text-xs px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 font-black rounded-lg border border-emerald-500/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="Generar y copiar resumen de asistencia para WhatsApp con 1 clic"
+          >
+            <MessageSquare size={14} className="text-emerald-400" />
+            <span>📲 Resumen WhatsApp</span>
+          </button>
+
+          {/* Botón Validar Todos OK cuando está en pestaña Documentos */}
+          {!isReadOnly && columnTab === 'DOCUMENTOS' && (
+            <button
+              type="button"
+              onClick={handleBulkMarkAllFilteredDocsOk}
+              disabled={filteredData.length === 0 || savingStatus === 'saving'}
+              className="text-xs px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-black rounded-lg border border-amber-500/40 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-xs disabled:opacity-40"
+              title="Marcar todos los 6 documentos como OK para los postulantes filtrados"
+            >
+              <CheckCheck size={14} className="text-amber-400" />
+              <span>⚡ Validar Todos OK ({filteredData.length})</span>
+            </button>
+          )}
+
+          {/* Toggle Solo Incompletos */}
+          {!isCapacitacionRole && kpis.total > 0 && kpis.docsOk < kpis.total && (
+            <button
+              type="button"
+              onClick={() => setOnlyIncompleteDocsFilter(prev => !prev)}
+              className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                onlyIncompleteDocsFilter
+                  ? 'bg-amber-500 text-black border-amber-400 font-black'
+                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+              }`}
+              title="Filtrar solo postulantes con documentos pendientes"
+            >
+              <FileWarning size={13} />
+              <span>{onlyIncompleteDocsFilter ? 'Ver Todos' : `Solo Incompletos (${data.length - kpis.docsOk})`}</span>
+            </button>
+          )}
+
           {/* Botón de Actualizar sin recargar página */}
           <button
             type="button"
@@ -1064,12 +1240,22 @@ export default function NominaGridEditor({
                         )}
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">{row.documento}</span>
                           {isDuplicate && (
                             <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
                               Repetido
                             </span>
+                          )}
+                          {!isReadOnly && (columnTab === 'DOCUMENTOS' || columnTab === 'TODO') && (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAllDocsOk(row.id)}
+                              title={`Validar todos los 6 documentos de ${fullName} como OK`}
+                              className="text-[9.5px] px-1.5 py-0.5 rounded font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all flex items-center gap-0.5 cursor-pointer shadow-2xs"
+                            >
+                              <Sparkles size={10} /> Todo OK
+                            </button>
                           )}
                         </div>
                         {!isReadOnly && (
@@ -1326,6 +1512,185 @@ export default function NominaGridEditor({
                   'Eliminar'
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL GENERADOR DE RESUMEN WHATSAPP (1-CLIC) ── */}
+      {showWhatsappModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-[var(--bg-elevated)] border border-[var(--border-subtle)] w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] flex items-center justify-between bg-gradient-to-r from-emerald-500/10 via-transparent to-transparent">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
+                  <MessageSquare size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-1.5">
+                    Resumen Rápido para WhatsApp
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Genera el formato oficial de asistencia para grupos de WhatsApp
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWhatsappModal(false)}
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)] transition-all cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* Selector de Día */}
+              <div>
+                <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">
+                  Seleccionar Tipo de Reporte
+                </label>
+                <div className="grid grid-cols-2 gap-2 bg-[var(--bg-surface)] p-1 rounded-xl border border-[var(--border-subtle)]">
+                  <button
+                    type="button"
+                    onClick={() => setWhatsappDia('DIA_0')}
+                    className={`py-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      whatsappDia === 'DIA_0'
+                        ? 'bg-emerald-500 text-black shadow-xs'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    📍 DÍA 0 ({kpis.asistieronD0} Asistieron)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWhatsappDia('DIA_1')}
+                    className={`py-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      whatsappDia === 'DIA_1'
+                        ? 'bg-emerald-500 text-black shadow-xs'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    📍 DÍA 1 ({kpis.asistieronD1} Asistieron)
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid Parámetros Operativos */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Meta RQ (Requerimiento)
+                  </label>
+                  <input
+                    type="text"
+                    value={whatsappRq}
+                    onChange={e => setWhatsappRq(e.target.value)}
+                    placeholder="Ej. 8 ó 12"
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-emerald-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Asistencia Final (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={whatsappAsistenciaFinal}
+                    onChange={e => setWhatsappAsistenciaFinal(e.target.value)}
+                    placeholder="Ej. 8 ó -"
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-emerald-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Menciones y Nota */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Menciones / Supervisores (@)
+                  </label>
+                  <input
+                    type="text"
+                    value={whatsappMenciones}
+                    onChange={e => setWhatsappMenciones(e.target.value)}
+                    placeholder="Ej. @Tania @Cristina @Nicole"
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-emerald-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Nota o Mensaje Operativo Adicional
+                  </label>
+                  <input
+                    type="text"
+                    value={whatsappNota}
+                    onChange={e => setWhatsappNota(e.target.value)}
+                    placeholder="Ej. Se procede a llamar a las faltas y agregados"
+                    className="w-full px-3 py-2 text-xs font-semibold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-emerald-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Vista Previa Estilo Burbuja WhatsApp */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">
+                    Vista Previa (Formato WhatsApp)
+                  </label>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    Idéntico al Chat Oficial
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-[#0b141a] border border-[#202c33] font-mono text-xs text-[#e9edef] whitespace-pre-wrap leading-relaxed shadow-inner select-all relative">
+                  {generatedWhatsappText}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer con Botón Copiar */}
+            <div className="p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] flex items-center justify-between gap-3">
+              <div className="text-xs text-[var(--text-muted)] font-medium">
+                {copiedFeedback ? (
+                  <span className="text-emerald-400 font-bold flex items-center gap-1 animate-fadeIn">
+                    <Check size={14} /> ¡Copiado al portapapeles!
+                  </span>
+                ) : (
+                  <span>Listo para pegar en WhatsApp.</span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWhatsappModal(false)}
+                  className="px-3.5 py-2 text-xs font-bold rounded-xl text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-normal)] transition-all cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyWhatsapp}
+                  className={`px-4 py-2 text-xs font-black rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-md active:scale-95 ${
+                    copiedFeedback
+                      ? 'bg-emerald-400 text-black shadow-emerald-500/30'
+                      : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/20'
+                  }`}
+                >
+                  {copiedFeedback ? (
+                    <>
+                      <Check size={15} /> Copiado con Éxito
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={15} /> Copiar Resumen (1 Clic)
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
