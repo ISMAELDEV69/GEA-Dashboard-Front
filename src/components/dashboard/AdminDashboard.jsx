@@ -1,12 +1,14 @@
-import { useState, useMemo, memo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell, ScatterChart, Scatter, ZAxis } from 'recharts'
 import { 
   Users, GraduationCap, Award, BellRing, Target, AlertTriangle, ShieldAlert, TrendingUp,
   Filter, RotateCcw, Layers, Clock, Calendar, Briefcase, Building2, UserCheck, CheckCircle2
 } from 'lucide-react'
 import {
-  computeGlobalMetrics, buildConsolidadoFunnel, nameMatches, buildAttendanceIndexes, buildCampanaEtapaHeatmap, getExactGrupoMetasOps
+  computeGlobalMetrics, buildConsolidadoFunnel, nameMatches, buildAttendanceIndexes, buildCampanaEtapaHeatmap, buildResumenMensualCapacitacion, getExactGrupoMetasOps, computePeriodVariance
 } from '../../lib/dashboardAnalytics'
+import ResumenMensualCapacitacion from './ResumenMensualCapacitacion'
+import GraficoPersonalizadoBI from './GraficoPersonalizadoBI'
 import { DashboardHeader, KpiCard } from './StoryComponents'
 import PageLayout from '../ui/PageLayout'
 import PageHeader from '../ui/PageHeader'
@@ -107,7 +109,7 @@ function getHeatmapColor(pct) {
   return { bg, text, subText }
 }
 
-// ── Componente KPI de Alto Impacto Visual (Glassmorphism + Ambient Beam) ──
+// ── Componente KPI de Alto Impacto Visual Ultra-Compacto con Varianza ──
 function ModernKpiCard({ 
   label, 
   value, 
@@ -116,69 +118,80 @@ function ModernKpiCard({
   badge, 
   badgeColor, 
   accentColor = '#6366f1',
-  gradientFrom = 'rgba(99, 102, 241, 0.14)'
+  gradientFrom = 'rgba(99, 102, 241, 0.16)',
+  delta = null
 }) {
   return (
     <div 
-      className="group relative overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:border-[var(--border-normal)] hover:shadow-lg hover:shadow-black/25 flex flex-col justify-between"
+      className="group relative overflow-hidden rounded-xl border border-slate-800/90 bg-slate-900/80 px-2.5 py-1.5 transition-all duration-200 hover:border-slate-700 hover:shadow-lg hover:shadow-cyan-950/20 flex flex-col justify-between backdrop-blur-md"
       style={{
-        background: `radial-gradient(circle at top right, ${gradientFrom}, transparent 70%), var(--bg-surface)`
+        background: `radial-gradient(circle at top right, ${gradientFrom}, transparent 75%), rgba(15, 23, 42, 0.85)`
       }}
     >
-      {/* Barra superior de acento con brillo sutil */}
       <div 
-        className="absolute top-0 left-0 right-0 h-[2px] opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+        className="absolute top-0 left-0 right-0 h-[2px] opacity-75 transition-opacity duration-200 group-hover:opacity-100"
         style={{
           background: `linear-gradient(90deg, transparent, ${accentColor}, transparent)`
         }}
       />
 
-      <div className="flex items-start justify-between gap-2 mb-2">
-        {/* Contenedor del Icono con fondo tonal */}
-        <div 
-          className="flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-300 group-hover:scale-110 shadow-xs"
-          style={{
-            backgroundColor: `${accentColor}18`,
-            borderColor: `${accentColor}35`,
-            color: accentColor
-          }}
-        >
-          <Icon size={16} strokeWidth={2.3} />
-        </div>
-
-        {/* Badge de contexto */}
-        {badge && (
-          <span 
-            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold tracking-tight border uppercase shadow-2xs"
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div 
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all duration-200 shadow-xs"
             style={{
-              backgroundColor: `${badgeColor || accentColor}15`,
-              borderColor: `${badgeColor || accentColor}30`,
-              color: badgeColor || accentColor
+              backgroundColor: `${accentColor}18`,
+              borderColor: `${accentColor}40`,
+              color: accentColor
             }}
           >
-            {badge}
-          </span>
-        )}
-      </div>
-
-      {/* Métricas Principales */}
-      <div>
-        <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accentColor }} />
-          {label}
-        </p>
-        <div className="flex items-baseline gap-1.5 mt-0.5">
-          <span 
-            className="text-2xl font-black tracking-tight font-mono tabular-nums"
-            style={{ color: accentColor }}
-          >
-            {typeof value === 'number' ? value.toLocaleString('es-PE') : value}
+            <Icon size={11} strokeWidth={2.5} />
+          </div>
+          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 group-hover:text-slate-300 truncate transition-colors">
+            {label}
           </span>
         </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {delta && !delta.isNeutral && (
+            <span 
+              className={`inline-flex items-center gap-0.5 px-1 py-0 text-[7.5px] font-black border rounded-sm tracking-tight ${
+                delta.isImprovement
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                  : 'bg-rose-500/15 text-rose-300 border-rose-500/35'
+              }`}
+              title={`Variación vs período anterior: ${delta.formattedDeltaPct}`}
+            >
+              {delta.deltaPct > 0 ? '▲' : '▼'} {delta.formattedDeltaPct}
+            </span>
+          )}
+
+          {badge && (
+            <span 
+              className="inline-flex items-center rounded-full px-1.5 py-0 text-[7.5px] font-black tracking-tight border uppercase shadow-xs"
+              style={{
+                backgroundColor: `${badgeColor || accentColor}15`,
+                borderColor: `${badgeColor || accentColor}35`,
+                color: badgeColor || accentColor
+              }}
+            >
+              {badge}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-baseline justify-between gap-2 mt-0.5">
+        <span 
+          className="text-base sm:text-lg xl:text-xl font-black tracking-tight font-mono tabular-nums leading-none drop-shadow-xs"
+          style={{ color: accentColor }}
+        >
+          {typeof value === 'number' ? value.toLocaleString('es-PE') : value}
+        </span>
         {sub && (
-          <p className="mt-1 text-[10px] font-medium text-[var(--text-secondary)] truncate">
+          <span className="text-[8.5px] sm:text-[9px] font-medium text-slate-400 truncate text-right">
             {sub}
-          </p>
+          </span>
         )}
       </div>
     </div>
@@ -245,7 +258,7 @@ function AdminDashboard({
     return map
   }, [campanasMetas])
 
-  // ── Estados de Filtros en Cascada (Llave Maestra) ──
+  // ── Estados de Filtros (Llave Maestra Multidireccional) ──
   const [selectedSegmento, setSelectedSegmento] = useState('ALL')
   const [selectedCampana, setSelectedCampana] = useState('ALL')
   const [selectedGrupo, setSelectedGrupo] = useState('ALL')
@@ -253,218 +266,261 @@ function AdminDashboard({
   const [selectedSemana, setSelectedSemana] = useState('ALL')
   const [selectedReclutador, setSelectedReclutador] = useState('ALL')
 
-  // Paso 1: Lista de Segmentos disponibles
+  const selectedFilters = useMemo(() => ({
+    segmento: selectedSegmento,
+    campana: selectedCampana,
+    grupo: selectedGrupo,
+    periodo: selectedPeriodo,
+    semana: selectedSemana,
+    reclutador: selectedReclutador
+  }), [selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, selectedReclutador])
+
+  // ── Motor Cross-Filtering Multidireccional (Power BI / Excel) ──
+  const filterExcluding = (excludeKey = null) => {
+    const { segmento, campana, grupo, periodo, semana, reclutador } = selectedFilters
+
+    const filteredP = postulantes.filter(p => {
+      const g = groupMetaMap.get(p.grupo_codigo)
+
+      if (excludeKey !== 'segmento' && segmento !== 'ALL') {
+        const seg = p.segmento || g?.segmento
+        if (!matchStr(seg, segmento)) return false
+      }
+
+      if (excludeKey !== 'campana' && campana !== 'ALL') {
+        const camp = p.campana || g?.campana_nombre || g?.campana
+        if (!matchStr(camp, campana)) return false
+      }
+
+      if (excludeKey !== 'grupo' && grupo !== 'ALL') {
+        if (!matchGrp(p.grupo_codigo, grupo)) return false
+      }
+
+      if (excludeKey !== 'periodo' && periodo !== 'ALL') {
+        const per = p.periodo_reclutado || g?.periodo
+        if (!matchStr(per, periodo)) return false
+      }
+
+      if (excludeKey !== 'semana' && semana !== 'ALL') {
+        const sem = p.semana_trabajo || g?.semana_label || g?.semana
+        if (!matchStr(sem, semana)) return false
+      }
+
+      if (excludeKey !== 'reclutador' && reclutador !== 'ALL') {
+        if (!matchRec(p.reclutador, reclutador)) return false
+      }
+
+      return true
+    })
+
+    const filteredC = campanasMetas.filter(g => {
+      if (excludeKey !== 'segmento' && segmento !== 'ALL') {
+        if (!matchStr(g.segmento, segmento)) return false
+      }
+
+      if (excludeKey !== 'campana' && campana !== 'ALL') {
+        if (!matchStr(g.campana_nombre || g.campana, campana)) return false
+      }
+
+      if (excludeKey !== 'grupo' && grupo !== 'ALL') {
+        if (!matchGrp(g.grupo_codigo || g.codigo, grupo)) return false
+      }
+
+      if (excludeKey !== 'periodo' && periodo !== 'ALL') {
+        if (!matchStr(g.periodo, periodo)) return false
+      }
+
+      if (excludeKey !== 'semana' && semana !== 'ALL') {
+        if (!matchStr(g.semana_label || g.semana, semana)) return false
+      }
+
+      if (excludeKey !== 'reclutador' && reclutador !== 'ALL') {
+        if (!g.reclutadores || !Array.isArray(g.reclutadores) || g.reclutadores.length === 0) {
+          return true
+        }
+        const matchAny = g.reclutadores.some(r => {
+          const name = r.nombre_completo || r.alias || (typeof r === 'string' ? r : '')
+          return matchRec(name, reclutador)
+        })
+        if (!matchAny) return false
+      }
+
+      return true
+    })
+
+    return { filteredP, filteredC }
+  }
+
+  // 1. Datasets para Opciones de Segmentos (excluyendo segmento)
+  const { filteredP: pForSeg, filteredC: cForSeg } = useMemo(() => 
+    filterExcluding('segmento'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const segmentosList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantes) {
+    for (const p of pForSeg) {
       const g = groupMetaMap.get(p.grupo_codigo)
       const seg = p.segmento || g?.segmento
       if (seg && normStr(seg) !== '-' && normStr(seg) !== 'NULL') set.add(String(seg).trim())
     }
-    for (const g of campanasMetas) {
+    for (const g of cForSeg) {
       if (g.segmento && normStr(g.segmento) !== '-' && normStr(g.segmento) !== 'NULL') set.add(String(g.segmento).trim())
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [postulantes, campanasMetas, groupMetaMap])
+  }, [pForSeg, cForSeg, groupMetaMap])
 
-  // Filtrado por Segmento
-  const { postulantesBySeg, campanasBySeg } = useMemo(() => {
-    const pList = selectedSegmento === 'ALL'
-      ? postulantes
-      : postulantes.filter(p => {
-          const g = groupMetaMap.get(p.grupo_codigo)
-          return matchStr(p.segmento || g?.segmento, selectedSegmento)
-        })
-    const cList = selectedSegmento === 'ALL'
-      ? campanasMetas
-      : campanasMetas.filter(g => matchStr(g.segmento, selectedSegmento))
-    return { postulantesBySeg: pList, campanasBySeg: cList }
-  }, [postulantes, campanasMetas, selectedSegmento, groupMetaMap])
-
-  // Paso 2: Lista de Campañas disponibles (en cascada)
+  // 2. Datasets para Opciones de Campañas (excluyendo campana)
+  const { filteredP: pForCamp, filteredC: cForCamp } = useMemo(() => 
+    filterExcluding('campana'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const campanasList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantesBySeg) {
+    for (const p of pForCamp) {
       const g = groupMetaMap.get(p.grupo_codigo)
       const camp = p.campana || g?.campana_nombre || g?.campana
       if (camp && normStr(camp) !== '-' && normStr(camp) !== 'NULL') set.add(String(camp).trim())
     }
-    for (const g of campanasBySeg) {
+    for (const g of cForCamp) {
       const camp = g.campana_nombre || g.campana
       if (camp && normStr(camp) !== '-' && normStr(camp) !== 'NULL') set.add(String(camp).trim())
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [postulantesBySeg, campanasBySeg, groupMetaMap])
+  }, [pForCamp, cForCamp, groupMetaMap])
 
-  // Filtrado por Campaña
-  const { postulantesByCamp, campanasByCamp } = useMemo(() => {
-    const pList = selectedCampana === 'ALL'
-      ? postulantesBySeg
-      : postulantesBySeg.filter(p => {
-          const g = groupMetaMap.get(p.grupo_codigo)
-          return matchStr(p.campana || g?.campana_nombre || g?.campana, selectedCampana)
-        })
-    const cList = selectedCampana === 'ALL'
-      ? campanasBySeg
-      : campanasBySeg.filter(g => matchStr(g.campana_nombre || g.campana, selectedCampana))
-    return { postulantesByCamp: pList, campanasByCamp: cList }
-  }, [postulantesBySeg, campanasBySeg, selectedCampana, groupMetaMap])
-
-  // Paso 3: Lista de Grupos disponibles (en cascada)
+  // 3. Datasets para Opciones de Grupos GPE (excluyendo grupo)
+  const { filteredP: pForGrp, filteredC: cForGrp } = useMemo(() => 
+    filterExcluding('grupo'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const gruposList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantesByCamp) {
+    for (const p of pForGrp) {
       if (p.grupo_codigo && normStr(p.grupo_codigo) !== '-' && normStr(p.grupo_codigo) !== 'NULL') {
         set.add(String(p.grupo_codigo).trim())
       }
     }
-    for (const g of campanasByCamp) {
+    for (const g of cForGrp) {
       const code = g.grupo_codigo || g.codigo
       if (code && normStr(code) !== '-' && normStr(code) !== 'NULL') {
         set.add(String(code).trim())
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [postulantesByCamp, campanasByCamp])
+  }, [pForGrp, cForGrp])
 
-  // Filtrado por Grupo
-  const { postulantesByGrp, campanasByGrp } = useMemo(() => {
-    const pList = selectedGrupo === 'ALL'
-      ? postulantesByCamp
-      : postulantesByCamp.filter(p => matchGrp(p.grupo_codigo, selectedGrupo))
-    const cList = selectedGrupo === 'ALL'
-      ? campanasByCamp
-      : campanasByCamp.filter(g => matchGrp(g.grupo_codigo || g.codigo, selectedGrupo))
-    return { postulantesByGrp: pList, campanasByGrp: cList }
-  }, [postulantesByCamp, campanasByCamp, selectedGrupo])
-
-  // Paso 4: Lista de Periodos disponibles (en cascada)
+  // 4. Datasets para Opciones de Periodos (excluyendo periodo)
+  const { filteredP: pForPer, filteredC: cForPer } = useMemo(() => 
+    filterExcluding('periodo'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const periodosList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantesByGrp) {
+    for (const p of pForPer) {
       const g = groupMetaMap.get(p.grupo_codigo)
       const per = p.periodo_reclutado || g?.periodo
       if (per && normStr(per) !== '-' && normStr(per) !== 'NULL') set.add(String(per).trim())
     }
-    for (const g of campanasByGrp) {
+    for (const g of cForPer) {
       if (g.periodo && normStr(g.periodo) !== '-' && normStr(g.periodo) !== 'NULL') set.add(String(g.periodo).trim())
     }
     return Array.from(set).sort((a, b) => b.localeCompare(a))
-  }, [postulantesByGrp, campanasByGrp, groupMetaMap])
+  }, [pForPer, cForPer, groupMetaMap])
 
-  // Filtrado por Periodo
-  const { postulantesByPer, campanasByPer } = useMemo(() => {
-    const pList = selectedPeriodo === 'ALL'
-      ? postulantesByGrp
-      : postulantesByGrp.filter(p => {
-          const g = groupMetaMap.get(p.grupo_codigo)
-          return matchStr(p.periodo_reclutado || g?.periodo, selectedPeriodo)
-        })
-    const cList = selectedPeriodo === 'ALL'
-      ? campanasByGrp
-      : campanasByGrp.filter(g => matchStr(g.periodo, selectedPeriodo))
-    return { postulantesByPer: pList, campanasByPer: cList }
-  }, [postulantesByGrp, campanasByGrp, selectedPeriodo, groupMetaMap])
-
-  // Paso 5: Lista de Semanas disponibles (en cascada)
+  // 5. Datasets para Opciones de Semanas (excluyendo semana)
+  const { filteredP: pForSem, filteredC: cForSem } = useMemo(() => 
+    filterExcluding('semana'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const semanasList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantesByPer) {
+    for (const p of pForSem) {
       const g = groupMetaMap.get(p.grupo_codigo)
       const sem = p.semana_trabajo || g?.semana_label || g?.semana
       if (sem && normStr(sem) !== '-' && normStr(sem) !== 'NULL') set.add(String(sem).trim())
     }
-    for (const g of campanasByPer) {
+    for (const g of cForSem) {
       const sem = g.semana_label || g.semana
       if (sem && normStr(sem) !== '-' && normStr(sem) !== 'NULL') set.add(String(sem).trim())
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [postulantesByPer, campanasByPer, groupMetaMap])
+  }, [pForSem, cForSem, groupMetaMap])
 
-  // Filtrado por Semana
-  const { postulantesBySem, campanasBySem } = useMemo(() => {
-    const pList = selectedSemana === 'ALL'
-      ? postulantesByPer
-      : postulantesByPer.filter(p => {
-          const g = groupMetaMap.get(p.grupo_codigo)
-          return matchStr(p.semana_trabajo || g?.semana_label || g?.semana, selectedSemana)
-        })
-    const cList = selectedSemana === 'ALL'
-      ? campanasByPer
-      : campanasByPer.filter(g => matchStr(g.semana_label || g.semana, selectedSemana))
-    return { postulantesBySem: pList, campanasBySem: cList }
-  }, [postulantesByPer, campanasByPer, selectedSemana, groupMetaMap])
-
-  // Paso 6: Lista de Reclutadores disponibles (en cascada)
+  // 6. Datasets para Opciones de Reclutadores (excluyendo reclutador)
+  const { filteredP: pForRec, filteredC: cForRec } = useMemo(() => 
+    filterExcluding('reclutador'),
+    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+  )
   const reclutadoresList = useMemo(() => {
     const set = new Set()
-    for (const p of postulantesBySem) {
+    for (const p of pForRec) {
       if (p.reclutador && normStr(p.reclutador) !== '-' && normStr(p.reclutador) !== 'NULL') {
         set.add(String(p.reclutador).trim())
       }
     }
-    for (const g of campanasBySem) {
+    for (const g of cForRec) {
       if (g.reclutadores && Array.isArray(g.reclutadores)) {
         for (const r of g.reclutadores) {
-          if (r.nombre_completo) set.add(r.nombre_completo.trim())
-          else if (r.alias) set.add(r.alias.trim())
+          const name = r.nombre_completo || r.alias || (typeof r === 'string' ? r : '')
+          if (name && normStr(name) !== '-' && normStr(name) !== 'NULL') {
+            set.add(String(name).trim())
+          }
         }
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [postulantesBySem, campanasBySem])
+  }, [pForRec, cForRec])
 
-  // Datasets finales filtrados
-  const filteredPostulantes = useMemo(() => {
-    if (selectedReclutador === 'ALL') return postulantesBySem
-    return postulantesBySem.filter(p => matchRec(p.reclutador, selectedReclutador))
-  }, [postulantesBySem, selectedReclutador])
+  // ── Datasets Finales Filtrados (Aplica todos los 6 filtros activos) ──
+  const { filteredPostulantes, filteredCampanasMetasFinal } = useMemo(() => {
+    const { filteredP, filteredC } = filterExcluding(null)
+    return { filteredPostulantes: filteredP, filteredCampanasMetasFinal: filteredC }
+  }, [postulantes, campanasMetas, groupMetaMap, selectedFilters])
 
-  const filteredCampanasMetasFinal = useMemo(() => {
-    if (selectedReclutador === 'ALL') return campanasBySem
-    return campanasBySem.filter(g => {
-      if (!g.reclutadores || !Array.isArray(g.reclutadores) || g.reclutadores.length === 0) return true
-      return g.reclutadores.some(r => matchRec(r.nombre_completo || r.alias, selectedReclutador))
-    })
-  }, [campanasBySem, selectedReclutador])
+  // ── Auto-Reset de selecciones incompatibles con cross-filter ──
+  useEffect(() => {
+    if (selectedSegmento !== 'ALL' && !segmentosList.includes(selectedSegmento)) {
+      setSelectedSegmento('ALL')
+    }
+  }, [selectedSegmento, segmentosList])
 
-  // Handlers de Cascada
-  const handleSegmentoChange = (val) => {
-    setSelectedSegmento(val)
-    setSelectedCampana('ALL')
-    setSelectedGrupo('ALL')
-    setSelectedPeriodo('ALL')
-    setSelectedSemana('ALL')
-    setSelectedReclutador('ALL')
-  }
+  useEffect(() => {
+    if (selectedCampana !== 'ALL' && !campanasList.includes(selectedCampana)) {
+      setSelectedCampana('ALL')
+    }
+  }, [selectedCampana, campanasList])
 
-  const handleCampanaChange = (val) => {
-    setSelectedCampana(val)
-    setSelectedGrupo('ALL')
-    setSelectedPeriodo('ALL')
-    setSelectedSemana('ALL')
-    setSelectedReclutador('ALL')
-  }
+  useEffect(() => {
+    if (selectedGrupo !== 'ALL' && !gruposList.includes(selectedGrupo)) {
+      setSelectedGrupo('ALL')
+    }
+  }, [selectedGrupo, gruposList])
 
-  const handleGrupoChange = (val) => {
-    setSelectedGrupo(val)
-    setSelectedPeriodo('ALL')
-    setSelectedSemana('ALL')
-    setSelectedReclutador('ALL')
-  }
+  useEffect(() => {
+    if (selectedPeriodo !== 'ALL' && !periodosList.includes(selectedPeriodo)) {
+      setSelectedPeriodo('ALL')
+    }
+  }, [selectedPeriodo, periodosList])
 
-  const handlePeriodoChange = (val) => {
-    setSelectedPeriodo(val)
-    setSelectedSemana('ALL')
-  }
+  useEffect(() => {
+    if (selectedSemana !== 'ALL' && !semanasList.includes(selectedSemana)) {
+      setSelectedSemana('ALL')
+    }
+  }, [selectedSemana, semanasList])
 
-  const handleSemanaChange = (val) => {
-    setSelectedSemana(val)
-  }
+  useEffect(() => {
+    if (selectedReclutador !== 'ALL' && !reclutadoresList.includes(selectedReclutador)) {
+      setSelectedReclutador('ALL')
+    }
+  }, [selectedReclutador, reclutadoresList])
 
-  const handleReclutadorChange = (val) => {
-    setSelectedReclutador(val)
-  }
+  // ── Handlers Simplificados ──
+  const handleSegmentoChange = (val) => setSelectedSegmento(val)
+  const handleCampanaChange = (val) => setSelectedCampana(val)
+  const handleGrupoChange = (val) => setSelectedGrupo(val)
+  const handlePeriodoChange = (val) => setSelectedPeriodo(val)
+  const handleSemanaChange = (val) => setSelectedSemana(val)
+  const handleReclutadorChange = (val) => setSelectedReclutador(val)
 
   const resetAllFilters = () => {
     setSelectedSegmento('ALL')
@@ -491,23 +547,21 @@ function AdminDashboard({
     return buildAttendanceIndexes(asistencias, filteredPostulantes, filteredCampanasMetasFinal)
   }, [asistencias, filteredPostulantes, filteredCampanasMetasFinal])
 
-  const metrics = useMemo(() => computeGlobalMetrics(filteredPostulantes, asistencias, grupos, attendanceIndexes), [filteredPostulantes, asistencias, grupos, attendanceIndexes])
+  const metrics = useMemo(() => 
+    computeGlobalMetrics(filteredPostulantes, asistencias, filteredCampanasMetasFinal, attendanceIndexes), 
+    [filteredPostulantes, asistencias, filteredCampanasMetasFinal, attendanceIndexes]
+  )
   const funnel = useMemo(() => buildConsolidadoFunnel(filteredPostulantes, asistencias, attendanceIndexes), [filteredPostulantes, asistencias, attendanceIndexes])
 
-  // Heatmap de Retención Campaña × Etapa
-  const heatmapData = useMemo(() => {
-    return buildCampanaEtapaHeatmap(filteredPostulantes, asistencias, filteredCampanasMetasFinal, attendanceIndexes)
+  // Resumen Mensual de Capacitación en Relación a Grupo
+  const resumenMensualData = useMemo(() => {
+    return buildResumenMensualCapacitacion(filteredPostulantes, asistencias, filteredCampanasMetasFinal, attendanceIndexes)
   }, [filteredPostulantes, asistencias, filteredCampanasMetasFinal, attendanceIndexes])
 
   // Eficacia Cierre Día 1 (3er Corte / Cierre de Jornada vs. Meta Requerida)
   const dia1Summary = useMemo(() => {
-    let dia1 = 0
-    let rqDia1 = 0
-
-    for (const r of heatmapData.rows) {
-      dia1 += r.dia1Count || 0
-      rqDia1 += r.rqDia1 || 0
-    }
+    const dia1 = resumenMensualData.totalSummary?.dia1 || 0
+    const rqDia1 = resumenMensualData.totalSummary?.metaRqDia1 || 0
 
     const pct = rqDia1 > 0
       ? Math.round((dia1 / rqDia1) * 100)
@@ -518,160 +572,83 @@ function AdminDashboard({
       rqDia1Total: rqDia1,
       pct
     }
-  }, [heatmapData.rows, filteredPostulantes.length])
+  }, [resumenMensualData, filteredPostulantes.length])
 
-  // Filtro para Metas RQ (Por defecto: Vigentes = ACTIVO / EN CURSO)
-  const [filtroEstadoMetas, setFiltroEstadoMetas] = useState('VIGENTES')
-  // Modo de medición en Heatmap: 'META_RQ' (Eficacia contra Meta) vs 'RETENCION' (Merma del Embudo)
-  const [modoHeatmap, setModoHeatmap] = useState('META_RQ')
+  // ── Cálculo de Varianza Inter-Período (Último Período vs Período Anterior) ──
+  const kpiVariances = useMemo(() => {
+    const cols = resumenMensualData?.columns || []
+    if (cols.length < 2) return {}
 
-  const filteredGruposMetas = useMemo(() => {
-    const list = (filteredCampanasMetasFinal || []).filter(c => Number(c.rq_solicitado) > 0)
-    if (filtroEstadoMetas === 'TODOS') return list
-    if (filtroEstadoMetas === 'PLANIFICADO') {
-      return list.filter(isGrupoPlanificado)
+    const lastCol = cols[cols.length - 1]
+    const prevCol = cols[cols.length - 2]
+
+    // 1. Volumen Nómina
+    const volumenVar = computePeriodVariance(lastCol.nomina, prevCol.nomina, false)
+    
+    // 2. Ingresos OP
+    const ingresosVar = computePeriodVariance(lastCol.ingresos, prevCol.ingresos, false)
+
+    // 3. Conversión / Retención OP
+    const lastConv = lastCol.nomina > 0 ? (lastCol.ingresos / lastCol.nomina) * 100 : 0
+    const prevConv = prevCol.nomina > 0 ? (prevCol.ingresos / prevCol.nomina) * 100 : 0
+    const conversionVar = computePeriodVariance(lastConv, prevConv, false)
+
+    // 4. Cumplimiento / Eficacia Día 1
+    const eficaciaVar = computePeriodVariance(lastCol.indicators?.pctCumplimientoDia1, prevCol.indicators?.pctCumplimientoDia1, false)
+
+    return {
+      volumen: volumenVar,
+      ingresos: ingresosVar,
+      conversion: conversionVar,
+      eficacia: eficaciaVar,
     }
-    // 'VIGENTES' por defecto: ACTIVO o EN CURSO
-    return list.filter(isGrupoVigente)
-  }, [filteredCampanasMetasFinal, filtroEstadoMetas])
-
-  // Tendencia Operativa (Últimos 30 días)
-  const trendData = useMemo(() => {
-    const parseDateKey = (val) => {
-      if (!val) return null
-      const s = String(val).trim()
-      if (!s || s === '-' || s === '0') return null
-      if (s.includes('T')) return s.split('T')[0]
-      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10)
-      if (s.includes('/')) {
-        const parts = s.split('/')
-        if (parts.length === 3) {
-          const d = parts[0].padStart(2, '0')
-          const m = parts[1].padStart(2, '0')
-          let y = parts[2].split(' ')[0]
-          y = y.length === 2 ? `20${y}` : y
-          return `${y}-${m}-${d}`
-        }
-      }
-      const d = new Date(val)
-      if (!isNaN(d.getTime())) {
-        const y = d.getFullYear()
-        const m = String(d.getMonth() + 1).padStart(2, '0')
-        const day = String(d.getDate()).padStart(2, '0')
-        return `${y}-${m}-${day}`
-      }
-      return null
-    }
-
-    const dateMap = new Map()
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(today)
-      d.setDate(today.getDate() - i)
-      const yyyy = d.getFullYear()
-      const mm = String(d.getMonth() + 1).padStart(2, '0')
-      const dd = String(d.getDate()).padStart(2, '0')
-      const isoDate = `${yyyy}-${mm}-${dd}`
-      const label = `${dd}/${mm}`
-
-      dateMap.set(isoDate, {
-        fecha: isoDate,
-        label,
-        reclutados: 0,
-        conversionesOP: 0,
-      })
-    }
-
-    // 1. Contar postulantes reclutados por día
-    filteredPostulantes.forEach(p => {
-      const dateRaw = p.fecha_registro || p.created_at || p.marca_temporal
-      const dateKey = parseDateKey(dateRaw)
-      if (dateKey && dateMap.has(dateKey)) {
-        dateMap.get(dateKey).reclutados++
-      }
-    })
-
-    // 2. Contar conversiones a operación (I-OP) por día
-    const opCountedDocsPerDay = new Set()
-
-    asistencias.forEach(a => {
-      if (a.sigla_asistencia === 'I-OP') {
-        const doc = a.documento || a.numero_documento
-        const dateKey = parseDateKey(a.fecha_asistencia || a.fecha)
-        if (dateKey && dateMap.has(dateKey) && doc) {
-          const comboKey = `${dateKey}_${doc}`
-          if (!opCountedDocsPerDay.has(comboKey)) {
-            opCountedDocsPerDay.add(comboKey)
-            dateMap.get(dateKey).conversionesOP++
-          }
-        }
-      }
-    })
-
-    return Array.from(dateMap.values())
-  }, [filteredPostulantes, asistencias])
-
-  const trendTotals = useMemo(() => {
-    return trendData.reduce(
-      (acc, d) => ({
-        reclutados: acc.reclutados + d.reclutados,
-        conversionesOP: acc.conversionesOP + d.conversionesOP
-      }),
-      { reclutados: 0, conversionesOP: 0 }
-    )
-  }, [trendData])
+  }, [resumenMensualData])
 
   return (
-    <PageLayout className="p-3 md:p-4 space-y-3 overflow-y-auto">
-      {/* Title */}
-      <PageHeader
-        title="Control Operativo"
-        subtitle="Centro de Mando: Retención por Etapa, Tendencia Operativa, Metas RQ y Eficacia de Reclutamiento"
-        actions={<div className="bg-[var(--accent-soft)] text-[var(--accent)] text-xs font-bold px-3 py-1 rounded-full uppercase">Administración</div>}
-      />
-
-      {/* ── BARRA DE FILTROS EN CASCADA (LLAVE MAESTRA) ── */}
-      <div className="p-3 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl shadow-xs space-y-2.5">
-        <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
-          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-            <Filter size={14} className="text-indigo-400" />
-            <span>Filtros de Segmentación & Análisis (Llave Maestra)</span>
+    <PageLayout className="min-h-[calc(100vh-3.25rem)] flex flex-col gap-2 p-1.5 sm:p-2 md:p-2.5 overflow-y-auto w-full custom-scrollbar">
+      {/* ── BARRA DE FILTROS EN CASCADA COMPACTA (LLAVE MAESTRA) ── */}
+      <div className="px-2.5 py-1.5 bg-slate-900/90 border border-slate-800/90 rounded-xl shadow-xs space-y-1 backdrop-blur-md shrink-0">
+        <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
+          <div className="flex items-center gap-1.5 text-[10.5px] font-black uppercase tracking-wider text-slate-200">
+            <span className="flex h-4 w-4 items-center justify-center rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              <Filter size={10} />
+            </span>
+            <span>Filtros de Segmentación (Llave Maestra)</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {activeFiltersCount > 0 && (
               <button
                 type="button"
                 onClick={resetAllFilters}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/30 transition-all cursor-pointer shadow-2xs active:scale-95"
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition-all cursor-pointer shadow-xs"
                 title="Restablecer todos los filtros"
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={9} />
                 <span>Limpiar ({activeFiltersCount})</span>
               </button>
             )}
-            <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+            <span className="flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 shadow-xs">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               {filteredPostulantes.length.toLocaleString('es-PE')} postulantes
             </span>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
           {/* 1. Segmento / Cliente */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <Building2 size={11} className="text-blue-400" />
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <Building2 size={9} className="text-blue-400" />
               <span>Segmento</span>
             </label>
             <select
               value={selectedSegmento}
               onChange={(e) => handleSegmentoChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500 truncate"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-blue-500/50 focus:border-blue-400 focus:ring-1 focus:ring-blue-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-semibold outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL">Todos ({segmentosList.length})</option>
               {segmentosList.map((seg) => {
-                const count = postulantes.filter(p => {
+                const count = pForSeg.filter(p => {
                   const g = groupMetaMap.get(p.grupo_codigo)
                   return matchStr(p.segmento || g?.segmento, seg)
                 }).length
@@ -684,20 +661,20 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 2. Campaña (en cascada) */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <Layers size={11} className="text-purple-400" />
+          {/* 2. Campaña (Cross-Filtered) */}
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <Layers size={9} className="text-purple-400" />
               <span>Campaña</span>
             </label>
             <select
               value={selectedCampana}
               onChange={(e) => handleCampanaChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500 truncate"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-purple-500/50 focus:border-purple-400 focus:ring-1 focus:ring-purple-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-semibold outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL">Todas ({campanasList.length})</option>
               {campanasList.map((c) => {
-                const count = postulantesBySeg.filter(p => {
+                const count = pForCamp.filter(p => {
                   const g = groupMetaMap.get(p.grupo_codigo)
                   return matchStr(p.campana || g?.campana_nombre || g?.campana, c)
                 }).length
@@ -710,20 +687,20 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 3. Grupo (GPE en cascada) */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <Clock size={11} className="text-amber-400" />
-              <span>Grupo (GPE)</span>
+          {/* 3. Grupo (GPE Cross-Filtered) */}
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <Clock size={9} className="text-amber-400" />
+              <span>Grupo (OPE)</span>
             </label>
             <select
               value={selectedGrupo}
               onChange={(e) => handleGrupoChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500 truncate font-mono"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-amber-500/50 focus:border-amber-400 focus:ring-1 focus:ring-amber-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-mono outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL" className="font-sans">Todos ({gruposList.length})</option>
               {gruposList.map((g) => {
-                const count = postulantesByCamp.filter(p => matchGrp(p.grupo_codigo, g)).length
+                const count = pForGrp.filter(p => matchGrp(p.grupo_codigo, g)).length
                 return (
                   <option key={g} value={g}>
                     {g} ({count})
@@ -733,20 +710,20 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 4. Periodo (en cascada) */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <Calendar size={11} className="text-emerald-400" />
+          {/* 4. Periodo (Cross-Filtered) */}
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <Calendar size={9} className="text-emerald-400" />
               <span>Periodo</span>
             </label>
             <select
               value={selectedPeriodo}
               onChange={(e) => handlePeriodoChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500 font-mono"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-emerald-500/50 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-mono outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL" className="font-sans">Todos ({periodosList.length})</option>
               {periodosList.map((per) => {
-                const count = postulantesByGrp.filter(p => {
+                const count = pForPer.filter(p => {
                   const g = groupMetaMap.get(p.grupo_codigo)
                   return matchStr(p.periodo_reclutado || g?.periodo, per)
                 }).length
@@ -759,20 +736,20 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 5. Semana (en cascada) */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <Calendar size={11} className="text-cyan-400" />
+          {/* 5. Semana (Cross-Filtered) */}
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <Calendar size={9} className="text-cyan-400" />
               <span>Semana</span>
             </label>
             <select
               value={selectedSemana}
               onChange={(e) => handleSemanaChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-cyan-500/50 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-semibold outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL">Todas ({semanasList.length})</option>
               {semanasList.map((sem) => {
-                const count = postulantesByPer.filter(p => {
+                const count = pForSem.filter(p => {
                   const g = groupMetaMap.get(p.grupo_codigo)
                   return matchStr(p.semana_trabajo || g?.semana_label || g?.semana, sem)
                 }).length
@@ -785,20 +762,20 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 6. Reclutador (en cascada) */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-              <UserCheck size={11} className="text-rose-400" />
+          {/* 6. Reclutador (Cross-Filtered) */}
+          <div className="space-y-0.5">
+            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
+              <UserCheck size={9} className="text-rose-400" />
               <span>Reclutador</span>
             </label>
             <select
               value={selectedReclutador}
               onChange={(e) => handleReclutadorChange(e.target.value)}
-              className="w-full bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-500 truncate"
+              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-rose-500/50 focus:border-rose-400 focus:ring-1 focus:ring-rose-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-semibold outline-none cursor-pointer truncate transition-colors shadow-xs"
             >
               <option value="ALL">Todos ({reclutadoresList.length})</option>
               {reclutadoresList.map((rec) => {
-                const count = postulantesBySem.filter(p => matchRec(p.reclutador, rec)).length
+                const count = pForRec.filter(p => matchRec(p.reclutador, rec)).length
                 return (
                   <option key={rec} value={rec}>
                     {rec} ({count})
@@ -810,8 +787,8 @@ function AdminDashboard({
         </div>
       </div>
 
-      {/* KPI Widgets Grid (Rediseño Moderno de Alto Impacto) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPI Widgets Grid Compacto con Varianza */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-2 shrink-0">
         <ModernKpiCard 
           label="Volumen General" 
           value={metrics.total} 
@@ -819,17 +796,19 @@ function AdminDashboard({
           icon={Users} 
           badge="Nómina Total"
           accentColor="#818cf8"
-          gradientFrom="rgba(129, 140, 248, 0.14)"
+          gradientFrom="rgba(129, 140, 248, 0.16)"
+          delta={kpiVariances.volumen}
         />
         <ModernKpiCard 
           label="Grupos en Curso" 
-          value={(filteredCampanasMetasFinal || []).filter(isGrupoVigente).length || filteredGruposMetas.length} 
+          value={(filteredCampanasMetasFinal || []).filter(isGrupoVigente).length} 
           sub={`De ${metrics.totalGrupos} grupos registrados`}
           icon={GraduationCap} 
           badge="Vigentes"
           badgeColor="#10b981"
           accentColor="#10b981"
-          gradientFrom="rgba(16, 185, 129, 0.14)"
+          gradientFrom="rgba(16, 185, 129, 0.16)"
+          delta={kpiVariances.ingresos}
         />
         <ModernKpiCard 
           label="Conversión a OP" 
@@ -839,368 +818,38 @@ function AdminDashboard({
           badge="Efectividad"
           badgeColor="#f59e0b"
           accentColor="#f59e0b"
-          gradientFrom="rgba(245, 158, 11, 0.14)"
+          gradientFrom="rgba(245, 158, 11, 0.16)"
+          delta={kpiVariances.conversion}
         />
         <ModernKpiCard 
           label="Eficacia Cierre Día 1" 
           value={`${dia1Summary.pct}%`} 
-          sub={`${dia1Summary.dia1Count.toLocaleString('es-PE')} completaron jornada • ${dia1Summary.rqDia1Total.toLocaleString('es-PE')} meta`}
+          sub={`${dia1Summary.dia1Count.toLocaleString('es-PE')} completaron • ${dia1Summary.rqDia1Total.toLocaleString('es-PE')} meta`}
           icon={CheckCircle2} 
           badge="Corte Cierre"
           badgeColor="#06b6d4"
           accentColor="#06b6d4"
-          gradientFrom="rgba(6, 182, 212, 0.14)"
+          gradientFrom="rgba(6, 182, 212, 0.16)"
+          delta={kpiVariances.eficacia}
         />
       </div>
 
-      {/* SECCIÓN PRINCIPAL: Heatmap Vertical (Izquierda) + Gráficos Apilados (Derecha) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-        {/* COLUMNA IZQUIERDA: Heatmap de Retención Campaña × Etapa (Formato Vertical Expandido) */}
-        <Card className="lg:col-span-7 shadow-sm hover:shadow-md transition-all duration-300 flex flex-col">
-          <CardHeader className="flex flex-row items-start justify-between pb-1 pt-3 px-4">
-            <div>
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                <Target size={16} className="text-indigo-400" />
-                Heatmap de Campañas
-                <Badge variant="secondary" className="text-[9.5px] font-mono py-0 px-1.5">
-                  {heatmapData.rows.length} {heatmapData.rows.length === 1 ? 'Campaña' : 'Campañas'}
-                </Badge>
-              </CardTitle>
-              <CardDescription className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                {modoHeatmap === 'META_RQ'
-                  ? 'Medición de Eficacia: Asistencias reales vs. Requerimientos / Metas asignadas'
-                  : 'Evolución del Embudo: Supervivencia de postulantes citados a lo largo de cada etapa'}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Toggle de Modo: Meta RQ vs Postulantes */}
-              <div className="flex items-center bg-[var(--bg-elevated)] p-0.5 rounded-lg border border-[var(--border-subtle)]">
-                <button
-                  type="button"
-                  onClick={() => setModoHeatmap('META_RQ')}
-                  className={`px-2 py-0.5 rounded-md text-[9.5px] font-semibold transition-all cursor-pointer ${
-                    modoHeatmap === 'META_RQ'
-                      ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                  }`}
-                  title="Compara la asistencia real contra las Metas / Requerimientos solicitados por la operación"
-                >
-                  Vs. Meta RQ
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModoHeatmap('RETENCION')}
-                  className={`px-2 py-0.5 rounded-md text-[9.5px] font-semibold transition-all cursor-pointer ${
-                    modoHeatmap === 'RETENCION'
-                      ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
-                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                  }`}
-                  title="Compara la asistencia contra el volumen total de postulantes citados en nómina"
-                >
-                  Vs. Postulantes
-                </button>
-              </div>
+      {/* ZONA ANALÍTICA PRINCIPAL: Gráfica + Matriz Completa */}
+      <div className="flex flex-col gap-2 w-full">
+        {/* SECCIÓN 1: Gráfico Personalizado Multi-Indicador (Enterprise BI) */}
+        <GraficoPersonalizadoBI 
+          postulantes={filteredPostulantes}
+          asistencias={asistencias}
+          campanasMetas={filteredCampanasMetasFinal}
+          indexes={attendanceIndexes}
+          className="w-full h-[265px] xl:h-[295px]"
+        />
 
-              {heatmapData.totalMissingOjtCampanas > 0 && (
-                <div 
-                  className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-md text-[9.5px] text-amber-400 font-semibold shadow-xs" 
-                  title="Campañas con grupos que no tienen fecha de inicio OJT configurada en capacidad_rys"
-                >
-                  <AlertTriangle size={11} className="shrink-0 text-amber-400" />
-                  <span>{heatmapData.totalMissingOjtCampanas} sin OJT</span>
-                </div>
-              )}
-            </div>
-          </CardHeader>
-
-          <CardContent className="pt-1 px-3 pb-3 flex-1 flex flex-col min-h-0">
-            <div className="h-[495px] w-full overflow-y-auto custom-scrollbar border border-[var(--border-subtle)] rounded-xl bg-[var(--bg-surface)]">
-              <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 z-10 bg-[var(--bg-elevated)] border-b border-[var(--border-normal)] text-[9.5px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
-                  <tr>
-                    <th className="py-2 px-3">Campaña</th>
-                    <th className="py-2 px-2 text-center">Postulantes</th>
-                    <th className="py-2 px-1 text-center min-w-[90px]">
-                      {modoHeatmap === 'META_RQ' ? 'Día 1 (vs RQ)' : 'Conexión Día 1'}
-                    </th>
-                    <th className="py-2 px-1 text-center min-w-[90px]">Conexión OJT</th>
-                    <th className="py-2 px-1 text-center min-w-[90px]">
-                      {modoHeatmap === 'META_RQ' ? 'Pase OP (vs RQ)' : 'Conexión OP'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)] text-xs">
-                  {heatmapData.rows.length > 0 ? (
-                    heatmapData.rows.map(row => (
-                      <tr key={row.campana} className="hover:bg-[var(--bg-elevated)]/40 transition-colors">
-                        <td className="py-1 px-3 font-semibold text-xs text-[var(--text-primary)] truncate max-w-[180px]" title={row.campana}>
-                          {row.campana}
-                        </td>
-                        <td className="py-1 px-2 text-center font-mono font-bold text-xs text-[var(--text-primary)] tabular-nums">
-                          {row.totalReclutados}
-                        </td>
-                        <td className="p-0.5 text-center">
-                          <HeatmapCell 
-                            pct={modoHeatmap === 'META_RQ' ? row.pctDia1VsRq : row.pctDia1VsRec} 
-                            count={row.dia1Count} 
-                            total={modoHeatmap === 'META_RQ' ? row.rqDia1 : row.totalReclutados} 
-                          />
-                        </td>
-                        <td className="p-0.5 text-center">
-                          <HeatmapCell 
-                            pct={row.pctOjt} 
-                            count={row.ojtCount} 
-                            total={row.ojtEligibleCount}
-                            isMissing={row.hasMissingOjt}
-                            warningTooltip={`Fecha OJT no definida en ${row.missingOjtGruposCount} grupos de esta campaña`}
-                          />
-                        </td>
-                        <td className="p-0.5 text-center">
-                          <HeatmapCell 
-                            pct={modoHeatmap === 'META_RQ' ? row.pctOpVsRq : row.pctOpVsRec} 
-                            count={row.opCount} 
-                            total={modoHeatmap === 'META_RQ' ? row.rqOp : row.totalReclutados} 
-                          />
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-xs text-[var(--text-muted)]">
-                        No hay datos de campañas registrados.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* COLUMNA DERECHA: Gráficos Apilados Verticalmente (Tendencia Operativa + Metas RQ) */}
-        <div className="lg:col-span-5 flex flex-col gap-3">
-          {/* 1. Tendencia Operativa (Últimos 30 días) */}
-          <Card className="shadow-sm hover:shadow-md transition-all duration-300 flex flex-col">
-            <CardHeader className="flex flex-row items-start justify-between pb-1 pt-3 px-4">
-              <div>
-                <CardTitle className="text-sm font-bold flex items-center gap-2">
-                  <TrendingUp size={16} className="text-indigo-400" />
-                  Tendencia Operativa
-                  <Badge variant="secondary" className="text-[9.5px] font-mono py-0 px-1.5">
-                    30 días
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                  Reclutados vs Incorporaciones (I-OP)
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[#8b5cf6]" />
-                  <span className="text-[10px] text-[var(--text-muted)]">Rec:</span>
-                  <span className="text-[11px] font-bold text-[var(--text-primary)] tabular-nums">
-                    {trendTotals.reclutados}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-[#10b981]" />
-                  <span className="text-[10px] text-[var(--text-muted)]">OP:</span>
-                  <span className="text-[11px] font-bold text-[var(--text-primary)] tabular-nums">
-                    {trendTotals.conversionesOP}
-                  </span>
-                </div>
-              </div>
-            </CardHeader>
-
-            <CardContent className="pt-1 px-3 pb-3 flex-1 flex flex-col min-h-0">
-              <div className="h-[185px] w-full border border-[var(--border-subtle)] rounded-xl bg-[var(--bg-surface)] p-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-normal)" opacity={0.25} vertical={false} />
-                    <XAxis 
-                      dataKey="label" 
-                      tick={{ fontSize: 9, fill: 'var(--text-muted)' }} 
-                      interval="preserveStartEnd" 
-                      axisLine={{ stroke: 'var(--border-normal)' }}
-                      tickLine={false}
-                    />
-                    <YAxis 
-                      tick={{ fontSize: 9, fill: 'var(--text-muted)' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      allowDecimals={false}
-                    />
-                    <RechartsTooltip 
-                      content={<ChartTooltipContent 
-                        labelFormatter={(label, payload) => {
-                          const item = payload?.[0]?.payload
-                        return `Fecha: ${item?.fecha || label}`
-                        }}
-                        formatter={(val, name) => [`${val} registros`, name]}
-                      />} 
-                      cursor={{ stroke: 'var(--border-normal)', strokeWidth: 1, strokeDasharray: '3 3' }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="reclutados" 
-                      name="Reclutados" 
-                      stroke="#8b5cf6" 
-                      strokeWidth={2} 
-                      dot={false}
-                      activeDot={{ r: 4, strokeWidth: 0, fill: '#8b5cf6' }}
-                      animationDuration={600}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="conversionesOP" 
-                      name="Conversión OP" 
-                      stroke="#10b981" 
-                      strokeWidth={2} 
-                      dot={false}
-                      activeDot={{ r: 4, strokeWidth: 0, fill: '#10b981' }}
-                      animationDuration={600}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 2. Metas RQ */}
-          <Card className="shadow-sm hover:shadow-md transition-all duration-300 flex flex-col">
-            <CardHeader
-              className="pb-1 pt-3 px-4 flex flex-row items-center justify-between"
-              title={
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-bold">Metas RQ</span>
-                  <Badge variant="secondary" className="text-[9.5px] font-mono py-0 px-1.5">
-                    {filteredGruposMetas.length} {filteredGruposMetas.length === 1 ? 'grupo' : 'grupos'}
-                  </Badge>
-                </div>
-              }
-              actions={
-                <div className="flex items-center gap-1">
-                  {[
-                    { id: 'VIGENTES', label: 'Vigentes' },
-                    { id: 'PLANIFICADO', label: 'Planificados' },
-                    { id: 'TODOS', label: 'Todos' }
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setFiltroEstadoMetas(tab.id)}
-                      className={`px-2 py-0.5 rounded-md text-[9.5px] font-semibold transition-all cursor-pointer ${
-                        filtroEstadoMetas === tab.id
-                          ? 'bg-[var(--accent)] text-white shadow-xs font-bold'
-                          : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-muted)] border border-[var(--border-subtle)]'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              }
-            />
-            <CardContent className="pt-1 px-3 pb-3 flex-1 flex flex-col min-h-0">
-              <div className="h-[235px] w-full overflow-y-auto custom-scrollbar border border-[var(--border-subtle)] rounded-xl bg-[var(--bg-surface)] p-1.5">
-                {filteredGruposMetas.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {filteredGruposMetas.map(c => {
-                      const ops = getExactGrupoMetasOps(c, attendanceIndexes.exactGroupOpsMap, attendanceIndexes.groupOpsMap)
-                      const rq = Number(c.rq_solicitado) || 0
-                      const pct = rq > 0 ? Math.min(100, Math.round((ops / rq) * 100)) : 0
-
-                      let barColor = 'var(--accent)'
-                      if (pct >= 100) barColor = '#10b981'
-                      else if (pct < 50) barColor = '#ef4444'
-                      else barColor = '#f59e0b'
-
-                      const normEstado = normalizeEstado(c.estado)
-                      const estadoLabel = normEstado === 'EN_CURSO' ? 'EN CURSO' : normEstado || 'PLANIFICADO'
-                      const estadoClass =
-                        isGrupoVigente(c)
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : isGrupoPlanificado(c)
-                          ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
-                          : normEstado === 'CANCELADO'
-                          ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                          : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
-
-                      const reclutadores = c.reclutadores || []
-
-                      return (
-                        <div
-                          key={c.grupo_codigo}
-                          className="p-2 rounded-lg bg-[var(--bg-muted)] border border-[var(--border-subtle)] flex flex-col justify-between transition-all hover:border-[var(--border-normal)]"
-                        >
-                          <div className="flex justify-between items-start mb-1 gap-1">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-bold text-[var(--text-primary)] font-mono truncate">
-                                  {c.grupo_codigo}
-                                </span>
-                                <span className={`text-[7.5px] font-bold px-1 py-0 rounded-full border uppercase shrink-0 ${estadoClass}`}>
-                                  {estadoLabel}
-                                </span>
-                              </div>
-                              <p className="text-[8.5px] text-[var(--text-muted)] mt-0.5 truncate">
-                                {c.campana_nombre || 'Sin Campaña'}{c.segmento ? ` • ${c.segmento}` : ''}
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <span className="text-[10px] font-black text-[var(--text-primary)]">
-                                {ops} <span className="text-[var(--text-muted)] font-medium text-[8px]">/ {rq} OP</span>
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="mt-0.5">
-                            <div className="flex justify-between items-center text-[8.5px] font-bold mb-0.5">
-                              <span className="text-[var(--text-muted)] font-normal text-[8px]">
-                                {c.meta_dia_1 ? `Día 1: ${c.conectados_dia_1_grupal || 0}/${c.meta_dia_1}` : 'Meta OP'}
-                              </span>
-                              <span style={{ color: barColor }}>{pct}%</span>
-                            </div>
-                            <div className="h-1 rounded-full overflow-hidden bg-[var(--bg-elevated)]">
-                              <div
-                                className="h-full rounded-full transition-all duration-500 ease-out"
-                                style={{ width: `${pct}%`, background: barColor }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Desglose de Reclutadores Asignados */}
-                          {reclutadores.length > 0 && (
-                            <div className="mt-1.5 pt-1 border-t border-[var(--border-subtle)] flex flex-wrap gap-1">
-                              {reclutadores.slice(0, 3).map(r => (
-                                <span 
-                                  key={r.reclutador_id} 
-                                  className="text-[7.5px] px-1 py-0.2 rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-subtle)] truncate max-w-[135px]" 
-                                  title={`${r.nombre_completo}: ${r.conectados_dia_1_individual || 0}/${r.meta_dia_1_individual || 0} D1`}
-                                >
-                                  {r.alias || (r.nombre_completo ? r.nombre_completo.split(' ')[0] : 'Rec')}: <strong className="text-[var(--text-primary)]">{r.conectados_dia_1_individual || 0}</strong>/{r.meta_dia_1_individual || 0} D1
-                                </span>
-                              ))}
-                              {reclutadores.length > 3 && (
-                                <span className="text-[7.5px] px-1 py-0.2 rounded bg-[var(--bg-elevated)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
-                                  +{reclutadores.length - 3}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-[var(--text-muted)] text-xs p-4 text-center">
-                    <p>No se encontraron grupos con el filtro seleccionado ({filtroEstadoMetas.toLowerCase()}).</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {/* SECCIÓN 2: Resumen Mensual de Capacitación en Relación a Grupo (Tabla Completa Visible) */}
+        <ResumenMensualCapacitacion 
+          resumenData={resumenMensualData}
+          className="w-full"
+        />
       </div>
     </PageLayout>
   )

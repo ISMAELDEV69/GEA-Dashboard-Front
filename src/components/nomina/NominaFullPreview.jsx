@@ -19,7 +19,7 @@ function getHeaderColor(key) {
   return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
 }
 
-export default function NominaFullPreview({ grupoCodigo, campana, periodo, semana, segmento }) {
+export default function NominaFullPreview({ grupoCodigo, campana, periodo, semana, segmento, currentRole = null }) {
   const [data, setData] = useState([])
   const [columns, setColumns] = useState([])
   const [loading, setLoading] = useState(false)
@@ -127,7 +127,16 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
         }
 
         // Reorder to ensure evaluar and obs_evaluar are before doc_cv
-        const highlightCols = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
+        const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion', 'visor'].includes(currentRole)
+        const highlightCols = isCapacitacionRole 
+          ? [] 
+          : ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
+        
+        if (isCapacitacionRole) {
+          const docKeys = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
+          cols = cols.filter(c => !docKeys.includes(c))
+        }
+
         const newCols = ['evaluar', 'obs_evaluar', ...highlightCols, 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso']
         
         const toMove = newCols.filter(c => cols.includes(c))

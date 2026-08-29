@@ -2360,22 +2360,24 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     }
   }).filter(f => f.fecha_asistencia)
 
+  const bajasDia1Set = new Set()
+  for (const r of (rawFormAsis || [])) {
+    const doc = r.documento || r.postulante_documento
+    const m = String(r.motivo_baja || '').toUpperCase()
+    const e = String(r.estado || '').toUpperCase()
+    const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase()
+    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+      if (doc) bajasDia1Set.add(doc)
+    }
+  }
+
   const mapFormFull = new Map()
   for (const f of formAsis) {
     const doc = f.postulante_documento
-    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1');
     if (!mapFormFull.has(doc)) {
       mapFormFull.set(doc, f)
-    } else {
-      const existing = mapFormFull.get(doc)
-      const existingIsBaja = String(existing.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(existing.estado || '').toUpperCase().includes('BAJA DIA 1');
-      if (isBaja) {
-        mapFormFull.set(doc, f)
-      } else if (!existingIsBaja && f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      } else if (f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      }
+    } else if (f.fecha_asistencia === fecha_dia1_ref) {
+      mapFormFull.set(doc, f)
     }
   }
 
@@ -2409,16 +2411,12 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     const recSigla = mapRec.get(doc) // 'ASISTIO' or 'FALTA' or undefined
 
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && (
-      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
-      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
-    )
+    const isBajaDia1 = bajasDia1Set.has(doc)
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
     // Formador asistencia = A, FI, FJ, I-OP
-    const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
+    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2477,22 +2475,24 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     }
   }).filter(f => f.fecha_asistencia)
 
+  const bajasDia1Set = new Set()
+  for (const r of (rawFormAsis || [])) {
+    const doc = r.documento || r.postulante_documento
+    const m = String(r.motivo_baja || '').toUpperCase()
+    const e = String(r.estado || '').toUpperCase()
+    const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase()
+    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+      if (doc) bajasDia1Set.add(doc)
+    }
+  }
+
   const mapFormFull = new Map()
   for (const f of formAsis) {
     const doc = f.postulante_documento
-    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1');
     if (!mapFormFull.has(doc)) {
       mapFormFull.set(doc, f)
-    } else {
-      const existing = mapFormFull.get(doc)
-      const existingIsBaja = String(existing.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(existing.estado || '').toUpperCase().includes('BAJA DIA 1');
-      if (isBaja) {
-        mapFormFull.set(doc, f)
-      } else if (!existingIsBaja && f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      } else if (f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      }
+    } else if (f.fecha_asistencia === fecha_dia1_ref) {
+      mapFormFull.set(doc, f)
     }
   }
 
@@ -2508,15 +2508,11 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const recSigla = mapRec.get(doc)
     
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && (
-      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
-      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
-    )
+    const isBajaDia1 = bajasDia1Set.has(doc)
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
-    const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
+    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2556,31 +2552,24 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
 
   const mapNombres = new Map(recAsis.map(p => [p.documento, `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
 
-  const mapFormFull = new Map();
-  const isBajaGlobal = new Map();
-  
-  for (const f of formAsis) {
-    const doc = f.postulante_documento;
-    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-    isBajaGlobal.set(doc, isBaja);
-    
-    if (f.fecha_asistencia === fecha_dia1_ref) {
-      mapFormFull.set(doc, f);
+  const bajasDia1Set = new Set()
+  for (const r of (rawFormAsis || [])) {
+    const doc = r.documento || r.postulante_documento
+    const m = String(r.motivo_baja || '').toUpperCase()
+    const e = String(r.estado || '').toUpperCase()
+    const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase()
+    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+      if (doc) bajasDia1Set.add(doc)
     }
   }
-  
+
+  const mapFormFull = new Map()
   for (const f of formAsis) {
-    const doc = f.postulante_documento;
-    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-    if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
-      mapFormFull.set(doc, f);
-    }
-  }
-  
-  for (const [doc, f] of mapFormFull.entries()) {
-    const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-    if (isBaja && !isBajaGlobal.get(doc)) {
-      mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
+    const doc = f.postulante_documento
+    if (!mapFormFull.has(doc)) {
+      mapFormFull.set(doc, f)
+    } else if (f.fecha_asistencia === fecha_dia1_ref) {
+      mapFormFull.set(doc, f)
     }
   }
 
@@ -2594,17 +2583,13 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const recSigla = mapRec.get(doc)
     
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = formRecord && (
-      String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-      String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
-      (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
-    )
+    const isBajaDia1 = bajasDia1Set.has(doc)
     
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     const displayFormSigla = isBajaDia1 ? 'BAJA DÍA 1' : formSigla;
     
-    const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
+    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
     
     if (isFormAsistencia !== isRecAsistencia) {
       discrepancias.push({
@@ -4093,15 +4078,20 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
 
+    const bajasDia1Set = new Set();
+    for (const r of groupFormAsisRaw) {
+      const doc = r.documento || r.postulante_documento;
+      const m = String(r.motivo_baja || '').toUpperCase();
+      const e = String(r.estado || '').toUpperCase();
+      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase();
+      if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+        if (doc) bajasDia1Set.add(doc);
+      }
+    }
+
     for (const n of validNominas) {
       if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
-        const docKey = n.documento;
-        const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === docKey);
-        const isBajaDia1 = records.some(r => {
-          const m = String(r.motivo_baja || '').toUpperCase();
-          const e = String(r.estado || '').toUpperCase();
-          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
-        });
+        const isBajaDia1 = bajasDia1Set.has(n.documento);
         if (!isBajaDia1) {
           countRec++;
         }
@@ -4142,30 +4132,12 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         });
 
       const mapFormFull = new Map();
-      const isBajaGlobal = new Map();
-      
       for (const f of formAsis) {
         const doc = f.postulante_documento;
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        isBajaGlobal.set(doc, isBaja);
-        
-        if (f.fecha_asistencia === fecha_dia1_ref) {
+        if (!mapFormFull.has(doc)) {
           mapFormFull.set(doc, f);
-        }
-      }
-      
-      for (const f of formAsis) {
-        const doc = f.postulante_documento;
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
+        } else if (f.fecha_asistencia === fecha_dia1_ref) {
           mapFormFull.set(doc, f);
-        }
-      }
-      
-      for (const [doc, f] of mapFormFull.entries()) {
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        if (isBaja && !isBajaGlobal.get(doc)) {
-          mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
         }
       }
 
@@ -4177,15 +4149,11 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         const recSigla = mapRec.get(doc) 
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-        const isBajaDia1 = formRecord && (
-          String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-          String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
-          (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
-        )
+        const isBajaDia1 = bajasDia1Set.has(doc);
         const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
         
-        const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-        const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
+        const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP');
+        const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
         
         if (isFormAsistencia) countForm++;
 
@@ -4273,20 +4241,19 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
 
       const d0 = String(n.dia_0 || '').toUpperCase().trim();
-      if (d0 === 'ASISTIO' || tieneIngreso) {
+      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || tieneIngreso) {
         asistio_dia0++;
       }
       
       const d1 = String(n.dia_1 || '').toUpperCase().trim();
-      if (d1 === 'ASISTIO' || tieneIngreso) {
-        const isBajaDia1 = records.some(r => {
-          const m = String(r.motivo_baja || '').toUpperCase();
-          const e = String(r.estado || '').toUpperCase();
-          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
-        });
-        if (!isBajaDia1) {
-          asistio_dia1++;
-        }
+      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
+      const hasD1Attendance = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION';
+      });
+
+      if (d1 === 'ASISTIO' || d1.includes('FALTA') || d1.includes('BAJA') || hasD1Nomina || hasD1Attendance || tieneIngreso) {
+        asistio_dia1++;
       }
     }
 
@@ -4511,14 +4478,20 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
     totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
 
+    const bajasDia1Set = new Set();
+    for (const r of groupFormAsisRaw) {
+      const doc = r.documento || r.postulante_documento;
+      const m = String(r.motivo_baja || '').toUpperCase();
+      const e = String(r.estado || '').toUpperCase();
+      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase();
+      if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+        if (doc) bajasDia1Set.add(doc);
+      }
+    }
+
     for (const n of validNominas) {
       if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
-        const records = groupFormAsisRaw.filter(r => r.documento === n.documento);
-        const isBajaDia1 = records.some(r => {
-          const m = String(r.motivo_baja || '').toUpperCase();
-          const e = String(r.estado || '').toUpperCase();
-          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
-        });
+        const isBajaDia1 = bajasDia1Set.has(n.documento);
         if (!isBajaDia1) {
           countRec++;
         }
@@ -4556,30 +4529,12 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       });
 
       const mapFormFull = new Map();
-      const isBajaGlobal = new Map();
-      
       for (const f of formAsis) {
         const doc = f.postulante_documento;
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        isBajaGlobal.set(doc, isBaja);
-        
-        if (f.fecha_asistencia === fecha_dia1_ref) {
+        if (!mapFormFull.has(doc)) {
           mapFormFull.set(doc, f);
-        }
-      }
-      
-      for (const f of formAsis) {
-        const doc = f.postulante_documento;
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        if (!mapFormFull.has(doc) && isBajaGlobal.get(doc) && isBaja) {
+        } else if (f.fecha_asistencia === fecha_dia1_ref) {
           mapFormFull.set(doc, f);
-        }
-      }
-      
-      for (const [doc, f] of mapFormFull.entries()) {
-        const isBaja = String(f.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(f.estado || '').toUpperCase().includes('BAJA DIA 1') || String(f.sigla_asistencia).toUpperCase() === 'B';
-        if (isBaja && !isBajaGlobal.get(doc)) {
-          mapFormFull.set(doc, { ...f, motivo_baja: null, sigla_asistencia: 'FI' });
         }
       }
 
@@ -4591,15 +4546,11 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const recSigla = mapRec.get(doc) 
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-        const isBajaDia1 = formRecord && (
-          String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-          String(formRecord.estado || '').toUpperCase().includes('BAJA DIA 1') ||
-          (formSigla === 'B' && String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA'))
-        )
+        const isBajaDia1 = bajasDia1Set.has(doc);
         const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
         
-        const isFormAsistencia = effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP'
-        const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO' && !isBajaDia1) : false;
+        const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP');
+        const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
         
         if (isFormAsistencia) countForm++;
 
@@ -4727,22 +4678,30 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       : nominas;
       
     const total_nomina = validNominas.length;
-    const asistio_dia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
 
-    // Asistió Día 1 Efectivo: Marcado como ASISTIO en nómina y NO dado de baja inmediata como BAJA DÍA 1
+    let asistio_dia0 = 0;
     let asistio_dia1 = 0;
+
     for (const n of validNominas) {
-      if (String(n.dia_1).toUpperCase().trim() === 'ASISTIO') {
-        const records = groupFormAsisRaw.filter(r => r.documento === n.documento);
-        const isBajaDia1 = records.some(r => {
-          const m = String(r.motivo_baja || '').toUpperCase();
-          const e = String(r.estado || '').toUpperCase();
-          return m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1');
-        });
-        if (!isBajaDia1) {
-          asistio_dia1++;
-        }
+      const doc = n.documento;
+      const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
+      const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
+
+      const d0 = String(n.dia_0 || '').toUpperCase().trim();
+      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || tieneIngreso) {
+        asistio_dia0++;
+      }
+
+      const d1 = String(n.dia_1 || '').toUpperCase().trim();
+      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
+      const hasD1Attendance = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION';
+      });
+
+      if (d1 === 'ASISTIO' || d1.includes('FALTA') || d1.includes('BAJA') || hasD1Nomina || hasD1Attendance || tieneIngreso) {
+        asistio_dia1++;
       }
     }
 

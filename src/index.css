@@ -196,6 +196,10 @@
   --sidebar-bg:    #FFFFFF;
   --header-bg:     rgba(255,255,255,0.95);
   --table-head-bg: #F8FAFC;
+  --surface:       #FFFFFF;
+  --surface-elevated: #F1F5F9;
+  --surface-hover: #E2E8F0;
+  --surface-card:  #FFFFFF;
   --accent:        #0369A1;
   --accent-hover:  #0284C7;
   --accent-soft:   rgba(3,105,161,0.1);
@@ -265,6 +269,10 @@
   --sidebar-bg:    #020617;
   --header-bg:     rgba(2,6,23,0.95);
   --table-head-bg: #1E293B;
+  --surface:       #0F172A;
+  --surface-elevated: #1E293B;
+  --surface-hover: #334155;
+  --surface-card:  #0F172A;
   --accent:        #38BDF8;
   --accent-hover:  #0EA5E9;
   --accent-soft:   rgba(56,189,248,0.15);
@@ -316,6 +324,10 @@
   --sidebar-bg:    #111827;
   --header-bg:     rgba(17,24,39,0.95);
   --table-head-bg: #374151;
+  --surface:       #1F2937;
+  --surface-elevated: #374151;
+  --surface-hover: #4B5563;
+  --surface-card:  #1F2937;
   --accent:        #818CF8;
   --accent-hover:  #6366F1;
   --accent-soft:   rgba(129,140,248,0.15);

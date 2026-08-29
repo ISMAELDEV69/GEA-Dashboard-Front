@@ -3,7 +3,8 @@ import {
   fetchGoogleSpreadsheetWorkbookData,
   parseSheetMatrixCandidates,
   fetchGoogleFormsPool,
-  invalidateCache
+  invalidateCache,
+  adjudicarPostulantesPoolBulk
 } from '../../lib/dataService'
 import { NOMINA_DB_FIELDS } from '../../lib/nominaConsolidadoSchema'
 import { parseExcelDate } from '../../lib/capacidadRysSchema'
@@ -12,7 +13,7 @@ import {
   Loader2, Search, CheckSquare, Square, DownloadCloud,
   AlertTriangle, Trash2, RefreshCw, Users, UserCheck,
   CheckCircle2, X, ChevronDown, ChevronLeft, ChevronRight, Link2, FileSpreadsheet,
-  Layers, Sparkles, ExternalLink, ArrowRight, ShieldAlert, Check, Lock, Calendar, Tag, Activity,
+  Layers, Sparkles, ExternalLink, ArrowRight, ShieldAlert, Check, Calendar, Tag, Activity,
   AlertCircle
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -75,18 +76,21 @@ function getEstadoDisplay(assignment) {
   // 2. Si activo es boolean false
   if (assignment.activo === false) return 'CESADO'
 
+  // 3. Revisar sigla, estado o motivo de baja en consolidado de asistencia y nómina
+  const rawSigla = String(assignment.asis_sigla || assignment.sigla || '').trim().toUpperCase()
+  const rawAsisEstado = String(assignment.asis_estado || '').trim().toUpperCase()
+  const rawMotivo = String(assignment.asis_motivo_baja || assignment.motivo_baja || assignment.observacion_estado || '').trim().toUpperCase()
   const rawEstado = String(assignment.estado || '').trim().toUpperCase()
   const rawStatusFinal = String(assignment.status_final || '').trim().toUpperCase()
   const rawStatusD1 = String(assignment.status_dia_1 || '').trim().toUpperCase()
-  const rawMotivo = String(assignment.motivo_baja || assignment.observacion_estado || '').trim().toUpperCase()
-  const rawSigla = String(assignment.sigla || '').trim().toUpperCase()
 
   if (
+    rawSigla === 'B' || rawSigla === 'BD1' || rawSigla === 'D1' ||
+    rawAsisEstado.includes('BAJA') || rawAsisEstado.includes('CESAD') || rawAsisEstado.includes('DESERC') ||
     rawEstado === 'CESADO' || rawEstado === 'BAJA' ||
     rawStatusFinal.includes('BAJA') || rawStatusFinal.includes('CESAD') ||
     rawStatusD1.includes('BAJA') || rawStatusD1.includes('DESERC') ||
-    rawSigla === 'B' ||
-    rawMotivo.includes('BAJA') || rawMotivo.includes('CES')
+    (rawMotivo && rawMotivo !== 'NULL' && rawMotivo !== 'UNDEFINED' && rawMotivo !== 'ASISTIO' && rawMotivo !== 'ACTIVO' && rawMotivo !== 'SIN ESPECIFICAR')
   ) {
     return 'CESADO'
   }
@@ -415,9 +419,10 @@ export default function NominaFormPool({
       })
       const uniqueData = Array.from(deduplicatedMap.values())
 
-      // Consultar historial de asignaciones de todos los postulantes en la base de datos en paralelo
+      // Consultar historial de asignaciones y consolidado de asistencias de todos los postulantes
       const uniqueDnis = uniqueData.map(d => String(d.documento || '').trim()).filter(Boolean)
       const historyMap = new Map()
+      const asisHistoryMap = new Map()
 
       if (uniqueDnis.length > 0) {
         const chunkSize = 400
@@ -426,17 +431,29 @@ export default function NominaFormPool({
           chunks.push(uniqueDnis.slice(i, i + chunkSize))
         }
 
-        const responses = await Promise.all(
-          chunks.map(chunk =>
-            supabase
-              .from('nominas')
-              .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, dia_0, dia_1, created_at')
-              .in('documento', chunk)
-              .order('created_at', { ascending: false })
+        const [nomResponses, asisResponses] = await Promise.all([
+          Promise.all(
+            chunks.map(chunk =>
+              supabase
+                .from('nominas')
+                .select('id, documento, marca_temporal, campana, grupo_codigo, reclutador, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, status_final, status_dia_1, estado, activo, observacion_estado, dia_0, dia_1, created_at')
+                .in('documento', chunk)
+                .order('created_at', { ascending: false })
+            )
+          ),
+          Promise.all(
+            chunks.map(chunk =>
+              supabase
+                .from('consolidado_asistencias')
+                .select('id, documento, campana, codigo_grupo, fecha_registro_asistencia, sigla, estado, motivo_baja, created_at')
+                .in('documento', chunk)
+                .order('fecha_registro_asistencia', { ascending: false })
+                .order('created_at', { ascending: false })
+            )
           )
-        )
+        ])
 
-        responses.forEach(({ data: existing, error: fetchErr }) => {
+        nomResponses.forEach(({ data: existing, error: fetchErr }) => {
           if (!fetchErr && existing) {
             existing.forEach(r => {
               const doc = String(r.documento || '').trim()
@@ -448,14 +465,38 @@ export default function NominaFormPool({
             })
           }
         })
+
+        asisResponses.forEach(({ data: asisData, error: asisErr }) => {
+          if (!asisErr && asisData) {
+            asisData.forEach(r => {
+              const doc = String(r.documento || '').trim()
+              if (!doc) return
+              if (!asisHistoryMap.has(doc)) {
+                asisHistoryMap.set(doc, [])
+              }
+              asisHistoryMap.get(doc).push(r)
+            })
+          }
+        })
       }
 
-      // Tomar siempre el ÚLTIMO grupo en el que el postulante haya estado
+      // Tomar siempre el ÚLTIMO grupo y cruzarlo con su última marcación de asistencia
       const latestMap = new Map()
       historyMap.forEach((records, doc) => {
         const sorted = [...records].sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
         if (sorted.length > 0) {
-          latestMap.set(doc, sorted[0])
+          const latestNom = sorted[0]
+          // Buscar la asistencia más reciente para este DNI
+          const asisRecords = asisHistoryMap.get(doc) || []
+          const latestAsis = asisRecords.length > 0 ? asisRecords[0] : null
+
+          latestMap.set(doc, {
+            ...latestNom,
+            asis_sigla: latestAsis?.sigla || null,
+            asis_estado: latestAsis?.estado || null,
+            asis_motivo_baja: latestAsis?.motivo_baja || null,
+            asis_fecha: latestAsis?.fecha_registro_asistencia || null
+          })
         }
       })
 
@@ -746,27 +787,16 @@ export default function NominaFormPool({
         setImportProgress(p => Math.min(p + 20, 90))
       }, 150)
 
-      // 1. Insert new candidates / reingresos
+      // 1. Insertar nuevos postulantes / reingresos mediante adjudicación atómica y segura
       if (toInsert.length > 0) {
-        // Desactivar procesos previos de estos postulantes para respetar la unicidad de proceso activo
-        const docsToInsert = toInsert.map(r => String(r.documento).trim()).filter(Boolean)
-        if (docsToInsert.length > 0) {
-          try {
-            await supabase
-              .from('nominas')
-              .update({ activo: false })
-              .in('documento', docsToInsert)
-              .neq('grupo_codigo', cleanTargetGrupo)
-          } catch (deactErr) {
-            console.warn('Advertencia al desactivar procesos anteriores:', deactErr)
-          }
-        }
-
-        const { error: dbErr } = await supabase.from('nominas').insert(toInsert)
-        if (dbErr) throw dbErr
+        await adjudicarPostulantesPoolBulk({
+          targetGrupo: cleanTargetGrupo,
+          targetCampana: bulkCampana,
+          postulantes: toInsert
+        })
       }
 
-      // 2. Update existing candidates in current group (Sin pisar seguimiento operativo)
+      // 2. Actualizar postulantes existentes en este mismo grupo (Sin pisar seguimiento operativo)
       if (toUpdate.length > 0) {
         for (const item of toUpdate) {
           if (Object.keys(item.row).length > 0) {
@@ -809,45 +839,32 @@ export default function NominaFormPool({
     const targetGrupo = assignment.grupo_codigo || 'Sin Grupo'
     
     if (!window.confirm(
-      `¿Desadjudicar / habilitar a ${candidate.nombres || ''} ${candidate.apellido_paterno || ''} (DNI: ${cleanDoc}) para asignarlo al grupo actual?\n(Se liberará del grupo previo "${targetGrupo}")`
+      `¿Habilitar a ${candidate.nombres || ''} ${candidate.apellido_paterno || ''} (DNI: ${cleanDoc}) para asignarlo al grupo actual ${bulkGrupo || ''}?\n\nℹ️ El registro previo en "${targetGrupo}" se conservará intacto en el historial para proteger los indicadores del reclutador anterior.`
     )) return
 
     try {
       setLoading(true)
       setError(null)
 
-      // 1. Intentar eliminar o marcar inactivo el registro previo en Supabase
-      if (assignment.id) {
-        const { error: delErr } = await supabase.from('nominas').delete().eq('id', assignment.id)
-        if (delErr) {
-          await supabase.from('nominas').update({ activo: false, estado: 'CESADO' }).eq('id', assignment.id)
-        }
-      } else {
-        const { error: delErr } = await supabase.from('nominas').delete().eq('documento', cleanDoc).eq('grupo_codigo', targetGrupo)
-        if (delErr) {
-          await supabase.from('nominas').update({ activo: false, estado: 'CESADO' }).eq('documento', cleanDoc).eq('grupo_codigo', targetGrupo)
-        }
-      }
-
-      // 2. Actualizar estado local inmediatamente para desbloquear al postulante
+      // Actualizar estado local inmediatamente para desbloquear al postulante
       setLatestAssignedDocs(prev => {
         const next = new Map(prev)
         next.delete(cleanDoc)
         return next
       })
 
-      // 3. Auto-seleccionar al postulante para el grupo actual
+      // Auto-seleccionar al postulante para el grupo actual
       setSelectedDocs(prev => {
         const next = new Set(prev)
         next.add(`${cleanDoc}|${candidate.marca_temporal}`)
         return next
       })
 
-      setSuccess(`✅ Postulante ${cleanDoc} liberado y listo para asignarse a ${bulkGrupo || 'este grupo'}.`)
+      setSuccess(`✅ Postulante ${cleanDoc} habilitado para adjudicar a ${bulkGrupo || 'este grupo'}. Su historial previo se mantiene seguro.`)
       setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
-      console.error('Error al desadjudicar:', err)
-      setError(`Error al desadjudicar: ${err.message}`)
+      console.error('Error al habilitar postulante:', err)
+      setError(`Error al habilitar postulante: ${err.message}`)
     } finally {
       setLoading(false)
     }
@@ -1142,49 +1159,52 @@ export default function NominaFormPool({
                 const isReingreso = isAssigned && !isCurrentGroup && !isAssignmentActivo
 
                 const isSelected = selectedDocs.has(key)
-                const strikeClass = isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-secondary)]'
 
                 return (
                   <tr
                     key={`${cleanDoc}-${idx}`}
                     onClick={() => {
-                      if (!isOtherGroup) toggleSelect(cleanDoc, d.marca_temporal)
+                      if (isOtherGroup) {
+                        handleDesadjudicar(latestAssignment, d)
+                      } else {
+                        toggleSelect(cleanDoc, d.marca_temporal)
+                      }
                     }}
                     className={`transition-colors ${
-                      isOtherGroup
-                        ? 'bg-slate-100/50 dark:bg-slate-900/35 opacity-75'
-                        : isSelected
-                          ? 'bg-cyan-500/10 cursor-pointer'
-                          : isCurrentGroup
-                            ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
-                            : isReingreso
-                              ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
+                      isSelected
+                        ? 'bg-cyan-500/10 cursor-pointer'
+                        : isCurrentGroup
+                          ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
+                          : isReingreso
+                            ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
+                            : isOtherGroup
+                              ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
                               : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
                     }`}
                   >
                     {/* Selection Checkbox */}
                     <td className="p-3 text-center align-top sticky left-0 z-10 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)]" onClick={e => e.stopPropagation()}>
-                      {isOtherGroup ? (
-                        <div className="flex items-center justify-center pt-1" title={`Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic en "Quitar" para habilitarlo.`}>
-                          <span className="p-1 rounded-md bg-slate-200/80 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
-                            <Lock size={13} />
-                          </span>
-                        </div>
-                      ) : (
-                        <button onClick={() => toggleSelect(cleanDoc, d.marca_temporal)} className="cursor-pointer pt-1">
-                          {isSelected 
-                            ? <CheckSquare size={16} className="text-cyan-400" /> 
-                            : <Square size={16} className="text-[var(--text-muted)]" />
+                      <button 
+                        onClick={() => {
+                          if (isOtherGroup) {
+                            handleDesadjudicar(latestAssignment, d)
+                          } else {
+                            toggleSelect(cleanDoc, d.marca_temporal)
                           }
-                        </button>
-                      )}
+                        }} 
+                        className="cursor-pointer pt-1"
+                        title={isOtherGroup ? `Postulante asignado a ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` : 'Seleccionar'}
+                      >
+                        {isSelected 
+                          ? <CheckSquare size={16} className="text-cyan-400" /> 
+                          : <Square size={16} className="text-[var(--text-muted)] hover:text-cyan-400 transition-colors" />
+                        }
+                      </button>
                     </td>
 
                     {/* DNI / Assignment Details */}
                     <td className="p-3 align-top min-w-[210px]">
-                      <div className={`font-mono text-xs font-black tracking-wider ${
-                        isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'
-                      }`}>
+                      <div className="font-mono text-xs font-black tracking-wider text-[var(--text-primary)]">
                         {cleanDoc}
                       </div>
 
@@ -1225,7 +1245,7 @@ export default function NominaFormPool({
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDesadjudicar(latestAssignment, d); }}
                               className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-500 dark:text-rose-300 transition-colors text-[8.5px] font-bold shrink-0 cursor-pointer"
-                              title="Desadjudicar de este grupo"
+                              title="Habilitar para este grupo manteniendo el historial previo"
                             >
                               Quitar
                             </button>
@@ -1263,84 +1283,84 @@ export default function NominaFormPool({
 
                     {/* Nombre Completo */}
                     <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[220px]">
-                      <span className={isOtherGroup ? 'line-through text-slate-400 dark:text-slate-500' : 'text-[var(--text-primary)]'}>
+                      <span className="text-[var(--text-primary)]">
                         {[d.apellido_paterno, d.apellido_materno, d.nombres].filter(Boolean).join(' ') || d.documento}
                       </span>
                     </td>
 
                     {/* Celular */}
                     <td className="p-3 font-mono text-xs whitespace-nowrap align-top min-w-[110px]">
-                      <span className={strikeClass}>{d.celular || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.celular || '—'}</span>
                     </td>
 
                     {/* Celular Referencia */}
                     <td className="p-3 font-mono text-xs whitespace-nowrap align-top min-w-[110px]">
-                      <span className={strikeClass}>{d.celular_referencia || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.celular_referencia || '—'}</span>
                     </td>
 
                     {/* Correo Electrónico */}
                     <td className="p-3 text-xs whitespace-nowrap align-top lowercase min-w-[180px]">
-                      <span className={strikeClass}>{d.correo || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.correo || '—'}</span>
                     </td>
 
                     {/* Género */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[90px]">
-                      <span className={strikeClass}>{d.genero || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.genero || '—'}</span>
                     </td>
 
                     {/* F. Nacimiento */}
                     <td className="p-3 text-xs whitespace-nowrap font-mono align-top min-w-[110px]">
-                      <span className={strikeClass}>{d.fecha_nacimiento || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.fecha_nacimiento || '—'}</span>
                     </td>
 
                     {/* Edad */}
                     <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[65px]">
-                      <span className={strikeClass}>{d.edad ? `${d.edad} años` : '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.edad ? `${d.edad} años` : '—'}</span>
                     </td>
 
                     {/* Estado Civil */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[110px]">
-                      <span className={strikeClass}>{d.estado_civil || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.estado_civil || '—'}</span>
                     </td>
 
                     {/* Hijos */}
                     <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[65px]">
-                      <span className={strikeClass}>{d.n_hijos !== null && d.n_hijos !== undefined ? d.n_hijos : '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.n_hijos !== null && d.n_hijos !== undefined ? d.n_hijos : '—'}</span>
                     </td>
 
                     {/* Nivel Académico */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[140px]">
-                      <span className={strikeClass}>{d.nivel_academico || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.nivel_academico || '—'}</span>
                     </td>
 
                     {/* Carrera */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[150px]">
-                      <span className={strikeClass}>{d.carrera || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.carrera || '—'}</span>
                     </td>
 
                     {/* Nacionalidad */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[110px]">
-                      <span className={strikeClass}>{d.nacionalidad || 'PERUANA'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.nacionalidad || 'PERUANA'}</span>
                     </td>
 
                     {/* Lugar Residencia */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
-                      <span className={strikeClass}>{d.lugar_residencia || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.lugar_residencia || '—'}</span>
                     </td>
 
                     {/* Distrito */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
-                      <span className={strikeClass}>{d.distrito_residencia || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.distrito_residencia || '—'}</span>
                     </td>
 
                     {/* Dirección */}
                     <td className="p-3 text-xs max-w-[240px] truncate align-top min-w-[200px]" title={d.direccion_domicilio || ''}>
-                      <span className={strikeClass}>{d.direccion_domicilio || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.direccion_domicilio || '—'}</span>
                     </td>
 
                     {/* Exp. Call Center */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[120px]">
-                      <span className={strikeClass}>{d.exp_call_center || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">{d.exp_call_center || '—'}</span>
                     </td>
 
                     {/* Tipo Experiencia */}

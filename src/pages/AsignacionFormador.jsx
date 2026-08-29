@@ -71,7 +71,17 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
     if (selectedSegmento && !supervisorSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
-    return [...new Set(filtered.map(g => g.semana_label ? String(g.semana_label).trim() : null).filter(Boolean))].sort()
+    return [...new Set(filtered.map(g => {
+      const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : (g.semana ? `SEM ${g.semana}` : ''))
+      if (!s) return null
+      const clean = String(s).trim().toUpperCase()
+      const num = clean.replace(/\D/g, '')
+      return num ? `SEM ${num}` : clean
+    }).filter(Boolean))].sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, '')) || 0
+      const numB = parseInt(String(b).replace(/\D/g, '')) || 0
+      return numA - numB
+    })
   }, [grupos, selectedPeriodo, selectedSegmento, selectedCampana, supervisorSegmento])
 
   // Filtrar grupos para la tabla
@@ -89,7 +99,13 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
     if (selectedPeriodo) res = res.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
     if (selectedSegmento && !supervisorSegmento) res = res.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) res = res.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
-    if (selectedSemana) res = res.filter(g => String(g.semana_label).trim() === String(selectedSemana).trim())
+    if (selectedSemana) res = res.filter(g => {
+      const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : (g.semana ? `SEM ${g.semana}` : ''))
+      const numA = parseInt(String(s || '').replace(/\D/g, ''), 10)
+      const numB = parseInt(String(selectedSemana).replace(/\D/g, ''), 10)
+      if (!isNaN(numA) && !isNaN(numB)) return numA === numB
+      return String(s || '').trim().toUpperCase() === String(selectedSemana).trim().toUpperCase()
+    })
     
     if (filterStatus === 'ASSIGNED') {
       res = res.filter(g => g.formador_documento)

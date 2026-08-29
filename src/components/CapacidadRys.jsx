@@ -99,45 +99,53 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
     [grupos, postulantes]
   )
 
+  const getSemanaStr = useCallback((g) => {
+    if (!g) return ''
+    const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '')
+    if (!s) return ''
+    const num = String(s).replace(/\D/g, '')
+    return num ? `SEM ${num}` : String(s).trim().toUpperCase()
+  }, [])
+
   const periodos = useMemo(() => {
     const subset = gruposEnriquecidos.filter(g => 
       (filterEstado === 'TODOS' || g.estado === filterEstado) &&
       (filterCampana === 'TODOS' || g.campana === filterCampana) &&
       (filterSegmento === 'TODOS' || g.segmento === filterSegmento) &&
-      (filterSemana === 'TODOS' || g.semana_label === filterSemana)
+      (filterSemana === 'TODOS' || getSemanaStr(g) === filterSemana)
     )
     return ['TODOS', ...Array.from(new Set(subset.map(g => g.periodo).filter(Boolean))).sort().reverse()]
-  }, [gruposEnriquecidos, filterEstado, filterCampana, filterSegmento, filterSemana])
+  }, [gruposEnriquecidos, filterEstado, filterCampana, filterSegmento, filterSemana, getSemanaStr])
 
   const campanaOptions = useMemo(() => {
     const subset = gruposEnriquecidos.filter(g => 
       (filterPeriodo === 'TODOS' || g.periodo === filterPeriodo) &&
       (filterEstado === 'TODOS' || g.estado === filterEstado) &&
       (filterSegmento === 'TODOS' || g.segmento === filterSegmento) &&
-      (filterSemana === 'TODOS' || g.semana_label === filterSemana)
+      (filterSemana === 'TODOS' || getSemanaStr(g) === filterSemana)
     )
     return ['TODOS', ...Array.from(new Set(subset.map(g => g.campana).filter(Boolean))).sort()]
-  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterSegmento, filterSemana])
+  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterSegmento, filterSemana, getSemanaStr])
 
   const estados = useMemo(() => {
     const subset = gruposEnriquecidos.filter(g => 
       (filterPeriodo === 'TODOS' || g.periodo === filterPeriodo) &&
       (filterCampana === 'TODOS' || g.campana === filterCampana) &&
       (filterSegmento === 'TODOS' || g.segmento === filterSegmento) &&
-      (filterSemana === 'TODOS' || g.semana_label === filterSemana)
+      (filterSemana === 'TODOS' || getSemanaStr(g) === filterSemana)
     )
     return ['TODOS', ...Array.from(new Set(subset.map(g => g.estado).filter(Boolean))).sort()]
-  }, [gruposEnriquecidos, filterPeriodo, filterCampana, filterSegmento, filterSemana])
+  }, [gruposEnriquecidos, filterPeriodo, filterCampana, filterSegmento, filterSemana, getSemanaStr])
 
   const segmentos = useMemo(() => {
     const subset = gruposEnriquecidos.filter(g => 
       (filterPeriodo === 'TODOS' || g.periodo === filterPeriodo) &&
       (filterEstado === 'TODOS' || g.estado === filterEstado) &&
       (filterCampana === 'TODOS' || g.campana === filterCampana) &&
-      (filterSemana === 'TODOS' || g.semana_label === filterSemana)
+      (filterSemana === 'TODOS' || getSemanaStr(g) === filterSemana)
     )
     return ['TODOS', ...Array.from(new Set(subset.map(g => g.segmento).filter(Boolean))).sort()]
-  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterCampana, filterSemana])
+  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterCampana, filterSemana, getSemanaStr])
 
   const segmentoOptions = useMemo(() => {
     return Array.from(new Set(gruposEnriquecidos.map(c => c?.segmento).filter(Boolean))).sort()
@@ -150,8 +158,8 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
       (filterCampana === 'TODOS' || g.campana === filterCampana) &&
       (filterSegmento === 'TODOS' || g.segmento === filterSegmento)
     )
-    return ['TODOS', ...Array.from(new Set(subset.map(g => g.semana_label).filter(Boolean))).sort()]
-  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterCampana, filterSegmento])
+    return ['TODOS', ...Array.from(new Set(subset.map(g => getSemanaStr(g)).filter(Boolean))).sort()]
+  }, [gruposEnriquecidos, filterPeriodo, filterEstado, filterCampana, filterSegmento, getSemanaStr])
 
   useEffect(() => {
     if (filterPeriodo !== 'TODOS' && !periodos.includes(filterPeriodo)) setFilterPeriodo('TODOS')
@@ -168,7 +176,7 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
       const gEstado = String(g.estado || '').trim().toUpperCase()
       const gCampana = String(g.campana || '').trim().toUpperCase()
       const gSegmento = String(g.segmento || '').trim().toUpperCase()
-      const gSemana = String(g.semana_label || '').trim().toUpperCase()
+      const gSemana = getSemanaStr(g).toUpperCase()
 
       const fPeriodo = String(filterPeriodo || '').trim().toUpperCase()
       const fEstado = String(filterEstado || '').trim().toUpperCase()
@@ -183,11 +191,11 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
       if (fSemana !== 'TODOS' && gSemana !== fSemana) return false
 
       if (!q) return true
-      const hay = [g.codigo, g.campana, g.segmento, g.area_traslado, g.periodo, g.semana_label, g.modalidad, g.condicion, g.estado]
+      const hay = [g.codigo, g.campana, g.segmento, g.area_traslado, g.periodo, gSemana, g.modalidad, g.condicion, g.estado]
         .join(' ').toUpperCase()
       return hay.includes(q)
     })
-  }, [gruposEnriquecidos, search, filterPeriodo, filterEstado, filterSegmento, filterCampana])
+  }, [gruposEnriquecidos, search, filterPeriodo, filterEstado, filterSegmento, filterCampana, filterSemana, getSemanaStr])
 
   const kpis = useMemo(() => {
     const activos = filtered.filter(g => {

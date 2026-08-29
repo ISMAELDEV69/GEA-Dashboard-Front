@@ -19,7 +19,8 @@ import {
   LogOut,
   Sparkles,
   Zap,
-  Radio
+  Radio,
+  Award
 } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
@@ -30,6 +31,7 @@ export const NAV_SECTIONS = [
   {
     title: 'Analítica & Reportes',
     items: [
+      { id: 'scorecard_individual', label: 'KPIS - Asesor', icon: Award, description: 'Rendimiento 360°, rankings y metas', badge: 'Nuevo' },
       { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', badge: 'Live' },
       { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real' },
       { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias' },

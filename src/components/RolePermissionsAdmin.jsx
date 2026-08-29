@@ -4,15 +4,19 @@ import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
 import { fetchModulePermissions, updateModulePermissions, fetchAppRoles, createAppRole } from '../lib/dataService'
+import { ALL_NAV } from '../App'
 
 // Note: 'perfil' and other non-module views are not included here, only manageable ones
 export const AVAILABLE_MODULES = [
+  { id: 'scorecard_individual', label: 'KPIS - Asesor' },
+  { id: 'resumen_capacitacion', label: 'Resumen Capacitación' },
+  { id: 'cartera_reclutador', label: 'Mi Cartera' },
+  { id: 'consolidado', label: 'Control de Asistencia' },
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'metas', label: 'Metas y Equipos' },
   { id: 'capacidad', label: 'Capacidad RYS' },
   { id: 'legacy_dashboards', label: 'Dashboards' },
   { id: 'attendancebi', label: 'Dispersión BI' },
-  { id: 'consolidado', label: 'Control de Asistencia' },
   { id: 'motivos_bajas_bi', label: 'Motivos Bajas' },
   { id: 'descuentos_bi', label: 'Motivos Desc.' },
   { id: 'propuestas', label: 'Propuestas' },
@@ -89,7 +93,8 @@ export default function RolePermissionsAdmin() {
   const handleToggle = async (moduleId, role) => {
     // Current roles for this module
     const currentModule = permissions.find(p => p.module_id === moduleId)
-    let currentRoles = currentModule ? [...currentModule.roles] : ['admin'] // fallback
+    const defaultNav = ALL_NAV.find(n => n.id === moduleId)
+    let currentRoles = currentModule ? [...currentModule.roles] : (defaultNav ? [...defaultNav.roles] : ['admin'])
     
     // Toggle
     if (currentRoles.includes(role)) {
@@ -131,7 +136,10 @@ export default function RolePermissionsAdmin() {
 
   const getRoleAccess = (moduleId, role) => {
     const currentModule = permissions.find(p => p.module_id === moduleId)
-    if (!currentModule) return false // Deny by default if no DB record
+    if (!currentModule) {
+      const defaultNav = ALL_NAV.find(n => n.id === moduleId)
+      return defaultNav ? defaultNav.roles.includes(role) : false
+    }
     return currentModule.roles.includes(role)
   }
 

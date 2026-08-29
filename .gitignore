@@ -35,3 +35,6 @@ migrate_data.py
 .env
 .env.local
 .vercel
+scratch/
+scripts/
+*.csv

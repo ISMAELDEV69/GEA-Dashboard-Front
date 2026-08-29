@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { checkCalibracionDia1, fetchReclutadoresFull, invalidateCache } from '../../lib/dataService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
-import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle } from 'lucide-react'
+import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
@@ -135,11 +135,165 @@ export default function NominaGridEditor({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
 
+  // ── Role Permissions & Read-Only Mode ───────────────────────────
+  const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion', 'visor'].includes(currentRole)
+  const isReadOnly = isCapacitacionRole
+
   // ── Duplicate Detection & Delete Management ─────────────────────
   const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
   const [rowToDelete, setRowToDelete] = useState(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFeedback, setDeleteFeedback] = useState(null)
+
+  // ── Candidate (DNI / Name) Edit Management with Audit ───────────
+  const [candidateToEdit, setCandidateToEdit] = useState(null)
+  const [editFormData, setEditFormData] = useState({
+    documento: '',
+    apellido_paterno: '',
+    apellido_materno: '',
+    nombres: '',
+    celular: ''
+  })
+  const [isSavingCandidate, setIsSavingCandidate] = useState(false)
+  const [candidateSaveFeedback, setCandidateSaveFeedback] = useState(null)
+
+  const handleOpenEditCandidate = (row) => {
+    if (isReadOnly) return
+    setCandidateToEdit(row)
+    setEditFormData({
+      documento: row.documento || '',
+      apellido_paterno: row.apellido_paterno || '',
+      apellido_materno: row.apellido_materno || '',
+      nombres: row.nombres || '',
+      celular: row.celular || ''
+    })
+    setCandidateSaveFeedback(null)
+  }
+
+  const handleSaveCandidate = async (e) => {
+    if (e) e.preventDefault()
+    if (!candidateToEdit || isReadOnly) return
+
+    const newDoc = String(editFormData.documento || '').trim()
+    const newApePat = String(editFormData.apellido_paterno || '').trim().toUpperCase()
+    const newApeMat = String(editFormData.apellido_materno || '').trim().toUpperCase()
+    const newNombres = String(editFormData.nombres || '').trim().toUpperCase()
+    const newCel = String(editFormData.celular || '').trim()
+
+    if (!newDoc) {
+      alert('El DNI / Documento es obligatorio.')
+      return
+    }
+    if (!newNombres || !newApePat) {
+      alert('Los nombres y apellido paterno son obligatorios.')
+      return
+    }
+
+    setIsSavingCandidate(true)
+    try {
+      const oldDoc = String(candidateToEdit.documento || '').trim()
+      const newFullName = `${newApePat} ${newApeMat} ${newNombres}`.trim()
+
+      // 1. Actualizar en tabla nominas
+      const updatePayload = {
+        documento: newDoc,
+        apellido_paterno: newApePat,
+        apellido_materno: newApeMat,
+        nombres: newNombres,
+        nombre_completo: newFullName,
+        celular: newCel,
+        updated_at: new Date().toISOString()
+      }
+
+      const { error: nomErr } = await supabase
+        .from('nominas')
+        .update(updatePayload)
+        .eq('id', candidateToEdit.id)
+
+      if (nomErr) throw nomErr
+
+      // 2. Si el DNI cambió, propagar en cascada a tablas vinculadas
+      if (oldDoc && oldDoc !== newDoc) {
+        // Asistencias Dia 1 Reclutador
+        await supabase
+          .from('asistencias_dia1_reclutador')
+          .update({ postulante_documento: newDoc })
+          .eq('postulante_documento', oldDoc)
+          .catch(e => console.warn('Sync asistencias_dia1_reclutador doc err:', e))
+
+        // Consolidado asistencias
+        await supabase
+          .from('consolidado_asistencias')
+          .update({ documento: newDoc })
+          .eq('documento', oldDoc)
+          .catch(e => console.warn('Sync consolidado_asistencias doc err:', e))
+
+        // Descuentos
+        await supabase
+          .from('descuentos')
+          .update({ documento: newDoc })
+          .eq('documento', oldDoc)
+          .catch(e => console.warn('Sync descuentos doc err:', e))
+      }
+
+      // 3. Registrar en audit_logs
+      const auditPayload = {
+        tabla_afectada: 'nominas',
+        operacion: 'UPDATE_CANDIDATO_DNI',
+        id_registro: String(candidateToEdit.id),
+        valores_anteriores: JSON.stringify({
+          documento: oldDoc,
+          apellido_paterno: candidateToEdit.apellido_paterno,
+          apellido_materno: candidateToEdit.apellido_materno,
+          nombres: candidateToEdit.nombres,
+          celular: candidateToEdit.celular,
+          grupo_codigo: grupoCodigo,
+          campana: campana
+        }),
+        valores_nuevos: JSON.stringify({
+          documento: newDoc,
+          apellido_paterno: newApePat,
+          apellido_materno: newApeMat,
+          nombres: newNombres,
+          celular: newCel,
+          grupo_codigo: grupoCodigo,
+          campana: campana
+        }),
+        usuario_email: userProfile?.email || userProfile?.usuario || userProfile?.nombre_completo || 'reclutador',
+        fecha: new Date().toISOString()
+      }
+
+      await supabase.from('audit_logs').insert(auditPayload).catch(e => console.warn('Error registrando audit_log:', e))
+
+      // 4. Recalibrar grupo si cambió
+      await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.warn('Recalibration error:', e))
+
+      // 5. Invalidar caches
+      invalidateCache('all_consolidado')
+      invalidateCache('all_asistencias_bajas')
+      invalidateCache('resumen_cap_')
+
+      // 6. Optimistic update
+      setData(prev => prev.map(r => r.id === candidateToEdit.id ? { ...r, ...updatePayload } : r))
+
+      setCandidateSaveFeedback({
+        type: 'success',
+        message: `✅ Postulante actualizado: ${newFullName} (DNI ${newDoc}). Auditoría registrada.`
+      })
+
+      setTimeout(() => {
+        setCandidateToEdit(null)
+        setCandidateSaveFeedback(null)
+      }, 1500)
+
+      if (onSaveComplete) onSaveComplete()
+    } catch (err) {
+      console.error('Error guardando cambios del postulante:', err)
+      alert('Error al guardar: ' + (err.message || err))
+    } finally {
+      setIsSavingCandidate(false)
+    }
+  }
 
   const duplicateDocsSet = useMemo(() => {
     const counts = new Map()
@@ -164,7 +318,7 @@ export default function NominaGridEditor({
   }, [data, duplicateDocsSet])
 
   const handleDeleteRow = async () => {
-    if (!rowToDelete) return
+    if (!rowToDelete || isReadOnly) return
     setIsDeleting(true)
     try {
       const { error: delErr } = await supabase
@@ -215,11 +369,15 @@ export default function NominaGridEditor({
   }
 
   const visibleColumns = useMemo(() => {
+    if (isCapacitacionRole) {
+      if (columnTab === 'DOCUMENTOS') return POSTULANTE_COLUMNS
+      if (columnTab === 'TODO') return [...POSTULANTE_COLUMNS, ...OPERACION_COLUMNS]
+    }
     if (columnTab === 'POSTULANTE') return POSTULANTE_COLUMNS
     if (columnTab === 'OPERATIVO') return OPERACION_COLUMNS
     if (columnTab === 'DOCUMENTOS') return DOCUMENTOS_COLUMNS
     return ALL_EDITABLE_COLUMNS
-  }, [columnTab])
+  }, [columnTab, isCapacitacionRole])
 
   // Debounce ref to store pending updates grouped by rowId
   const pendingUpdatesRef = useRef(new Map())
@@ -388,6 +546,7 @@ export default function NominaGridEditor({
 
   // Handle cell edit with 1.2s debounce and row-level batching
   const handleCellChange = (rowId, key, value, immediate = false) => {
+    if (isReadOnly) return
     const updateObj = { [key]: value || null }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
@@ -420,7 +579,7 @@ export default function NominaGridEditor({
 
   // Handle bulk replication of a column to all filtered rows
   const handleBulkUpdate = async () => {
-    if (!selectedColumn || filteredData.length < 2) return
+    if (isReadOnly || !selectedColumn || filteredData.length < 2) return
     const firstRow = filteredData[0]
     const updateObj = { [selectedColumn]: firstRow[selectedColumn] || null }
     if (selectedColumn === 'reclutador') {
@@ -572,28 +731,37 @@ export default function NominaGridEditor({
           </div>
         </div>
 
-        {/* Documentación OK */}
-        <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/20 shadow-[0_0_12px_rgba(255,122,0,0.08)] flex items-center justify-between">
-          <div>
-            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Documentos OK</div>
-            <div className="text-xl sm:text-2xl font-black text-orange-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {kpis.docsOk} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctDocs}%)</span>
+        {/* Documentación OK (Oculto para Supervisores de Capacitación) */}
+        {!isCapacitacionRole && (
+          <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/20 shadow-[0_0_12px_rgba(255,122,0,0.08)] flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Documentos OK</div>
+              <div className="text-xl sm:text-2xl font-black text-orange-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+                {kpis.docsOk} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctDocs}%)</span>
+              </div>
+            </div>
+            <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
+              <FileCheck size={18} />
             </div>
           </div>
-          <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
-            <FileCheck size={18} />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* ── TOOLBAR: Grupo Info, Replicar, Estado Guardado ── */}
       <div className="p-3 sm:p-4 border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center gap-3 bg-[var(--bg-surface)]">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="font-extrabold text-[var(--text-primary)] text-base">Edición de Nómina</h3>
+            <h3 className="font-extrabold text-[var(--text-primary)] text-base">
+              {isReadOnly ? 'Consulta de Nómina' : 'Edición de Nómina'}
+            </h3>
             <span className="font-mono text-xs font-black px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
               {grupoCodigo}
             </span>
+            {isReadOnly && (
+              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <Eye size={12} /> Solo Lectura (Capacitación)
+              </span>
+            )}
           </div>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">
             {[periodo, semana ? (semana.toUpperCase().startsWith('SEM') ? semana : `Sem ${semana}`) : '', segmento, campana].filter(Boolean).join(' · ')}
@@ -626,17 +794,19 @@ export default function NominaGridEditor({
           >
             ⚙️ Operación & Capa
           </button>
-          <button
-            type="button"
-            onClick={() => setColumnTab('DOCUMENTOS')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              columnTab === 'DOCUMENTOS'
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            📑 Documentos
-          </button>
+          {!isCapacitacionRole && (
+            <button
+              type="button"
+              onClick={() => setColumnTab('DOCUMENTOS')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                columnTab === 'DOCUMENTOS'
+                  ? 'bg-amber-500 text-white shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              📑 Documentos
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setColumnTab('TODO')}
@@ -666,16 +836,18 @@ export default function NominaGridEditor({
             <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
 
-          <button 
-            onClick={handleBulkUpdate}
-            disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn}
-            className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            <CheckCircle2 size={14} /> 
-            {selectedColumn 
-              ? `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
-              : 'Selecciona columna para replicar'}
-          </button>
+          {!isReadOnly && (
+            <button 
+              onClick={handleBulkUpdate}
+              disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn}
+              className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              <CheckCircle2 size={14} /> 
+              {selectedColumn 
+                ? `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
+                : 'Selecciona columna para replicar'}
+            </button>
+          )}
 
           {/* Autosave status pill + subtle timestamp */}
           <div className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg border bg-[var(--bg-elevated)] border-[var(--border-subtle)]">
@@ -708,45 +880,35 @@ export default function NominaGridEditor({
         </div>
       </div>
 
-      {/* Duplicate detection banner (Non-intrusive) */}
+      {/* Duplicate Filter Alert Banner */}
       {totalDuplicates > 0 && (
-        <div className="mx-4 my-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-amber-300 shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="bg-amber-500/20 p-1.5 rounded-lg text-amber-400 shrink-0">
-              <AlertTriangle size={16} />
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-amber-200">
-                {totalDuplicates} {totalDuplicates === 1 ? 'duplicado detectado' : 'duplicados detectados'}
-              </h4>
-              <p className="text-[11px] text-amber-300/80">
-                Hay DNIs repetidos en este grupo. Revisa y elimina el registro sobrante.
-              </p>
-            </div>
+        <div className="p-3 mx-4 mt-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-200">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+            <span>
+              Se detectaron <strong>{duplicateDocsSet.size} DNI(s) repetidos</strong> ({totalDuplicates} filas en total) en esta nómina.
+            </span>
           </div>
           <button
             type="button"
             onClick={() => setOnlyDuplicatesFilter(prev => !prev)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer border ${
+            className={`px-3 py-1 rounded-lg font-bold border transition-all cursor-pointer ${
               onlyDuplicatesFilter
-                ? 'bg-amber-500 text-black border-amber-400 shadow-sm'
-                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40'
+                ? 'bg-amber-500 text-black border-amber-400 shadow-xs'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
             }`}
           >
-            {onlyDuplicatesFilter ? 'Mostrar todos' : 'Ver solo duplicados'}
+            {onlyDuplicatesFilter ? 'Ver Todos los Postulantes' : `Filtrar solo Repetidos (${totalDuplicates})`}
           </button>
         </div>
       )}
 
-      {/* Delete Feedback Banner */}
+      {/* Delete Feedback Toast */}
       {deleteFeedback && (
-        <div className={`mx-4 my-2 p-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-between gap-2 border animate-in fade-in duration-200 ${
-          deleteFeedback.type === 'success'
-            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-            : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+        <div className={`p-3 mx-4 mt-3 rounded-xl text-xs font-bold border animate-in fade-in duration-200 ${
+          deleteFeedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300'
         }`}>
-          <span>{deleteFeedback.message}</span>
-          <button onClick={() => setDeleteFeedback(null)} className="text-white/60 hover:text-white cursor-pointer">✕</button>
+          {deleteFeedback.message}
         </div>
       )}
 
@@ -832,7 +994,7 @@ export default function NominaGridEditor({
               <tr>
                 <th className="p-2.5 font-bold text-[var(--text-secondary)] border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--table-head-bg)] z-20 shadow-sm align-middle uppercase tracking-wider text-[10px]">
                   <div className="flex items-center justify-between gap-2">
-                    <span>CANDIDATO (Solo Lectura)</span>
+                    <span>CANDIDATO {isReadOnly ? '(Solo Lectura)' : ''}</span>
                     <ColumnFilter 
                       columnKey="candidato"
                       label="Candidato"
@@ -850,9 +1012,9 @@ export default function NominaGridEditor({
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div 
-                        className="cursor-pointer hover:text-cyan-400 transition-colors flex-1 truncate"
-                        onClick={() => setSelectedColumn(col.key)}
-                        title="Haz clic para seleccionar y replicar esta columna"
+                        className={`transition-colors flex-1 truncate ${!isReadOnly ? 'cursor-pointer hover:text-cyan-400' : ''}`}
+                        onClick={() => !isReadOnly && setSelectedColumn(col.key)}
+                        title={!isReadOnly ? "Haz clic para seleccionar y replicar esta columna" : ""}
                       >
                         {col.label}
                       </div>
@@ -886,34 +1048,48 @@ export default function NominaGridEditor({
                     <td className={`p-2.5 border-r border-[var(--border-subtle)] sticky left-0 z-10 shadow-sm flex flex-col justify-center ${
                       isDuplicate ? 'bg-[var(--bg-surface)]' : 'bg-[var(--bg-surface)]'
                     }`}>
-                      <span className="font-bold text-[var(--text-primary)] uppercase">
-                        {fullName}
-                      </span>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="font-bold text-[var(--text-primary)] uppercase truncate max-w-[200px]" title={fullName}>
+                          {fullName}
+                        </span>
+                        {!isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditCandidate(row)}
+                            title={`Editar datos principales de ${fullName} (DNI, nombres)`}
+                            className="p-1 rounded-md text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/15 transition-all cursor-pointer shrink-0"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                      </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-[var(--text-muted)] font-mono">{row.documento}</span>
+                          <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">{row.documento}</span>
                           {isDuplicate && (
                             <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
                               Repetido
                             </span>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setRowToDelete({
-                            id: row.id,
-                            nombre: fullName,
-                            documento: row.documento
-                          })}
-                          title={`Eliminar a ${fullName} de esta nómina`}
-                          className={`p-1 rounded-md transition-all cursor-pointer ${
-                            isDuplicate
-                              ? 'text-red-400 hover:text-red-300 hover:bg-red-500/20 opacity-100'
-                              : 'text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/15 opacity-30 hover:opacity-100'
-                          }`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {!isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => setRowToDelete({
+                              id: row.id,
+                              nombre: fullName,
+                              documento: row.documento
+                            })}
+                            title={`Eliminar a ${fullName} de esta nómina`}
+                            className={`p-1 rounded-md transition-all cursor-pointer ${
+                              isDuplicate
+                                ? 'text-red-400 hover:text-red-300 hover:bg-red-500/20 opacity-100'
+                                : 'text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/15 opacity-30 hover:opacity-100'
+                            }`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </td>
                     {visibleColumns.map(col => {
@@ -929,7 +1105,11 @@ export default function NominaGridEditor({
 
                       return (
                         <td key={col.key} className={`p-0 border-r border-[var(--border-subtle)] ${badgeClass}`}>
-                          {col.type === 'select' ? (
+                          {isReadOnly ? (
+                            <div className="w-full h-full p-2 text-xs font-semibold select-none truncate flex items-center">
+                              {val || '—'}
+                            </div>
+                          ) : col.type === 'select' ? (
                             <select
                               value={val}
                               onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
@@ -966,6 +1146,148 @@ export default function NominaGridEditor({
           </table>
         )}
       </div>
+
+      {/* ── MODAL EDITAR CANDIDATO (DNI / NOMBRES) CON AUDITORÍA ── */}
+      {candidateToEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-normal)] shadow-2xl overflow-hidden animate-slideUp">
+            <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between bg-[var(--bg-elevated)]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">
+                  <Pencil size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-wider">
+                    Editar Datos Principales
+                  </h3>
+                  <p className="text-[11px] text-[var(--text-muted)] font-medium">
+                    Corrección de DNI, nombres y contacto con registro de auditoría
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCandidateToEdit(null)}
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCandidate} className="p-5 space-y-4">
+              {candidateSaveFeedback && (
+                <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold animate-fadeIn">
+                  {candidateSaveFeedback.message}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* DNI */}
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    DNI / Documento de Identidad <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editFormData.documento}
+                    onChange={e => setEditFormData(prev => ({ ...prev, documento: e.target.value }))}
+                    placeholder="Ej. 74589632"
+                    className="w-full px-3 py-2 text-xs font-mono font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-cyan-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Apellido Paterno */}
+                  <div>
+                    <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                      Apellido Paterno <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editFormData.apellido_paterno}
+                      onChange={e => setEditFormData(prev => ({ ...prev, apellido_paterno: e.target.value }))}
+                      className="w-full px-3 py-2 text-xs font-bold uppercase rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-cyan-400 text-[var(--text-primary)] outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* Apellido Materno */}
+                  <div>
+                    <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                      Apellido Materno
+                    </label>
+                    <input
+                      type="text"
+                      value={editFormData.apellido_materno}
+                      onChange={e => setEditFormData(prev => ({ ...prev, apellido_materno: e.target.value }))}
+                      className="w-full px-3 py-2 text-xs font-bold uppercase rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-cyan-400 text-[var(--text-primary)] outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Nombres */}
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Nombres Completos <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editFormData.nombres}
+                    onChange={e => setEditFormData(prev => ({ ...prev, nombres: e.target.value }))}
+                    className="w-full px-3 py-2 text-xs font-bold uppercase rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-cyan-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+
+                {/* Celular */}
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] mb-1">
+                    Teléfono / Celular
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormData.celular}
+                    onChange={e => setEditFormData(prev => ({ ...prev, celular: e.target.value }))}
+                    placeholder="Ej. 987654321"
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl bg-[var(--input-bg)] border border-[var(--input-border)] focus:border-cyan-400 text-[var(--text-primary)] outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-300 font-medium">
+                ℹ️ Al guardar, se registrará una entrada en la bitácora de auditoría (audit_logs) y se actualizará en cascada la asistencia del postulante.
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--border-subtle)]">
+                <button
+                  type="button"
+                  onClick={() => setCandidateToEdit(null)}
+                  disabled={isSavingCandidate}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-normal)] transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCandidate}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-black transition-all flex items-center gap-1.5 shadow-md shadow-cyan-500/20 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingCandidate ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" /> Guardando...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={13} /> Guardar Cambios
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── MODAL CONFIRMACIÓN DE ELIMINACIÓN ── */}
       {rowToDelete && (

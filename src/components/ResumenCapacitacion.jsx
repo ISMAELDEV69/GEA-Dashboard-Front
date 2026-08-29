@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import SemicircleGauge from './dashboard/SemicircleGauge';
 import { 
   calculateMetricasResumenCapacitacionFast, 
   parseFechaAsistencia, 
@@ -47,13 +48,6 @@ import {
   ResponsiveContainer, 
   Cell, 
   LabelList,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
-  RadialBarChart,
-  RadialBar,
   Legend
 } from 'recharts';
 import ViewLoadingSkeleton from './ui/ViewLoadingSkeleton';
@@ -92,6 +86,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const [error, setError] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [activeTab, setActiveTab] = useState('DASHBOARD'); // 'DASHBOARD' | 'MATRIZ_TABLA'
+  const [rankingTab, setRankingTab] = useState('DOTACION_SEG'); // 'DOTACION_SEG' | 'DESERCION_SEG' | 'DOTACION_FOR' | 'DESERCION_FOR'
+  const [rankingFormadorFilter, setRankingFormadorFilter] = useState('Todas');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [filters, setFilters] = useState({
@@ -297,6 +293,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const retOjt = s.d1 > 0 ? ((s.ojt / s.d1) * 100) : 0;
       const convIop = s.d1 > 0 ? ((s.iop / s.d1) * 100) : 0;
       const cumplRq = s.rq > 0 ? ((s.iop / s.rq) * 100) : 0;
+      const desertores = Math.max(0, s.d1 - (s.ojt || 0) - (s.iop || 0));
+      const pctDesercion = s.d1 > 0 ? ((desertores / s.d1) * 100) : 0;
       const enTransito = Math.max(0, s.ojt - s.iop);
 
       return {
@@ -305,6 +303,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         retOjt: parseFloat(retOjt.toFixed(1)),
         convIop: parseFloat(convIop.toFixed(1)),
         cumplRq: parseFloat(cumplRq.toFixed(1)),
+        pctDesercion: parseFloat(pctDesercion.toFixed(1)),
+        desertores,
         enTransito,
         fill: SEGMENTO_COLORS[s.segmento] || '#00E5FF'
       };
@@ -330,66 +330,20 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     };
   }, [kpis, segmentData]);
 
-  // ── 1. KPI SUPERIOR: TENDENCIA VS PERIODO / SEMANA ANTERIOR ──
-  const kpiTendencia = useMemo(() => {
-    if (!data || data.length === 0) {
-      return { diffPp: '+0.0', diffVal: 0, isPositive: true, prevLabel: 'vs Periodo Previo', currentPct: '0.0', prevPct: '0.0' };
-    }
-
-    const currentReq = kpis.rq_solicitado || 0;
-    const currentIop = kpis.ingresos_iop || 0;
-    const currentPct = currentReq > 0 ? (currentIop / currentReq) * 100 : (kpis.asistio_dia1 > 0 ? (currentIop / kpis.asistio_dia1) * 100 : 0);
-
-    let prevData = [];
-    let prevLabel = '';
-
-    if (filters.periodo !== 'Todos') {
-      const allPeriodos = Array.from(new Set(data.map(d => d.periodo).filter(Boolean))).sort().reverse();
-      const currIdx = allPeriodos.indexOf(filters.periodo);
-      if (currIdx >= 0 && currIdx + 1 < allPeriodos.length) {
-        const prevPeriodo = allPeriodos[currIdx + 1];
-        prevData = data.filter(d => d.periodo === prevPeriodo);
-        prevLabel = `vs Periodo ${prevPeriodo}`;
-      } else {
-        prevLabel = `vs Periodo Base`;
-      }
-    } else if (filters.semana !== 'Todas') {
-      const allSemanas = filterOptions.semanas;
-      const currIdx = allSemanas.indexOf(filters.semana);
-      if (currIdx >= 0 && currIdx + 1 < allSemanas.length) {
-        const prevSem = allSemanas[currIdx + 1];
-        prevData = data.filter(d => matchSemana(d.semana, prevSem));
-        prevLabel = `vs ${prevSem}`;
-      } else {
-        prevLabel = `vs Semana Previa`;
-      }
-    } else {
-      const allPeriodos = Array.from(new Set(data.map(d => d.periodo).filter(Boolean))).sort().reverse();
-      if (allPeriodos.length >= 2) {
-        const prevP = allPeriodos[1];
-        prevData = data.filter(d => d.periodo === prevP);
-        prevLabel = `vs Periodo ${prevP}`;
-      } else {
-        prevLabel = `vs Periodo Previo`;
-      }
-    }
-
-    const prevReq = prevData.reduce((acc, d) => acc + (d.requerimiento || d.rq_solicitado || 0), 0);
-    const prevIop = prevData.reduce((acc, d) => acc + (d.ingresos_iop || 0), 0);
-    const prevPct = prevReq > 0 ? (prevIop / prevReq) * 100 : 0;
-
-    const diff = currentPct - prevPct;
-    const isPositive = diff >= 0;
+  // ── 1. KPI SUPERIOR: CANTIDAD DE GRUPOS / COHORTES ──
+  const kpiGrupos = useMemo(() => {
+    const total = filteredData.length;
+    const gruposConOjt = filteredData.filter(d => (d.activos_ojt || 0) > (d.ingresos_iop || 0)).length;
+    const formadoresUnicos = new Set(filteredData.map(d => d.formador).filter(Boolean)).size;
+    const segmentosUnicos = new Set(filteredData.map(d => normalizeSegmento(d.segmento, d.campana)).filter(Boolean)).size;
 
     return {
-      diffPp: (isPositive ? `+${diff.toFixed(1)}` : diff.toFixed(1)),
-      diffVal: diff,
-      isPositive,
-      prevLabel: prevLabel || 'vs Periodo Previo',
-      currentPct: currentPct.toFixed(1),
-      prevPct: prevPct.toFixed(1)
+      total,
+      gruposConOjt,
+      formadoresUnicos,
+      segmentosUnicos
     };
-  }, [data, kpis, filters.periodo, filters.semana, filterOptions.semanas]);
+  }, [filteredData]);
 
   // ── 2. KPI SUPERIOR: AGING / ANTIGÜEDAD EN TRÁNSITO ──
   const kpiAging = useMemo(() => {
@@ -555,73 +509,183 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     ];
   }, [kpis, kpiPercentages]);
 
-  // Datos para Radar de Calidad Gerencial (5 Pilares vs Meta 80%)
-  const radarData = useMemo(() => {
+  // ── 5. DATOS PARA GAUGE Y RANKINGS ESTILO POWERBI ──
+  const executiveGaugesData = useMemo(() => {
     const total = kpis.total_nomina || 0;
     const d1 = kpis.asistio_dia1 || 0;
-    const ojt = kpis.activos_ojt || 0;
-    const iop = kpis.ingresos_iop || 0;
     const rq = kpis.rq_solicitado || 0;
+    const iop = kpis.ingresos_iop || 0;
+    const ojt = kpis.activos_ojt || 0;
+    const desertoresOjt = kpis.desertores_ojt || 0;
+    
+    // 1. Deserción Global
+    const desertoresTotal = Math.max(0, d1 - (kpis.activos_actuales || 0) - iop);
+    const pctDesercionGlobal = d1 > 0 ? (desertoresTotal / d1) * 100 : 0;
 
-    const pilar1 = total > 0 ? (d1 / total) * 100 : 0;
-    const pilar2 = d1 > 0 ? (ojt / d1) * 100 : 0;
-    const pilar3 = ojt > 0 ? (iop / ojt) * 100 : 0;
-    const pilar4 = rq > 0 ? Math.min(100, (iop / rq) * 100) : (iop > 0 ? 100 : 0);
+    // 2. Deserción CT (Aula / Capacitación Teórica)
+    const desertoresCT = Math.max(0, d1 - ojt - iop - desertoresOjt);
+    const pctDesercionCT = d1 > 0 ? (desertoresCT / d1) * 100 : 0;
 
-    const desertores = Math.max(0, d1 - (kpis.activos_actuales || 0) - iop);
-    const pctDesercion = d1 > 0 ? (desertores / d1) * 100 : 0;
-    const pilar5 = Math.max(0, Math.min(100, 100 - pctDesercion));
+    // 3. Dotación FTEs
+    const pctDotacion = rq > 0 ? (iop / rq) * 100 : (iop > 0 ? 100 : 0);
 
-    return [
-      {
-        pilar: '1. Convocatoria',
-        pilarFull: 'Convocatoria RyS (D1 / Nómina)',
-        'Desempeño Real': parseFloat(pilar1.toFixed(1)),
-        'Meta Base (80%)': 80,
-        detalle: `${d1.toLocaleString()} de ${total.toLocaleString()} efectivos`
+    // 4. Deserción OJT
+    const qIniciaOjt = ojt + iop + desertoresOjt;
+    const pctDesercionOJT = qIniciaOjt > 0 ? (desertoresOjt / qIniciaOjt) * 100 : 0;
+
+    const formatNum = (n) => {
+      const num = Number(n) || 0;
+      if (num >= 1000) return `${(num / 1000).toFixed(2).replace('.', ',')} mil`;
+      return num.toLocaleString('es-PE');
+    };
+
+    return {
+      desercionGlobal: {
+        value: parseFloat(pctDesercionGlobal.toFixed(2)),
+        target: 43.40,
+        subMetrics: [
+          { label: 'Q Día 1', value: d1.toLocaleString('es-PE') },
+          { label: 'Desertores', value: desertoresTotal.toLocaleString('es-PE') }
+        ]
       },
-      {
-        pilar: '2. Retención Aula',
-        pilarFull: 'Retención en Aula (OJT / D1)',
-        'Desempeño Real': parseFloat(pilar2.toFixed(1)),
-        'Meta Base (80%)': 80,
-        detalle: `${ojt.toLocaleString()} de ${d1.toLocaleString()} a OJT`
+      desercionCT: {
+        value: parseFloat(pctDesercionCT.toFixed(2)),
+        target: 20.00,
+        subMetrics: [
+          { label: 'Q Día 1', value: d1.toLocaleString('es-PE') },
+          { label: 'Desertores CT', value: desertoresCT.toLocaleString('es-PE') }
+        ]
       },
-      {
-        pilar: '3. Rendimiento OJT',
-        pilarFull: 'Rendimiento en Nesting (I-OP / OJT)',
-        'Desempeño Real': parseFloat(pilar3.toFixed(1)),
-        'Meta Base (80%)': 80,
-        detalle: `${iop.toLocaleString()} de ${ojt.toLocaleString()} graduados`
+      dotacion: {
+        value: parseFloat(pctDotacion.toFixed(2)),
+        target: 80.00,
+        subMetrics: [
+          { label: "RQ FTE's", value: formatNum(rq) },
+          { label: "Dotación FTE's", value: formatNum(iop) }
+        ]
       },
-      {
-        pilar: '4. Cobertura Meta',
-        pilarFull: 'Cobertura de Requerimiento (I-OP / RQ)',
-        'Desempeño Real': parseFloat(pilar4.toFixed(1)),
-        'Meta Base (80%)': 80,
-        detalle: `${iop.toLocaleString()} de ${rq.toLocaleString()} FTEs`
-      },
-      {
-        pilar: '5. Estabilidad',
-        pilarFull: 'Estabilidad Operativa (100% - Bajas)',
-        'Desempeño Real': parseFloat(pilar5.toFixed(1)),
-        'Meta Base (80%)': 80,
-        detalle: `${(100 - pctDesercion).toFixed(1)}% libre de deserción`
+      desercionOJT: {
+        value: parseFloat(pctDesercionOJT.toFixed(2)),
+        target: 20.00,
+        subMetrics: [
+          { label: 'Q Inicia OJT', value: formatNum(qIniciaOjt) },
+          { label: 'DESERTORES_OJT', value: formatNum(desertoresOjt) }
+        ]
       }
-    ];
+    };
   }, [kpis]);
 
-  // Datos para Gráfico Radial / Polar de Cumplimiento con porcentaje exacto
-  const radialData = useMemo(() => {
-    return segmentData.map(s => ({
-      name: s.segmento.replace('CLARO PERU ', '').replace('CLARO ', ''),
-      fullName: s.segmento,
-      cumplimiento: s.cumplRq,
-      iop: s.iop,
-      rq: s.rq,
-      fill: s.fill
-    })).sort((a, b) => b.cumplimiento - a.cumplimiento);
-  }, [segmentData]);
+  const formadoresRankingList = useMemo(() => {
+    const map = new Map();
+    filteredData.forEach(g => {
+      const fName = String(g.formador || 'SIN ASIGNAR').trim().toUpperCase();
+      if (!map.has(fName)) {
+        map.set(fName, {
+          nombre: fName,
+          rq: 0,
+          d1: 0,
+          iop: 0,
+          activosOjt: 0,
+          desertores: 0
+        });
+      }
+      const item = map.get(fName);
+      item.rq += Number(g.rq_solicitado || g.rq_ftes_solicitado) || 0;
+      item.d1 += Number(g.asistio_dia1) || 0;
+      item.iop += Number(g.ingresos_iop) || 0;
+      item.activosOjt += Number(g.activos_ojt) || 0;
+      
+      const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
+      item.desertores += desert;
+    });
+
+    return Array.from(map.values()).map(f => {
+      const pctDot = f.rq > 0 ? (f.iop / f.rq) * 100 : (f.d1 > 0 ? (f.iop / f.d1) * 100 : 0);
+      const pctDes = f.d1 > 0 ? (f.desertores / f.d1) * 100 : 0;
+      return {
+        ...f,
+        pctDotacion: parseFloat(pctDot.toFixed(2)),
+        pctDesercion: parseFloat(pctDes.toFixed(2))
+      };
+    });
+  }, [filteredData]);
+
+  const modalidadRankingList = useMemo(() => {
+    const map = {
+      PRESENCIAL: { nombre: 'PRESENCIAL', rq: 0, d1: 0, iop: 0, desertores: 0 },
+      REMOTO: { nombre: 'REMOTO', rq: 0, d1: 0, iop: 0, desertores: 0 }
+    };
+
+    filteredData.forEach(g => {
+      const mod = String(g.modalidad || '').toUpperCase().includes('REM') ? 'REMOTO' : 'PRESENCIAL';
+      const target = map[mod];
+      target.rq += Number(g.rq_solicitado || g.rq_ftes_solicitado) || 0;
+      target.d1 += Number(g.asistio_dia1) || 0;
+      target.iop += Number(g.ingresos_iop) || 0;
+      const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
+      target.desertores += desert;
+    });
+
+    return Object.values(map).map(m => {
+      const pctDot = m.rq > 0 ? (m.iop / m.rq) * 100 : (m.d1 > 0 ? (m.iop / m.d1) * 100 : 0);
+      const pctDes = m.d1 > 0 ? (m.desertores / m.d1) * 100 : 0;
+      return {
+        ...m,
+        pctDotacion: parseFloat(pctDot.toFixed(2)),
+        pctDesercion: parseFloat(pctDes.toFixed(2))
+      };
+    });
+  }, [filteredData]);
+
+  const activeRankingBars = useMemo(() => {
+    let list = [];
+    if (rankingTab === 'DOTACION_SEG') {
+      list = segmentData.map(s => {
+        const val = Number(s.cumplRq) || 0;
+        return {
+          label: s.segmento,
+          value: val,
+          displayVal: `${val.toFixed(2)} %`,
+          isDesercion: false
+        };
+      }).sort((a, b) => b.value - a.value);
+    } else if (rankingTab === 'DESERCION_SEG') {
+      list = segmentData.map(s => {
+        const val = Number(s.pctDesercion) || 0;
+        return {
+          label: s.segmento,
+          value: val,
+          displayVal: `${val.toFixed(2)} %`,
+          isDesercion: true
+        };
+      }).sort((a, b) => b.value - a.value);
+    } else if (rankingTab === 'DOTACION_FOR') {
+      list = formadoresRankingList.map(f => {
+        const val = Number(f.pctDotacion) || 0;
+        return {
+          label: f.nombre,
+          value: val,
+          displayVal: `${val.toFixed(2)} %`,
+          isDesercion: false
+        };
+      }).sort((a, b) => b.value - a.value);
+    } else {
+      list = formadoresRankingList.map(f => {
+        const val = Number(f.pctDesercion) || 0;
+        return {
+          label: f.nombre,
+          value: val,
+          displayVal: `${val.toFixed(2)} %`,
+          isDesercion: true
+        };
+      }).sort((a, b) => b.value - a.value);
+    }
+
+    if (rankingFormadorFilter !== 'Todas') {
+      list = list.filter(item => item.label.includes(rankingFormadorFilter));
+    }
+    return list;
+  }, [rankingTab, segmentData, formadoresRankingList, rankingFormadorFilter]);
 
   // Exportar matriz a Excel
   const handleExport = () => {
@@ -820,40 +884,32 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
           {/* NIVEL 1: SCORECARD EJECUTIVO (4 KPIS ESTRATÉGICOS NO REDUNDANTES)  */}
           {/* ═══════════════════════════════════════════════════════════════════ */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* KPI 1: TENDENCIA VS PERIODO ANTERIOR */}
+            {/* KPI 1: CANTIDAD DE GRUPOS / COHORTES */}
             <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-indigo-950/20 p-5 rounded-2xl border border-indigo-500/25 shadow-lg group hover:border-indigo-500/50 transition-all">
               <div className="absolute top-0 right-0 w-28 h-28 bg-indigo-500/10 rounded-full blur-2xl group-hover:bg-indigo-500/20 transition-all pointer-events-none" />
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[10px] font-black text-indigo-400 tracking-wider uppercase px-2.5 py-0.5 bg-indigo-500/10 rounded-md border border-indigo-500/20 flex items-center gap-1.5">
-                  <Activity className="w-3 h-3" />
-                  1 · Tendencia
+                  <Layers className="w-3 h-3" />
+                  1 · Cantidad de Grupos
                 </span>
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  kpiTendencia.isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-                }`}>
-                  {kpiTendencia.isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+                  <Users className="w-4 h-4" />
                 </div>
               </div>
               <div className="flex items-baseline gap-2">
-                <span className={`text-3xl font-black tracking-tight ${
-                  kpiTendencia.isPositive ? 'text-emerald-400' : 'text-rose-400'
-                }`}>
-                  {kpiTendencia.diffPp} pp
+                <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight">
+                  {kpiGrupos.total.toLocaleString()} <span className="text-lg font-bold text-indigo-400">grupos</span>
                 </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  kpiTendencia.isPositive 
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                }`}>
-                  {kpiTendencia.isPositive ? 'Mejora' : 'Caída'}
+                <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
+                  {kpiGrupos.gruposConOjt} en OJT
                 </span>
               </div>
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Cumplimiento Actual: <strong className="text-[var(--text-primary)]">{kpiTendencia.currentPct}%</strong>
+                Cohortes Totales Evaluadas
               </p>
               <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)] truncate max-w-[140px]">{kpiTendencia.prevLabel}:</span>
-                <span className="font-bold text-[var(--text-secondary)] font-mono">{kpiTendencia.prevPct}%</span>
+                <span className="text-[var(--text-muted)]">{kpiGrupos.formadoresUnicos} Formadores asignados</span>
+                <span className="font-bold text-[var(--text-primary)] font-mono">{kpiGrupos.segmentosUnicos} Segmentos</span>
               </div>
             </div>
 
@@ -972,55 +1028,56 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════ */}
-          {/* NIVEL 2: EMBUDO DE CONVERSIÓN LINEAL & CUMPLIMIENTO POLAR RADIAL   */}
+          {/* NIVEL 2: EMBUDO A LA IZQUIERDA (5 COLS) + MATRIZ 2X2 TACÓMETROS (7 COLS) */}
           {/* ═══════════════════════════════════════════════════════════════════ */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Embudo de Conversión Lineal (7 cols) */}
-            <div className="lg:col-span-7 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-subtle)] shadow-lg flex flex-col justify-between">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
+            
+            {/* LADO IZQUIERDO: EMBUDO DE CONVERSIÓN LINEAL (4 ETAPAS) */}
+            <div className="xl:col-span-5 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-normal)] shadow-md flex flex-col justify-between transition-colors duration-300">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
                     <Zap className="w-4 h-4 text-cyan-400" />
-                    EMBUDO DE CONVERSIÓN LINEAL (4 ETAPAS)
+                    EMBUDO DE CONVERSIÓN LINEAL
                   </h3>
-                  <span className="text-xs font-bold text-cyan-400">Paso a Paso</span>
+                  <span className="text-xs font-bold text-cyan-400 font-mono">4 Etapas</span>
                 </div>
-                <p className="text-xs text-[var(--text-secondary)] mb-6">
+                <p className="text-xs text-[var(--text-secondary)] mb-5">
                   Monitoreo secuencial de caída y retención neta desde Nómina hasta Pase a Operación
                 </p>
 
-                {/* Steps Visuales (Embudo Centrado Sólido y Simétrico) */}
-                <div className="space-y-3.5">
+                {/* Steps Visuales en Cascada Vertical apegado a la izquierda */}
+                <div className="space-y-3">
                   {funnelData.map((step, idx) => (
                     <div key={step.etapa} className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 truncate max-w-[200px]">
                           <span className="font-black text-[var(--text-primary)]">{step.etapa}:</span>
-                          <span className="text-[var(--text-secondary)]">{step.nombre}</span>
+                          <span className="text-[var(--text-secondary)] truncate">{step.nombre}</span>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-black text-[var(--text-primary)] text-sm">{step.valor.toLocaleString()}</span>
-                          <span className="font-bold px-2 py-0.5 rounded-md text-[11px]" style={{ backgroundColor: `${step.fill}20`, color: step.fill }}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-[var(--text-primary)] text-xs font-mono">{step.valor.toLocaleString()}</span>
+                          <span className="font-bold px-2 py-0.5 rounded-md text-[10.5px] font-mono" style={{ backgroundColor: `${step.fill}20`, color: step.fill }}>
                             {step.pct}
                           </span>
                         </div>
                       </div>
 
-                      {/* Barra de Embudo Centrada */}
-                      <div className="w-full h-3.5 bg-[var(--surface-elevated)] rounded-full overflow-hidden p-0.5 border border-[var(--border-subtle)] flex items-center justify-center">
+                      {/* Barra de Embudo */}
+                      <div className="w-full h-3 bg-[var(--surface-elevated)] rounded-full overflow-hidden p-0.5 border border-[var(--border-normal)]">
                         <div
                           className="h-full rounded-full transition-all duration-700"
                           style={{
                             width: `${kpis.total_nomina > 0 ? (step.valor / kpis.total_nomina) * 100 : 0}%`,
                             backgroundColor: step.fill,
-                            boxShadow: `0 0 10px ${step.fill}50`
+                            boxShadow: `0 0 10px ${step.fill}60`
                           }}
                         />
                       </div>
 
                       {idx < funnelData.length - 1 && (
                         <div className="flex items-center justify-center my-0.5">
-                          <span className="inline-flex items-center gap-1 text-[10px] text-rose-400 font-bold px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20">
+                          <span className="inline-flex items-center gap-1 text-[10px] text-rose-400 font-bold px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 font-mono">
                             ↓ {funnelData[idx + 1].drop}
                           </span>
                         </div>
@@ -1030,226 +1087,232 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 </div>
               </div>
 
-              <div className="mt-6 pt-4 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-secondary)]">
+              <div className="mt-4 pt-3 border-t border-[var(--border-normal)] flex flex-wrap items-center justify-between text-xs text-[var(--text-secondary)] gap-2">
                 <span>Total Evaluados: <strong className="text-[var(--text-primary)]">{kpis.total_nomina.toLocaleString()}</strong></span>
-                <span>Graduación Exitosa: <strong className="text-amber-400">{kpis.ingresos_iop.toLocaleString()} I-OP</strong></span>
+                <span>Graduación: <strong className="text-amber-400 font-mono">{kpis.ingresos_iop.toLocaleString()} I-OP</strong></span>
               </div>
             </div>
 
-            {/* Gráfico Coxcomb / Nightingale Rose de Cumplimiento por Segmento (5 cols) */}
-            <div className="lg:col-span-5 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-subtle)] shadow-lg flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-sm font-black text-[var(--text-primary)]">
-                    Cumplimiento por Segmento
-                  </h3>
-                  <span className="text-[11px] font-semibold text-[var(--text-muted)]">
-                    % Meta vs Requerido
+            {/* LADO DERECHO: 4 TACÓMETROS EN MATRIZ DE 2x2 */}
+            <div className="xl:col-span-7 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-normal)] shadow-md flex flex-col justify-between space-y-4 transition-colors duration-300">
+              <div className="flex items-center justify-between border-b border-[var(--border-normal)] pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00E5FF]" />
+                  <span className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
+                    INDICADORES GLOBALES - CAPACITACIÓN
                   </span>
                 </div>
-                <p className="text-xs text-[var(--text-secondary)] mb-4">
-                  Visualización polar de área de pases I-OP vs requerimiento solicitado
-                </p>
+                <span className="text-[11px] font-bold text-[var(--text-muted)] font-mono">
+                  Semáforo Dinámico
+                </span>
+              </div>
 
-                {/* Nightingale Rose / Coxcomb SVG Chart */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-2">
-                  <div className="relative w-[240px] h-[240px] flex items-center justify-center flex-shrink-0">
-                    <svg viewBox="0 0 260 260" className="w-full h-full overflow-visible">
-                      <defs>
-                        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                          <feGaussianBlur stdDeviation="3" result="blur" />
-                          <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                        </filter>
-                      </defs>
+              {/* Matriz 2x2 de Tacómetros */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Gauge 1: % Deserción Global */}
+                <SemicircleGauge
+                  title="% Deserción"
+                  value={executiveGaugesData.desercionGlobal.value}
+                  target={executiveGaugesData.desercionGlobal.target}
+                  type="desercion"
+                  subMetrics={executiveGaugesData.desercionGlobal.subMetrics}
+                />
 
-                      {/* Concentric Polar Grid Rings */}
-                      {[35, 60, 85, 110].map((radius, i) => (
-                        <circle
-                          key={i}
-                          cx="130"
-                          cy="130"
-                          r={radius}
-                          fill="none"
-                          stroke="var(--border-subtle)"
-                          strokeWidth="1"
-                          strokeDasharray={i === 3 ? "none" : "3 3"}
-                          opacity={0.6}
-                        />
-                      ))}
+                {/* Gauge 2: % Deserción CT */}
+                <SemicircleGauge
+                  title="% Deserción CT"
+                  value={executiveGaugesData.desercionCT.value}
+                  target={executiveGaugesData.desercionCT.target}
+                  type="desercion"
+                  subMetrics={executiveGaugesData.desercionCT.subMetrics}
+                />
 
-                      {/* Concentric Axis Crosshairs */}
-                      <line x1="130" y1="20" x2="130" y2="240" stroke="var(--border-subtle)" strokeWidth="0.8" opacity="0.3" />
-                      <line x1="20" y1="130" x2="240" y2="130" stroke="var(--border-subtle)" strokeWidth="0.8" opacity="0.3" />
+                {/* Gauge 3: % Dotación */}
+                <SemicircleGauge
+                  title="% Dotación"
+                  value={executiveGaugesData.dotacion.value}
+                  target={executiveGaugesData.dotacion.target}
+                  type="dotacion"
+                  maxVal={100}
+                  subMetrics={executiveGaugesData.dotacion.subMetrics}
+                />
 
-                      {/* 5 Polar Wedges */}
-                      {(() => {
-                        const maxVal = Math.max(...segmentData.map(s => s.cumplRq), 1);
-                        const SECTORS = [
-                          { key: 'CLARO CHILE', label: 'Claro Chile', fill: '#2563EB', stroke: '#60A5FA', startAngle: -90, endAngle: -18 },
-                          { key: 'CLARO PERU RETENCIONES', label: 'Claro Retenc.', fill: '#059669', stroke: '#34D399', startAngle: -18, endAngle: 54 },
-                          { key: 'LIPIGAS', label: 'Lipigas', fill: '#7C3AED', stroke: '#A78BFA', startAngle: 54, endAngle: 126 },
-                          { key: 'CLARO PERU', label: 'Claro Perú', fill: '#BE123C', stroke: '#FB7185', startAngle: 126, endAngle: 198 },
-                          { key: 'CLARO PERU OUT', label: 'Claro Out', fill: '#D97706', stroke: '#FBBF24', startAngle: 198, endAngle: 270 }
-                        ];
+                {/* Gauge 4: % Deserción OJT */}
+                <SemicircleGauge
+                  title="% Deserción OJT"
+                  value={executiveGaugesData.desercionOJT.value}
+                  target={executiveGaugesData.desercionOJT.target}
+                  type="desercion"
+                  subMetrics={executiveGaugesData.desercionOJT.subMetrics}
+                />
+              </div>
+            </div>
 
-                        return SECTORS.map(sec => {
-                          const segItem = segmentData.find(s => s.segmento === sec.key) || { cumplRq: 0, iop: 0, rq: 0 };
-                          const val = segItem.cumplRq || 0;
-                          
-                          // Radius scale: min 36px up to 115px
-                          const radius = 36 + (val / maxVal) * 76;
-                          const cx = 130;
-                          const cy = 130;
+          </div>
 
-                          const startRad = (sec.startAngle * Math.PI) / 180;
-                          const endRad = (sec.endAngle * Math.PI) / 180;
-                          const x1 = cx + radius * Math.cos(startRad);
-                          const y1 = cy + radius * Math.sin(startRad);
-                          const x2 = cx + radius * Math.cos(endRad);
-                          const y2 = cy + radius * Math.sin(endRad);
-                          const largeArc = (sec.endAngle - sec.startAngle) > 180 ? 1 : 0;
-                          const pathD = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* NIVEL 3: PANEL DE RANKINGS Y RENDIMIENTO OPERATIVO                   */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          <div className="w-full p-5 rounded-2xl bg-[var(--surface-elevated)] border border-[var(--border-normal)] shadow-md space-y-4 transition-colors duration-300">
+            {/* Header de Pestañas Toggle */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-normal)] pb-3">
+              <span className="text-xs font-black uppercase tracking-wider text-[var(--accent)] bg-[var(--surface)] border border-[var(--border-normal)] px-3 py-1 rounded-lg">
+                RANKING Y DESGLOSE OPERATIVO
+              </span>
 
-                          return (
-                            <g key={sec.key} className="group transition-all duration-300 cursor-pointer">
-                              <path
-                                d={pathD}
-                                fill={sec.fill}
-                                fillOpacity={0.75}
-                                stroke={sec.stroke}
-                                strokeWidth="1.8"
-                                className="hover:fill-opacity-95 transition-all duration-300 hover:filter-[url(#glow)]"
-                              />
-                            </g>
-                          );
-                        });
-                      })()}
-                    </svg>
+              {/* Botones de Control de Pestañas */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[var(--surface)] rounded-xl border border-[var(--border-normal)] text-[10.5px] font-black">
+                <button
+                  type="button"
+                  onClick={() => setRankingTab('DOTACION_SEG')}
+                  className={`py-1.5 px-3 rounded-lg transition-all text-center cursor-pointer ${
+                    rankingTab === 'DOTACION_SEG'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  DOTACIÓN - SEG.
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRankingTab('DESERCION_SEG')}
+                  className={`py-1.5 px-3 rounded-lg transition-all text-center cursor-pointer ${
+                    rankingTab === 'DESERCION_SEG'
+                      ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  DESERCIÓN - SEG.
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRankingTab('DOTACION_FOR')}
+                  className={`py-1.5 px-3 rounded-lg transition-all text-center cursor-pointer ${
+                    rankingTab === 'DOTACION_FOR'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  DOTACIÓN - FOR.
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRankingTab('DESERCION_FOR')}
+                  className={`py-1.5 px-3 rounded-lg transition-all text-center cursor-pointer ${
+                    rankingTab === 'DESERCION_FOR'
+                      ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  DESERCIÓN - FOR.
+                </button>
+              </div>
+            </div>
+
+            {/* Grid 2 columnas: Barras de Ranking a la Izquierda + Rendimiento por Modalidad y Selector a la Derecha */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start pt-1">
+              
+              {/* Columna Izquierda: Barras de Ranking (7 cols) */}
+              <div className="lg:col-span-7 space-y-2.5 max-h-[260px] overflow-y-auto custom-scrollbar pr-2">
+                {activeRankingBars.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-[var(--text-muted)] font-mono">
+                    No hay registros disponibles para este filtro
                   </div>
+                ) : (
+                  activeRankingBars.map((item, idx) => {
+                    const maxVal = Math.max(...activeRankingBars.map(b => b.value), 100);
+                    const widthPct = Math.min(100, (item.value / maxVal) * 100);
+                    const isDesercion = item.isDesercion;
+                    const barColor = isDesercion 
+                      ? (item.value > 30 ? '#EF4444' : item.value > 15 ? '#F59E0B' : '#10B981')
+                      : (item.value >= 100 ? '#10B981' : item.value >= 80 ? '#F59E0B' : '#EF4444');
 
-                  {/* Leyenda Lateral con colores exactos a la imagen */}
-                  <div className="flex flex-col gap-2.5 w-full sm:w-auto pr-2">
-                    {[
-                      { label: 'Claro Chile', fill: '#2563EB', stroke: '#60A5FA', key: 'CLARO CHILE' },
-                      { label: 'Claro Retenc.', fill: '#059669', stroke: '#34D399', key: 'CLARO PERU RETENCIONES' },
-                      { label: 'Lipigas', fill: '#7C3AED', stroke: '#A78BFA', key: 'LIPIGAS' },
-                      { label: 'Claro Perú', fill: '#BE123C', stroke: '#FB7185', key: 'CLARO PERU' },
-                      { label: 'Claro Out', fill: '#D97706', stroke: '#FBBF24', key: 'CLARO PERU OUT' }
-                    ].map(leg => {
-                      const segItem = segmentData.find(s => s.segmento === leg.key) || { cumplRq: 0, iop: 0, rq: 0 };
-                      return (
-                        <div key={leg.label} className="flex items-center justify-between sm:justify-start gap-3 text-xs">
-                          <div className="flex items-center gap-2">
-                            <span 
-                              className="w-3.5 h-3.5 rounded-full border border-white/20 flex-shrink-0" 
-                              style={{ backgroundColor: leg.fill }}
-                            />
-                            <span className="font-medium text-[var(--text-secondary)]">{leg.label}</span>
-                          </div>
-                          <span className="font-bold text-[var(--text-primary)] font-mono ml-auto">
-                            {segItem.cumplRq}%
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs font-mono">
+                          <span className="font-bold text-[var(--text-primary)] truncate max-w-[240px]" title={item.label}>
+                            {item.label}
+                          </span>
+                          <span className="font-black tabular-nums" style={{ color: barColor }}>
+                            {item.displayVal}
                           </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div className="w-full h-3 bg-[var(--surface)] rounded-md overflow-hidden p-0.5 border border-[var(--border-normal)]">
+                          <div
+                            className="h-full rounded-sm transition-all duration-500"
+                            style={{
+                              width: `${widthPct}%`,
+                              backgroundColor: barColor,
+                              boxShadow: `0 0 8px ${barColor}60`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Columna Derecha: Rendimiento por Modalidad & Selector de Formador (5 cols) */}
+              <div className="lg:col-span-5 bg-[var(--surface)] p-4 rounded-xl border border-[var(--border-normal)] space-y-4">
+                {/* Barras de Modalidad (Presencial vs Remoto) */}
+                <div className="space-y-2.5">
+                  <span className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider block font-sans">
+                    Rendimiento por Modalidad:
+                  </span>
+                  {modalidadRankingList.map((m) => {
+                    const rawVal = rankingTab.includes('DESERCION') ? m.pctDesercion : m.pctDotacion;
+                    const val = Number(rawVal) || 0;
+                    const isDes = rankingTab.includes('DESERCION');
+                    const barColor = isDes 
+                      ? (val > 30 ? '#EF4444' : '#10B981')
+                      : (val >= 80 ? '#10B981' : '#EF4444');
+
+                    return (
+                      <div key={m.nombre} className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-mono">
+                          <span className="font-bold text-[var(--text-secondary)]">{m.nombre}</span>
+                          <span className="font-bold tabular-nums" style={{ color: barColor }}>{val.toFixed(2)} %</span>
+                        </div>
+                        <div className="w-full h-2.5 bg-[var(--surface-elevated)] rounded-md overflow-hidden p-0.5 border border-[var(--border-normal)]">
+                          <div
+                            className="h-full rounded-sm transition-all duration-500"
+                            style={{
+                              width: `${Math.min(100, val)}%`,
+                              backgroundColor: barColor
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Selector de Formador */}
+                <div className="pt-2 border-t border-[var(--border-normal)]">
+                  <label className="text-[9.5px] font-bold text-[var(--text-muted)] uppercase tracking-wider block mb-1 font-sans">
+                    Filtrar por Formador:
+                  </label>
+                  <select
+                    value={rankingFormadorFilter}
+                    onChange={(e) => setRankingFormadorFilter(e.target.value)}
+                    className="w-full bg-[var(--surface-elevated)] border border-[var(--border-normal)] rounded-lg px-2.5 py-1.5 text-xs font-bold text-[var(--text-primary)] outline-none cursor-pointer"
+                  >
+                    <option value="Todas">Todos los Formadores</option>
+                    {formadoresRankingList.map(f => (
+                      <option key={f.nombre} value={f.nombre}>{f.nombre}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
-              <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px] text-[var(--text-muted)]">
-                <span>Eje radial normalizado</span>
-                <span>Proporcional a RQ</span>
-              </div>
             </div>
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════ */}
-          {/* NIVEL 3: RADAR NORMALIZADO (0-100%) & TABLA EJECUTIVA POR SEGMENTO */}
+          {/* NIVEL 4: MATRIZ EJECUTIVA DE DOTACIÓN POR SEGMENTO (12 COLS)        */}
           {/* ═══════════════════════════════════════════════════════════════════ */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Radar de Calidad Gerencial (5 Pilares vs Meta 80%) (5 cols) */}
-            <div className="lg:col-span-5 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-subtle)] shadow-lg flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
-                    <Compass className="w-4 h-4 text-cyan-400" />
-                    RADAR DE CALIDAD GERENCIAL
-                  </h3>
-                  <span className="text-[11px] font-bold text-cyan-400 px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20">
-                    {filters.segmento === 'Todos' ? 'Global Operación' : filters.segmento}
-                  </span>
-                </div>
-                <p className="text-xs text-[var(--text-secondary)] mb-4">
-                  Diagnóstico multidimensional en 5 pilares operativos contrastados contra la <strong>Meta Estándar del 80%</strong>
-                </p>
-
-                <div className="h-[280px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadarChart cx="50%" cy="50%" outerRadius="75%" data={radarData}>
-                      <PolarGrid stroke="var(--border-subtle)" />
-                      <PolarAngleAxis 
-                        dataKey="pilar" 
-                        tick={{ fill: 'var(--text-secondary)', fontSize: 10, fontWeight: 'bold' }} 
-                      />
-                      <PolarRadiusAxis 
-                        angle={30} 
-                        domain={[0, 100]} 
-                        tick={{ fill: 'var(--text-muted)', fontSize: 9 }}
-                        stroke="var(--border-subtle)"
-                      />
-                      <Radar 
-                        name="Meta Base (80%)" 
-                        dataKey="Meta Base (80%)" 
-                        stroke="#F59E0B" 
-                        strokeDasharray="4 4"
-                        strokeWidth={1.5}
-                        fill="#F59E0B" 
-                        fillOpacity={0.06} 
-                      />
-                      <Radar 
-                        name="Desempeño Real (%)" 
-                        dataKey="Desempeño Real" 
-                        stroke="#00E5FF" 
-                        strokeWidth={2.5}
-                        fill="#00E5FF" 
-                        fillOpacity={0.35} 
-                      />
-                      <Legend 
-                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
-                      />
-                      <RechartsTooltip
-                        content={({ payload }) => {
-                          if (!payload || !payload.length) return null;
-                          const d = payload[0].payload;
-                          const isAbove = d['Desempeño Real'] >= 80;
-                          return (
-                            <div className="bg-[var(--surface-elevated)] p-3.5 rounded-xl border border-[var(--border-subtle)] shadow-xl text-xs space-y-1.5">
-                              <p className="font-black text-[var(--text-primary)] border-b border-[var(--border-subtle)] pb-1">{d.pilarFull}</p>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-[var(--text-secondary)]">Desempeño Real:</span>
-                                <span className={`font-black font-mono ${isAbove ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                  {d['Desempeño Real']}%
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between gap-4 text-[11px] text-[var(--text-muted)]">
-                                <span>Meta Benchmark:</span>
-                                <span className="font-mono text-amber-400/80">80.0%</span>
-                              </div>
-                              <p className="text-[10px] text-cyan-400/90 pt-0.5 border-t border-[var(--border-subtle)] font-medium">
-                                {d.detalle}
-                              </p>
-                            </div>
-                          );
-                        }}
-                      />
-                    </RadarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-
-            {/* Matriz Ejecutiva de Dotación por Segmento (7 cols) */}
-            <div className="lg:col-span-7 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-subtle)] shadow-lg flex flex-col justify-between">
+          <div className="w-full bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-subtle)] shadow-lg flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
@@ -1326,7 +1389,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 </div>
               </div>
             </div>
-          </div>
         </>
       ) : (
         /* ═══════════════════════════════════════════════════════════════════ */

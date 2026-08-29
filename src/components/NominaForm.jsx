@@ -268,10 +268,26 @@ export default function NominaForm({
 
   // Helpers de homologación y jerarquía desde CAPACIDAD_RYS
   const getPeriodoVal = useCallback((g) => g?.periodo ? String(g.periodo).trim() : '', [])
-  const getSemanaVal = useCallback((g) => g ? String(g.semana_label || g.semana_trabajo || g.semana || '').trim() : '', [])
+  const getSemanaVal = useCallback((g) => {
+    if (!g) return ''
+    const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : (g.semana ? `SEM ${g.semana}` : ''))
+    if (!s) return ''
+    const clean = String(s).trim().toUpperCase()
+    const num = clean.replace(/\D/g, '')
+    return num ? `SEM ${num}` : clean
+  }, [])
+  const matchSemana = useCallback((valA, valB) => {
+    if (!valA || !valB) return false
+    const strB = String(valB).trim().toUpperCase()
+    if (strB === 'TODAS' || strB === 'TODOS' || !strB) return true
+    const numA = parseInt(String(valA).replace(/\D/g, ''), 10)
+    const numB = parseInt(String(valB).replace(/\D/g, ''), 10)
+    if (!isNaN(numA) && !isNaN(numB)) return numA === numB
+    return String(valA).trim().toUpperCase() === String(valB).trim().toUpperCase()
+  }, [])
   const getSegmentoVal = useCallback((g) => {
     if (!g) return ''
-    const seg = g.segmento || inferSegmento(g.campana || '')
+    const seg = g.segmento || inferSegmento(g.campana || g.campana_nombre || '')
     return String(seg || '').trim().toUpperCase()
   }, [])
   const getCampanaVal = useCallback((g) => g ? String(g.campana || g.campana_nombre || '').trim().toUpperCase() : '', [])
@@ -305,25 +321,25 @@ export default function NominaForm({
   const bulkSegmentos = useMemo(() => {
     let filtered = grupos
     if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
-    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSemana) filtered = filtered.filter(g => matchSemana(getSemanaVal(g), bulkSemana))
     const fromGrupos = filtered.map(g => getSegmentoVal(g)).filter(Boolean)
     return [...new Set(fromGrupos)].sort()
-  }, [grupos, bulkPeriodo, bulkSemana, getPeriodoVal, getSemanaVal, getSegmentoVal])
+  }, [grupos, bulkPeriodo, bulkSemana, getPeriodoVal, getSemanaVal, getSegmentoVal, matchSemana])
 
   // 4. Campañas disponibles según Periodo, Semana y Segmento
   const bulkCampanas = useMemo(() => {
     let filtered = grupos
     if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
-    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSemana) filtered = filtered.filter(g => matchSemana(getSemanaVal(g), bulkSemana))
     if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
     return [...new Set(filtered.map(g => getCampanaVal(g)).filter(Boolean))].sort()
-  }, [grupos, bulkPeriodo, bulkSemana, bulkSegmento, getPeriodoVal, getSemanaVal, getSegmentoVal, getCampanaVal])
+  }, [grupos, bulkPeriodo, bulkSemana, bulkSegmento, getPeriodoVal, getSemanaVal, getSegmentoVal, getCampanaVal, matchSemana])
 
   // 5. Grupos disponibles según Periodo, Semana, Segmento y Campaña
   const bulkGruposList = useMemo(() => {
     let filtered = grupos
     if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
-    if (bulkSemana) filtered = filtered.filter(g => getSemanaVal(g) === String(bulkSemana).trim())
+    if (bulkSemana) filtered = filtered.filter(g => matchSemana(getSemanaVal(g), bulkSemana))
     if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
     if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
