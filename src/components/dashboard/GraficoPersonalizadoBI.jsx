@@ -17,7 +17,7 @@ import {
   BarChart3,
   ChevronDown,
 } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardContent } from '../ui/card'
+import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card'
 import { KPI_CATALOG, buildGraficoPersonalizadoData, computePeriodVariance } from '../../lib/dashboardAnalytics'
 
 /**
