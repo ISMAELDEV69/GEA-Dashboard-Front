@@ -1159,6 +1159,7 @@ export default function NominaFormPool({
                 const isReingreso = isAssigned && !isCurrentGroup && !isAssignmentActivo
 
                 const isSelected = selectedDocs.has(key)
+                const strikeClass = isOtherGroup ? 'text-[var(--text-muted)] opacity-60' : 'text-[var(--text-secondary)]'
 
                 return (
                   <tr
