@@ -741,6 +741,50 @@ export default function NominaGridEditor({
     }
   }, [data])
 
+  // Recalcular KPIs sobre la vista filtrada dinámicamente
+  const kpisFiltered = useMemo(() => {
+    const total = filteredData.length
+    const asistieronD0 = filteredData.filter(d => (d.dia_0 || '').toUpperCase() === 'ASISTIO').length
+    const asistieronD1 = filteredData.filter(d => (d.dia_1 || '').toUpperCase() === 'ASISTIO').length
+    const docsOk = filteredData.filter(d => {
+      if ((d.status_final || '').toUpperCase() === 'COMPLETO') return true
+      return (
+        (d.doc_cv || '').toUpperCase() === 'OK' &&
+        (d.doc_dni_adjunto || '').toUpperCase() === 'OK' &&
+        (d.doc_certijoven || '').toUpperCase() === 'OK' &&
+        (d.doc_recibo_servicios || '').toUpperCase() === 'OK' &&
+        (d.doc_ficha_datos || '').toUpperCase() === 'OK' &&
+        (d.doc_autorizacion || '').toUpperCase() === 'OK'
+      )
+    }).length
+
+    return {
+      total,
+      asistieronD0,
+      pctD0: total > 0 ? ((asistieronD0 / total) * 100).toFixed(0) : 0,
+      asistieronD1,
+      pctD1: total > 0 ? ((asistieronD1 / total) * 100).toFixed(0) : 0,
+      docsOk,
+      pctDocs: total > 0 ? ((docsOk / total) * 100).toFixed(0) : 0,
+    }
+  }, [filteredData])
+
+  const activeColumnFiltersCount = useMemo(() => {
+    let count = 0
+    for (const k in filters) {
+      if (filters[k] && filters[k].length > 0) count++
+    }
+    if (onlyIncompleteDocsFilter) count++
+    if (onlyDuplicatesFilter) count++
+    return count
+  }, [filters, onlyIncompleteDocsFilter, onlyDuplicatesFilter])
+
+  const handleClearAllFilters = () => {
+    setFilters({})
+    setOnlyIncompleteDocsFilter(false)
+    setOnlyDuplicatesFilter(false)
+  }
+
   const missingDataCandidates = useMemo(() => {
     const invalidList = []
     data.forEach(p => {
