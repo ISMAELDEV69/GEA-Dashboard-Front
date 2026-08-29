@@ -66,20 +66,11 @@ function normalizeSegmento(value) {
 }
 
 function normalizeSemana(label, trabajo, archivo) {
-  if (label && String(label).trim()) {
-    const s = String(label).trim().toUpperCase();
-    return s.startsWith('SEM') ? s : `SEM ${s}`;
-  }
-  if (trabajo !== null && trabajo !== undefined && String(trabajo).trim()) {
-    const num = String(trabajo).replace(/\D/g, '');
-    return num ? `SEM ${num}` : String(trabajo).trim().toUpperCase();
-  }
-  if (archivo && String(archivo).trim().toUpperCase().startsWith('SEM')) {
-    const s = String(archivo).trim().toUpperCase();
-    const num = s.replace(/\D/g, '');
-    return num ? `SEM ${num}` : s;
-  }
-  return '';
+  const raw = label || trabajo || archivo;
+  if (!raw) return '';
+  const s = String(raw).trim().toUpperCase();
+  const num = s.replace(/\D/g, '');
+  return num ? `SEM ${num}` : s;
 }
 
 function normalizeSigla(value) {

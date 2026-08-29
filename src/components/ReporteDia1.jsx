@@ -125,7 +125,17 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     if (filters.periodo) {
       filtered = filtered.filter(g => String(g.periodo || '').trim() === filters.periodo)
     }
-    return [...new Set(filtered.map(g => g.semana_label ? String(g.semana_label).trim() : null).filter(Boolean))].sort()
+    const unique = [...new Set(filtered.map(g => {
+      const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '')
+      if (!s) return null
+      const num = String(s).replace(/\D/g, '')
+      return num ? `SEM ${num}` : String(s).trim().toUpperCase()
+    }).filter(Boolean))]
+    return unique.sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(String(b).replace(/\D/g, ''), 10) || 0
+      return numA - numB
+    })
   }, [grupos, filters.periodo])
 
   const optSegmento = useMemo(() => {
@@ -134,7 +144,13 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
       filtered = filtered.filter(g => String(g.periodo || '').trim() === filters.periodo)
     }
     if (filters.semana) {
-      filtered = filtered.filter(g => String(g.semana_label || '').trim() === filters.semana)
+      const numF = parseInt(String(filters.semana).replace(/\D/g, ''), 10)
+      filtered = filtered.filter(g => {
+        const s = g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '')
+        const numG = parseInt(String(s).replace(/\D/g, ''), 10)
+        if (!isNaN(numF) && !isNaN(numG)) return numF === numG
+        return String(s || '').trim().toUpperCase() === String(filters.semana).trim().toUpperCase()
+      })
     }
     return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
   }, [grupos, filters.periodo, filters.semana])

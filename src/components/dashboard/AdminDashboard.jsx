@@ -40,6 +40,23 @@ export function isGrupoPlanificado(g) {
 
 const normStr = (s) => String(s || '').trim().toUpperCase()
 
+export const normalizeSemana = (val) => {
+  if (!val) return ''
+  const s = String(val).trim().toUpperCase()
+  if (s === 'ALL' || s === 'TODAS' || s === 'TODOS' || s === '-' || s === 'NULL' || s === 'UNDEFINED') return ''
+  const num = s.replace(/\D/g, '')
+  return num ? `SEM ${num}` : s
+}
+
+export const matchSemana = (valA, valB) => {
+  if (!valB || valB === 'ALL' || valB === 'TODAS' || valB === 'TODOS') return true
+  if (!valA) return false
+  const numA = parseInt(String(valA).replace(/\D/g, ''), 10)
+  const numB = parseInt(String(valB).replace(/\D/g, ''), 10)
+  if (!isNaN(numA) && !isNaN(numB)) return numA === numB
+  return normStr(valA) === normStr(valB)
+}
+
 const matchStr = (val, target) => {
   if (!target || target === 'ALL') return true
   return normStr(val) === normStr(target)
@@ -303,7 +320,7 @@ function AdminDashboard({
 
       if (excludeKey !== 'semana' && semana !== 'ALL') {
         const sem = p.semana_trabajo || g?.semana_label || g?.semana
-        if (!matchStr(sem, semana)) return false
+        if (!matchSemana(sem, semana)) return false
       }
 
       if (excludeKey !== 'reclutador' && reclutador !== 'ALL') {
@@ -331,7 +348,8 @@ function AdminDashboard({
       }
 
       if (excludeKey !== 'semana' && semana !== 'ALL') {
-        if (!matchStr(g.semana_label || g.semana, semana)) return false
+        const sem = g.semana_label || g.semana || g.semana_trabajo
+        if (!matchSemana(sem, semana)) return false
       }
 
       if (excludeKey !== 'reclutador' && reclutador !== 'ALL') {
@@ -436,14 +454,18 @@ function AdminDashboard({
     const set = new Set()
     for (const p of pForSem) {
       const g = groupMetaMap.get(p.grupo_codigo)
-      const sem = p.semana_trabajo || g?.semana_label || g?.semana
-      if (sem && normStr(sem) !== '-' && normStr(sem) !== 'NULL') set.add(String(sem).trim())
+      const sem = normalizeSemana(p.semana_trabajo || g?.semana_label || g?.semana)
+      if (sem) set.add(sem)
     }
     for (const g of cForSem) {
-      const sem = g.semana_label || g.semana
-      if (sem && normStr(sem) !== '-' && normStr(sem) !== 'NULL') set.add(String(sem).trim())
+      const sem = normalizeSemana(g.semana_label || g.semana || g.semana_trabajo)
+      if (sem) set.add(sem)
     }
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
+    return Array.from(set).sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(String(b).replace(/\D/g, ''), 10) || 0
+      return numA - numB
+    })
   }, [pForSem, cForSem, groupMetaMap])
 
   // 6. Datasets para Opciones de Reclutadores (excluyendo reclutador)
@@ -751,7 +773,7 @@ function AdminDashboard({
               {semanasList.map((sem) => {
                 const count = pForSem.filter(p => {
                   const g = groupMetaMap.get(p.grupo_codigo)
-                  return matchStr(p.semana_trabajo || g?.semana_label || g?.semana, sem)
+                  return matchSemana(p.semana_trabajo || g?.semana_label || g?.semana, sem)
                 }).length
                 return (
                   <option key={sem} value={sem}>
