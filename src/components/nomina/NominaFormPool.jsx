@@ -335,7 +335,7 @@ export default function NominaFormPool({
       } else if (wbInfo.type === 'workbook') {
         const worksheet = wbInfo.workbook.Sheets[targetSheetName]
         if (worksheet) {
-          matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
+          matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
           tabCacheRef.current.set(targetSheetName, matrix)
         }
       } else if (wbInfo.type === 'published_sheets') {
@@ -420,7 +420,22 @@ export default function NominaFormPool({
       const uniqueData = Array.from(deduplicatedMap.values())
 
       // Consultar historial de asignaciones y consolidado de asistencias de todos los postulantes
-      const uniqueDnis = uniqueData.map(d => String(d.documento || '').trim()).filter(Boolean)
+      // Incluimos tanto el documento con ceros como sin ceros iniciales para detectar registros históricos
+      const queryDnisSet = new Set()
+      uniqueData.forEach(d => {
+        const doc = String(d.documento || '').trim()
+        if (doc) {
+          queryDnisSet.add(doc)
+          const raw = doc.replace(/^0+/, '')
+          if (raw) {
+            queryDnisSet.add(raw)
+            queryDnisSet.add('0' + raw)
+            queryDnisSet.add('00' + raw)
+          }
+        }
+      })
+
+      const uniqueDnis = Array.from(queryDnisSet)
       const historyMap = new Map()
       const asisHistoryMap = new Map()
 
@@ -458,10 +473,11 @@ export default function NominaFormPool({
             existing.forEach(r => {
               const doc = String(r.documento || '').trim()
               if (!doc) return
-              if (!historyMap.has(doc)) {
-                historyMap.set(doc, [])
-              }
-              historyMap.get(doc).push(r)
+              const keys = [doc, doc.replace(/^0+/, ''), '0' + doc.replace(/^0+/, ''), '00' + doc.replace(/^0+/, '')]
+              keys.forEach(k => {
+                if (!historyMap.has(k)) historyMap.set(k, [])
+                historyMap.get(k).push(r)
+              })
             })
           }
         })
@@ -471,10 +487,11 @@ export default function NominaFormPool({
             asisData.forEach(r => {
               const doc = String(r.documento || '').trim()
               if (!doc) return
-              if (!asisHistoryMap.has(doc)) {
-                asisHistoryMap.set(doc, [])
-              }
-              asisHistoryMap.get(doc).push(r)
+              const keys = [doc, doc.replace(/^0+/, ''), '0' + doc.replace(/^0+/, ''), '00' + doc.replace(/^0+/, '')]
+              keys.forEach(k => {
+                if (!asisHistoryMap.has(k)) asisHistoryMap.set(k, [])
+                asisHistoryMap.get(k).push(r)
+              })
             })
           }
         })
@@ -482,15 +499,15 @@ export default function NominaFormPool({
 
       // Tomar siempre el ÚLTIMO grupo y cruzarlo con su última marcación de asistencia
       const latestMap = new Map()
-      historyMap.forEach((records, doc) => {
+      historyMap.forEach((records, docKey) => {
         const sorted = [...records].sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
         if (sorted.length > 0) {
           const latestNom = sorted[0]
           // Buscar la asistencia más reciente para este DNI
-          const asisRecords = asisHistoryMap.get(doc) || []
+          const asisRecords = asisHistoryMap.get(docKey) || []
           const latestAsis = asisRecords.length > 0 ? asisRecords[0] : null
 
-          latestMap.set(doc, {
+          latestMap.set(docKey, {
             ...latestNom,
             asis_sigla: latestAsis?.sigla || null,
             asis_estado: latestAsis?.estado || null,
@@ -550,18 +567,26 @@ export default function NominaFormPool({
     loadSheetCandidates(workbookData, sheetName)
   }
 
-  // Filter available data
+  // Filter available data with flexible matching for leading zeros (DNI / CE)
   const availableData = useMemo(() => {
     let list = poolData.filter(d => d.documento)
     if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(d =>
-        String(d.documento || '').toLowerCase().includes(q) ||
-        String(d.nombres || '').toLowerCase().includes(q) ||
-        String(d.apellido_paterno || '').toLowerCase().includes(q) ||
-        String(d.apellido_materno || '').toLowerCase().includes(q) ||
-        String(d.celular || '').toLowerCase().includes(q)
-      )
+      const q = search.toLowerCase().trim()
+      const qClean = q.replace(/^0+/, '')
+      list = list.filter(d => {
+        const doc = String(d.documento || '').toLowerCase().trim()
+        const docClean = doc.replace(/^0+/, '')
+        const matchDoc = doc.includes(q) || 
+                         (qClean.length >= 4 && (docClean.includes(qClean) || qClean.includes(docClean)))
+
+        return (
+          matchDoc ||
+          String(d.nombres || '').toLowerCase().includes(q) ||
+          String(d.apellido_paterno || '').toLowerCase().includes(q) ||
+          String(d.apellido_materno || '').toLowerCase().includes(q) ||
+          String(d.celular || '').toLowerCase().includes(q)
+        )
+      })
     }
     return list
   }, [poolData, search])

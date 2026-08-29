@@ -192,8 +192,9 @@ export function mapGoogleFormHeaders(headerRow = []) {
  * Limpia y normaliza números de documento de identidad (DNI, CE, Pasaporte),
  * eliminando apóstrofes iniciales (ej. '006541136 puesto en Excel/Sheets para preservar ceros),
  * comillas simples/dobles, prefijos de texto como "DNI:" o "NRO", caracteres de control y espacios.
+ * Preserva y restituye ceros iniciales según el tipo de documento y nacionalidad.
  */
-export function cleanDocumento(val) {
+export function cleanDocumento(val, rowContext = {}) {
   if (val === null || val === undefined) return ''
   let s = String(val).trim()
   if (!s) return ''
@@ -212,9 +213,25 @@ export function cleanDocumento(val) {
   // 4. Eliminar comillas o apóstrofes residuales incrustados y espacios
   s = s.replace(/['"`’‘“”\s]/g, '').trim()
   
-  // 5. Si es puramente numérico de 7 dígitos (DNI peruano que perdió un cero en Excel por falta de apóstrofe), padearlo a 8 dígitos
-  if (/^\d{7}$/.test(s)) {
-    s = '0' + s
+  // 5. Determinar contexto de documento y nacionalidad
+  const tipoDoc = String(rowContext.tipo_documento || '').toUpperCase()
+  const nac = String(rowContext.nacionalidad || '').toUpperCase()
+  const isForeign = (tipoDoc && (tipoDoc.includes('CE') || tipoDoc.includes('EXTRANJ') || tipoDoc.includes('PTP') || tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CEDULA') || tipoDoc !== 'DNI')) || (nac && !nac.includes('PERU'))
+
+  // 6. Normalización inteligente de ceros iniciales
+  if (/^\d+$/.test(s)) {
+    if (s.length === 7) {
+      if (isForeign) {
+        // CE extranjero numérico estándar (9 dígitos): restaurar los dos ceros '00'
+        s = '00' + s
+      } else {
+        // DNI peruano estándar (8 dígitos): restaurar un cero '0'
+        s = '0' + s
+      }
+    } else if (s.length === 8 && s.startsWith('0') && isForeign) {
+      // CE extranjero que había recibido solo 1 cero por error anterior: llevarlo a 9 dígitos '00'
+      s = '0' + s
+    }
   }
   
   return s
@@ -260,13 +277,16 @@ export function parseGoogleFormRow(row, colIdx) {
   }
 
   const str = (k) => String(get(k) || '').trim() || null
-  let rawDoc = cleanDocumento(get('documento'))
+  const rawTipoDoc = str('tipo_documento') ? str('tipo_documento').toUpperCase() : 'DNI'
+  const rawNac = str('nacionalidad') ? str('nacionalidad').toUpperCase() : 'PERUANA'
+  
+  let rawDoc = cleanDocumento(get('documento'), { tipo_documento: rawTipoDoc, nacionalidad: rawNac })
 
   // Fallback: Si no hay documento en la columna mapeada, buscar en las demás celdas de la fila un DNI válido
   if (!isValidDocumento(rawDoc)) {
     for (let cIdx = 0; cIdx < row.length; cIdx++) {
-      const candidate = cleanDocumento(row[cIdx])
-      if (isValidDocumento(candidate) && /^\d{7,12}$/.test(candidate)) {
+      const candidate = cleanDocumento(row[cIdx], { tipo_documento: rawTipoDoc, nacionalidad: rawNac })
+      if (isValidDocumento(candidate) && /^\d{6,15}$/.test(candidate)) {
         rawDoc = candidate
         break
       }
@@ -429,7 +449,7 @@ export function parseNominaRows(matrix = [], defaults = {}) {
       cell === 'HORARIOS ESPECIALES' ||
       cell === 'SOLICITUDES DE HORARIO'
     )
-    if (isSecondaryHeader && !rowCells.some(cell => /^\d{8}$/.test(cell))) {
+    if (isSecondaryHeader && !rowCells.some(cell => /^\d{6,15}$/.test(cell) || isValidDocumento(cell))) {
       break
     }
 

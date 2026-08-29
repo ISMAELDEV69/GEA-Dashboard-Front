@@ -2774,7 +2774,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
       if (resp.ok) {
         const buffer = await resp.arrayBuffer()
         console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] XLSX descargado con éxito:', buffer.byteLength, 'bytes')
-        const workbook = XLSX.read(buffer, { type: 'array' })
+        const workbook = XLSX.read(buffer, { type: 'array', cellText: true, cellDates: true })
         const sheetNames = workbook.SheetNames || []
         if (sheetNames.length > 0) {
           console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestañas en libro XLSX:', sheetNames)
@@ -2969,7 +2969,7 @@ export async function parseSheetMatrixCandidates(matrix, options = {}) {
         // Si es título de tabla secundaria y no tiene datos de postulante, cortar
         const hasDocInRow = rowCells.some(cell => {
           const c = cell.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
-          return /^\d{7,12}$/.test(c)
+          return /^\d{6,15}$/.test(c)
         })
         if (isSecondaryHeader && !hasDocInRow) {
           console.info('[POOL-PIPELINE] [ETAPA 4: SALTO] Saltando fila de tabla secundaria en índice:', j)
@@ -3039,7 +3039,7 @@ export async function fetchGoogleFormsPool(url, sheetName = null) {
         ? sheetName 
         : wbData.sheetNames[0]
       const worksheet = wbData.workbook.Sheets[targetSheet]
-      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
+      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
       return await parseSheetMatrixCandidates(matrix)
     }
     return await parseSheetMatrixCandidates(wbData.matrix)
