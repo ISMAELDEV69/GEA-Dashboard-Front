@@ -166,13 +166,33 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex justify-end bg-slate-50 dark:bg-slate-800/50">
+      <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/50">
+        <div className="flex items-center gap-2">
+          {filteredData.length === data.length ? (
+            <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+              Total: <strong>{data.length}</strong> postulantes
+            </span>
+          ) : (
+            <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+              Mostrando {filteredData.length} de {data.length} postulantes ({data.length - filteredData.length} ocultos)
+            </span>
+          )}
+          {Object.keys(filters).some(k => filters[k] && filters[k].length > 0) && (
+            <button
+              type="button"
+              onClick={() => setFilters({})}
+              className="text-xs font-bold px-2 py-0.5 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors cursor-pointer"
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
         <button
           onClick={handleDownload}
           disabled={loading || filteredData.length === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-sm font-semibold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors disabled:opacity-50 cursor-pointer"
         >
-          <DownloadCloud size={16} /> Descargar Excel
+          <DownloadCloud size={15} /> Descargar Excel ({filteredData.length})
         </button>
       </div>
       <div className="flex-1 overflow-auto">

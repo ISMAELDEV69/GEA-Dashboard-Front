@@ -829,9 +829,17 @@ export default function NominaGridEditor({
         {/* Total Postulantes */}
         <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-cyan-500/20 shadow-[0_0_12px_rgba(0,245,255,0.08)] flex items-center justify-between">
           <div>
-            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Total Postulantes</div>
-            <div className="text-xl sm:text-2xl font-black text-cyan-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {kpis.total}
+            <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1">
+              Total Postulantes
+              {filteredData.length < data.length && (
+                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-400 font-bold">Filtrados</span>
+              )}
+            </div>
+            <div className="text-xl sm:text-2xl font-black text-cyan-400 leading-none mt-1 flex items-baseline gap-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {filteredData.length}
+              {filteredData.length < data.length && (
+                <span className="text-xs font-bold text-[var(--text-muted)]">/ {kpis.total}</span>
+              )}
             </div>
           </div>
           <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
@@ -843,8 +851,12 @@ export default function NominaGridEditor({
         <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-emerald-500/20 shadow-[0_0_12px_rgba(57,255,20,0.08)] flex items-center justify-between">
           <div>
             <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Asistieron Día 0</div>
-            <div className="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {kpis.asistieronD0} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD0}%)</span>
+            <div className="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-1 flex items-baseline gap-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpisFiltered.asistieronD0}
+              <span className="text-xs font-bold text-[var(--text-muted)]">
+                ({kpisFiltered.pctD0}%)
+                {filteredData.length < data.length && ` / ${kpis.asistieronD0}`}
+              </span>
             </div>
           </div>
           <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
@@ -856,8 +868,12 @@ export default function NominaGridEditor({
         <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-purple-500/20 shadow-[0_0_12px_rgba(191,95,255,0.08)] flex items-center justify-between">
           <div>
             <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Asistieron Día 1</div>
-            <div className="text-xl sm:text-2xl font-black text-purple-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-              {kpis.asistieronD1} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctD1}%)</span>
+            <div className="text-xl sm:text-2xl font-black text-purple-400 leading-none mt-1 flex items-baseline gap-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+              {kpisFiltered.asistieronD1}
+              <span className="text-xs font-bold text-[var(--text-muted)]">
+                ({kpisFiltered.pctD1}%)
+                {filteredData.length < data.length && ` / ${kpis.asistieronD1}`}
+              </span>
             </div>
           </div>
           <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
@@ -870,8 +886,12 @@ export default function NominaGridEditor({
           <div className="p-2.5 sm:p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/20 shadow-[0_0_12px_rgba(255,122,0,0.08)] flex items-center justify-between">
             <div>
               <div className="text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-muted)]">Documentos OK</div>
-              <div className="text-xl sm:text-2xl font-black text-orange-400 leading-none mt-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
-                {kpis.docsOk} <span className="text-xs font-bold text-[var(--text-muted)]">({kpis.pctDocs}%)</span>
+              <div className="text-xl sm:text-2xl font-black text-orange-400 leading-none mt-1 flex items-baseline gap-1" style={{ fontFamily: 'Space Grotesk, Inter, sans-serif' }}>
+                {kpisFiltered.docsOk}
+                <span className="text-xs font-bold text-[var(--text-muted)]">
+                  ({kpisFiltered.pctDocs}%)
+                  {filteredData.length < data.length && ` / ${kpis.docsOk}`}
+                </span>
               </div>
             </div>
             <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400">
@@ -900,7 +920,11 @@ export default function NominaGridEditor({
           <p className="text-xs text-[var(--text-muted)] mt-0.5">
             {[periodo, semana ? (semana.toUpperCase().startsWith('SEM') ? semana : `Sem ${semana}`) : '', segmento, campana].filter(Boolean).join(' · ')}
             {([periodo, semana, segmento, campana].some(Boolean) ? ' · ' : '')}
-            {data.length} candidatos cargados
+            {filteredData.length < data.length ? (
+              <strong className="text-cyan-400">{filteredData.length} de {data.length} candidatos visibles</strong>
+            ) : (
+              `${data.length} candidatos cargados`
+            )}
           </p>
         </div>
 
@@ -1054,6 +1078,85 @@ export default function NominaGridEditor({
             )}
           </div>
         </div>
+      </div>
+
+      {/* ── BARRA DINÁMICA DE CONTEO EN VIVO Y FILTROS ACTIVOS ── */}
+      <div className="px-4 py-2.5 bg-[var(--bg-elevated)]/60 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2.5 text-xs">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          {filteredData.length === data.length ? (
+            <span className="font-bold text-[var(--text-secondary)] flex items-center gap-1.5">
+              <Users size={14} className="text-cyan-400" />
+              <span>Nómina completa: <strong className="text-[var(--text-primary)]">{data.length}</strong> postulantes</span>
+            </span>
+          ) : (
+            <span className="font-black px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 flex items-center gap-1.5 shadow-2xs">
+              <Filter size={13} />
+              Mostrando {filteredData.length} de {data.length} postulantes ({data.length - filteredData.length} ocultos por filtros)
+            </span>
+          )}
+
+          {/* Chips de filtros activos por columna */}
+          {Object.entries(filters).map(([k, vals]) => {
+            if (!vals || vals.length === 0) return null
+            const colDef = ALL_EDITABLE_COLUMNS.find(c => c.key === k) || { label: k }
+            return (
+              <span
+                key={k}
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold animate-in fade-in"
+              >
+                <span>{colDef.label}: <strong className="text-indigo-200">{vals.join(', ')}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => handleFilterChange(k, [])}
+                  className="hover:text-rose-400 transition-colors cursor-pointer"
+                  title="Quitar este filtro"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            )
+          })}
+
+          {onlyIncompleteDocsFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px] font-bold animate-in fade-in">
+              <span>Filtro: Incompletos ({filteredData.length})</span>
+              <button
+                type="button"
+                onClick={() => setOnlyIncompleteDocsFilter(false)}
+                className="hover:text-rose-400 transition-colors cursor-pointer"
+                title="Quitar filtro de incompletos"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          )}
+
+          {onlyDuplicatesFilter && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[11px] font-bold animate-in fade-in">
+              <span>Filtro: Duplicados ({filteredData.length})</span>
+              <button
+                type="button"
+                onClick={() => setOnlyDuplicatesFilter(false)}
+                className="hover:text-rose-400 transition-colors cursor-pointer"
+                title="Quitar filtro de duplicados"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          )}
+        </div>
+
+        {/* Botón Limpiar Todos los Filtros */}
+        {activeColumnFiltersCount > 0 && (
+          <button
+            type="button"
+            onClick={handleClearAllFilters}
+            className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all flex items-center gap-1 cursor-pointer active:scale-95 ml-auto"
+            title="Quitar todos los filtros y ver la nómina completa"
+          >
+            <X size={13} /> Limpiar Filtros ({activeColumnFiltersCount})
+          </button>
+        )}
       </div>
 
       {/* Duplicate Filter Alert Banner */}
