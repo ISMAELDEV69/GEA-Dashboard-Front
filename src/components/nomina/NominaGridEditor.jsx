@@ -40,6 +40,7 @@ export const POSTULANTE_COLUMNS = [
   { key: 'estado_civil', label: 'ESTADO CIVIL', width: 130 },
   { key: 'n_hijos', label: 'N° HIJOS', width: 90, type: 'number' },
   { key: 'nivel_academico', label: 'NIVEL ACADÉMICO', width: 160 },
+
   { key: 'carrera', label: 'CARRERA', width: 160 },
   { key: 'distrito_residencia', label: 'DISTRITO', width: 150 },
   { key: 'lugar_residencia', label: 'LUGAR RESIDENCIA', width: 160 },
@@ -53,7 +54,7 @@ export const POSTULANTE_COLUMNS = [
 
 // 2. Gestión Operativa y Capacitación
 export const OPERACION_COLUMNS = [
-  { key: 'reclutador', label: 'RECLUTADOR', width: 220, type: 'select', options: [] },
+  { key: 'reclutador', label: 'RECLUTADOR', width: 220, isLocked: true },
   { key: 'sede', label: 'SEDE', width: 150, type: 'select', options: ['ATE', 'SAN ISIDRO', 'COMAS', 'JOCKEY'] },
   { key: 'modalidad', label: 'MODALIDAD', width: 120, type: 'select', options: ['PRESENCIAL', 'HIBRIDO', 'REMOTO'] },
   { key: 'condicion', label: 'CONDICIÓN', width: 120, type: 'select', options: ['FULL TIME', 'PART TIME'] },
@@ -571,7 +572,7 @@ export default function NominaGridEditor({
 
   // Handle cell edit with 1.2s debounce and row-level batching
   const handleCellChange = (rowId, key, value, immediate = false) => {
-    if (isReadOnly) return
+    if (isReadOnly || key === 'reclutador') return
     const updateObj = { [key]: value || null }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
@@ -604,7 +605,7 @@ export default function NominaGridEditor({
 
   // Handle bulk replication of a column to all filtered rows
   const handleBulkUpdate = async () => {
-    if (isReadOnly || !selectedColumn || filteredData.length < 2) return
+    if (isReadOnly || !selectedColumn || selectedColumn === 'reclutador' || filteredData.length < 2) return
     const firstRow = filteredData[0]
     const updateObj = { [selectedColumn]: firstRow[selectedColumn] || null }
     if (selectedColumn === 'reclutador') {
@@ -1083,12 +1084,12 @@ export default function NominaGridEditor({
           {!isReadOnly && (
             <button 
               onClick={handleBulkUpdate}
-              disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn}
+              disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn || selectedColumn === 'reclutador'}
               className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
               <CheckCircle2 size={14} /> 
               {selectedColumn 
-                ? `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos` 
+                ? (selectedColumn === 'reclutador' ? 'Reclutador no replicable' : `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos`) 
                 : 'Selecciona columna para replicar'}
             </button>
           )}
@@ -1335,11 +1336,12 @@ export default function NominaGridEditor({
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div 
-                        className={`transition-colors flex-1 truncate ${!isReadOnly ? 'cursor-pointer hover:text-cyan-400' : ''}`}
-                        onClick={() => !isReadOnly && setSelectedColumn(col.key)}
-                        title={!isReadOnly ? "Haz clic para seleccionar y replicar esta columna" : ""}
+                        className={`transition-colors flex-1 truncate flex items-center gap-1 ${!isReadOnly && col.key !== 'reclutador' ? 'cursor-pointer hover:text-cyan-400' : ''}`}
+                        onClick={() => !isReadOnly && col.key !== 'reclutador' && setSelectedColumn(col.key)}
+                        title={col.key === 'reclutador' ? "Columna bloqueada (no editable)" : (!isReadOnly ? "Haz clic para seleccionar y replicar esta columna" : "")}
                       >
-                        {col.label}
+                        {col.key === 'reclutador' && <Lock size={10} className="text-amber-400 shrink-0" />}
+                        <span className="truncate">{col.label}</span>
                       </div>
                       <ColumnFilter 
                         columnKey={col.key}
@@ -1438,7 +1440,15 @@ export default function NominaGridEditor({
 
                       return (
                         <td key={col.key} className={`p-0 border-r border-[var(--border-subtle)] ${badgeClass}`}>
-                          {isReadOnly ? (
+                          {col.key === 'reclutador' ? (
+                            <div 
+                              className="w-full h-full p-2 text-xs font-bold select-none truncate flex items-center gap-1.5 text-[var(--text-secondary)] bg-[var(--bg-elevated)]/30"
+                              title={`Reclutador asignado: ${val || 'Sin asignar'} (Bloqueado)`}
+                            >
+                              <Lock size={11} className="text-amber-400/80 shrink-0" />
+                              <span className="truncate">{val || '—'}</span>
+                            </div>
+                          ) : isReadOnly ? (
                             <div className="w-full h-full p-2 text-xs font-semibold select-none truncate flex items-center">
                               {val || '—'}
                             </div>
@@ -1451,7 +1461,7 @@ export default function NominaGridEditor({
                               className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
                             >
                               <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
-                              {(col.key === 'reclutador' ? reclutadorOptions : col.options || []).map(opt => (
+                              {(col.options || []).map(opt => (
                                 <option key={opt} value={opt} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                                   {opt}
                                 </option>
