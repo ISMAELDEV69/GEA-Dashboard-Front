@@ -249,6 +249,7 @@ export default function App() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false)
 
   const hasLoadedOnceRef = useRef(false)
+  const lastFullFetchTimeRef = useRef(Date.now())
 
   const loadAllData = useCallback(async ({ silent = hasLoadedOnceRef.current } = {}) => {
     if (!silent) setLoading(true)
@@ -298,6 +299,8 @@ export default function App() {
       if (a?.length) setAsistencias(a)
       if (al?.length) setAuditLogs(al)
 
+      lastFullFetchTimeRef.current = Date.now()
+
     } catch (err) {
       console.error('Error loading data:', err)
       setError(err.message || 'Error al cargar los datos.')
@@ -320,7 +323,7 @@ export default function App() {
     }
   }, [loadAllData])
 
-  // ── JITTER DE ARRANQUE Y POLLING SUAVE (Mitigación Thundering Herd 100+ usuarios concurrentes - 2026-08-23) ──
+  // ── JITTER DE ARRANQUE Y POLLING OPTIMIZADO (Page Visibility API + 15 min Interval) ──
   
   // 1. Jitter de arranque inicial (0 a 8 segundos): dispersa el login masivo de las 8:00 AM
   useEffect(() => {
@@ -344,27 +347,64 @@ export default function App() {
     return () => clearTimeout(startupTimer)
   }, [effectiveSession, loadAllData])
 
-  // 2. Polling suave cada 5 minutos con jitter fijo por sesión (offset aleatorio de 0 a 60s)
+  // 2. Polling cada 15 minutos con Page Visibility API (Pausa en background, reanuda al enfocar)
   const sessionPollOffsetMs = useRef(Math.floor(Math.random() * 60000)).current
 
   useEffect(() => {
     if (!effectiveSession || DB_MODE !== 'supabase') return undefined
 
-    const FIVE_MINUTES_MS = 5 * 60 * 1000
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
     let intervalId = null
 
-    // Primer poll se ejecuta a los (5 min + offset de sesión)
-    const initialPollTimer = setTimeout(() => {
-      loadAllData({ silent: true })
-      // Configurar polling recurrente cada 5 minutos
+    const startPolling = () => {
+      if (intervalId) clearInterval(intervalId)
       intervalId = setInterval(() => {
+        // Solo ejecutar llamada de red si la pestaña está visible
+        if (typeof document !== 'undefined' && !document.hidden && document.visibilityState === 'visible') {
+          loadAllData({ silent: true })
+        }
+      }, FIFTEEN_MINUTES_MS)
+    }
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId)
+        intervalId = null
+      }
+    }
+
+    // Listener de visibilidad de pestaña: pausar en background y sincronizar al volver si pasaron > 15 min
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined') return
+      if (!document.hidden && document.visibilityState === 'visible') {
+        const timeSinceLastFetch = Date.now() - (lastFullFetchTimeRef.current || 0)
+        if (timeSinceLastFetch >= FIFTEEN_MINUTES_MS) {
+          loadAllData({ silent: true })
+        }
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    }
+
+    // Iniciar primer poll con offset de sesión (15 min + offset de 0 a 60s)
+    const initialPollTimer = setTimeout(() => {
+      if (typeof document !== 'undefined' && !document.hidden && document.visibilityState === 'visible') {
         loadAllData({ silent: true })
-      }, FIVE_MINUTES_MS)
-    }, FIVE_MINUTES_MS + sessionPollOffsetMs)
+      }
+      startPolling()
+    }, FIFTEEN_MINUTES_MS + sessionPollOffsetMs)
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+    }
 
     return () => {
       clearTimeout(initialPollTimer)
-      if (intervalId) clearInterval(intervalId)
+      stopPolling()
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+      }
     }
   }, [effectiveSession, loadAllData, sessionPollOffsetMs])
 

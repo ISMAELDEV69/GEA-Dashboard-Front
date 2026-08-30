@@ -802,7 +802,10 @@ function buildNominaPayload(payload, ids) {
 }
 
 /**
- * QW-2: Limita la descarga inicial de postulantes a 800 registros para evitar transferencias
+export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, celular_emergencia, contacto_emergencia, parentesco, correo, genero, fecha_nacimiento, edad, estado_civil, n_hijos, nivel_academico, carrera, entidad, nacionalidad, lugar_nacimiento, lugar_residencia, distrito_residencia, direccion_domicilio, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, exp_call_center, exp_tipo_campana, exp_tiempo_campana, exp_otra, exp_tiempo_otra, grupo_codigo, modalidad, condicion, horario_gestion, descanso, envio_dni, test_psicologico, validacion_pc, evaluacion_dia_0, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, pago_capacitacion, fecha_inscripcion_curso, fecha_ingreso, tipo_trabajo, tipo_contratacion, razon_social, rango_salarial, remuneracion, bono_variable, bono_movilidad, bono_bienvenida, bono_permanencia, bono_asistencia_perfecta, cargo_contractual, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, doc_cv, doc_dni_adjunto, doc_certijoven, doc_recibo_servicios, doc_ficha_datos, doc_autorizacion, created_at';
+
+/**
+ * QW-2: Limita la descarga inicial de postulantes a 5000 registros para evitar transferencias
  * masivas y saturación en inicios de turno simultáneos.
  * Para obtener todo el histórico completo (ej. exportes Excel), pasar { all: true } o usar fetchAllPostulantes().
  */
@@ -810,7 +813,7 @@ export async function fetchPostulantes({ limit = 5000, all = false } = {}) {
   if (DB_MODE === 'supabase') {
     let query = supabase
       .from('v_nominas_consolidado')
-      .select('*')
+      .select(POSTULANTES_COLUMNS)
       .order('created_at', { ascending: false })
 
     if (!all && limit) {
@@ -850,7 +853,7 @@ export async function fetchPostulantesReclutador(reclutadorId, reclutadorNombre 
   if (DB_MODE === 'supabase') {
     let query = supabase
       .from('v_nominas_consolidado')
-      .select('*')
+      .select(POSTULANTES_COLUMNS)
       .order('created_at', { ascending: false })
 
     if (reclutadorId) {
