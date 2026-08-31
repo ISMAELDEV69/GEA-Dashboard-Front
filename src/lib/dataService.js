@@ -4375,13 +4375,36 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postulantes = [], asistencias = []) {
   if (!gruposInfo || gruposInfo.length === 0) return [];
 
+  // Fallback de seguridad: Si postulantes o asistencias no vienen cargados en memoria, consultar directamente a Supabase
+  let effPostulantes = postulantes;
+  let effAsistencias = asistencias;
+
+  if (DB_MODE === 'supabase') {
+    if (!effPostulantes || effPostulantes.length === 0) {
+      try {
+        effPostulantes = await fetchPostulantes({ all: true });
+      } catch (e) {
+        console.warn('Error fetching postulantes fallback:', e);
+      }
+    }
+    if (!effAsistencias || effAsistencias.length === 0) {
+      try {
+        effAsistencias = await fetchAsistencias();
+      } catch (e) {
+        console.warn('Error fetching asistencias fallback:', e);
+      }
+    }
+  }
+
   const norm = (val) => String(val || '').trim().toUpperCase();
+  const getBaseCode = (str) => norm(str).replace(/-(SEM\d+|S\d+|\d{6,})$/i, '').replace(/\s*\(SEM.*?\)/i, '').trim();
   const descSet = await getDescuentosSetGlobal();
 
   const nominasGrouped = new Map();
   const nominasByCode = new Map();
-  (postulantes || []).forEach(n => {
+  (effPostulantes || []).forEach(n => {
     const code = norm(n.grupo_codigo);
+    const baseCode = getBaseCode(n.grupo_codigo);
     const key = `${norm(n.campana)}|${code}`;
     if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
     nominasGrouped.get(key).push(n);
@@ -4390,12 +4413,17 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (!nominasByCode.has(code)) nominasByCode.set(code, []);
       nominasByCode.get(code).push(n);
     }
+    if (baseCode && baseCode !== code) {
+      if (!nominasByCode.has(baseCode)) nominasByCode.set(baseCode, []);
+      nominasByCode.get(baseCode).push(n);
+    }
   });
 
   const formAsisGrouped = new Map();
   const formAsisByCode = new Map();
-  (asistencias || []).forEach(f => {
+  (effAsistencias || []).forEach(f => {
     const code = norm(f.grupo_codigo || f.codigo_grupo);
+    const baseCode = getBaseCode(f.grupo_codigo || f.codigo_grupo);
     const key = `${norm(f.campana)}|${code}`;
     if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
     formAsisGrouped.get(key).push(f);
@@ -4404,22 +4432,31 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (!formAsisByCode.has(code)) formAsisByCode.set(code, []);
       formAsisByCode.get(code).push(f);
     }
+    if (baseCode && baseCode !== code) {
+      if (!formAsisByCode.has(baseCode)) formAsisByCode.set(baseCode, []);
+      formAsisByCode.get(baseCode).push(f);
+    }
   });
 
   const results = [];
   for (const grupoInfo of gruposInfo) {
     const { codigo: grupo_codigo, campana, fecha_inicio_ojt } = grupoInfo;
     const cleanCode = norm(grupo_codigo);
+    const baseCode = getBaseCode(grupo_codigo);
     const groupKey = `${norm(campana)}|${cleanCode}`;
     
     // Obtener nóminas intentando match exacto y luego por código de cohorte
-    const rawNominas = nominasGrouped.get(groupKey) || nominasByCode.get(cleanCode) || [];
+    const rawNominas = nominasGrouped.get(groupKey) || 
+                       nominasByCode.get(cleanCode) || 
+                       nominasByCode.get(baseCode) || [];
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
     // Obtener asistencias intentando match exacto y luego por código de cohorte
-    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || formAsisByCode.get(cleanCode) || [];
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || 
+                             formAsisByCode.get(cleanCode) || 
+                             formAsisByCode.get(baseCode) || [];
 
     // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico
     let effectiveCandidates = validNominas;

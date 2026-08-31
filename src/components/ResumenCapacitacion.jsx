@@ -142,13 +142,20 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [grupos, postulantes, asistencias, data.length]);
+  }, [grupos, postulantes, asistencias]);
 
   useEffect(() => {
     if (grupos.length > 0) {
       loadData(false);
     }
-  }, [grupos.length, postulantes.length, asistencias.length]);
+  }, [grupos, postulantes, asistencias, loadData]);
+
+  // Escuchar refresco global
+  useEffect(() => {
+    const handleRefresh = () => loadData(true);
+    window.addEventListener('gea-global-refresh', handleRefresh);
+    return () => window.removeEventListener('gea-global-refresh', handleRefresh);
+  }, [loadData]);
 
   // Filtros activos
   const hasActiveFilters = useMemo(() => {
