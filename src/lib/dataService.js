@@ -4479,7 +4479,10 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     let activos_actuales = 0;
     let activos_ojt = 0;
+    let desertores_ojt = 0;
     let ingresos_iop = 0;
+
+    const fechaOjtTarget = fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida' ? parseFechaAsistencia(fecha_inicio_ojt) : null;
 
     for (const n of effectiveCandidates) {
       const doc = n.documento;
@@ -4502,6 +4505,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
       let isBajaDia1 = false;
       let isBajaGeneral = false;
+      let fechaUltimaBaja = null;
       
       if (records.length > 0) {
         const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || a.fecha_asistencia || 0) - new Date(b.fecha_registro_asistencia || b.fecha_asistencia || 0));
@@ -4514,32 +4518,41 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         
         isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
         isBajaGeneral = txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO';
+        if (isBajaGeneral) {
+          fechaUltimaBaja = parseFechaAsistencia(lastRecord.fecha_registro_asistencia || lastRecord.fecha_asistencia);
+        }
       }
 
-      // Activo en OJT? (Cualquiera que haya llegado a I-OP, o que tenga asistencia >= fecha_inicio_ojt sin baja)
+      // Activo en OJT? ESTRICTAMENTE basado en fecha_inicio_ojt programada en capacidad_rys
       let isOjtActive = false;
+      let isOjtDesertor = false;
+
       if (tieneIngreso) {
         isOjtActive = true;
-      } else if (dia1Asistio && !isBajaDia1) {
-        if (fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida') {
-          const targetDateStr = parseFechaAsistencia(fecha_inicio_ojt);
-          isOjtActive = records.some(r => {
-            const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
-            if (!rawDate) return false;
-            const recordDateStr = parseFechaAsistencia(rawDate);
-            const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-            const estado = String(r.estado || '').toUpperCase().trim();
-            const motivo = String(r.motivo_baja || '').toUpperCase().trim();
-            const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado.includes('BAJA') || estado === 'CESADO' || estado === 'INACTIVO';
-            return recordDateStr >= targetDateStr && !isBaja;
-          });
-        } else if (records.length > 1 && !isBajaGeneral) {
-          isOjtActive = true;
+      } else if (dia1Asistio && !isBajaDia1 && fechaOjtTarget) {
+        // Tuvo asistencia en o después de la fecha programada de OJT en capacidad_rys?
+        const attendedInOjt = records.some(r => {
+          const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
+          if (!rawDate) return false;
+          const rDate = parseFechaAsistencia(rawDate);
+          const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+          return rDate >= fechaOjtTarget && (sigla === 'A' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
+        });
+
+        if (attendedInOjt) {
+          if (!isBajaGeneral) {
+            isOjtActive = true;
+          } else if (fechaUltimaBaja && fechaUltimaBaja >= fechaOjtTarget) {
+            isOjtDesertor = true;
+          }
         }
       }
 
       if (isOjtActive) {
         activos_ojt++;
+      }
+      if (isOjtDesertor) {
+        desertores_ojt++;
       }
 
       // Activo Actual? (Postulantes que pasaron Día 1, no son baja, no han salido a I-OP, y el grupo sigue abierto)
@@ -4600,6 +4613,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       asistio_dia1,
       activos_actuales,
       activos_ojt,
+      desertores_ojt,
       ingresos_iop,
       asistencias_raw: groupFormAsisRaw || []
     });

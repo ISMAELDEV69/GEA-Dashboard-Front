@@ -260,6 +260,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       acc.total_nomina += (curr.total_nomina || 0);
       acc.asistio_dia1 += (curr.asistio_dia1 || 0);
       acc.activos_ojt += (curr.activos_ojt || 0);
+      acc.desertores_ojt += (curr.desertores_ojt || 0);
       acc.ingresos_iop += (curr.ingresos_iop || 0);
       acc.activos_actuales += (curr.activos_actuales || 0);
       return acc;
@@ -268,6 +269,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       total_nomina: 0,
       asistio_dia1: 0,
       activos_ojt: 0,
+      desertores_ojt: 0,
       ingresos_iop: 0,
       activos_actuales: 0
     });
