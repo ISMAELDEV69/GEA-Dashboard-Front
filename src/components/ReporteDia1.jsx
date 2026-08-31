@@ -113,6 +113,13 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     }
   }, [grupos.length, postulantes.length, asistencias.length])
 
+  // Escuchar refresco global
+  useEffect(() => {
+    const handleRefresh = () => loadReport(true)
+    window.addEventListener('gea-global-refresh', handleRefresh)
+    return () => window.removeEventListener('gea-global-refresh', handleRefresh)
+  }, [grupos, postulantes, asistencias])
+
   // ─────────────────────────────────────────────────────────────────────────────
   // 2. OPCIONES DE DROPDOWNS EN CASCADA (Derivación pura en memoria)
   // ─────────────────────────────────────────────────────────────────────────────

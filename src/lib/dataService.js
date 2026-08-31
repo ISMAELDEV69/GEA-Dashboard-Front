@@ -4077,25 +4077,62 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (!gruposInfo || gruposInfo.length === 0) return []
 
   const norm = (val) => String(val || '').trim().toUpperCase();
+  const cleanCodeStr = (val) => {
+    if (!val) return '';
+    return String(val).trim().toUpperCase().split(' - ')[0].trim();
+  };
+
   const codigos = [...new Set(gruposInfo.map(g => g.codigo).filter(Boolean))];
   const campanas = [...new Set(gruposInfo.map(g => g.campana).filter(Boolean))];
 
   // 1. Consultas de configuración y asistencias_dia1_reclutador
   let configAll = [];
   let recAsisDia1All = [];
+  let activePostulantes = postulantes || [];
+  let activeAsistencias = asistencias || [];
 
   if (DB_MODE === 'supabase' && codigos.length > 0) {
-    const [cfgRes, recAsisRes] = await Promise.all([
+    const promises = [
       supabase.from('grupos_dia1')
         .select('estado_calibracion, fecha_dia1, grupo_codigo, campana')
         .in('grupo_codigo', codigos),
       supabase.from('asistencias_dia1_reclutador')
         .select('postulante_documento, grupo_codigo, campana, sigla_inicial, sigla_final, motivo_baja')
         .in('grupo_codigo', codigos)
-    ]);
+    ];
+
+    // Fallback directo si no hay postulantes cargados en memoria
+    if (activePostulantes.length === 0) {
+      promises.push(
+        supabase.from('nominas')
+          .select('documento, grupo_codigo, campana, dia_0, dia_1, activo')
+          .in('grupo_codigo', codigos)
+      );
+    } else {
+      promises.push(Promise.resolve({ data: null }));
+    }
+
+    // Fallback directo si no hay asistencias cargadas en memoria
+    if (activeAsistencias.length === 0) {
+      promises.push(
+        supabase.from('consolidado_asistencias')
+          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, fecha_registro_asistencia')
+          .in('codigo_grupo', codigos)
+      );
+    } else {
+      promises.push(Promise.resolve({ data: null }));
+    }
+
+    const [cfgRes, recAsisRes, nomFallbackRes, asisFallbackRes] = await Promise.all(promises);
     
     configAll = cfgRes.data || [];
     recAsisDia1All = recAsisRes.data || [];
+    if (nomFallbackRes?.data && activePostulantes.length === 0) {
+      activePostulantes = nomFallbackRes.data;
+    }
+    if (asisFallbackRes?.data && activeAsistencias.length === 0) {
+      activeAsistencias = asisFallbackRes.data;
+    }
   }
 
   const descSet = await getDescuentosSetGlobal();
@@ -4104,8 +4141,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (configAll) {
     configAll.forEach(c => {
       const code = norm(c.grupo_codigo);
+      const baseCode = cleanCodeStr(c.grupo_codigo);
       configMap.set(`${norm(c.campana)}|${code}`, c);
       if (code) configMap.set(code, c);
+      if (baseCode) configMap.set(baseCode, c);
     });
   }
 
@@ -4114,10 +4153,16 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (recAsisDia1All) {
     recAsisDia1All.forEach(r => {
       const code = norm(r.grupo_codigo);
+      const baseCode = cleanCodeStr(r.grupo_codigo);
       const doc = norm(r.postulante_documento);
-      if (code && doc) {
-        recAsisMap.set(`${code}|${doc}`, r);
-        recAsisMap.set(`${norm(r.campana)}|${code}|${doc}`, r);
+      if (doc) {
+        if (code) {
+          recAsisMap.set(`${code}|${doc}`, r);
+          recAsisMap.set(`${norm(r.campana)}|${code}|${doc}`, r);
+        }
+        if (baseCode) {
+          recAsisMap.set(`${baseCode}|${doc}`, r);
+        }
       }
     });
   }
@@ -4125,8 +4170,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   // 2. Indexación Dual O(1) de Nóminas / Postulantes en memoria
   const nominasGrouped = new Map();
   const nominasByCode = new Map();
-  (postulantes || []).forEach(n => {
+  activePostulantes.forEach(n => {
     const code = norm(n.grupo_codigo);
+    const baseCode = cleanCodeStr(n.grupo_codigo);
     const key = `${norm(n.campana)}|${code}`;
     if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
     nominasGrouped.get(key).push(n);
@@ -4135,13 +4181,19 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       if (!nominasByCode.has(code)) nominasByCode.set(code, []);
       nominasByCode.get(code).push(n);
     }
+    if (baseCode && baseCode !== code) {
+      if (!nominasByCode.has(baseCode)) nominasByCode.set(baseCode, []);
+      nominasByCode.get(baseCode).push(n);
+    }
   });
 
   // 3. Indexación Dual O(1) de Asistencias en memoria
   const formAsisGrouped = new Map();
   const formAsisByCode = new Map();
-  (asistencias || []).forEach(f => {
-    const code = norm(f.grupo_codigo || f.codigo_grupo);
+  activeAsistencias.forEach(f => {
+    const rawCode = f.grupo_codigo || f.codigo_grupo;
+    const code = norm(rawCode);
+    const baseCode = cleanCodeStr(rawCode);
     const key = `${norm(f.campana)}|${code}`;
     if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
     formAsisGrouped.get(key).push(f);
@@ -4149,6 +4201,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     if (code) {
       if (!formAsisByCode.has(code)) formAsisByCode.set(code, []);
       formAsisByCode.get(code).push(f);
+    }
+    if (baseCode && baseCode !== code) {
+      if (!formAsisByCode.has(baseCode)) formAsisByCode.set(baseCode, []);
+      formAsisByCode.get(baseCode).push(f);
     }
   });
 
@@ -4162,18 +4218,23 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   for (const grupoInfo of gruposInfo) {
     const { codigo: grupo_codigo, campana } = grupoInfo;
     const cleanCode = norm(grupo_codigo);
+    const baseCode = cleanCodeStr(grupo_codigo);
     const groupKey = `${norm(campana)}|${cleanCode}`;
     
     let totalNomina = 0;
     let totalDia0 = 0;
     let countRec = 0;
     
-    const rawNominas = nominasGrouped.get(groupKey) || nominasByCode.get(cleanCode) || [];
+    const rawNominas = nominasGrouped.get(groupKey) || 
+                       nominasByCode.get(cleanCode) || 
+                       nominasByCode.get(baseCode) || [];
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
-    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || formAsisByCode.get(cleanCode) || [];
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || 
+                             formAsisByCode.get(cleanCode) || 
+                             formAsisByCode.get(baseCode) || [];
 
     // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico
     let effectiveCandidates = validNominas;
@@ -4209,7 +4270,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     for (const n of effectiveCandidates) {
       const doc = norm(n.documento);
       const isBajaDia1 = bajasDia1Set.has(doc);
-      const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`);
+      const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || 
+                          recAsisMap.get(`${baseCode}|${doc}`) || 
+                          recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`);
       
       const hasNominaDia1 = isAsistioStr(n.dia_1);
       const hasRecAsisDia1 = recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A');
@@ -4219,7 +4282,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
     }
 
-    const config = configMap.get(groupKey) || configMap.get(cleanCode);
+    const config = configMap.get(groupKey) || configMap.get(cleanCode) || configMap.get(baseCode);
     let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
     let fecha_dia1_ref = config?.fecha_dia1 || null;
 
