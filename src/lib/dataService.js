@@ -4642,9 +4642,15 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
-      fecha_inicio_ojt: fecha_inicio_ojt || 'No definida',
-      requerimiento: parseInt(grupoInfo.rq_ftes_solicitado || grupoInfo.rq_solicitado || grupoInfo.meta || grupoInfo.requerimiento || 0) || total_nomina || 0,
-      rq_solicitado: parseInt(grupoInfo.rq_ftes_solicitado || grupoInfo.rq_solicitado || grupoInfo.meta || 0) || 0,
+      requerimiento: grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== ''
+        ? Number(grupoInfo.rq_solicitado)
+        : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0),
+      rq_solicitado: grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== ''
+        ? Number(grupoInfo.rq_solicitado)
+        : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0),
+      rq_ftes_solicitado: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+        ? Number(grupoInfo.rq_ftes_solicitado)
+        : Number(grupoInfo.rq_solicitado || 0),
       total_nomina,
       asistio_dia0,
       asistio_dia1,

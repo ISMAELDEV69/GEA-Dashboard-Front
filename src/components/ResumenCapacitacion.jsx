@@ -263,7 +263,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Totales Scorecard
   const kpis = useMemo(() => {
     return filteredData.reduce((acc, curr) => {
-      acc.rq_solicitado += (curr.requerimiento || curr.rq_solicitado || 0);
+      const rqVal = curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0);
+      acc.rq_solicitado += rqVal;
       acc.total_nomina += (curr.total_nomina || 0);
       acc.asistio_dia1 += (curr.asistio_dia1 || 0);
       acc.activos_ojt += (curr.activos_ojt || 0);
@@ -296,7 +297,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const segKey = normalizeSegmento(d.segmento, d.campana);
       const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 });
 
-      target.rq += (d.requerimiento || d.rq_solicitado || 0);
+      const rqVal = d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0);
+      target.rq += rqVal;
       target.reclutados += (d.total_nomina || 0);
       target.d1 += (d.asistio_dia1 || 0);
       target.ojt += (d.activos_ojt || 0);
