@@ -92,7 +92,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   const [filters, setFilters] = useState({
     periodo: 'Todos',
-    semana: 'Todas',
     segmento: 'Todos',
     campana: 'Todas',
     grupo: 'Todos'
@@ -100,26 +99,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   // Helpers de normalización robusta
   const norm = (val) => String(val || '').trim().toUpperCase();
-  const getSemanaRaw = (g) => g?.semana_label || g?.semana_trabajo || g?.semana || '';
-  
-  const formatSemana = (val) => {
-    if (!val) return '';
-    const s = String(val).trim().toUpperCase();
-    if (s.startsWith('SEM')) return s;
-    const num = parseInt(s.replace(/\D/g, ''), 10);
-    return !isNaN(num) ? `SEM ${num}` : s;
-  };
-
-  const matchSemana = (valA, valB) => {
-    if (!valA || !valB) return false;
-    const strB = String(valB).trim().toUpperCase();
-    if (strB === 'TODAS' || strB === 'TODOS') return true;
-    
-    const numA = parseInt(String(valA).replace(/\D/g, ''), 10);
-    const numB = parseInt(String(valB).replace(/\D/g, ''), 10);
-    if (!isNaN(numA) && !isNaN(numB)) return numA === numB;
-    return norm(valA) === norm(valB);
-  };
 
   const isCalculatingRef = useRef(false);
   const lastParamsRef = useRef('');
@@ -171,7 +150,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Filtros activos
   const hasActiveFilters = useMemo(() => {
     return filters.periodo !== 'Todos' ||
-      filters.semana !== 'Todas' ||
       filters.segmento !== 'Todos' ||
       filters.campana !== 'Todas' ||
       filters.grupo !== 'Todos' ||
@@ -181,7 +159,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const handleResetFilters = () => {
     setFilters({
       periodo: 'Todos',
-      semana: 'Todas',
       segmento: 'Todos',
       campana: 'Todas',
       grupo: 'Todos'
@@ -199,34 +176,23 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       return pVal ? String(pVal).trim() : null;
     }).filter(Boolean));
     
-    // 2. Semanas (filtradas por periodo activo)
-    const subSemanas = dataset.filter(g => {
+    // 2. Segmentos Oficiales (filtrados por periodo activo)
+    const subSegmentos = dataset.filter(g => {
       const pVal = g.periodo_ingreso_op || g.periodo;
       return filters.periodo === 'Todos' || String(pVal || '').trim() === String(filters.periodo || '').trim();
     });
-    const semanas = new Set(subSemanas.map(g => formatSemana(getSemanaRaw(g))).filter(Boolean));
-    
-    // 3. Segmentos Oficiales (filtrados por periodo y semana activos)
-    const subSegmentos = subSemanas.filter(g => filters.semana === 'Todas' || matchSemana(getSemanaRaw(g), filters.semana));
     const segmentos = new Set(subSegmentos.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
     
-    // 4. Campañas (filtradas por periodo, semana y segmento activos)
+    // 3. Campañas (filtradas por periodo y segmento activos)
     const subCampanas = subSegmentos.filter(g => filters.segmento === 'Todos' || normalizeSegmento(g.segmento, g.campana) === filters.segmento);
     const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
     
-    // 5. Grupos (filtrados por campaña activa)
+    // 4. Grupos (filtrados por campaña activa)
     const subGrupos = subCampanas.filter(g => filters.campana === 'Todas' || norm(g.campana) === norm(filters.campana));
     const gruposSet = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
 
-    const sortedSemanas = Array.from(semanas).sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
-      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
-      return numB - numA;
-    });
-
     return {
       periodos: Array.from(periodos).sort().reverse(),
-      semanas: sortedSemanas,
       segmentos: Array.from(segmentos).sort(),
       campanas: Array.from(campanas).sort(),
       grupos: Array.from(gruposSet).sort()
@@ -239,10 +205,6 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       // Filtro Periodo (Periodo de Ingreso a Operación)
       const pVal = d.periodo_ingreso_op || d.periodo;
       if (filters.periodo !== 'Todos' && String(pVal || '').trim() !== String(filters.periodo || '').trim()) {
-        return false;
-      }
-      // Filtro Semana
-      if (filters.semana !== 'Todas' && !matchSemana(d.semana, filters.semana)) {
         return false;
       }
       // Filtro Segmento (Normalizado robusto)
@@ -821,28 +783,15 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       {/* ── BARRA DE FILTROS CRUZADOS ── */}
       <div className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
         {/* Periodo */}
-        <div className="flex-1 min-w-[130px]">
+        <div className="flex-1 min-w-[140px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Periodo</label>
           <select
             value={filters.periodo}
-            onChange={(e) => setFilters(f => ({ ...f, periodo: e.target.value, semana: 'Todas', campana: 'Todas', grupo: 'Todos' }))}
+            onChange={(e) => setFilters(f => ({ ...f, periodo: e.target.value, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
             className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
           >
-            <option value="Todos">Todos</option>
+            <option value="Todos">Todos los Periodos</option>
             {filterOptions.periodos.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
-
-        {/* Semana */}
-        <div className="flex-1 min-w-[130px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Semana</label>
-          <select
-            value={filters.semana}
-            onChange={(e) => setFilters(f => ({ ...f, semana: e.target.value, campana: 'Todas', grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todas">Todas</option>
-            {filterOptions.semanas.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 
