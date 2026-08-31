@@ -175,11 +175,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const filterOptions = useMemo(() => {
     const dataset = data.length > 0 ? data : capacidadRys;
     
-    // 1. Periodos
-    const periodos = new Set(dataset.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean));
+    // 1. Periodos (Periodo de Ingreso a Operación)
+    const periodos = new Set(dataset.map(g => {
+      const pVal = g.periodo_ingreso_op || g.periodo;
+      return pVal ? String(pVal).trim() : null;
+    }).filter(Boolean));
     
     // 2. Semanas (filtradas por periodo activo)
-    const subSemanas = dataset.filter(g => filters.periodo === 'Todos' || String(g.periodo || '').trim() === String(filters.periodo || '').trim());
+    const subSemanas = dataset.filter(g => {
+      const pVal = g.periodo_ingreso_op || g.periodo;
+      return filters.periodo === 'Todos' || String(pVal || '').trim() === String(filters.periodo || '').trim();
+    });
     const semanas = new Set(subSemanas.map(g => formatSemana(getSemanaRaw(g))).filter(Boolean));
     
     // 3. Segmentos Oficiales (filtrados por periodo y semana activos)
@@ -212,8 +218,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Datos filtrados en caliente con normalización exacta
   const filteredData = useMemo(() => {
     return data.filter(d => {
-      // Filtro Periodo
-      if (filters.periodo !== 'Todos' && String(d.periodo || '').trim() !== String(filters.periodo || '').trim()) {
+      // Filtro Periodo (Periodo de Ingreso a Operación)
+      const pVal = d.periodo_ingreso_op || d.periodo;
+      if (filters.periodo !== 'Todos' && String(pVal || '').trim() !== String(filters.periodo || '').trim()) {
         return false;
       }
       // Filtro Semana

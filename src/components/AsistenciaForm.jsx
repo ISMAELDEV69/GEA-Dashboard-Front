@@ -968,41 +968,6 @@ export default function AsistenciaForm({
           fecha_hora_registro: nowStr,
           codigo_grupo: targetGroup
         });
-
-        pastDates.forEach(pastDate => {
-          const pastRecord = asistencias.find(a => a.postulante_documento === r.documento && (normalize(a.grupo_codigo) === normalize(targetGroup) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)) && a.fecha_asistencia === pastDate);
-          
-          let shouldBackfillFI = false;
-          
-          if (!pastRecord) {
-             shouldBackfillFI = true;
-          } else if (r.sigla !== 'B' && pastRecord.sigla_asistencia === 'B') {
-             shouldBackfillFI = true;
-          }
-
-          if (shouldBackfillFI) {
-            drivePayload.push({
-              archivo_origen: weekNum ? `SEM${weekNum}` : '',
-              documento: r.documento,
-              apellido_materno: itemInfo?.apellido_materno || '',
-              apellido_paterno: itemInfo?.apellido_paterno || '',
-              nombres: itemInfo?.nombres || '',
-              celular: itemInfo?.celular || '',
-              condicion_laboral: itemInfo?.condicion_laboral || '',
-              campana: itemInfo?.campana || '',
-              grupo: targetGroup,
-              documento_formador: itemInfo?.docFormador || '',
-              nombre_formador: itemInfo?.nombreFormador || '',
-              fecha_registro_asistencia: formatSpreadsheetDate(pastDate),
-              tipo_reclutado: itemInfo?.tipoReclutado || '',
-              estado: 'ACTIVO',
-              sigla: 'FI',
-              motivo_baja: '',
-              fecha_hora_registro: nowStr,
-              codigo_grupo: targetGroup
-            });
-          }
-        });
       });
       
       try {
