@@ -209,13 +209,12 @@ export default function NominaGridEditor({
       const oldDoc = String(candidateToEdit.documento || '').trim()
       const newFullName = `${newApePat} ${newApeMat} ${newNombres}`.trim()
 
-      // 1. Actualizar en tabla nominas
+      // 1. Actualizar en tabla nominas (columnas existentes en nominas)
       const updatePayload = {
         documento: newDoc,
         apellido_paterno: newApePat,
         apellido_materno: newApeMat,
         nombres: newNombres,
-        nombre_completo: newFullName,
         celular: newCel,
         updated_at: new Date().toISOString()
       }
@@ -227,7 +226,20 @@ export default function NominaGridEditor({
 
       if (nomErr) throw nomErr
 
-      // 2. Si el DNI cambió, propagar en cascada a tablas vinculadas
+      // 2. Sincronizar en tabla postulantes si existe en la base de datos
+      await supabase
+        .from('postulantes')
+        .upsert({
+          documento: newDoc,
+          apellido_paterno: newApePat,
+          apellido_materno: newApeMat,
+          nombres: newNombres,
+          celular: newCel,
+          updated_at: new Date().toISOString()
+        })
+        .catch(e => console.warn('Sync postulantes error (non-blocking):', e))
+
+      // 3. Si el DNI cambió, propagar en cascada a tablas vinculadas
       if (oldDoc && oldDoc !== newDoc) {
         // Asistencias Dia 1 Reclutador
         await supabase

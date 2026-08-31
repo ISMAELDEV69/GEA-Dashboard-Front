@@ -44,10 +44,19 @@ const getSemanaLabel = (g) => {
   if (!g) return ''
   const val = g.semana_label || g.semana_trabajo || g.semana || ''
   if (!val) return ''
-  const s = String(val).trim().toUpperCase()
-  if (s.startsWith('SEM')) return s
-  const num = parseInt(s.replace(/\D/g, ''), 10)
-  return !isNaN(num) ? `SEM ${num}` : s
+  const clean = String(val).trim().toUpperCase()
+  const num = parseInt(clean.replace(/\D/g, ''), 10)
+  return (!isNaN(num) && num > 0) ? `SEM ${num}` : clean
+}
+
+const matchSemana = (valA, valB) => {
+  if (!valA || !valB) return false
+  const strB = String(valB).trim().toUpperCase()
+  if (strB === 'TODAS' || strB === 'TODOS' || !strB) return true
+  const numA = parseInt(String(valA).replace(/\D/g, ''), 10)
+  const numB = parseInt(String(valB).replace(/\D/g, ''), 10)
+  if (!isNaN(numA) && !isNaN(numB)) return numA === numB
+  return String(valA).trim().toUpperCase() === String(valB).trim().toUpperCase()
 }
 
 function formatSpreadsheetDate(dateStr) {
@@ -294,14 +303,14 @@ export default function AsistenciaForm({
   const segmentos = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
+    if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
     return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
   }, [grupos, selectedPeriodo, selectedSemana])
 
   const campanas = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
+    if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
   }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento])
@@ -309,7 +318,7 @@ export default function AsistenciaForm({
   const modalidades = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
+    if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     return [...new Set(filtered.map(g => g.modalidad ? String(g.modalidad).trim().toUpperCase() : null).filter(Boolean))].sort()
@@ -318,7 +327,7 @@ export default function AsistenciaForm({
   const gruposFiltrados = useMemo(() => {
     let filtered = grupos.filter(g => g.periodo)
     if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
-    if (selectedSemana) filtered = filtered.filter(g => getSemanaLabel(g) === selectedSemana)
+    if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
     if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     if (selectedModalidad) filtered = filtered.filter(g => String(g.modalidad || '').trim().toUpperCase() === String(selectedModalidad).trim().toUpperCase())
@@ -343,16 +352,44 @@ export default function AsistenciaForm({
       (g.id === selectedGrupo || g.codigo === selectedGrupo) && 
       (!selectedCampana || String(g.campana).trim() === String(selectedCampana).trim()) &&
       (!selectedPeriodo || String(g.periodo).trim() === String(selectedPeriodo).trim()) &&
-      (!selectedSemana || getSemanaLabel(g) === selectedSemana)
+      (!selectedSemana || matchSemana(getSemanaLabel(g), selectedSemana))
     );
   }, [grupos, gruposFiltrados, selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana])
 
-  // Clear dependent filters on parent filter change
-  useEffect(() => { setSelectedSemana(''); setSelectedSegmento(''); setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedPeriodo])
-  useEffect(() => { setSelectedSegmento(''); setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedSemana])
-  useEffect(() => { setSelectedCampana(''); setSelectedModalidad(''); setSelectedGrupo('') }, [selectedSegmento])
-  useEffect(() => { setSelectedModalidad(''); setSelectedGrupo('') }, [selectedCampana])
-  useEffect(() => { setSelectedGrupo('') }, [selectedModalidad])
+  // Explicit user-driven cascading filter handlers (avoid wiping localStorage restored values on mount)
+  const handlePeriodoChange = (val) => {
+    setSelectedPeriodo(val)
+    setSelectedSemana('')
+    setSelectedSegmento('')
+    setSelectedCampana('')
+    setSelectedModalidad('')
+    setSelectedGrupo('')
+  }
+  const handleSemanaChange = (val) => {
+    setSelectedSemana(val)
+    setSelectedSegmento('')
+    setSelectedCampana('')
+    setSelectedModalidad('')
+    setSelectedGrupo('')
+  }
+  const handleSegmentoChange = (val) => {
+    setSelectedSegmento(val)
+    setSelectedCampana('')
+    setSelectedModalidad('')
+    setSelectedGrupo('')
+  }
+  const handleCampanaChange = (val) => {
+    setSelectedCampana(val)
+    setSelectedModalidad('')
+    setSelectedGrupo('')
+  }
+  const handleModalidadChange = (val) => {
+    setSelectedModalidad(val)
+    setSelectedGrupo('')
+  }
+  const handleGrupoChange = (val) => {
+    setSelectedGrupo(val)
+  }
 
   useEffect(() => {
     if (gruposFiltrados.length === 1 && !selectedGrupo) setSelectedGrupo(gruposFiltrados[0].id || gruposFiltrados[0].codigo)
@@ -375,43 +412,18 @@ export default function AsistenciaForm({
 
   const lastSetGrupo = useRef(null);
 
-  // Auto-set Date based on Group
+  // Auto-set Date: default to today, avoid jumping automatically to past historical dates
   useEffect(() => {
     if (!activeGrupoObj) return;
 
     const groupKey = `${activeGrupoObj.codigo}_${activeGrupoObj.periodo || ''}_${getSemanaLabel(activeGrupoObj)}`;
     if (lastSetGrupo.current === groupKey) return;
+    lastSetGrupo.current = groupKey;
 
-    const targetGrupoCodigo = activeGrupoObj.codigo;
-    const targetCampana = activeGrupoObj.campana;
-    const targetSemanaNum = parseInt(String(activeGrupoObj.semana_trabajo || activeGrupoObj.semana_label || '').replace(/\D/g, ''), 10);
-
-    const groupDates = asistencias
-      .filter(a => {
-        const matchG = normalize(a.grupo_codigo) === normalize(targetGrupoCodigo) || normalize(a.grupo_codigo) === normalize(selectedGrupo);
-        if (!matchG) return false;
-        if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) return false;
-        if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && a.archivo_origen) {
-          const aSem = parseInt(String(a.archivo_origen).replace(/\D/g, ''), 10);
-          if (!isNaN(aSem) && aSem !== targetSemanaNum) return false;
-        }
-        return true;
-      })
-      .map(a => a.fecha_asistencia)
-      .sort();
-
-    if (groupDates.length > 0) {
-      setFecha(groupDates[groupDates.length - 1]);
-      lastSetGrupo.current = groupKey;
-    } else if (activeGrupoObj.fecha_inicio || activeGrupoObj.fecha_registro) {
-      const fechaInicio = activeGrupoObj.fecha_inicio || activeGrupoObj.fecha_registro;
-      setFecha(fechaInicio.split('T')[0]);
-      lastSetGrupo.current = groupKey;
-    } else {
+    if (!fecha) {
       setFecha(new Date().toISOString().split('T')[0]);
-      lastSetGrupo.current = groupKey;
     }
-  }, [activeGrupoObj, asistencias, selectedGrupo]);
+  }, [activeGrupoObj, fecha]);
 
   const [groupPostulantesDirect, setGroupPostulantesDirect] = useState([]);
 
@@ -1361,7 +1373,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedPeriodo}
-              onChange={e => setSelectedPeriodo(e.target.value)}
+              onChange={e => handlePeriodoChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Todos</option>
@@ -1376,7 +1388,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedSemana}
-              onChange={e => setSelectedSemana(e.target.value)}
+              onChange={e => handleSemanaChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Todas</option>
@@ -1391,7 +1403,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedSegmento}
-              onChange={e => setSelectedSegmento(e.target.value)}
+              onChange={e => handleSegmentoChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Todos</option>
@@ -1406,7 +1418,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedCampana}
-              onChange={e => setSelectedCampana(e.target.value)}
+              onChange={e => handleCampanaChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Todas</option>
@@ -1421,7 +1433,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedModalidad}
-              onChange={e => setSelectedModalidad(e.target.value)}
+              onChange={e => handleModalidadChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Todas</option>
@@ -1436,7 +1448,7 @@ export default function AsistenciaForm({
             </span>
             <select
               value={selectedGrupo}
-              onChange={e => setSelectedGrupo(e.target.value)}
+              onChange={e => handleGrupoChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Seleccionar</option>
