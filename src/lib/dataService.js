@@ -4397,7 +4397,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   }
 
   const norm = (val) => String(val || '').trim().toUpperCase();
-  const getBaseCode = (str) => norm(str).replace(/-(SEM\d+|S\d+|\d{6,})$/i, '').replace(/\s*\(SEM.*?\)/i, '').trim();
+  const getBaseCode = (str) => norm(str).replace(/\s*\((SEM|S|SEMANA)\s*\d+.*?\)/i, '').replace(/-(SEM|S)\d+$/i, '').trim();
   const descSet = await getDescuentosSetGlobal();
 
   const nominasGrouped = new Map();
@@ -4406,8 +4406,15 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const code = norm(n.grupo_codigo);
     const baseCode = getBaseCode(n.grupo_codigo);
     const key = `${norm(n.campana)}|${code}`;
+    const baseKey = `${norm(n.campana)}|${baseCode}`;
+
     if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
     nominasGrouped.get(key).push(n);
+
+    if (baseKey !== key) {
+      if (!nominasGrouped.has(baseKey)) nominasGrouped.set(baseKey, []);
+      nominasGrouped.get(baseKey).push(n);
+    }
 
     if (code) {
       if (!nominasByCode.has(code)) nominasByCode.set(code, []);
@@ -4425,8 +4432,15 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const code = norm(f.grupo_codigo || f.codigo_grupo);
     const baseCode = getBaseCode(f.grupo_codigo || f.codigo_grupo);
     const key = `${norm(f.campana)}|${code}`;
+    const baseKey = `${norm(f.campana)}|${baseCode}`;
+
     if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
     formAsisGrouped.get(key).push(f);
+
+    if (baseKey !== key) {
+      if (!formAsisGrouped.has(baseKey)) formAsisGrouped.set(baseKey, []);
+      formAsisGrouped.get(baseKey).push(f);
+    }
 
     if (code) {
       if (!formAsisByCode.has(code)) formAsisByCode.set(code, []);
@@ -4444,9 +4458,11 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const cleanCode = norm(grupo_codigo);
     const baseCode = getBaseCode(grupo_codigo);
     const groupKey = `${norm(campana)}|${cleanCode}`;
+    const baseGroupKey = `${norm(campana)}|${baseCode}`;
     
     // Obtener nóminas intentando match exacto y luego por código de cohorte
     const rawNominas = nominasGrouped.get(groupKey) || 
+                       nominasGrouped.get(baseGroupKey) || 
                        nominasByCode.get(cleanCode) || 
                        nominasByCode.get(baseCode) || [];
     const validNominas = descSet.size > 0 
@@ -4455,6 +4471,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       
     // Obtener asistencias intentando match exacto y luego por código de cohorte
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || 
+                             formAsisGrouped.get(baseGroupKey) || 
                              formAsisByCode.get(cleanCode) || 
                              formAsisByCode.get(baseCode) || [];
 
