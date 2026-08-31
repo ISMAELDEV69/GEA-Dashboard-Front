@@ -146,10 +146,11 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
   const formadoresActivos = useMemo(() => {
     const map = new Map()
 
-    // 1. Desde equipoFormacionData (tabla formadores de Supabase)
+    // 1. Desde equipoFormacionData (tabla equipo_formacion y formadores)
     equipoFormacionData.forEach(f => {
       const doc = String(f.documento || '').trim()
-      if (f.estado?.trim().toUpperCase() === 'ACTIVO' && doc) {
+      const est = String(f.estado || 'ACTIVO').trim().toUpperCase()
+      if (doc && (est === 'ACTIVO' || est === '')) {
         map.set(doc, {
           documento: doc,
           nombres_completos: f.datos_completos || f.nombres_completos || f.nombre_completo || '',
@@ -161,17 +162,19 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
       }
     })
 
-    // 2. Complementar con formadores prop (perfiles / auth)
+    // 2. Complementar con formadores prop (perfiles / auth / tabla formadores)
     formadores.forEach(f => {
       const doc = String(f.documento || f.id || '').trim()
-      if (doc && !map.has(doc)) {
+      const est = String(f.estado || 'ACTIVO').trim().toUpperCase()
+      if (doc && (est === 'ACTIVO' || est === '')) {
+        const existing = map.get(doc) || {}
         map.set(doc, {
           documento: doc,
-          nombres_completos: f.nombre_completo || f.nombres_completos || f.nombre || '',
-          segmento: f.segmento || '',
-          subcampana: f.subcampana || '',
-          cargo_funcional: f.cargo_funcional || '',
-          estado: f.estado || 'ACTIVO'
+          nombres_completos: f.nombre_completo || f.nombres_completos || f.nombre || existing.nombres_completos || '',
+          segmento: f.segmento || existing.segmento || '',
+          subcampana: f.subcampana || existing.subcampana || '',
+          cargo_funcional: f.cargo_funcional || existing.cargo_funcional || '',
+          estado: f.estado || existing.estado || 'ACTIVO'
         })
       }
     })
@@ -179,7 +182,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
     const allList = Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
 
     if (supervisorSegmento) {
-      return allList.filter(f => f.segmento && f.segmento.trim().toUpperCase() === supervisorSegmento)
+      return allList.filter(f => !f.segmento || (f.segmento || '').trim().toUpperCase() === supervisorSegmento)
     }
 
     return allList
@@ -607,14 +610,18 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
                             const targetSegmento = (supervisorSegmento || g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase();
                             const currentDoc = String(g.formador_documento || '').trim();
 
-                            // 1. Filtrar formadores del segmento del grupo
+                            // 1. Filtrar formadores afines al segmento del grupo
                             const formadoresDelSegmento = targetSegmento
-                              ? formadoresActivos.filter(f => (f.segmento || '').trim().toUpperCase() === targetSegmento)
+                              ? formadoresActivos.filter(f => {
+                                  const fSeg = (f.segmento || '').trim().toUpperCase();
+                                  if (!fSeg) return true;
+                                  return fSeg === targetSegmento || fSeg.includes(targetSegmento) || targetSegmento.includes(fSeg);
+                                })
                               : formadoresActivos;
 
-                            // 2. Verificar si el formador actualmente asignado pertenece a otro segmento (caso legado)
+                            const otrosFormadores = formadoresActivos.filter(f => !formadoresDelSegmento.some(fs => fs.documento === f.documento));
                             const currentAsignado = currentDoc ? formadoresActivos.find(f => f.documento === currentDoc) : null;
-                            const isCurrentInSegment = formadoresDelSegmento.some(f => f.documento === currentDoc);
+                            const isCurrentInList = formadoresActivos.some(f => f.documento === currentDoc);
 
                             return (
                               <>
@@ -622,23 +629,25 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
                                   <optgroup label={`Formadores de ${targetSegmento || 'este segmento'} (${formadoresDelSegmento.length})`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
                                     {formadoresDelSegmento.map(f => (
                                       <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                        ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : ''}
+                                        ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : (f.segmento ? `• ${f.segmento}` : '')}
                                       </option>
                                     ))}
                                   </optgroup>
-                                ) : (
-                                  <optgroup label={`Sin formadores registrados en ${targetSegmento || 'este grupo'}`} className="bg-[var(--bg-surface)] font-bold text-amber-400">
-                                    {formadoresActivos.map(f => (
+                                ) : null}
+
+                                {otrosFormadores.length > 0 && (
+                                  <optgroup label={`Otros Formadores Activos (${otrosFormadores.length})`} className="bg-[var(--bg-surface)] font-bold text-blue-400">
+                                    {otrosFormadores.map(f => (
                                       <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                        ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''}
+                                        ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''} {f.subcampana ? `• ${f.subcampana}` : ''}
                                       </option>
                                     ))}
                                   </optgroup>
                                 )}
 
-                                {/* Excepción visual: Si ya tenía asignado alguien de otro segmento, mantenerlo visible */}
-                                {currentAsignado && !isCurrentInSegment && (
-                                  <optgroup label="⚠️ Asignado Previamente (Otro Segmento)" className="bg-[var(--bg-surface)] font-bold text-amber-400">
+                                {/* Excepción visual: Si ya tenía asignado alguien que no está en la lista de activos */}
+                                {currentAsignado && !isCurrentInList && (
+                                  <optgroup label="⚠️ Asignado Previamente (Inactivo o No Registrado)" className="bg-[var(--bg-surface)] font-bold text-amber-400">
                                     <option value={currentAsignado.documento} className="bg-[var(--bg-surface)] text-amber-300 font-semibold">
                                       ⚠ {currentAsignado.nombres_completos} ({currentAsignado.segmento || 'Sin Segmento'})
                                     </option>

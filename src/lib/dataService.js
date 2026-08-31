@@ -1945,40 +1945,67 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
 
 export async function fetchFormadores() {
   if (DB_MODE === 'supabase') {
-    const { data: efData, error: efErr } = await supabase
-      .from('equipo_formacion')
-      .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
-      .order('nombres_completos')
+    const map = new Map()
 
-    if (!efErr && efData && efData.length > 0) {
-      return efData.map(f => ({
-        documento: String(f.documento).trim(),
-        nombre_completo: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
-        sede: f.sede || '',
-        segmento: f.segmento || '',
-        subcampana: f.subcampana || '',
-        cargo_contractual: f.cargo_contractual || 'FORMADOR',
-        cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-        estado: (f.estado || 'Activo').trim()
-      }))
+    // 1. Fetch formadores
+    try {
+      const { data: formData } = await supabase
+        .from('formadores')
+        .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+        .order('nombre_completo')
+
+      if (formData) {
+        formData.forEach(f => {
+          const doc = String(f.documento || '').trim()
+          if (doc) {
+            map.set(doc, {
+              documento: doc,
+              nombre_completo: (f.nombre_completo || '').trim().toUpperCase(),
+              sede: f.sede || '',
+              segmento: f.segmento || '',
+              subcampana: f.subcampana || '',
+              cargo_contractual: f.cargo_contractual || 'FORMADOR',
+              cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+              estado: (f.estado || 'Activo').trim()
+            })
+          }
+        })
+      }
+    } catch (e) {
+      console.warn('fetch formadores table err:', e)
     }
 
-    const { data, error } = await supabase
-      .from('formadores')
-      .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
-      .order('nombre_completo')
+    // 2. Fetch equipo_formacion (merge/complement)
+    try {
+      const { data: efData } = await supabase
+        .from('equipo_formacion')
+        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+        .order('nombres_completos')
 
-    if (!error && data && data.length > 0) {
-      return data.map(f => ({
-        documento: String(f.documento).trim(),
-        nombre_completo: (f.nombre_completo || '').trim().toUpperCase(),
-        sede: f.sede || '',
-        segmento: f.segmento || '',
-        subcampana: f.subcampana || '',
-        cargo_contractual: f.cargo_contractual || 'FORMADOR',
-        cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-        estado: (f.estado || 'Activo').trim()
-      }))
+      if (efData) {
+        efData.forEach(f => {
+          const doc = String(f.documento || '').trim()
+          if (doc) {
+            const existing = map.get(doc) || {}
+            map.set(doc, {
+              documento: doc,
+              nombre_completo: (f.datos_completos || f.nombres_completos || existing.nombre_completo || '').trim().toUpperCase(),
+              sede: f.sede || existing.sede || '',
+              segmento: f.segmento || existing.segmento || '',
+              subcampana: f.subcampana || existing.subcampana || '',
+              cargo_contractual: f.cargo_contractual || existing.cargo_contractual || 'FORMADOR',
+              cargo_funcional: (f.cargo_funcional || existing.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+              estado: (f.estado || existing.estado || 'Activo').trim()
+            })
+          }
+        })
+      }
+    } catch (e) {
+      console.warn('fetch equipo_formacion table err:', e)
+    }
+
+    if (map.size > 0) {
+      return [...map.values()]
     }
 
     // Fallback: perfiles con rol formador si no hay registros
@@ -1988,7 +2015,6 @@ export async function fetchFormadores() {
       .eq('rol', 'formador')
       .order('nombre')
 
-    const map = new Map()
     for (const p of perfilesData || []) {
       const doc = `USR-${(p.nombre || 'FORMADOR').replace(/\s+/g, '').slice(0, 12).toUpperCase()}`
       map.set(doc, { documento: doc, nombre_completo: p.nombre, estado: 'Activo' })
@@ -3536,45 +3562,74 @@ export async function addEquipoReclutamiento(payload) {
 // ==========================================
 
 export function getEquipoFormacion() {
-  return withCache('equipo_formacion', 300000, async () => {
+  return withCache('equipo_formacion', 120000, async () => {
     if (DB_MODE === 'supabase') {
-      const { data, error } = await supabase
-        .from('equipo_formacion')
-        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, usuario_alix')
-        .order('nombres_completos');
-        
-      if (!error && data && data.length > 0) {
-        return data.map(f => ({
-          ...f,
-          documento: String(f.documento).trim(),
-          nombres_completos: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
-          datos_completos: (f.datos_completos || f.nombres_completos || '').trim().toUpperCase(),
-          cargo_contractual: f.cargo_contractual || 'FORMADOR',
-          cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-          estado: (f.estado || 'ACTIVO').trim().toUpperCase()
-        }));
+      const map = new Map();
+
+      // 1. Fetch formadores
+      try {
+        const { data: formData } = await supabase
+          .from('formadores')
+          .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese')
+          .order('nombre_completo');
+
+        if (formData) {
+          formData.forEach(f => {
+            const doc = String(f.documento || '').trim();
+            if (doc) {
+              map.set(doc, {
+                documento: doc,
+                nombres_completos: (f.nombre_completo || '').trim().toUpperCase(),
+                datos_completos: (f.nombre_completo || '').trim().toUpperCase(),
+                sede: f.sede || '',
+                segmento: f.segmento || '',
+                subcampana: f.subcampana || '',
+                cargo_contractual: f.cargo_contractual || 'FORMADOR',
+                cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+                estado: (f.estado || 'ACTIVO').trim().toUpperCase(),
+                fecha_inicio: f.fecha_inicio || null,
+                fecha_cese: f.fecha_cese || null
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('getEquipoFormacion: error reading formadores:', e);
       }
 
-      // Fallback a formadores si equipo_formacion no devuelve datos
-      const { data: formData } = await supabase
-        .from('formadores')
-        .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese')
-        .order('nombre_completo');
+      // 2. Fetch equipo_formacion (merge/overwrite)
+      try {
+        const { data, error } = await supabase
+          .from('equipo_formacion')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, usuario_alix')
+          .order('nombres_completos');
+          
+        if (!error && data) {
+          data.forEach(f => {
+            const doc = String(f.documento || '').trim();
+            if (doc) {
+              const existing = map.get(doc) || {};
+              map.set(doc, {
+                ...f,
+                documento: doc,
+                nombres_completos: (f.datos_completos || f.nombres_completos || existing.nombres_completos || '').trim().toUpperCase(),
+                datos_completos: (f.datos_completos || f.nombres_completos || existing.datos_completos || '').trim().toUpperCase(),
+                sede: f.sede || existing.sede || '',
+                segmento: f.segmento || existing.segmento || '',
+                subcampana: f.subcampana || existing.subcampana || '',
+                cargo_contractual: f.cargo_contractual || existing.cargo_contractual || 'FORMADOR',
+                cargo_funcional: (f.cargo_funcional || existing.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+                estado: (f.estado || existing.estado || 'ACTIVO').trim().toUpperCase()
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('getEquipoFormacion: error reading equipo_formacion:', e);
+      }
 
-      if (formData && formData.length > 0) {
-        return formData.map(f => ({
-          documento: String(f.documento).trim(),
-          nombres_completos: (f.nombre_completo || '').trim().toUpperCase(),
-          datos_completos: (f.nombre_completo || '').trim().toUpperCase(),
-          sede: f.sede || '',
-          segmento: f.segmento || '',
-          subcampana: f.subcampana || '',
-          cargo_contractual: f.cargo_contractual || 'FORMADOR',
-          cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-          estado: (f.estado || 'ACTIVO').trim().toUpperCase(),
-          fecha_inicio: f.fecha_inicio || null,
-          fecha_cese: f.fecha_cese || null
-        }));
+      if (map.size > 0) {
+        return Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''));
       }
     }
     
@@ -4210,43 +4265,85 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   const descSet = await getDescuentosSetGlobal();
 
   const nominasGrouped = new Map();
+  const nominasByCode = new Map();
   (postulantes || []).forEach(n => {
-    const key = `${norm(n.campana)}|${norm(n.grupo_codigo)}`;
+    const code = norm(n.grupo_codigo);
+    const key = `${norm(n.campana)}|${code}`;
     if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
     nominasGrouped.get(key).push(n);
+
+    if (code) {
+      if (!nominasByCode.has(code)) nominasByCode.set(code, []);
+      nominasByCode.get(code).push(n);
+    }
   });
 
   const formAsisGrouped = new Map();
+  const formAsisByCode = new Map();
   (asistencias || []).forEach(f => {
-    const groupCode = f.grupo_codigo || f.codigo_grupo;
-    const key = `${norm(f.campana)}|${norm(groupCode)}`;
+    const code = norm(f.grupo_codigo || f.codigo_grupo);
+    const key = `${norm(f.campana)}|${code}`;
     if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
     formAsisGrouped.get(key).push(f);
+
+    if (code) {
+      if (!formAsisByCode.has(code)) formAsisByCode.set(code, []);
+      formAsisByCode.get(code).push(f);
+    }
   });
 
   const results = [];
   for (const grupoInfo of gruposInfo) {
     const { codigo: grupo_codigo, campana, fecha_inicio_ojt } = grupoInfo;
-    const groupKey = `${norm(campana)}|${norm(grupo_codigo)}`;
+    const cleanCode = norm(grupo_codigo);
+    const groupKey = `${norm(campana)}|${cleanCode}`;
     
-    const nominas = nominasGrouped.get(groupKey) || [];
+    // Obtener nóminas intentando match exacto y luego por código de cohorte
+    const rawNominas = nominasGrouped.get(groupKey) || nominasByCode.get(cleanCode) || [];
     const validNominas = descSet.size > 0 
-      ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
-      : nominas;
+      ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
+      : rawNominas;
       
-    const total_nomina = validNominas.length;
-    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || [];
+    // Obtener asistencias intentando match exacto y luego por código de cohorte
+    const groupFormAsisRaw = formAsisGrouped.get(groupKey) || formAsisByCode.get(cleanCode) || [];
+
+    // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico
+    let effectiveCandidates = validNominas;
+    if (effectiveCandidates.length === 0 && groupFormAsisRaw.length > 0) {
+      const seenDocs = new Map();
+      groupFormAsisRaw.forEach(r => {
+        const doc = r.documento || r.postulante_documento;
+        if (doc && !seenDocs.has(doc)) {
+          seenDocs.set(doc, {
+            documento: doc,
+            dia_0: 'ASISTIO',
+            dia_1: 'ASISTIO'
+          });
+        }
+      });
+      effectiveCandidates = Array.from(seenDocs.values());
+    }
+
+    const total_nomina = effectiveCandidates.length;
 
     let asistio_dia0 = 0;
     let asistio_dia1 = 0;
 
-    for (const n of validNominas) {
+    for (const n of effectiveCandidates) {
       const doc = n.documento;
       const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
-      const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
+      const tieneIngreso = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        const st = String(r.estado || '').toUpperCase().trim();
+        return s === 'I-OP' || st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
+      });
 
       const d0 = String(n.dia_0 || '').toUpperCase().trim();
-      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || tieneIngreso) {
+      const hasD0Attendance = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
+      });
+      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || hasD0Attendance || tieneIngreso) {
         asistio_dia0++;
       }
       
@@ -4254,7 +4351,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
       const hasD1Attendance = records.some(r => {
         const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION';
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
       });
 
       if (d1 === 'ASISTIO' || d1.includes('FALTA') || d1.includes('BAJA') || hasD1Nomina || hasD1Attendance || tieneIngreso) {
@@ -4270,25 +4367,31 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     let activos_ojt = 0;
     let ingresos_iop = 0;
 
-    for (const n of validNominas) {
+    for (const n of effectiveCandidates) {
       const doc = n.documento;
       const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
       
-      // Tiene I-OP?
-      const tieneIngreso = records.some(r => String(r.sigla || r.sigla_asistencia).toUpperCase().trim() === 'I-OP');
+      // Tiene I-OP o pase formal a operación?
+      const tieneIngreso = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        const st = String(r.estado || '').toUpperCase().trim();
+        return s === 'I-OP' || st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
+      });
       if (tieneIngreso) {
         ingresos_iop++;
       }
 
-      const dia1Asistio = String(n.dia_1 || '').toUpperCase().trim() === 'ASISTIO' || tieneIngreso;
-      let currentState = '';
+      const dia1Asistio = String(n.dia_1 || '').toUpperCase().trim() === 'ASISTIO' || records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'A' || s === 'CAPACITACION' || s === 'OJT' || s === 'I-OP';
+      }) || tieneIngreso;
+
       let isBajaDia1 = false;
       let isBajaGeneral = false;
       
       if (records.length > 0) {
         const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || a.fecha_asistencia || 0) - new Date(b.fecha_registro_asistencia || b.fecha_asistencia || 0));
         const lastRecord = sortedRecords[sortedRecords.length - 1];
-        currentState = String(lastRecord.estado || '').toUpperCase();
         
         const txtEstado = String(lastRecord.estado || '').toUpperCase();
         const txtMotivo = String(lastRecord.motivo_baja || '').toUpperCase();
@@ -4304,7 +4407,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (tieneIngreso) {
         isOjtActive = true;
       } else if (dia1Asistio && !isBajaDia1) {
-        if (fecha_inicio_ojt) {
+        if (fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida') {
           const targetDateStr = parseFechaAsistencia(fecha_inicio_ojt);
           isOjtActive = records.some(r => {
             const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
