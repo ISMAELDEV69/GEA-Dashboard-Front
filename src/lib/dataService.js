@@ -2442,9 +2442,9 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     const isBajaDia1 = bajasDia1Set.has(doc)
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
-    // Formador asistencia = A, FI, FJ, I-OP
-    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
-    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
+    // Formador asistencia = A, I-OP, CAPACITACION, OJT
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT')
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2480,11 +2480,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
   
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
   const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_1').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
-  
-  const descSet = await getDescuentosSetGlobal();
-  const recAsis = descSet.size > 0
-    ? (rawRecAsis || []).filter(r => !descSet.has(makeDescuentoKey(r.documento, campana, grupo_codigo)))
-    : (rawRecAsis || []);
+  const recAsis = rawRecAsis || [];
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
     .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
@@ -2539,8 +2535,8 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const isBajaDia1 = bajasDia1Set.has(doc)
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     
-    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
-    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT')
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2554,11 +2550,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
 
   const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_1, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
-  
-  const descSet = await getDescuentosSetGlobal();
-  const recAsis = descSet.size > 0
-    ? (rawRecAsis || []).filter(r => !descSet.has(makeDescuentoKey(r.documento, campana, grupo_codigo)))
-    : (rawRecAsis || []);
+  const recAsis = rawRecAsis || [];
   
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
     .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
@@ -2616,15 +2608,15 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
     const displayFormSigla = isBajaDia1 ? 'BAJA DÍA 1' : formSigla;
     
-    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP')
-    const isRecAsistencia = recSigla ? (!isBajaDia1 && String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
+    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT')
+    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
     
     if (isFormAsistencia !== isRecAsistencia) {
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
         sigla_formador: displayFormSigla,
-        sigla_reclutador: recSigla ? (isBajaDia1 ? 'BAJA DÍA 1' : String(recSigla).toUpperCase().trim()) : 'SIN REGISTRO'
+        sigla_reclutador: recSigla ? String(recSigla).toUpperCase().trim() : 'SIN REGISTRO'
       })
     }
   }
@@ -4227,9 +4219,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const rawNominas = nominasGrouped.get(groupKey) || 
                        nominasByCode.get(cleanCode) || 
                        nominasByCode.get(baseCode) || [];
-    const validNominas = descSet.size > 0 
-      ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
-      : rawNominas;
+    const validNominas = rawNominas;
       
     const groupFormAsisRaw = formAsisGrouped.get(groupKey) || 
                              formAsisByCode.get(cleanCode) || 
@@ -4268,7 +4258,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
     for (const n of effectiveCandidates) {
       const doc = norm(n.documento);
-      const isBajaDia1 = bajasDia1Set.has(doc);
       const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || 
                           recAsisMap.get(`${baseCode}|${doc}`) || 
                           recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`);
@@ -4276,7 +4265,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       const hasNominaDia1 = isAsistioStr(n.dia_1);
       const hasRecAsisDia1 = recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A');
 
-      if ((hasNominaDia1 || hasRecAsisDia1) && !isBajaDia1) {
+      if (hasNominaDia1 || hasRecAsisDia1) {
         countRec++;
       }
     }
@@ -4336,8 +4325,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         const isBajaDia1 = bajasDia1Set.has(doc);
         const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
         
-        const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'FI' || effectiveFormSigla === 'FJ' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT');
-        const isRecAsistencia = (!isBajaDia1) && (isAsistioStr(recSigla) || (recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A')));
+        // Formador asistencia = A, I-OP, CAPACITACION, OJT (no B ni FI)
+        const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT');
+        const isRecAsistencia = isAsistioStr(recSigla) || (recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A'));
         
         if (isFormAsistencia) countForm++;
 
