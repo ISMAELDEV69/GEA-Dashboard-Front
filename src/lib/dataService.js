@@ -3945,9 +3945,11 @@ export async function migrarPostulantesEntreGrupos({ origenGrupoCodigo, destinoG
     .in('documento', dnis)
 
   if (cleanCampana) asisQuery = asisQuery.ilike('campana', `%${cleanCampana}%`)
-  if (cleanOrigen) asisQuery = asisQuery.or(`codigo_grupo.eq.${cleanOrigen},grupo.eq.${cleanOrigen}`)
-
-  await asisQuery.catch(e => console.warn('Aviso al actualizar consolidado_asistencias en migración:', e))
+  try {
+    await asisQuery
+  } catch (e) {
+    console.warn('Aviso al actualizar consolidado_asistencias en migración:', e)
+  }
 
   // 3. Crear / asegurar registro del subgrupo destino en capacidad_rys si aún no existe
   try {

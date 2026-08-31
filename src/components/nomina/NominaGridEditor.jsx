@@ -227,43 +227,52 @@ export default function NominaGridEditor({
       if (nomErr) throw nomErr
 
       // 2. Sincronizar en tabla postulantes si existe en la base de datos
-      await supabase
-        .from('postulantes')
-        .upsert({
-          documento: newDoc,
-          apellido_paterno: newApePat,
-          apellido_materno: newApeMat,
-          nombres: newNombres,
-          celular: newCel,
-          updated_at: new Date().toISOString()
-        })
-        .catch(e => console.warn('Sync postulantes error (non-blocking):', e))
+      try {
+        await supabase
+          .from('postulantes')
+          .upsert({
+            documento: newDoc,
+            apellido_paterno: newApePat,
+            apellido_materno: newApeMat,
+            nombres: newNombres,
+            celular: newCel,
+            updated_at: new Date().toISOString()
+          })
+      } catch (e) {
+        console.warn('Sync postulantes error (non-blocking):', e)
+      }
 
       // 3. Si el DNI cambió, propagar en cascada a tablas vinculadas
       if (oldDoc && oldDoc !== newDoc) {
-        // Asistencias Dia 1 Reclutador
-        await supabase
-          .from('asistencias_dia1_reclutador')
-          .update({ postulante_documento: newDoc })
-          .eq('postulante_documento', oldDoc)
-          .catch(e => console.warn('Sync asistencias_dia1_reclutador doc err:', e))
+        try {
+          await supabase
+            .from('asistencias_dia1_reclutador')
+            .update({ postulante_documento: newDoc })
+            .eq('postulante_documento', oldDoc)
+        } catch (e) {
+          console.warn('Sync asistencias_dia1_reclutador doc err:', e)
+        }
 
-        // Consolidado asistencias
-        await supabase
-          .from('consolidado_asistencias')
-          .update({ documento: newDoc })
-          .eq('documento', oldDoc)
-          .catch(e => console.warn('Sync consolidado_asistencias doc err:', e))
+        try {
+          await supabase
+            .from('consolidado_asistencias')
+            .update({ documento: newDoc })
+            .eq('documento', oldDoc)
+        } catch (e) {
+          console.warn('Sync consolidado_asistencias doc err:', e)
+        }
 
-        // Descuentos
-        await supabase
-          .from('descuentos')
-          .update({ documento: newDoc })
-          .eq('documento', oldDoc)
-          .catch(e => console.warn('Sync descuentos doc err:', e))
+        try {
+          await supabase
+            .from('descuentos')
+            .update({ documento: newDoc })
+            .eq('documento', oldDoc)
+        } catch (e) {
+          console.warn('Sync descuentos doc err:', e)
+        }
       }
 
-      // 3. Registrar en audit_logs
+      // 4. Registrar en audit_logs
       const auditPayload = {
         tabla_afectada: 'nominas',
         operacion: 'UPDATE_CANDIDATO_DNI',
@@ -290,10 +299,18 @@ export default function NominaGridEditor({
         fecha: new Date().toISOString()
       }
 
-      await supabase.from('audit_logs').insert(auditPayload).catch(e => console.warn('Error registrando audit_log:', e))
+      try {
+        await supabase.from('audit_logs').insert(auditPayload)
+      } catch (e) {
+        console.warn('Error registrando audit_log:', e)
+      }
 
-      // 4. Recalibrar grupo si cambió
-      await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.warn('Recalibration error:', e))
+      // 5. Recalibrar grupo si cambió
+      try {
+        await checkCalibracionDia1(grupoCodigo, campana)
+      } catch (e) {
+        console.warn('Recalibration error:', e)
+      }
 
       // 5. Invalidar caches
       invalidateCache('all_consolidado')
