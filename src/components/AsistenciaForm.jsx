@@ -821,10 +821,14 @@ export default function AsistenciaForm({
         inheritedSigla = existing.sigla_asistencia
         inheritedMotivo = existing.motivo_baja || ''
       } else {
-        if (prevList && prevList.length > 0) {
+        const priorBajaRecord = prevList.find(r => r.sigla_asistencia === 'B' || String(r.sigla || '').toUpperCase() === 'B');
+        if (priorBajaRecord) {
+          inheritedSigla = 'B';
+          inheritedMotivo = priorBajaRecord.motivo_baja || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'BAJA');
+        } else if (prevList && prevList.length > 0) {
           inheritedSigla = prevList[0].sigla_asistencia
           inheritedMotivo = prevList[0].motivo_baja || ''
-        } else if (p.estado === 'CESADO') {
+        } else if (p.estado === 'CESADO' || p.estado === 'BAJA') {
           inheritedSigla = 'B'
           inheritedMotivo = isEligibleBajaD1 ? 'BAJA DIA 1' : (p.motivo_baja || '')
         } else if (isIngresoEspecial && isFirstRecordGroup) {
