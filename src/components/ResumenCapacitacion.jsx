@@ -121,9 +121,18 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     return norm(valA) === norm(valB);
   };
 
-  // Carga y cálculo de métricas
+  const isCalculatingRef = useRef(false);
+  const lastParamsRef = useRef('');
+
+  // Carga y cálculo de métricas ultrarrápido
   const loadData = useCallback(async (force = false) => {
-    if (grupos.length === 0) return;
+    if (!grupos || grupos.length === 0) return;
+    
+    const paramsKey = `${grupos.length}_${postulantes.length}_${asistencias.length}`;
+    if (!force && lastParamsRef.current === paramsKey && data.length > 0) return;
+    if (isCalculatingRef.current) return;
+
+    isCalculatingRef.current = true;
     try {
       if (force || data.length === 0) {
         setLoading(true);
@@ -135,20 +144,22 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const metricas = await calculateMetricasResumenCapacitacionFast(grupos, postulantes, asistencias);
       setCapacidadRys(grupos);
       setData(metricas || []);
+      lastParamsRef.current = paramsKey;
     } catch (err) {
       console.error('Error calculating resumen metrics:', err);
       setError(err?.message || 'Error cargando datos de resumen');
     } finally {
+      isCalculatingRef.current = false;
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [grupos, postulantes, asistencias]);
+  }, [grupos, postulantes, asistencias, data.length]);
 
   useEffect(() => {
     if (grupos.length > 0) {
       loadData(false);
     }
-  }, [grupos, postulantes, asistencias, loadData]);
+  }, [grupos.length, postulantes.length, asistencias.length]);
 
   // Escuchar refresco global
   useEffect(() => {

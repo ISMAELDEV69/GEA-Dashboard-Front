@@ -4458,6 +4458,15 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
                              formAsisByCode.get(cleanCode) || 
                              formAsisByCode.get(baseCode) || [];
 
+    const asisByDoc = new Map();
+    for (const r of groupFormAsisRaw) {
+      const doc = r.documento || r.postulante_documento;
+      if (doc) {
+        if (!asisByDoc.has(doc)) asisByDoc.set(doc, []);
+        asisByDoc.get(doc).push(r);
+      }
+    }
+
     // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico
     let effectiveCandidates = validNominas;
     if (effectiveCandidates.length === 0 && groupFormAsisRaw.length > 0) {
@@ -4479,51 +4488,19 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     let asistio_dia0 = 0;
     let asistio_dia1 = 0;
-
-    for (const n of effectiveCandidates) {
-      const doc = n.documento;
-      const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
-      const tieneIngreso = records.some(r => {
-        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        const st = String(r.estado || '').toUpperCase().trim();
-        return s === 'I-OP' || st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
-      });
-
-      const d0 = String(n.dia_0 || '').toUpperCase().trim();
-      const hasD0Attendance = records.some(r => {
-        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
-      });
-      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || hasD0Attendance || tieneIngreso) {
-        asistio_dia0++;
-      }
-      
-      const d1 = String(n.dia_1 || '').toUpperCase().trim();
-      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
-      const hasD1Attendance = records.some(r => {
-        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
-      });
-
-      if (d1 === 'ASISTIO' || d1.includes('FALTA') || d1.includes('BAJA') || hasD1Nomina || hasD1Attendance || tieneIngreso) {
-        asistio_dia1++;
-      }
-    }
-
-    const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
-    const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
-    const isGrupoCerrado = estadoGrupo === 'CERRADO' || estadoGrupo === 'CANCELADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO' || periodoRys === 'CANCELADO';
-
     let activos_actuales = 0;
     let activos_ojt = 0;
     let desertores_ojt = 0;
     let ingresos_iop = 0;
 
+    const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
+    const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
+    const isGrupoCerrado = estadoGrupo === 'CERRADO' || estadoGrupo === 'CANCELADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO' || periodoRys === 'CANCELADO';
     const fechaOjtTarget = fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida' ? parseFechaAsistencia(fecha_inicio_ojt) : null;
 
     for (const n of effectiveCandidates) {
       const doc = n.documento;
-      const records = groupFormAsisRaw.filter(r => (r.documento || r.postulante_documento) === doc);
+      const records = asisByDoc.get(doc) || [];
       
       // Tiene I-OP o pase formal a operación?
       const tieneIngreso = records.some(r => {
@@ -4535,10 +4512,28 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         ingresos_iop++;
       }
 
-      const dia1Asistio = String(n.dia_1 || '').toUpperCase().trim() === 'ASISTIO' || records.some(r => {
+      // Día 0
+      const d0 = String(n.dia_0 || '').toUpperCase().trim();
+      const hasD0Attendance = records.some(r => {
         const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        return s === 'A' || s === 'CAPACITACION' || s === 'OJT' || s === 'I-OP';
-      }) || tieneIngreso;
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
+      });
+      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || hasD0Attendance || tieneIngreso) {
+        asistio_dia0++;
+      }
+      
+      // Día 1
+      const d1 = String(n.dia_1 || '').toUpperCase().trim();
+      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
+      const hasD1Attendance = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
+      });
+      const dia1Asistio = d1 === 'ASISTIO' || hasD1Nomina || hasD1Attendance || tieneIngreso;
+
+      if (dia1Asistio) {
+        asistio_dia1++;
+      }
 
       let isBajaDia1 = false;
       let isBajaGeneral = false;
@@ -4567,7 +4562,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (tieneIngreso) {
         isOjtActive = true;
       } else if (dia1Asistio && !isBajaDia1 && fechaOjtTarget) {
-        // Tuvo asistencia en o después de la fecha programada de OJT en capacidad_rys?
         const attendedInOjt = records.some(r => {
           const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
           if (!rawDate) return false;
