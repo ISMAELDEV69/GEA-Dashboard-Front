@@ -1618,8 +1618,8 @@ export async function fetchAsistencias() {
           apellido_materno: row.apellido_materno,
           celular: row.celular,
           condicion_laboral: row.condicion_laboral,
-          codigo_grupo: row.codigo_grupo,
-          grupo_codigo: row.codigo_grupo,
+          codigo_grupo: cleanGrupo,
+          grupo_codigo: cleanGrupo,
           campana: row.campana,
           fecha_registro_asistencia: isoDate,
           fecha_asistencia: isoDate,
@@ -4677,7 +4677,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Fecha más reciente en que se guardó asistencia
+    // Fecha más reciente en que se guardó asistencia o registro
     let ultima_fecha_asistencia = '';
     if (groupFormAsisRaw.length > 0) {
       const validDates = groupFormAsisRaw
@@ -4700,6 +4700,56 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
+    // Fallback 1: Si no hay firmas de asistencia diaria, obtener la fecha más reciente de los postulantes registrados en nómina
+    if (!ultima_fecha_asistencia && validNominas.length > 0) {
+      const nominaDates = validNominas
+        .map(n => n.fecha_ingreso || n.fecha_registro || n.created_at || n.marca_temporal || '')
+        .filter(f => Boolean(f) && String(f).trim() !== '')
+        .map(f => {
+          const str = String(f).trim();
+          if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+          const parts = str.split(/[\/\-]/);
+          if (parts.length === 3 && parts[2].length === 4) {
+            return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          }
+          const dt = new Date(str);
+          return isNaN(dt.getTime()) ? str : dt.toISOString().slice(0, 10);
+        })
+        .filter(Boolean)
+        .sort();
+      if (nominaDates.length > 0) {
+        ultima_fecha_asistencia = nominaDates[nominaDates.length - 1];
+      }
+    }
+
+    // Fallback 2: Fecha de inicio / registro de la cohorte en capacidad_rys
+    if (!ultima_fecha_asistencia) {
+      const capDate = grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha || grupoInfo.fecha_inicio_ojt || '';
+      if (capDate) {
+        const str = String(capDate).trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+          ultima_fecha_asistencia = str.slice(0, 10);
+        } else {
+          const parts = str.split(/[\/\-]/);
+          if (parts.length === 3 && parts[2].length === 4) {
+            ultima_fecha_asistencia = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+          } else {
+            const dt = new Date(str);
+            if (!isNaN(dt.getTime())) ultima_fecha_asistencia = dt.toISOString().slice(0, 10);
+          }
+        }
+      }
+    }
+
+    // Sede / Local de la cohorte
+    let sede = (grupoInfo.sede && String(grupoInfo.sede).trim() !== '-' && String(grupoInfo.sede).trim() !== '')
+      ? String(grupoInfo.sede).trim()
+      : '';
+    if (!sede && validNominas.length > 0) {
+      const sDoc = validNominas.find(n => n.sede && String(n.sede).trim() !== '' && String(n.sede).trim() !== '-');
+      if (sDoc) sede = String(sDoc.sede).trim();
+    }
+
     results.push({
       grupo_codigo,
       campana: campana || '',
@@ -4709,6 +4759,8 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       periodo_inicio: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',
+      sede: sede || 'LIMA',
+      ultima_fecha_asistencia: ultima_fecha_asistencia || '-',
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),

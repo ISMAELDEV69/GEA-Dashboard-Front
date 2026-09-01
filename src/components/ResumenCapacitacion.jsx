@@ -690,8 +690,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         'Periodo': d.periodo,
         'Semana': d.semana,
         'Formador': d.formador || 'Sin Asignar',
-        'Última Asistencia': d.ultima_fecha_asistencia || '-',
+        'Último Registro': d.ultima_fecha_asistencia || '-',
         'Segmento': normalizeSegmento(d.segmento, d.campana),
+        'Local / Sede': d.sede || 'LIMA',
         'Campaña': d.campana,
         'Grupo (GPE)': d.grupo_codigo,
         'Fecha Inicio OJT': d.fecha_inicio_ojt,
@@ -1389,8 +1390,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                   <th className="py-3 px-3">Formador a Cargo</th>
                   <th className="py-3 px-3">Campaña</th>
                   <th className="py-3 px-3">Segmento</th>
+                  <th className="py-3 px-3">Local / Sede</th>
                   <th className="py-3 px-2 text-center">Semana</th>
-                  <th className="py-3 px-3 text-center">Últ. Asistencia</th>
+                  <th className="py-3 px-3 text-center">Últ. Registro</th>
                   <th className="py-3 px-2 text-right">RQ</th>
                   <th className="py-3 px-2 text-right">Nómina</th>
                   <th className="py-3 px-2 text-right">Día 1</th>
@@ -1414,6 +1416,11 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                       </td>
                       <td className="py-2.5 px-3 text-[var(--text-secondary)] truncate max-w-[150px]" title={d.campana}>{d.campana}</td>
                       <td className="py-2.5 px-3 text-[var(--text-muted)] whitespace-nowrap">{normalizeSegmento(d.segmento, d.campana)}</td>
+                      <td className="py-2.5 px-3 text-[var(--text-secondary)] whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-300 border border-slate-500/20 text-[11px] font-semibold">
+                          {d.sede || 'LIMA'}
+                        </span>
+                      </td>
                       <td className="py-2.5 px-2 text-center text-[var(--text-muted)] font-mono">{d.semana || '-'}</td>
                       <td className="py-2.5 px-3 text-center font-mono text-[11px] whitespace-nowrap">
                         {d.ultima_fecha_asistencia && d.ultima_fecha_asistencia !== '-' ? (
@@ -1434,7 +1441,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 })}
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-[var(--text-muted)]">
+                    <td colSpan={12} className="py-12 text-center text-[var(--text-muted)]">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-cyan-400" />
                       <p className="font-bold text-xs">No hay cohortes que coincidan con los filtros seleccionados.</p>
                     </td>
