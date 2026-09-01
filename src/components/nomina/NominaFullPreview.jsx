@@ -191,11 +191,6 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
               Mostrando {filteredData.length} de {data.length} postulantes ({data.length - filteredData.length} ocultos)
             </span>
           )}
-          {isCapacitacionRole && (
-            <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs">
-              Vista Formación: Columnas hasta Cargo Contractual
-            </span>
-          )}
           {Object.keys(filters).some(k => filters[k] && filters[k].length > 0) && (
             <button
               type="button"
