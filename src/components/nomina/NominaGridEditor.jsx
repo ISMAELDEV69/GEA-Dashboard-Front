@@ -414,14 +414,21 @@ export default function NominaGridEditor({
 
   const visibleColumns = useMemo(() => {
     if (isCapacitacionRole) {
-      if (columnTab === 'DOCUMENTOS') return POSTULANTE_COLUMNS
-      if (columnTab === 'TODO') return [...POSTULANTE_COLUMNS, ...OPERACION_COLUMNS]
+      if (columnTab === 'OPERATIVO') return OPERACION_COLUMNS
+      return POSTULANTE_COLUMNS
     }
     if (columnTab === 'POSTULANTE') return POSTULANTE_COLUMNS
     if (columnTab === 'OPERATIVO') return OPERACION_COLUMNS
     if (columnTab === 'DOCUMENTOS') return DOCUMENTOS_COLUMNS
     return ALL_EDITABLE_COLUMNS
   }, [columnTab, isCapacitacionRole])
+
+  // Asegurar que roles de capacitación solo puedan estar en POSTULANTE u OPERATIVO
+  useEffect(() => {
+    if (isCapacitacionRole && columnTab !== 'POSTULANTE' && columnTab !== 'OPERATIVO') {
+      setColumnTab('OPERATIVO')
+    }
+  }, [isCapacitacionRole, columnTab])
 
   // Debounce ref to store pending updates grouped by rowId
   const pendingUpdatesRef = useRef(new Map())
@@ -1039,17 +1046,19 @@ export default function NominaGridEditor({
               📑 Documentos
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setColumnTab('TODO')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              columnTab === 'TODO'
-                ? 'bg-purple-500 text-white shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            🌐 Ver Todo ({visibleColumns.length})
-          </button>
+          {!isCapacitacionRole && (
+            <button
+              type="button"
+              onClick={() => setColumnTab('TODO')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                columnTab === 'TODO'
+                  ? 'bg-purple-500 text-white shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              🌐 Ver Todo ({visibleColumns.length})
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
