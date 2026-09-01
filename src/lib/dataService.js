@@ -18,11 +18,18 @@ import {
   addAuditLog as mockAuditLog,
   initLocalStorageDb
 } from './mockData'
+import {
+  getPersistentItem,
+  setPersistentItem,
+  deletePersistentItem,
+  deletePersistentByPrefix,
+  clearPersistentCache
+} from './persistentCache.js'
 
 export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 
 // ─────────────────────────────────────────────
-// CACHE LAYER
+// CACHE LAYER (RAM + IndexedDB Persistente)
 // ─────────────────────────────────────────────
 const apiCache = new Map();
 
@@ -30,14 +37,28 @@ async function withCache(key, ttlMs = 300000, fetcher) {
   if (DB_MODE !== 'supabase') return fetcher();
   
   const now = Date.now();
+  // 1. Memoria RAM (Hit ultra-rápido síncrono)
   const cached = apiCache.get(key);
   if (cached && (now - cached.timestamp < ttlMs)) {
     return cached.data;
   }
+
+  // 2. Almacenamiento Persistente en IndexedDB (Hit ultra-rápido sin consumir Egress tras F5)
+  try {
+    const persistentData = await getPersistentItem(key, ttlMs);
+    if (persistentData !== null && persistentData !== undefined) {
+      apiCache.set(key, { data: persistentData, timestamp: now });
+      return persistentData;
+    }
+  } catch (err) {
+    console.warn('[withCache] Error reading IndexedDB cache:', err);
+  }
   
+  // 3. Consulta de red a Supabase
   const data = await fetcher();
   if (data !== null && data !== undefined) {
     apiCache.set(key, { data, timestamp: now });
+    setPersistentItem(key, data).catch(() => {});
   }
   return data;
 }
@@ -45,6 +66,7 @@ async function withCache(key, ttlMs = 300000, fetcher) {
 export function invalidateCache(keyPrefix) {
   if (!keyPrefix) {
     apiCache.clear();
+    clearPersistentCache().catch(() => {});
     return;
   }
   for (const key of apiCache.keys()) {
@@ -52,6 +74,7 @@ export function invalidateCache(keyPrefix) {
       apiCache.delete(key);
     }
   }
+  deletePersistentByPrefix(keyPrefix).catch(() => {});
 }
 
 export function isBajaDia1(motivo, sigla, row) {
@@ -810,23 +833,26 @@ export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apelli
  */
 export async function fetchPostulantes({ limit = 5000, all = false } = {}) {
   if (DB_MODE === 'supabase') {
-    let query = supabase
-      .from('v_nominas_consolidado')
-      .select(POSTULANTES_COLUMNS)
-      .order('created_at', { ascending: false })
+    const cacheKey = all ? 'postulantes_all' : `postulantes_${limit}`;
+    return withCache(cacheKey, 180000, async () => {
+      let query = supabase
+        .from('v_nominas_consolidado')
+        .select(POSTULANTES_COLUMNS)
+        .order('created_at', { ascending: false })
 
-    if (!all && limit) {
-      query = query.limit(limit)
-    }
+      if (!all && limit) {
+        query = query.limit(limit)
+      }
 
-    const { data, error } = await query
-    if (error) throw error
-    
-    return (data || []).map(row => ({
-      ...row,
-      campaign: row.campana,
-      observacion: row.observacion_reclutamiento,
-    }))
+      const { data, error } = await query
+      if (error) throw error
+      
+      return (data || []).map(row => ({
+        ...row,
+        campaign: row.campana,
+        observacion: row.observacion_reclutamiento,
+      }))
+    });
   }
   initLocalStorageDb()
   const list = getFromStorage('postulantes') || []
@@ -903,6 +929,10 @@ export async function insertPostulante(payload) {
       .eq('nomina_id', nominaId)
       .single()
     if (error) throw error
+    
+    invalidateCache('postulantes_');
+    invalidateCache('all_consolidado');
+    invalidateCache('resumen_cap_');
     return { ...data, campaign: data.campana, observacion: data.observacion_reclutamiento }
   }
   const list = getFromStorage('postulantes') || []
@@ -1062,6 +1092,11 @@ export async function updatePostulante(documento, payload) {
       .eq('activo', true)
     if (nErr) throw nErr
 
+    invalidateCache('postulantes_');
+    invalidateCache('all_consolidado');
+    invalidateCache('grupos_con_metas');
+    invalidateCache('resumen_cap_');
+
     const { data, error } = await supabase
       .from('v_nominas_consolidado')
       .select('*')
@@ -1091,11 +1126,14 @@ export async function updatePostulante(documento, payload) {
 // ─────────────────────────────────────────────
 export async function fetchGrupos(postulantesForStats = null) {
   if (DB_MODE === 'supabase') {
-    const { data, error } = await supabase
-      .from('capacidad_rys')
-      .select('*')
-      .order('fecha_registro', { ascending: false })
-    if (error) throw error
+    const data = await withCache('grupos_capacidad', 180000, async () => {
+      const { data: raw, error } = await supabase
+        .from('capacidad_rys')
+        .select('*')
+        .order('fecha_registro', { ascending: false })
+      if (error) throw error
+      return raw || [];
+    });
 
     return enrichGruposWithStats(
       data.map(g => ({
@@ -1145,13 +1183,16 @@ export async function fetchCapacidadRysOperativo() {
 export function subscribeOperationalData(onChange) {
   if (DB_MODE !== 'supabase') return () => {}
 
-  const handleChange = () => {
+  const handleChange = async () => {
     // Invalida caché local para asegurar datos frescos en la siguiente consulta del usuario
-    invalidateCache('all_consolidado');
-    invalidateCache('all_asistencias_bajas');
-    invalidateCache('all_motivos_bajas');
-    invalidateCache('grupos_con_metas');
-    invalidateCache('resumen_cap_');
+    await invalidateCache('all_consolidado');
+    await invalidateCache('all_asistencias_bajas');
+    await invalidateCache('all_motivos_bajas');
+    await invalidateCache('grupos_con_metas');
+    await invalidateCache('resumen_cap_');
+    await invalidateCache('postulantes_');
+    await invalidateCache('campanas_list');
+    await invalidateCache('sedes_list');
     
     // Auto-reload masivo desactivado para mitigar picos de carga concurrentes (>100 usuarios)
     // Si se requiere callback específico manual forzado, se puede invocar condicionalmente:
@@ -1266,6 +1307,7 @@ export async function saveGrupoCapacitacion({
     }
 
     if (hasChanges) {
+      await invalidateCache('grupos_capacidad');
       // Sync nominas if needed
       if (!existing || existing.campana !== grupoRow.campana || existing.semana_trabajo !== grupoRow.semana_trabajo) {
         const { error: syncErr } = await supabase
@@ -1392,6 +1434,7 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
       }
       onProgress?.(Math.min(i + BATCH_SIZE, finalRowsToUpsert.length), finalRowsToUpsert.length)
     }
+    await invalidateCache('grupos_capacidad');
   } catch (err) {
     console.error('Bulk upload error:', err)
     results.fail = validPayloads.length
@@ -1562,12 +1605,14 @@ export async function fetchAsistencias() {
     const map = new Map();
     data.forEach(row => {
       let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
+      const cleanDoc = String(row.documento || '').trim();
+      const cleanGrupo = String(row.codigo_grupo || row.grupo || '').trim();
       
-      if (isoDate) {
-        const key = `${row.documento}_${isoDate}`;
+      if (isoDate && cleanDoc) {
+        const key = `${cleanGrupo}_${cleanDoc}_${isoDate}`;
         map.set(key, {
-          documento: row.documento,
-          postulante_documento: row.documento,
+          documento: cleanDoc,
+          postulante_documento: cleanDoc,
           nombres: row.nombres,
           apellido_paterno: row.apellido_paterno,
           apellido_materno: row.apellido_materno,
@@ -1662,9 +1707,9 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
     }
 
     // Invalidar caché para que la próxima lectura traiga datos frescos de Supabase
-    invalidateCache('all_consolidado');
-    invalidateCache('all_asistencias_bajas');
-    invalidateCache('resumen_cap_');
+    await invalidateCache('all_consolidado');
+    await invalidateCache('all_asistencias_bajas');
+    await invalidateCache('resumen_cap_');
     return true
   }
 
@@ -1692,45 +1737,51 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
 // ─────────────────────────────────────────────
 export async function fetchReclutadores() {
   if (DB_MODE === 'supabase') {
-    const { data: recRes, error: recErr } = await supabase
-      .from('equipo_reclutamiento')
-      .select('apellido_paterno, apellido_materno, nombres_completos')
-      .eq('estado', 'ACTIVO')
-      
-    if (recErr) throw recErr
+    return withCache('reclutadores_list', 600000, async () => {
+      const { data: recRes, error: recErr } = await supabase
+        .from('equipo_reclutamiento')
+        .select('apellido_paterno, apellido_materno, nombres_completos')
+        .eq('estado', 'ACTIVO')
+        
+      if (recErr) throw recErr
 
-    const names = new Set()
-    for (const r of recRes || []) {
-      const full = `${r.apellido_paterno || ''} ${r.apellido_materno || ''} ${r.nombres_completos || ''}`.trim().replace(/\s+/g, ' ')
-      if (full) names.add(full.toUpperCase())
-    }
-    return [...names].sort()
+      const names = new Set()
+      for (const r of recRes || []) {
+        const full = `${r.apellido_paterno || ''} ${r.apellido_materno || ''} ${r.nombres_completos || ''}`.trim().replace(/\s+/g, ' ')
+        if (full) names.add(full.toUpperCase())
+      }
+      return [...names].sort()
+    })
   }
   return getFromStorage('reclutadores') || []
 }
 
 export async function fetchSedes() {
   if (DB_MODE === 'supabase') {
-    const { data } = await supabase.from('nominas').select('sede').not('sede', 'is', null)
-    const unique = [...new Set((data || []).map(d => d.sede))]
-    return unique.sort()
+    return withCache('sedes_list', 300000, async () => {
+      const { data } = await supabase.from('nominas').select('sede').not('sede', 'is', null)
+      const unique = [...new Set((data || []).map(d => d.sede))]
+      return unique.sort()
+    });
   }
   return getFromStorage('sedes') || []
 }
 
 export async function fetchCampanas() {
   if (DB_MODE === 'supabase') {
-    const { data } = await supabase.from('capacidad_rys').select('campana, segmento').not('campana', 'is', null)
-    
-    // De-duplicate
-    const map = new Map()
-    for (const d of (data || [])) {
-      if (!map.has(d.campana)) {
-        map.set(d.campana, d)
+    return withCache('campanas_list', 300000, async () => {
+      const { data } = await supabase.from('capacidad_rys').select('campana, segmento').not('campana', 'is', null)
+      
+      // De-duplicate
+      const map = new Map()
+      for (const d of (data || [])) {
+        if (!map.has(d.campana)) {
+          map.set(d.campana, d)
+        }
       }
-    }
-    const unique = Array.from(map.values())
-    return unique.sort((a,b) => a.campana.localeCompare(b.campana)).map(c => ({ nombre: c.campana, segmento: c.segmento }))
+      const unique = Array.from(map.values())
+      return unique.sort((a,b) => a.campana.localeCompare(b.campana)).map(c => ({ nombre: c.campana, segmento: c.segmento }))
+    });
   }
   return getFromStorage('campanas') || []
 }
@@ -1936,7 +1987,7 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
         .insert(rows)
       if (insErr) throw insErr
     }
-    invalidateCache('grupos_con_metas')
+    await invalidateCache('grupos_con_metas')
     return true
   }
   return true
@@ -1944,15 +1995,14 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
 
 export async function fetchFormadores() {
   if (DB_MODE === 'supabase') {
-    const map = new Map()
-
-    // 1. Fetch formadores
-    try {
+    return withCache('formadores_list', 300000, async () => {
+      const map = new Map()
       const { data: formData } = await supabase
         .from('formadores')
         .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+        .eq('estado', 'Activo')
         .order('nombre_completo')
-
+      
       if (formData) {
         formData.forEach(f => {
           const doc = String(f.documento || '').trim()
@@ -1970,55 +2020,8 @@ export async function fetchFormadores() {
           }
         })
       }
-    } catch (e) {
-      console.warn('fetch formadores table err:', e)
-    }
-
-    // 2. Fetch equipo_formacion (merge/complement)
-    try {
-      const { data: efData } = await supabase
-        .from('equipo_formacion')
-        .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
-        .order('nombres_completos')
-
-      if (efData) {
-        efData.forEach(f => {
-          const doc = String(f.documento || '').trim()
-          if (doc) {
-            const existing = map.get(doc) || {}
-            map.set(doc, {
-              documento: doc,
-              nombre_completo: (f.datos_completos || f.nombres_completos || existing.nombre_completo || '').trim().toUpperCase(),
-              sede: f.sede || existing.sede || '',
-              segmento: f.segmento || existing.segmento || '',
-              subcampana: f.subcampana || existing.subcampana || '',
-              cargo_contractual: f.cargo_contractual || existing.cargo_contractual || 'FORMADOR',
-              cargo_funcional: (f.cargo_funcional || existing.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-              estado: (f.estado || existing.estado || 'Activo').trim()
-            })
-          }
-        })
-      }
-    } catch (e) {
-      console.warn('fetch equipo_formacion table err:', e)
-    }
-
-    if (map.size > 0) {
       return [...map.values()]
-    }
-
-    // Fallback: perfiles con rol formador si no hay registros
-    const { data: perfilesData } = await supabase
-      .from('perfiles_publico')
-      .select('nombre, rol')
-      .eq('rol', 'formador')
-      .order('nombre')
-
-    for (const p of perfilesData || []) {
-      const doc = `USR-${(p.nombre || 'FORMADOR').replace(/\s+/g, '').slice(0, 12).toUpperCase()}`
-      map.set(doc, { documento: doc, nombre_completo: p.nombre, estado: 'Activo' })
-    }
-    return [...map.values()]
+    })
   }
   // Local fallback
   const list = getFromStorage('formadores') || []
@@ -2152,7 +2155,25 @@ export async function deleteMotivoBaja(motivoId) {
 }
 
 export async function insertConsolidado(payloads) {
-  if (DB_MODE !== 'supabase') return;
+  if (DB_MODE !== 'supabase' || !payloads || payloads.length === 0) return;
+  
+  // Limpiar duplicados previos de esa misma fecha y grupo antes de insertar el estado más fresco
+  const sample = payloads[0];
+  const targetGroup = sample.codigo_grupo || sample.grupo;
+  const targetFecha = sample.fecha_registro_asistencia;
+  
+  if (targetGroup && targetFecha) {
+    try {
+      await supabase
+        .from('consolidado_asistencias')
+        .delete()
+        .eq('codigo_grupo', targetGroup)
+        .eq('fecha_registro_asistencia', targetFecha);
+    } catch (cleanErr) {
+      console.warn('Aviso al limpiar registros previos del día:', cleanErr);
+    }
+  }
+
   const { error } = await supabase
     .from('consolidado_asistencias')
     .insert(payloads);
@@ -2179,7 +2200,7 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap')
     ])
     if (capRes.error) throw capRes.error
@@ -2200,7 +2221,7 @@ export async function fetchMotivosBajasData() {
   return withCache('all_motivos_bajas', 180000, async () => {
     const [consData, capRes, nominasRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
       supabase.from('nominas').select('documento, campana, grupo_codigo, fecha_inicio_capacitacion, estado, activo')
     ]);
 
@@ -2488,10 +2509,12 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     .eq('campana', campana)
     .order('created_at', { ascending: true })
     
+  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
+
   const formAsis = (rawFormAsis || []).map(row => {
     let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
     return {
-      postulante_documento: row.documento,
+      postulante_documento: normDoc(row.documento),
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
@@ -2499,44 +2522,41 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     }
   }).filter(f => f.fecha_asistencia)
 
-  const bajasDia1Set = new Set()
-  for (const r of (rawFormAsis || [])) {
-    const doc = r.documento || r.postulante_documento
-    const m = String(r.motivo_baja || '').toUpperCase()
-    const e = String(r.estado || '').toUpperCase()
-    const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase()
-    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
-      if (doc) bajasDia1Set.add(doc)
-    }
-  }
-
-  const mapFormFull = new Map()
+  const formRecordsByDoc = new Map()
   for (const f of formAsis) {
-    const doc = f.postulante_documento
-    if (!mapFormFull.has(doc)) {
-      mapFormFull.set(doc, f)
-    } else if (f.fecha_asistencia === fecha_dia1_ref) {
-      mapFormFull.set(doc, f)
-    }
+    const d = f.postulante_documento
+    if (!formRecordsByDoc.has(d)) formRecordsByDoc.set(d, [])
+    formRecordsByDoc.get(d).push(f)
   }
 
-  if (!recAsis) return { rec: 0, form: 0 }
+  const isAsistioStr = (val) => {
+    if (!val) return false;
+    const s = String(val).trim().toUpperCase();
+    return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
+  };
 
-  const mapRec = new Map(recAsis.map(r => [r.documento, r.dia_1]))
-  const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
+  const mapRec = new Map(recAsis.map(r => [normDoc(r.documento), r.dia_1]))
+  const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
   
   let countRec = 0
   let countForm = 0
   for (const doc of allDocs) {
-    const formRecord = mapFormFull.get(doc)
+    const studentRecords = formRecordsByDoc.get(doc) || []
     const recSigla = mapRec.get(doc)
     
-    const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = bajasDia1Set.has(doc)
-    const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
+    const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
+    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
+    const formRecord = exactD1Record || latestRecord
     
-    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT')
-    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO') : false
+    const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord)
+    
+    const hasAnyActiveAttendance = studentRecords.some(r => {
+      const s = String(r.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'A' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
+    })
+    
+    const isFormAsistencia = !isBajaDia1Record && (hasAnyActiveAttendance || (formRecord && (formRecord.sigla_asistencia === 'A' || formRecord.sigla_asistencia === 'I-OP')))
+    const isRecAsistencia = isAsistioStr(recSigla)
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2558,9 +2578,11 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     .eq('campana', campana)
     .order('created_at', { ascending: true })
     
+  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
+
   const formAsis = (rawFormAsis || []).filter(row => row.fecha_registro_asistencia).map(row => {
     return {
-      postulante_documento: row.documento,
+      postulante_documento: normDoc(row.documento),
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
@@ -2570,48 +2592,53 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
 
   if (!recAsis) return []
 
-  const mapNombres = new Map(recAsis.map(p => [p.documento, `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
-
-  const bajasDia1Set = new Set()
-  for (const r of (rawFormAsis || [])) {
-    const doc = r.documento || r.postulante_documento
-    const m = String(r.motivo_baja || '').toUpperCase()
-    const e = String(r.estado || '').toUpperCase()
-    const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase()
-    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
-      if (doc) bajasDia1Set.add(doc)
-    }
-  }
-
-  const mapFormFull = new Map()
+  const formRecordsByDoc = new Map()
   for (const f of formAsis) {
-    const doc = f.postulante_documento
-    if (!mapFormFull.has(doc)) {
-      mapFormFull.set(doc, f)
-    } else if (f.fecha_asistencia === fecha_dia1_ref) {
-      mapFormFull.set(doc, f)
-    }
+    const doc = normDoc(f.postulante_documento)
+    if (!doc) continue;
+    if (!formRecordsByDoc.has(doc)) formRecordsByDoc.set(doc, [])
+    formRecordsByDoc.get(doc).push(f)
   }
 
-  const mapRec = new Map(recAsis.map(r => [r.documento, r.dia_1]))
+  const isAsistioStr = (val) => {
+    if (!val) return false;
+    const s = String(val).trim().toUpperCase();
+    return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
+  };
+
+  const mapRec = new Map()
+  recAsis.forEach(r => {
+    const doc = normDoc(r.documento)
+    if (doc) mapRec.set(doc, r.dia_1)
+  })
   
-  const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
+  const mapNombres = new Map(recAsis.map(p => [normDoc(p.documento), `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
+  
+  const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
+  allDocs.delete('')
   const discrepancias = []
   
   for (const doc of allDocs) {
-    const formRecord = mapFormFull.get(doc)
+    const studentRecords = formRecordsByDoc.get(doc) || []
     const recSigla = mapRec.get(doc)
     
+    const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
+    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
+    const formRecord = exactD1Record || latestRecord
+    
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1 = bajasDia1Set.has(doc)
+    const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord)
     
-    const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
-    const displayFormSigla = isBajaDia1 ? 'BAJA DÍA 1' : formSigla;
-    
-    const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT')
-    const isRecAsistencia = recSigla ? (String(recSigla).toUpperCase().trim() === 'ASISTIO') : false;
+    const hasAnyActiveAttendance = studentRecords.some(r => {
+      const s = String(r.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'A' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
+    })
+
+    const isFormAsistencia = !isBajaDia1Record && (hasAnyActiveAttendance || formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT')
+    const isRecAsistencia = isAsistioStr(recSigla);
     
     if (isFormAsistencia !== isRecAsistencia) {
+      const displayFormSigla = isBajaDia1Record ? 'BAJA DÍA 1' : formSigla;
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
@@ -3087,14 +3114,16 @@ export async function fetchDescuentosPendientes() {
 
 export async function fetchHomologadas() {
   if (DB_MODE !== 'supabase') return [];
-  const { data, error } = await supabase
-    .from('opciones_homologadas')
-    .select('*');
-  if (error) {
-    console.error("Error fetching homologadas:", error);
-    return [];
-  }
-  return data || [];
+  return withCache('homologadas_list', 600000, async () => {
+    const { data, error } = await supabase
+      .from('opciones_homologadas')
+      .select('*');
+    if (error) {
+      console.error("Error fetching homologadas:", error);
+      return [];
+    }
+    return data || [];
+  });
 }
 
 export async function fetchDescuentosHistorial() {
@@ -4068,6 +4097,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (!gruposInfo || gruposInfo.length === 0) return []
 
   const norm = (val) => String(val || '').trim().toUpperCase();
+  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
   const cleanCodeStr = (val) => {
     if (!val) return '';
     return String(val).trim().toUpperCase().split(' - ')[0].trim();
@@ -4249,21 +4279,21 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     for (const r of groupFormAsisRaw) {
       const doc = r.documento || r.postulante_documento;
       const m = String(r.motivo_baja || '').toUpperCase();
-      const e = String(r.estado || '').toUpperCase();
       const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase();
-      if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+      if (isBajaDia1(m, s, r)) {
         if (doc) bajasDia1Set.add(doc);
       }
     }
 
     for (const n of effectiveCandidates) {
-      const doc = norm(n.documento);
+      const doc = normDoc(n.documento);
       const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || 
                           recAsisMap.get(`${baseCode}|${doc}`) || 
                           recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`);
       
       const hasNominaDia1 = isAsistioStr(n.dia_1);
-      const hasRecAsisDia1 = recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A');
+      const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
+      const hasRecAsisDia1 = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
 
       if (hasNominaDia1 || hasRecAsisDia1) {
         countRec++;
@@ -4290,6 +4320,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     }
 
     let countForm = 0;
+    const discrepanciasList = [];
     if (fecha_dia1_ref) {
       const formAsis = groupFormAsisRaw
         .filter(f => (f.fecha_registro_asistencia || f.fecha_asistencia))
@@ -4303,44 +4334,64 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           }
         });
 
-      const mapFormFull = new Map();
+      // Agrupar asistencias del formador por documento limpio (filtrando registros vacíos)
+      const formRecordsByDoc = new Map();
       for (const f of formAsis) {
-        const doc = norm(f.postulante_documento);
-        if (!mapFormFull.has(doc)) {
-          mapFormFull.set(doc, f);
-        } else if (f.fecha_asistencia === fecha_dia1_ref) {
-          mapFormFull.set(doc, f);
-        }
+        const d = normDoc(f.postulante_documento);
+        if (!d) continue;
+        if (!formRecordsByDoc.has(d)) formRecordsByDoc.set(d, []);
+        formRecordsByDoc.get(d).push(f);
       }
 
-      const mapRec = new Map(effectiveCandidates.map(r => [norm(r.documento), r.dia_1]))
-      const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
-      let isCalibrated = true
+      const mapRec = new Map();
+      effectiveCandidates.forEach(r => {
+        const d = normDoc(r.documento);
+        if (d) mapRec.set(d, r.dia_1);
+      });
+
+      const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()]);
+      allDocs.delete('');
       for (const doc of allDocs) {
-        const formRecord = mapFormFull.get(doc)
-        const recSigla = mapRec.get(doc)
-        const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`)
+        const studentRecords = formRecordsByDoc.get(doc) || [];
+        const recSigla = mapRec.get(doc);
+        const recAsisItem = recAsisMap.get(`${cleanCode}|${doc}`) || recAsisMap.get(`${norm(campana)}|${cleanCode}|${doc}`);
         
-        const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-        const isBajaDia1 = bajasDia1Set.has(doc);
-        const effectiveFormSigla = isBajaDia1 ? 'Sin registro' : formSigla;
+        // Buscar registro de fecha Día 1 o el más reciente
+        const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref);
+        const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null;
+        const formRecord = exactD1Record || latestRecord;
         
-        // Formador asistencia = A, I-OP, CAPACITACION, OJT (no B ni FI)
-        const isFormAsistencia = !isBajaDia1 && (effectiveFormSigla === 'A' || effectiveFormSigla === 'I-OP' || effectiveFormSigla === 'CAPACITACION' || effectiveFormSigla === 'OJT');
-        const isRecAsistencia = isAsistioStr(recSigla) || (recAsisItem && (recAsisItem.sigla_inicial === 'A' || recAsisItem.sigla_final === 'A'));
+        const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro';
+        const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord);
+        
+        const hasAnyActiveAttendance = studentRecords.some(r => {
+          const s = String(r.sigla_asistencia || '').toUpperCase().trim();
+          return s === 'A' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
+        });
+
+        const isFormAsistencia = !isBajaDia1Record && (hasAnyActiveAttendance || formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT');
+        
+        const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
+        const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
+        const isRecAsistencia = isAsistioStr(recSigla) || isAuxAsistencia;
         
         if (isFormAsistencia) countForm++;
 
         if (isFormAsistencia !== isRecAsistencia) {
-          isCalibrated = false
+          discrepanciasList.push({
+            documento: doc,
+            reclutador: isRecAsistencia ? 'ASISTIO' : (recSigla || 'NO ASISTIO'),
+            formador: isFormAsistencia ? 'ASISTIO' : (formSigla || 'Sin registro')
+          });
         }
       }
 
+      const hasDiscrepancies = discrepanciasList.length > 0;
       if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
         estado_calibracion = 'PENDIENTE';
-      } else if (countRec !== countForm || !isCalibrated) {
+      } else if (countRec !== countForm || hasDiscrepancies) {
         estado_calibracion = 'DESCALIBRADO';
-      } else if (countRec > 0 && countForm > 0 && isCalibrated && countRec === countForm) {
+      } else if (countRec > 0 && countForm > 0 && !hasDiscrepancies && countRec === countForm) {
         estado_calibracion = 'CALIBRADO';
       } else {
         estado_calibracion = 'PENDIENTE';
@@ -4355,13 +4406,16 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       segmento: grupoInfo.segmento || '',
       periodo: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
       semana_label: grupoInfo.semana_label ? String(grupoInfo.semana_label).trim() : '',
-      fecha_inicio: grupoInfo.fecha_inicio || '',
+      fecha_inicio: grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha || '',
       fecha_dia1: fecha_dia1_ref || 'No definida',
       estado: estado_calibracion,
       total_nomina: totalNomina,
       total_dia0: totalDia0,
       total_reclutador: countRec,
-      total_formador: countForm
+      total_formador: countForm,
+      discrepancias: discrepanciasList,
+      discrepancias_count: discrepanciasList.length,
+      discrepancia_nominal: countRec === countForm && discrepanciasList.length > 0
     });
   }
 
@@ -4572,25 +4626,28 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         }
       }
 
-      // Activo en OJT? ESTRICTAMENTE basado en fecha_inicio_ojt programada en capacidad_rys
+      // Activo en OJT? Basado en fecha_inicio_ojt programada en capacidad_rys O sigla explícita de OJT
       let isOjtActive = false;
       let isOjtDesertor = false;
 
       if (tieneIngreso) {
         isOjtActive = true;
-      } else if (dia1Asistio && !isBajaDia1 && fechaOjtTarget) {
+      } else if (dia1Asistio && !isBajaDia1) {
         const attendedInOjt = records.some(r => {
           const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
-          if (!rawDate) return false;
-          const rDate = parseFechaAsistencia(rawDate);
           const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-          return rDate >= fechaOjtTarget && (sigla === 'A' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
+          const rDate = rawDate ? parseFechaAsistencia(rawDate) : null;
+          
+          const isDateInOjt = Boolean(fechaOjtTarget && rDate && rDate >= fechaOjtTarget);
+          const isSiglaOjt = sigla === 'OJT' || sigla === 'I-OP';
+          
+          return (isDateInOjt || isSiglaOjt) && (sigla === 'A' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
         });
 
         if (attendedInOjt) {
           if (!isBajaGeneral) {
             isOjtActive = true;
-          } else if (fechaUltimaBaja && fechaUltimaBaja >= fechaOjtTarget) {
+          } else if (fechaUltimaBaja && (!fechaOjtTarget || fechaUltimaBaja >= fechaOjtTarget)) {
             isOjtDesertor = true;
           }
         }
@@ -4653,12 +4710,12 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
-      requerimiento: grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== ''
-        ? Number(grupoInfo.rq_solicitado)
-        : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0),
-      rq_solicitado: grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== ''
-        ? Number(grupoInfo.rq_solicitado)
-        : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0),
+      requerimiento: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+        ? Number(grupoInfo.rq_ftes_solicitado)
+        : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0),
+      rq_solicitado: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+        ? Number(grupoInfo.rq_ftes_solicitado)
+        : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0),
       rq_ftes_solicitado: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
         ? Number(grupoInfo.rq_ftes_solicitado)
         : Number(grupoInfo.rq_solicitado || 0),
@@ -5077,8 +5134,9 @@ export async function getMetricasResumenCapacitacion(gruposInfo) {
       is_cerrado: isGrupoCerrado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       fecha_inicio_ojt: fecha_inicio_ojt || 'No definida',
-      requerimiento: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || grupoInfo.requerimiento || 0) || total_nomina || 0,
-      rq_solicitado: parseInt(grupoInfo.rq_solicitado || grupoInfo.meta || 0) || 0,
+      requerimiento: parseInt(grupoInfo.rq_ftes_solicitado || grupoInfo.rq_solicitado || grupoInfo.meta || grupoInfo.requerimiento || 0) || total_nomina || 0,
+      rq_solicitado: parseInt(grupoInfo.rq_ftes_solicitado || grupoInfo.rq_solicitado || grupoInfo.meta || 0) || 0,
+      rq_ftes_solicitado: parseInt(grupoInfo.rq_ftes_solicitado || grupoInfo.rq_solicitado || 0) || 0,
       total_nomina,
       asistio_dia0,
       asistio_dia1,
@@ -5158,12 +5216,14 @@ export async function getMetricasPorModalidad(gruposInfo) {
 }
 
 export async function fetchModulePermissions() {
-  const { data, error } = await supabase.from('module_permissions').select('*')
-  if (error) {
-    console.error('Error fetching module_permissions:', error)
-    return []
-  }
-  return data
+  return withCache('module_permissions', 600000, async () => {
+    const { data, error } = await supabase.from('module_permissions').select('*')
+    if (error) {
+      console.error('Error fetching module_permissions:', error)
+      return []
+    }
+    return data || []
+  })
 }
 
 export async function updateModulePermissions(moduleId, roles) {
@@ -5172,6 +5232,7 @@ export async function updateModulePermissions(moduleId, roles) {
     .upsert({ module_id: moduleId, roles })
   
   if (error) throw error
+  invalidateCache('module_permissions')
   return true
 }
 export function parseFechaAsistencia(raw) {

@@ -377,7 +377,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     setTableSearch('')
   }
 
-  const getStatusBadge = (estado) => {
+  const getStatusBadge = (estado, row = {}) => {
     if (estado === 'CALIBRADO') {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-tight bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-xs">
@@ -387,14 +387,15 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
       )
     }
     if (estado === 'DESCALIBRADO') {
+      const isNominalOnly = row.discrepancia_nominal || (row.total_reclutador === row.total_formador && (row.total_reclutador > 0));
       return (
         <div className="inline-flex flex-col items-center">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-tight bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/35 shadow-xs animate-pulse">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-tight bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/35 shadow-xs">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 dark:bg-rose-400 shrink-0" />
-            DESCALIBRADO
+            {isNominalOnly ? 'DESVÍO NOMINAL' : 'DESCALIBRADO'}
           </span>
           <span className="text-[9px] text-rose-600 dark:text-rose-400/80 font-medium tracking-tight mt-0.5">
-            Ver discrepancias →
+            {isNominalOnly ? 'DNIs difieren →' : 'Ver discrepancias →'}
           </span>
         </div>
       )
@@ -906,7 +907,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
 
                         {/* Estado */}
                         <td className="px-4 py-2.5 text-center">
-                          {getStatusBadge(row.estado)}
+                          {getStatusBadge(row.estado, row)}
                         </td>
                       </tr>
                     )
