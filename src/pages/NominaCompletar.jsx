@@ -604,7 +604,7 @@ export default function NominaCompletar({
                 periodo={bulkPeriodo} 
                 semana={bulkSemana} 
                 segmento={bulkSegmento} 
-                currentRole={currentRole}
+                currentRole={currentRole || userProfile?.rol}
               />
             </div>
           </div>

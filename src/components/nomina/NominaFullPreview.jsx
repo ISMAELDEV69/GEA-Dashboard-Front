@@ -26,6 +26,9 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
   const [error, setError] = useState(null)
   const [filters, setFilters] = useState({})
 
+  const role = String(currentRole || '').toLowerCase().trim()
+  const isCapacitacionRole = ['supervisor_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
+
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
   }
@@ -126,22 +129,33 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
           cols.splice(fnIdx, 0, 'edad')
         }
 
-        // Reorder to ensure evaluar and obs_evaluar are before doc_cv
-        const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion', 'visor'].includes(currentRole)
-        const highlightCols = isCapacitacionRole 
-          ? [] 
-          : ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
-        
-        if (isCapacitacionRole) {
-          const docKeys = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
-          cols = cols.filter(c => !docKeys.includes(c))
-        }
+        // Control de permisos por rol: Formadores y Supervisores de Capacitación solo ven hasta cargo_contractual
+        const role = String(currentRole || '').toLowerCase().trim()
+        const isCapacitacionRole = ['supervisor_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
 
-        const newCols = ['evaluar', 'obs_evaluar', ...highlightCols, 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso']
-        
-        const toMove = newCols.filter(c => cols.includes(c))
-        cols = cols.filter(c => !toMove.includes(c))
-        cols.push(...toMove)
+        if (isCapacitacionRole) {
+          // Para Formadores y Supervisores de Capacitación: Mostrar y Descargar ÚNICAMENTE hasta 'cargo_contractual'
+          if (cols.includes('cargo_contractual')) {
+            const cargoIdx = cols.indexOf('cargo_contractual')
+            cols = cols.slice(0, cargoIdx + 1)
+          } else {
+            const restrictedCols = [
+              'dia_0', 'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs',
+              'doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos',
+              'doc_autorizacion', 'status_final', 'observacion_final', 'validacion_reingreso',
+              'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar', 'estado', 'observacion_estado', 'activo'
+            ]
+            cols = cols.filter(c => !restrictedCols.includes(c))
+          }
+        } else {
+          // Reorder to ensure evaluar and obs_evaluar are before doc_cv for Admin/RyS
+          const highlightCols = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final']
+          const newCols = ['evaluar', 'obs_evaluar', ...highlightCols, 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso']
+          
+          const toMove = newCols.filter(c => cols.includes(c))
+          cols = cols.filter(c => !toMove.includes(c))
+          cols.push(...toMove)
+        }
 
         setColumns(cols)
         setData(rows)
@@ -175,6 +189,11 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
           ) : (
             <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
               Mostrando {filteredData.length} de {data.length} postulantes ({data.length - filteredData.length} ocultos)
+            </span>
+          )}
+          {isCapacitacionRole && (
+            <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shadow-xs">
+              Vista Formación: Columnas hasta Cargo Contractual
             </span>
           )}
           {Object.keys(filters).some(k => filters[k] && filters[k].length > 0) && (
