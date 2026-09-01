@@ -2575,7 +2575,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   const recAsis = rawRecAsis || [];
   
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, nombres, apellido_paterno, apellido_materno')
     .eq('codigo_grupo', grupo_codigo)
     .eq('campana', campana)
     .order('created_at', { ascending: true })
@@ -2588,6 +2588,9 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
+      nombres: row.nombres,
+      apellido_paterno: row.apellido_paterno,
+      apellido_materno: row.apellido_materno,
       fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia)
     }
   })
@@ -2616,6 +2619,17 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   
   const mapNombres = new Map(recAsis.map(p => [normDoc(p.documento), `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
   
+  // Poblar nombres de formador como fallback para alumnos agregados en sala
+  for (const f of formAsis) {
+    const doc = normDoc(f.postulante_documento)
+    if (doc && (!mapNombres.has(doc) || !mapNombres.get(doc))) {
+      const nom = `${f.apellido_paterno || ''} ${f.apellido_materno || ''}, ${f.nombres || ''}`.trim()
+      if (nom && nom !== ',') {
+        mapNombres.set(doc, nom)
+      }
+    }
+  }
+
   const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
   allDocs.delete('')
   const discrepancias = []
@@ -4379,13 +4393,12 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         }
       }
 
-      const hasDiscrepancies = discrepanciasList.length > 0;
       if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
         estado_calibracion = 'PENDIENTE';
-      } else if (countRec !== countForm || hasDiscrepancies) {
-        estado_calibracion = 'DESCALIBRADO';
-      } else if (countRec > 0 && countForm > 0 && !hasDiscrepancies && countRec === countForm) {
+      } else if (countRec > 0 && countForm > 0 && countRec === countForm) {
         estado_calibracion = 'CALIBRADO';
+      } else if (countRec !== countForm) {
+        estado_calibracion = 'DESCALIBRADO';
       } else {
         estado_calibracion = 'PENDIENTE';
       }
@@ -4413,7 +4426,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       total_formador: countForm,
       discrepancias: discrepanciasList,
       discrepancias_count: discrepanciasList.length,
-      discrepancia_nominal: countRec === countForm && discrepanciasList.length > 0
+      discrepancia_nominal: false
     });
   }
 
