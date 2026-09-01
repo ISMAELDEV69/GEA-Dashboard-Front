@@ -396,7 +396,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                       {g.fecha_ingreso_op ? new Date(g.fecha_ingreso_op).toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
                     </td>
                     <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold text-[var(--text-primary)]">
-                      {g.rq_solicitado}
+                      {g.rq_ftes_solicitado || g.rq_solicitado}
                     </td>
 
                     {/* Middle rows (First recruiter or empty) */}
@@ -423,7 +423,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                     )}
 
                     {/* Right spanned columns */}
-                    <td rowSpan={rowCount} className={`border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-lg font-black ${g.lista_actual >= g.rq_solicitado ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'}`}>
+                    <td rowSpan={rowCount} className={`border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-lg font-black ${g.lista_actual >= (g.rq_ftes_solicitado || g.rq_solicitado) ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-500'}`}>
                       {g.lista_actual}
                     </td>
                     <td rowSpan={rowCount} className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold text-[var(--text-primary)]">
@@ -531,7 +531,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                 <div className="flex flex-col items-center justify-center text-center">
                   <p className="text-[10px] font-black uppercase text-[var(--text-secondary)] mb-1">Suma RQ Equipo</p>
                   <p className="text-3xl font-black text-[var(--accent)]">{sumIndividualRQ}</p>
-                  <p className="text-[10px] text-[var(--text-muted)] mt-1">Requerido Capacidad: <span className="font-bold text-[var(--text-primary)]">{editingGrupo.rq_solicitado}</span></p>
+                  <p className="text-[10px] text-[var(--text-muted)] mt-1">Requerido Capacidad: <span className="font-bold text-[var(--text-primary)]">{editingGrupo.rq_ftes_solicitado || editingGrupo.rq_solicitado}</span></p>
                 </div>
                 <div className="flex flex-col items-center justify-center text-center border-l border-[var(--border-subtle)]">
                   <p className="text-[10px] font-black uppercase text-[var(--text-secondary)] mb-1">Suma Día 1 Equipo</p>

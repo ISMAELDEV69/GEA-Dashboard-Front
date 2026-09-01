@@ -1561,7 +1561,7 @@ export default function NominaForm({
                     <option value="">Seleccione Grupo ({bulkGruposList.length} disponibles)</option>
                     {bulkGruposList.map(g => (
                       <option key={g.codigo || g.grupo_codigo} value={g.codigo || g.grupo_codigo}>
-                        {g.codigo || g.grupo_codigo} {g.rq_solicitado ? `(RQ: ${g.rq_solicitado})` : ''} {g.meta_dia_1 ? `(Meta: ${g.meta_dia_1})` : ''}
+                        {g.codigo || g.grupo_codigo} {(g.rq_ftes_solicitado || g.rq_solicitado) ? `(RQ: ${g.rq_ftes_solicitado || g.rq_solicitado})` : ''} {g.meta_dia_1 ? `(Meta: ${g.meta_dia_1})` : ''}
                       </option>
                     ))}
                   </select>

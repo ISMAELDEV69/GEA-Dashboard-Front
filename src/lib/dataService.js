@@ -1628,6 +1628,7 @@ export async function fetchAsistencias() {
           motivo_baja: row.motivo_baja,
           estado: row.estado || 'ACTIVO',
           formador: row.nombre_formador,
+          archivo_origen: row.archivo_origen || '',
         });
       }
     });
@@ -1658,9 +1659,9 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
       const atrib = atribuirBaja(motivo);
       const obs = `${motivo} [${atrib}]`;
       if (!bajasByMotivo.has(obs)) {
-        bajasByMotivo.set(obs, []);
+        bajasByMotivo.set(obs, { motivo, docs: [] });
       }
-      bajasByMotivo.get(obs).push(r.documento);
+      bajasByMotivo.get(obs).docs.push(r.documento);
     }
 
     // 2. Documentos a restaurar a ACTIVO (cualquiera que asista con sigla distinta de B)
@@ -1671,13 +1672,14 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
     // 3. Ejecutar updates de forma concurrente con Promise.all
     const updatePromises = [];
 
-    for (const [obs, docs] of bajasByMotivo.entries()) {
+    for (const [obs, { motivo, docs }] of bajasByMotivo.entries()) {
       if (docs.length > 0) {
         updatePromises.push(
           supabase
             .from('nominas')
             .update({
               estado: 'BAJA',
+              motivo_baja: motivo,
               observacion_estado: obs,
               updated_at: new Date().toISOString(),
             })

@@ -276,7 +276,7 @@ export function buildCampanaEtapaHeatmap(postulantes = [], asistencias = [], cam
       }
       const cm = campanaMetasSum.get(cName)
       cm.metaDia1 += Number(g.meta_dia_1) || 0
-      cm.metaOp += Number(g.rq_solicitado) || 0
+      cm.metaOp += Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
       cm.metaDia0 += Number(g.meta_dia_0) || 0
       cm.countGrupos++
     }
@@ -974,7 +974,7 @@ export function buildResumenMensualCapacitacion(
     const rawPer = normalize2026Period(g.periodo || g.codigo || g.grupo_codigo)
     if (!rawPer || !rawPer.startsWith('2026')) continue
     const row = getOrCreatePeriod(rawPer)
-    const rq = Number(g.rq_solicitado) || 0
+    const rq = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
     const cupos = Number(g.cupos || g.meta_apertura) || rq
     row.metaRqOp += rq
     row.metaRqDia1 += (cupos > 0 ? cupos : rq)
@@ -1279,7 +1279,7 @@ export function buildMultiEvolutivoData(
     const wObj = getWeekKey(g.semana_trabajo || g.semana_label || g.semana, g.periodo, g.grupo_codigo || g.codigo)
     if (!wObj) continue
     const row = getOrCreateWeek(wObj)
-    const rq = Number(g.rq_solicitado) || 0
+    const rq = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
     const cupos = Number(g.cupos || g.meta_apertura) || rq
     row.metaRqOp += rq
     row.metaAperturaD1 += (cupos > 0 ? cupos : rq)
@@ -1659,7 +1659,7 @@ export function buildGraficoPersonalizadoData(
       const rawPer = normalize2026Period(g.periodo || g.codigo || g.grupo_codigo)
       if (!rawPer || !rawPer.startsWith('2026')) continue
       const row = getOrCreatePeriod(rawPer)
-      const rq = Number(g.rq_solicitado) || 0
+      const rq = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
       const cupos = Number(g.cupos || g.meta_apertura || g.meta_dia_1) || rq
       const d0 = Number(g.meta_dia_0) || cupos
       row.metaRqOp += rq
@@ -1854,7 +1854,7 @@ export function buildGraficoPersonalizadoData(
       const wObj = getWeekKey(g.semana_trabajo || g.semana_label || g.semana, g.periodo, g.grupo_codigo || g.codigo)
       if (!wObj) continue
       const row = getOrCreateWeek(wObj)
-      const rq = Number(g.rq_solicitado) || 0
+      const rq = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
       const cupos = Number(g.cupos || g.meta_apertura || g.meta_dia_1) || rq
       const d0 = Number(g.meta_dia_0) || cupos
       row.metaRqOp += rq

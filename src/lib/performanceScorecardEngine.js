@@ -417,7 +417,7 @@ export function getRecruiterIndividualDetails(
       
       const metaRqInd = Number(recMeta?.meta_rq_individual) || 0
       const metaDia1Ind = Number(recMeta?.meta_dia_1_individual) || 0
-      const rqGrupal = Number(g.rq_solicitado) || 0
+      const rqGrupal = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
       const metaDia1Grupal = Number(g.meta_dia_1_grupal || g.meta_dia_1) || 0
 
       gruposBreakdown.push({

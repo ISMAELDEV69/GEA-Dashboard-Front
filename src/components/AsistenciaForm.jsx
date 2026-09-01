@@ -518,11 +518,21 @@ export default function AsistenciaForm({
           const filteredNom = dataNom.filter(isRowMatchWeekAndPeriod);
           const hasNominaData = (filteredNom && filteredNom.length > 0) || (filteredQ1 && filteredQ1.length > 0);
 
+          // Extraer mapa de motivos históricos de consolidado_asistencias
+          const historicalMotivosMap = new Map();
+          dataQ2.forEach(row => {
+            if (row.documento && row.motivo_baja && String(row.motivo_baja).trim() !== '' && String(row.motivo_baja).trim() !== 'null') {
+              historicalMotivosMap.set(row.documento, String(row.motivo_baja).trim());
+            }
+          });
+
           // 1. Postulantes de v_nominas_consolidado
           filteredQ1.forEach(row => {
             if (row.documento) {
+              const histMotivo = historicalMotivosMap.get(row.documento);
               docMap.set(row.documento, {
                 ...row,
+                motivo_baja: histMotivo || row.motivo_baja || '',
                 campaign: row.campana,
                 observacion: row.observacion_reclutamiento
               });
@@ -532,8 +542,10 @@ export default function AsistenciaForm({
           // 2. Postulantes directos de tabla nominas (fuente de verdad oficial)
           filteredNom.forEach(row => {
             if (row.documento) {
+              const histMotivo = historicalMotivosMap.get(row.documento);
               docMap.set(row.documento, {
                 ...row,
+                motivo_baja: histMotivo || row.motivo_baja || '',
                 campaign: row.campana,
                 observacion: row.observacion_reclutamiento
               });
@@ -541,18 +553,13 @@ export default function AsistenciaForm({
           });
 
           // 3. Postulantes de consolidado_asistencias (SOLO como fallback para grupos legacy sin nómina digital)
-          // FIX: Ya no se hardcodea dia_0/dia_1 como 'ASISTIO' para todos.
-          // Se infiere a partir del sigla del último registro: 'A' o 'I-OP' = asistió.
-          // Los grupos legacy no tienen distinción día 0 / día 1, así que todos los que
-          // tienen sigla activa se marcan como asistentes (para mantener comportamiento legacy).
           if (!hasNominaData) {
             dataQ2.forEach(row => {
               if (row.documento && !docMap.has(row.documento)) {
                 const siglaLegacy = (row.sigla || '').toString().toUpperCase().trim()
-                // Para legacy, solo incluir a quienes tienen al menos un registro activo (A o I-OP)
-                // y no están dados de baja en el último corte.
                 const eraActivoLegacy = siglaLegacy === 'A' || siglaLegacy === 'I-OP'
                 const eraBajaLegacy = siglaLegacy === 'B'
+                const histMotivo = historicalMotivosMap.get(row.documento);
                 docMap.set(row.documento, {
                   documento: row.documento,
                   nombres: row.nombres || '',
@@ -565,11 +572,12 @@ export default function AsistenciaForm({
                   grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
                   semana_trabajo: targetSemanaNum || null,
                   periodo_reclutado: targetPeriodo || null,
-                  // FIX: ya no se asume 'ASISTIO' para todos. Solo para activos.
                   dia_0: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
                   dia_1: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
                   status_dia_1: row.tipo_reclutado || 'APTO',
                   estado: row.estado || 'ACTIVO',
+                  sigla: row.sigla || '',
+                  motivo_baja: histMotivo || row.motivo_baja || '',
                   formador_documento: row.documento_formador || '',
                   formador_nombre: row.nombre_formador || ''
                 });
@@ -804,12 +812,16 @@ export default function AsistenciaForm({
       const prevList = previousRecordsByDoc.get(p.documento) || []
       const effectiveAttendedDays = prevList.filter(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP').length
 
+      // 1. Motivo histórico previo en asistencias registradas y nómina
+      const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
+      const fallbackNominaMotive = p.motivo_baja && String(p.motivo_baja).trim() !== '' && String(p.motivo_baja).trim() !== 'null' ? String(p.motivo_baja).trim() : ''
+
       // Agregados, Recuperados y Observados tienen un plazo de gracia de hasta 3 días
       const isEligibleBajaD1 = 
         isFirstRecordGroup || 
         (isIngresoEspecial && effectiveAttendedDays <= 3) ||
-        String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
-        String(existing?.motivo_baja || prevList[0]?.motivo_baja || p.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')
+        String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('BAJA DIA 1') ||
+        String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('PERIODO GRACIA')
 
       const docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
       const nombreFormador = formadoresMap.get(docFormador) || activeGrupoObj?.formador_nombre || ''
@@ -819,20 +831,28 @@ export default function AsistenciaForm({
 
       if (existing) {
         inheritedSigla = existing.sigla_asistencia
-        inheritedMotivo = existing.motivo_baja || ''
-      } else {
-        const priorBajaRecord = prevList.find(r => r.sigla_asistencia === 'B' || String(r.sigla || '').toUpperCase() === 'B');
-        if (priorBajaRecord) {
-          inheritedSigla = 'B';
-          inheritedMotivo = priorBajaRecord.motivo_baja || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'BAJA');
-        } else if (prevList && prevList.length > 0) {
-          inheritedSigla = prevList[0].sigla_asistencia
-          inheritedMotivo = prevList[0].motivo_baja || ''
-        } else if (p.estado === 'CESADO' || p.estado === 'BAJA') {
-          inheritedSigla = 'B'
-          inheritedMotivo = isEligibleBajaD1 ? 'BAJA DIA 1' : (p.motivo_baja || '')
-        } else if (isIngresoEspecial && isFirstRecordGroup) {
-          inheritedSigla = 'FI'
+        inheritedMotivo = existing.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || ''
+      } else if (prevList && prevList.length > 0) {
+        // Heredar del registro cronológico más reciente (permite reactivaciones sin trabas)
+        inheritedSigla = prevList[0].sigla_asistencia || 'A'
+        inheritedMotivo = pastMotiveFromRecords || prevList[0].motivo_baja || fallbackNominaMotive || ''
+      } else if (p.estado === 'CESADO' || p.estado === 'BAJA') {
+        inheritedSigla = 'B'
+        inheritedMotivo = pastMotiveFromRecords || fallbackNominaMotive || (isEligibleBajaD1 ? 'BAJA DIA 1' : '')
+      } else if (isIngresoEspecial && isFirstRecordGroup) {
+        inheritedSigla = 'FI'
+      }
+
+      // Si la persona tiene sigla B, garantizar que tenga motivo de baja no vacío para no bloquear la pantalla
+      if (inheritedSigla === 'B' && !inheritedMotivo) {
+        if (pastMotiveFromRecords) {
+          inheritedMotivo = pastMotiveFromRecords
+        } else if (fallbackNominaMotive) {
+          inheritedMotivo = fallbackNominaMotive
+        } else if (isEligibleBajaD1) {
+          inheritedMotivo = 'BAJA DIA 1'
+        } else {
+          inheritedMotivo = 'DESERCIÓN'
         }
       }
       
@@ -844,8 +864,8 @@ export default function AsistenciaForm({
         const localEdit = userEditsRef.current.get(p.documento)
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
-      } else if (sigla === 'B' && !motivo_baja && isEligibleBajaD1) {
-        motivo_baja = 'BAJA DIA 1'
+      } else if (sigla === 'B' && !motivo_baja) {
+        motivo_baja = pastMotiveFromRecords || fallbackNominaMotive || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
       }
 
       const isHistoricalBaja = (existing && existing.sigla_asistencia === 'B') || (!existing && inheritedSigla === 'B')
@@ -920,13 +940,22 @@ export default function AsistenciaForm({
       return alert('Este grupo no tiene un formador asignado o no se ha encontrado en la lista. Por favor, asigne un formador en la vista de Asignación antes de registrar la asistencia.');
     }
     
-    const invalidItems = attendanceList.filter(item => item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion)
+    // Auto-sanitizar bajas históricas para que no bloqueen la marcación del día si venían sin motivo
+    const sanitizedList = attendanceList.map(item => {
+      if (item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion) {
+        const fallback = item.isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN'
+        return { ...item, motivo_baja: fallback }
+      }
+      return item
+    })
+
+    const invalidItems = sanitizedList.filter(item => item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion)
     if (invalidItems.length > 0) {
       const names = invalidItems.map(i => i.nombres).join(', ')
       return alert(`Por favor, seleccione un motivo de baja para los siguientes candidatos:\n\n${names}`)
     }
 
-    const recordsToSave = attendanceList.filter(item => !item.isLateInclusion).map(item => ({
+    const recordsToSave = sanitizedList.filter(item => !item.isLateInclusion).map(item => ({
       documento: item.documento,
       sigla: item.sigla,
       motivo_baja: item.motivo_baja
