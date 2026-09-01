@@ -2643,18 +2643,24 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const formRecord = exactD1Record || latestRecord
     
     const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord)
     
+    // ¿Tiene alguna asistencia activa real ('A', 'I-OP', 'CAPACITACION', 'OJT')?
     const hasAnyActiveAttendance = studentRecords.some(r => {
       const s = String(r.sigla_asistencia || '').toUpperCase().trim()
       return s === 'A' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
     })
 
-    const isFormAsistencia = !isBajaDia1Record && (hasAnyActiveAttendance || formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT')
-    const isRecAsistencia = isAsistioStr(recSigla);
+    // Es baja día 1 pura solo si NO tiene ninguna asistencia activa
+    const isBajaDia1Pure = !hasAnyActiveAttendance && studentRecords.some(r => {
+      const s = String(r.sigla_asistencia || '').toUpperCase().trim()
+      return (s === 'B' && isBajaDia1(r.motivo_baja, r.sigla_asistencia, r)) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1')
+    })
+
+    const isFormAsistencia = hasAnyActiveAttendance || (!isBajaDia1Pure && (formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT'))
+    const isRecAsistencia = isAsistioStr(recSigla)
     
     if (isFormAsistencia !== isRecAsistencia) {
-      const displayFormSigla = isBajaDia1Record ? 'BAJA DÍA 1' : formSigla;
+      const displayFormSigla = isBajaDia1Pure ? 'BAJA DÍA 1' : (isFormAsistencia ? 'ASISTIO' : (formSigla || 'Sin registro'))
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
@@ -4369,14 +4375,20 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         const formRecord = exactD1Record || latestRecord;
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro';
-        const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord);
         
+        // ¿Tiene alguna asistencia activa real ('A', 'I-OP', 'CAPACITACION', 'OJT')?
         const hasAnyActiveAttendance = studentRecords.some(r => {
           const s = String(r.sigla_asistencia || '').toUpperCase().trim();
           return s === 'A' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
         });
 
-        const isFormAsistencia = !isBajaDia1Record && (hasAnyActiveAttendance || formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT');
+        // Es baja día 1 pura solo si NO tiene ninguna asistencia activa
+        const isBajaDia1Pure = !hasAnyActiveAttendance && studentRecords.some(r => {
+          const s = String(r.sigla_asistencia || '').toUpperCase().trim();
+          return (s === 'B' && isBajaDia1(r.motivo_baja, r.sigla_asistencia, r)) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+        });
+
+        const isFormAsistencia = hasAnyActiveAttendance || (!isBajaDia1Pure && (formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT'));
         
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
@@ -4388,7 +4400,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           discrepanciasList.push({
             documento: doc,
             reclutador: isRecAsistencia ? 'ASISTIO' : (recSigla || 'NO ASISTIO'),
-            formador: isFormAsistencia ? 'ASISTIO' : (formSigla || 'Sin registro')
+            formador: isBajaDia1Pure ? 'BAJA DÍA 1' : (isFormAsistencia ? 'ASISTIO' : (formSigla || 'Sin registro'))
           });
         }
       }
