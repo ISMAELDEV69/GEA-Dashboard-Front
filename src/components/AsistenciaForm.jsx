@@ -138,17 +138,10 @@ const AttendanceRow = React.memo(function AttendanceRow({
               disabled={item.isLockedBaja}
               className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
             >
-              {/* 1. Día 1 Oficial: Toda baja es exclusivamente BAJA DIA 1 */}
-              {item.isFirstRecordGroup && (
-                <option value="BAJA DIA 1">BAJA DIA 1</option>
-              )}
+              {/* Opción limpia universal: BAJA DIA 1 */}
+              <option value="BAJA DIA 1">BAJA DIA 1</option>
 
-              {/* 2. Días posteriores: Si es Agregado/Recuperado/Observado en periodo de gracia (≤ 3 días) */}
-              {!item.isFirstRecordGroup && item.isEligibleBajaD1 && (
-                <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 3 Días)</option>
-              )}
-
-              {/* 3. Días posteriores: Catálogo de Formación */}
+              {/* Días posteriores: Catálogo de Formación */}
               {!item.isFirstRecordGroup && (
                 <>
                   {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
@@ -690,7 +683,7 @@ export default function AsistenciaForm({
     // Sort previous records for each doc by date descending
     for (const [doc, arr] of previousRecordsByDoc.entries()) {
       if (arr.length > 1) {
-        arr.sort((a, b) => (b.fecha_asistencia > a.fecha_asistencia ? 1 : -1))
+        arr.sort((a, b) => b.fecha_asistencia.localeCompare(a.fecha_asistencia))
       }
     }
 
@@ -828,6 +821,7 @@ export default function AsistenciaForm({
       const effectiveAttendedDays = prevList.filter(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP').length
 
       // 1. Motivo histórico previo en asistencias registradas y nómina
+      const pastBajaRecord = prevList.find(r => r.sigla_asistencia === 'B')
       const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
       const fallbackNominaMotive = p.motivo_baja && String(p.motivo_baja).trim() !== '' && String(p.motivo_baja).trim() !== 'null' ? String(p.motivo_baja).trim() : ''
 
@@ -844,13 +838,21 @@ export default function AsistenciaForm({
       let inheritedSigla = 'A'
       let inheritedMotivo = ''
 
-      if (existing) {
-        // 1. Registro explícito guardado en la base de datos para ESTE grupo en ESTA fecha específica
+      if (existing && existing.sigla_asistencia === 'B') {
+        // 1. Registro explícito de baja guardado en la base de datos para esta fecha
+        inheritedSigla = 'B'
+        inheritedMotivo = existing.motivo_baja || pastMotiveFromRecords || ''
+      } else if (pastBajaRecord) {
+        // 2. Si en CUALQUIER fecha anterior de este grupo ya fue dado de baja (ej. Día 1 o Día 2):
+        // La persona permanece en estado de BAJA con su motivo registrado en todos los días posteriores
+        inheritedSigla = 'B'
+        inheritedMotivo = pastBajaRecord.motivo_baja || pastMotiveFromRecords || ''
+      } else if (existing) {
+        // 3. Registro explícito guardado (activo/falta) para esta fecha
         inheritedSigla = existing.sigla_asistencia || 'A'
-        inheritedMotivo = (inheritedSigla === 'B') ? (existing.motivo_baja || '') : ''
+        inheritedMotivo = ''
       } else if (prevList && prevList.length > 0) {
-        // 2. En días posteriores (Día 2, Día 3...) dentro de ESTE MISMO GRUPO, SEMANA Y PERIODO:
-        // Heredar el estado del registro inmediatamente anterior (prevList[0])
+        // 4. En días posteriores sin guardar: heredar del día previo más reciente
         const lastPrev = prevList[0]
         if (lastPrev.sigla_asistencia === 'B') {
           inheritedSigla = 'B'
@@ -860,11 +862,11 @@ export default function AsistenciaForm({
           inheritedMotivo = ''
         }
       } else if (isIngresoEspecial && isFirstRecordGroup) {
-        // 3. Ingreso especial en su primer día del grupo
+        // 5. Ingreso especial en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {
-        // 4. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
+        // 6. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
         inheritedSigla = 'A'
         inheritedMotivo = ''
       }
