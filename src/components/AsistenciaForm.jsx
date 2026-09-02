@@ -24,7 +24,7 @@ import {
   Laptop
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, DB_MODE } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, DB_MODE } from '../lib/dataService'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
