@@ -2609,6 +2609,12 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
+    if (!recCandidate) {
+      // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+      // Regla de Negocio Oficial: No cuenta en la entrega de Día 1 de Reclutamiento ni genera descalibración.
+      continue
+    }
+
     const isEspecial = isEspecialExtemporaneo(recCandidate, formRecord ? [formRecord] : [], formRecord)
     if (isEspecial) {
       if (!recCandidate) continue;
@@ -2707,6 +2713,12 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const recCandidate = mapRec.get(doc)
     
     if (isRecuperoCapCandidate(recCandidate)) {
+      continue
+    }
+
+    if (!recCandidate) {
+      // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+      // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera descalibración.
       continue
     }
 
@@ -2817,6 +2829,12 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     
     if (isRecuperoCapCandidate(recCandidate)) {
       continue // RECUPERO CAP no genera discrepancia
+    }
+
+    if (!recCandidate) {
+      // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+      // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera discrepancia.
+      continue
     }
 
     const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
@@ -4644,6 +4662,11 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           continue; // RECUPERO CAP no cuenta en Día 1 ni genera discrepancia
         }
 
+        if (!recCandidate) {
+          // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+          continue;
+        }
+
         const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
         const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
         const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null);
@@ -5258,6 +5281,11 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
 
         if (isRecuperoCapCandidate(recCandidate)) {
           continue; // RECUPERO CAP no se contabiliza en Día 1
+        }
+
+        if (!recCandidate) {
+          // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+          continue;
         }
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
