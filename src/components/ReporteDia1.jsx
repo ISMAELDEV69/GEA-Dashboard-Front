@@ -352,9 +352,17 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     }
 
     setSelectedGroupDetail(row.grupo_codigo)
+    
+    // Si ya tenemos las discrepancias calculadas en memoria para esta fila exacta, usarlas de inmediato
+    if (row.discrepancias && row.discrepancias.length > 0) {
+      setDiscrepancias(row.discrepancias)
+      setLoadingDetails(false)
+      return
+    }
+
     setLoadingDetails(true)
     try {
-      const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana)
+      const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana, row.periodo, row.semana_label)
       setDiscrepancias(detalles || [])
     } catch (err) {
       console.error('Error al cargar detalles de discrepancia:', err)

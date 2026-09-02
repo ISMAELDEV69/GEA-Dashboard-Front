@@ -2721,14 +2721,20 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
   return { rec: countRec, form: countForm }
 }
 
-export async function getDetalleCalibracion(grupo_codigo, campana) {
+export async function getDetalleCalibracion(grupo_codigo, campana, periodo = null, semana_label = null) {
   if (DB_MODE !== 'supabase') return []
 
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
 
-  let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  if (periodo) {
+    recQuery = recQuery.eq('periodo_reclutado', periodo)
+  }
+  let { data: rawRecAsis } = await recQuery
   if (!rawRecAsis || rawRecAsis.length === 0) {
-    const { data: fb } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo)
+    let fbQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo)
+    if (periodo) fbQuery = fbQuery.eq('periodo_reclutado', periodo)
+    const { data: fb } = await fbQuery
     if (fb && fb.length > 0) rawRecAsis = fb
   }
   const recAsis = rawRecAsis || [];
@@ -4664,8 +4670,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
           discrepanciasList.push({
             documento: doc,
-            reclutador: displayRecSigla,
-            formador: displayFormSigla
+            nombre: `${recCandidate?.apellido_paterno || ''} ${recCandidate?.apellido_materno || ''}, ${recCandidate?.nombres || ''}`.trim() || 'Postulante',
+            sigla_reclutador: displayRecSigla,
+            sigla_formador: displayFormSigla
           });
         }
       }
