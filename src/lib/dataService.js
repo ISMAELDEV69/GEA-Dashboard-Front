@@ -2470,7 +2470,11 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
 
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
   
-  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  if (!rawRecAsis || rawRecAsis.length === 0) {
+    const { data: fb } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo)
+    if (fb && fb.length > 0) rawRecAsis = fb
+  }
   const recAsis = rawRecAsis || []
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
@@ -2577,7 +2581,11 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
 
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
-  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  if (!rawRecAsis || rawRecAsis.length === 0) {
+    const { data: fb } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo)
+    if (fb && fb.length > 0) rawRecAsis = fb
+  }
   const recAsis = rawRecAsis || [];
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
@@ -2644,7 +2652,11 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
 
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
 
-  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  if (!rawRecAsis || rawRecAsis.length === 0) {
+    const { data: fb } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo)
+    if (fb && fb.length > 0) rawRecAsis = fb
+  }
   const recAsis = rawRecAsis || [];
   
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
