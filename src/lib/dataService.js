@@ -2735,15 +2735,16 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     })
 
     const isFormAsistencia = hasAnyActiveAttendance || (!isBajaDia1Pure && (formSigla === 'A' || formSigla === 'I-OP' || formSigla === 'CAPACITACION' || formSigla === 'OJT'))
-    const isRecAsistencia = isAsistioStr(recSigla)
+    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
     
     if (isFormAsistencia !== isRecAsistencia) {
       const displayFormSigla = isBajaDia1Pure ? 'BAJA DÍA 1' : (isFormAsistencia ? 'ASISTIO' : (formSigla || 'Sin registro'))
+      const displayRecSigla = isRecAsistencia ? 'ASISTIO' : (recCandidate ? (recCandidate.estado || 'BAJA / FALTA') : 'SIN REGISTRO')
       discrepancias.push({
         documento: doc,
         nombre: mapNombres.get(doc) || 'Desconocido',
         sigla_formador: displayFormSigla,
-        sigla_reclutador: recSigla ? String(recSigla).toUpperCase().trim() : 'SIN REGISTRO'
+        sigla_reclutador: displayRecSigla
       })
     }
   }
@@ -5463,5 +5464,11 @@ export function parseFechaAsistencia(raw) {
     return raw.substring(0, 10);
   }
   return raw;
+}
+
+export function isAsistioStr(val) {
+  if (!val) return false;
+  const s = String(val).trim().toUpperCase();
+  return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
 }
 
