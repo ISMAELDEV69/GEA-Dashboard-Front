@@ -2443,22 +2443,34 @@ export function isRecuperoCapCandidate(n) {
 export function isCandidateActiveRec(n) {
   if (!n) return false;
   if (isRecuperoCapCandidate(n)) return false; // RECUPERO CAP no se contabiliza para la cuota de Día 1
-  
-  const asistioD0 = isAsistioStr(n.dia_0);
-  const asistioD1 = isAsistioStr(n.dia_1);
+  if (n.activo === false) return false;
+
+  const d1Raw = String(n.dia_1 || '').toUpperCase().trim();
+  const d0Raw = String(n.dia_0 || '').toUpperCase().trim();
   const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
   const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
   const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO') || tipo.includes('AGREGADO') || tipo.includes('RECUPERADO');
 
-  // 1. Regular: Asistió a Día 0 (Inducción)
+  const asistioD1 = isAsistioStr(d1Raw);
+  const faltaD1 = d1Raw === 'FALTA' || d1Raw === 'F' || d1Raw === 'NO';
+  const asistioD0 = isAsistioStr(d0Raw);
+  const faltaD0 = d0Raw === 'FALTA' || d0Raw === 'F' || d0Raw === 'NO';
+
+  // 1. Si Reclutamiento marcó explícitamente ASISTIO en Día 1 -> Cuenta como activo entregado
+  if (asistioD1) return true;
+
+  // 2. Si Reclutamiento marcó explícitamente FALTA en Día 1 -> NO cuenta (aunque haya ido a Día 0)
+  if (faltaD1) return false;
+
+  // 3. Si Reclutamiento no ha marcado Día 1 aún (vacío / pendiente / apto), pero asistió a Día 0 -> Cuenta
   if (asistioD0) return true;
 
-  // 2. Agregado / Recuperado: Asistencia en Día 1
-  if (isAgregadoORecuperado && asistioD1) return true;
+  // 4. Si faltó a Día 0 y no tiene asistencia en Día 1 -> NO cuenta
+  if (faltaD0) return false;
 
-  // 3. Fallback inicial si no tiene Día 0 / Día 1 especificado pero está reclutado
+  // 5. Fallback si no tiene marcación pero está activo/reclutado
   const est = String(n.estado || '').toUpperCase().trim();
-  if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO') && n.activo !== false) {
+  if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) {
     return true;
   }
 
