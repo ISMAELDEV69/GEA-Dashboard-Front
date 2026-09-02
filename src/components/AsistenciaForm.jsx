@@ -729,52 +729,8 @@ export default function AsistenciaForm({
         }
       }
       
-      // Validar regla de asistencia de Reclutamiento para pasar al Formador:
-      // Para grupos con nómina, solo deben llegar los que Reclutamiento marcó como ASISTIO en Día 1
-      // o con status_dia_1 AGREGADO / RECUPERADO
-      if (hasGroupNomina) {
-        const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
-        const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
-        
-        const asistioD0 = dia0Val === 'ASISTIO'
-        const asistioD1 = dia1Val === 'ASISTIO'
-        const faltoD1 = dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO' || dia1Val === 'BAJA'
-        
-        // 1. Si en Día 1 se registró falta/deserción, NO ingresa a formación con el Formador
-        if (faltoD1) {
-          return false
-        }
-        
-        // 2. Si asistió a Día 1 (sea regular que vino de inducción D0 o agregado directo): PASA AL AULA
-        if (asistioD1) {
-          return true
-        }
-        
-        // 3. Si Día 1 aún no se ha marcado (está vacío/pendiente), pasan los que asistieron a Día 0 (inducción)
-        if (!dia1Val && asistioD0) {
-          return true
-        }
-        
-        // Cualquier otro caso (faltó a D0 y no asistió a D1, o sin registro): NO PASA
-        return false
-      } else {
-        // Para grupos legacy sin nómina digital
-        const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
-        const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
-        
-        const asistioD1 = dia1Val === 'ASISTIO'
-        const asistioD0 = dia0Val === 'ASISTIO'
-        const faltoD1 = dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO' || dia1Val === 'DESERTO' || dia1Val === 'NO' || dia1Val === 'BAJA'
-        
-        if (faltoD1) {
-          return false
-        }
-        if (asistioD1 || (!dia1Val && asistioD0)) {
-          return true
-        }
-        return false
-      }
-
+      // Los postulantes registrados por Reclutamiento en este grupo aparecen para que el Formador pueda registrar su asistencia
+      if (p.activo === false) return false
       return true
     })
     
