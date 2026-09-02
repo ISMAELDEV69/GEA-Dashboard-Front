@@ -2727,6 +2727,9 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
   for (const doc of allDocs) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
+    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
+    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
+    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
     if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue
@@ -2737,10 +2740,6 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera descalibración.
       continue
     }
-
-    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
-    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
-    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
     const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
     if (isEspecial) {
@@ -2842,6 +2841,9 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
   for (const doc of allDocs) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
+    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
+    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
+    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
     if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue // RECUPERO / AGREGADO CAP no genera discrepancia
@@ -2852,10 +2854,6 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera discrepancia.
       continue
     }
-
-    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
-    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
-    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
     const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
     if (isEspecial) {
@@ -4674,6 +4672,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
                             recAsisMap.get(`${normCamp}|${baseCode}|${doc}`) || 
                             recAsisMap.get(`${cleanCode}|${doc}`);
         
+        const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
+        const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
+        const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null);
+
         if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
           continue; // RECUPERO / AGREGADO CAP no cuenta en Día 1 ni genera discrepancia
         }
@@ -4682,10 +4684,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
           continue;
         }
-
-        const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
-        const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
-        const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null);
         
         const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord);
         if (isEspecial) {
