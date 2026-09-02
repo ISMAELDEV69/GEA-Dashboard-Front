@@ -667,6 +667,10 @@ export default function AsistenciaForm({
         const aSem = parseInt(String(a.archivo_origen).replace(/\D/g, ''), 10)
         if (!isNaN(aSem) && aSem !== targetSemanaNum) continue
       }
+      if (targetPeriodo && (a.periodo || a.periodo_reclutado)) {
+        const aPer = String(a.periodo || a.periodo_reclutado || '').replace(/\D/g, '').trim()
+        if (aPer && aPer !== targetPeriodo && !aPer.includes(targetPeriodo) && !targetPeriodo.includes(aPer)) continue
+      }
 
       groupRecordsAll.push(a)
       mappedDocs.add(a.postulante_documento)
@@ -844,12 +848,23 @@ export default function AsistenciaForm({
         // 1. Registro explícito guardado en la base de datos para ESTE grupo en ESTA fecha específica
         inheritedSigla = existing.sigla_asistencia || 'A'
         inheritedMotivo = (inheritedSigla === 'B') ? (existing.motivo_baja || '') : ''
+      } else if (prevList && prevList.length > 0) {
+        // 2. En días posteriores (Día 2, Día 3...) dentro de ESTE MISMO GRUPO, SEMANA Y PERIODO:
+        // Heredar el estado del registro inmediatamente anterior (prevList[0])
+        const lastPrev = prevList[0]
+        if (lastPrev.sigla_asistencia === 'B') {
+          inheritedSigla = 'B'
+          inheritedMotivo = lastPrev.motivo_baja || pastMotiveFromRecords || ''
+        } else {
+          inheritedSigla = 'A'
+          inheritedMotivo = ''
+        }
       } else if (isIngresoEspecial && isFirstRecordGroup) {
-        // 2. Ingreso especial en su primer día del grupo
+        // 3. Ingreso especial en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {
-        // 3. Pizarra limpia: Todo postulante de Nómina activa inicia como ACTIVO / A
+        // 4. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
         inheritedSigla = 'A'
         inheritedMotivo = ''
       }
