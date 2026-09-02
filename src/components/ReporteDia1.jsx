@@ -52,25 +52,35 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
 
   const reqIdRef = useRef(0)
 
-  // Auto-selección inicial al montar con el periodo y semana más reciente
+  // Auto-selección inicial inteligente: prioriza el periodo y semana activa con datos reales
   useEffect(() => {
     if (grupos.length > 0 && !isInitialized) {
+      const periodosWithData = [...new Set(postulantes.map(p => p.periodo_reclutado ? String(p.periodo_reclutado).trim() : null).filter(Boolean))].sort().reverse()
       const uniquePeriodos = [...new Set(grupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort().reverse()
-      if (uniquePeriodos.length > 0) {
-        const latestPeriodo = uniquePeriodos[0]
-        const filteredByPeriodo = grupos.filter(g => String(g.periodo).trim() === latestPeriodo)
+      
+      const activePeriodo = periodosWithData.length > 0 ? periodosWithData[0] : (uniquePeriodos.length > 0 ? uniquePeriodos[0] : '')
+      
+      if (activePeriodo) {
+        const filteredPostulantes = postulantes.filter(p => String(p.periodo_reclutado || '').trim() === activePeriodo)
+        const semanasWithData = [...new Set(filteredPostulantes.map(p => {
+          const s = p.semana_trabajo || p.semana
+          return s ? `SEM ${String(s).replace(/\D/g, '')}` : null
+        }).filter(Boolean))].sort().reverse()
+
+        const filteredByPeriodo = grupos.filter(g => String(g.periodo).trim() === activePeriodo)
         const uniqueSemanas = [...new Set(filteredByPeriodo.map(g => g.semana_label ? String(g.semana_label).trim() : null).filter(Boolean))].sort().reverse()
-        const latestSemana = uniqueSemanas.length > 0 ? uniqueSemanas[0] : ''
+        
+        const activeSemana = semanasWithData.length > 0 ? semanasWithData[0] : (uniqueSemanas.length > 0 ? uniqueSemanas[0] : '')
 
         setFilters(prev => ({
           ...prev,
-          periodo: latestPeriodo,
-          semana: latestSemana
+          periodo: activePeriodo,
+          semana: activeSemana
         }))
       }
       setIsInitialized(true)
     }
-  }, [grupos, isInitialized])
+  }, [grupos, postulantes, isInitialized])
 
   // Carga inicial y sincronización ultrarrápida en memoria
   const loadReport = async (forceInitial = false) => {
@@ -962,22 +972,43 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
-                      {discrepancias.map(d => (
-                        <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
-                          <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
-                          <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
-                          <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
-                            <span className="px-2.5 py-1 rounded-md font-mono font-bold text-xs bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-normal)]">
-                              {d.sigla_reclutador || '—'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
-                            <span className="px-2.5 py-1 rounded-md font-mono font-bold text-xs bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                              {d.sigla_formador || '—'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {discrepancias.map(d => {
+                        const recStr = String(d.sigla_reclutador || '').toUpperCase()
+                        const formStr = String(d.sigla_formador || '').toUpperCase()
+
+                        const recBadgeColor = recStr.includes('ACTIVO') || recStr.includes('ASISTIO')
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : (recStr.includes('BAJA') || recStr.includes('FALTA') || recStr.includes('CESADO')
+                            ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                            : (recStr.includes('SIN REGISTRO')
+                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                              : 'bg-[var(--bg-base)] text-[var(--text-muted)] border-[var(--border-normal)]'))
+
+                        const formBadgeColor = formStr.includes('ACTIVO') || formStr.includes('ASISTIO')
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : (formStr.includes('BAJA') || formStr.includes('CESADO') || formStr.includes('FALTA')
+                            ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                            : (formStr.includes('SIN REGISTRO')
+                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                              : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'))
+
+                        return (
+                          <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
+                            <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
+                            <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
+                            <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                              <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${recBadgeColor}`}>
+                                {d.sigla_reclutador || '—'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                              <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${formBadgeColor}`}>
+                                {d.sigla_formador || '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

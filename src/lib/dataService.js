@@ -422,24 +422,54 @@ async function fetchAllConsolidado() {
 }
 export async function getFirstDateFormador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return null;
-  const { data } = await supabase
-    .from('consolidado_asistencias')
+
+  // 1. Prioridad: Fecha oficial de inicio según capacidad_rys
+  let fechaInicioRef = null;
+  try {
+    let qCap = supabase.from('capacidad_rys').select('fecha_registro, fecha_dia_1').eq('codigo', grupo_codigo);
+    if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
+      qCap = qCap.ilike('campana', `%${campana}%`);
+    }
+    const { data: capData } = await qCap.limit(1).maybeSingle();
+    if (capData) {
+      if (capData.fecha_dia_1) {
+        return capData.fecha_dia_1;
+      }
+      if (capData.fecha_registro) {
+        const start = new Date(capData.fecha_registro + 'T12:00:00Z');
+        if (String(grupo_codigo).startsWith('GPE')) {
+          start.setUTCDate(start.getUTCDate() + 1);
+          if (start.getUTCDay() === 0) start.setUTCDate(start.getUTCDate() + 1);
+        }
+        fechaInicioRef = start.toISOString().split('T')[0];
+      }
+    }
+  } catch (err) {
+    console.error('Error obteniendo fecha de capacidad_rys:', err);
+  }
+
+  // 2. Buscar asistencias del formador en consolidado_asistencias
+  let qAsis = supabase.from('consolidado_asistencias')
     .select('fecha_registro_asistencia')
-    .eq('codigo_grupo', grupo_codigo)
-    .eq('campana', campana);
+    .eq('codigo_grupo', grupo_codigo);
+  if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
+    qAsis = qAsis.eq('campana', campana);
+  }
+  const { data } = await qAsis;
     
-  if (!data || data.length === 0) return null;
+  if (!data || data.length === 0) return fechaInicioRef;
   
   let earliestIso = null;
   for (const row of data) {
     if (row.fecha_registro_asistencia) {
       const iso = parseFechaAsistencia(row.fecha_registro_asistencia);
-      if (iso && (!earliestIso || iso < earliestIso)) {
+      // Si tenemos fechaInicioRef, solo considerar fechas a partir de la fecha de inicio del grupo
+      if (iso && (!fechaInicioRef || iso >= fechaInicioRef) && (!earliestIso || iso < earliestIso)) {
         earliestIso = iso;
       }
     }
   }
-  return earliestIso;
+  return earliestIso || fechaInicioRef;
 }
 
 export async function getMetricasReporteCalibracion(grupo_codigo, campana) {
@@ -1627,6 +1657,7 @@ export async function fetchAsistencias() {
           sigla_asistencia: row.sigla,
           motivo_baja: row.motivo_baja,
           estado: row.estado || 'ACTIVO',
+          tipo_reclutado: row.tipo_reclutado || '',
           formador: row.nombre_formador,
           archivo_origen: row.archivo_origen || '',
         });
@@ -2433,6 +2464,12 @@ export async function saveAsistenciasReclutador(grupo_codigo, campana, registros
   }
 }
 
+export function isAsistioStr(val) {
+  if (!val) return false;
+  const s = String(val).toUpperCase().trim();
+  return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
+}
+
 export function isRecuperoCapCandidate(n) {
   if (!n) return false;
   const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
@@ -2440,16 +2477,39 @@ export function isRecuperoCapCandidate(n) {
   return tipo.includes('RECUPERO') || stD1.includes('RECUPERO CAP') || stD1.includes('RECUPERO_CAP');
 }
 
+export function isEspecialExtemporaneo(recCandidate, formRecords = [], formRecord = null) {
+  const checkStr = (val) => {
+    const s = String(val || '').toUpperCase().trim();
+    return s.includes('AGREGAD') || 
+           s.includes('REINCORPORA') || 
+           s.includes('OBSERVA') || 
+           s.includes('RECUPER');
+  };
+
+  const isRecSpecial = recCandidate && (
+    checkStr(recCandidate.status_dia_1) || 
+    checkStr(recCandidate.estado) || 
+    checkStr(recCandidate.tipo_reclutado)
+  );
+
+  const isFormSpecial = (formRecord && (checkStr(formRecord.tipo_reclutado) || checkStr(formRecord.estado) || checkStr(formRecord.condicion))) ||
+    formRecords.some(f => checkStr(f.tipo_reclutado) || checkStr(f.estado) || checkStr(f.condicion));
+
+  return Boolean(isRecSpecial || isFormSpecial);
+}
+
 export function isCandidateActiveRec(n) {
   if (!n) return false;
   if (isRecuperoCapCandidate(n)) return false; // RECUPERO CAP no se contabiliza para la cuota de Día 1
-  if (n.activo === false) return false;
 
   const d1Raw = String(n.dia_1 || '').toUpperCase().trim();
   const d0Raw = String(n.dia_0 || '').toUpperCase().trim();
   const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-  const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
-  const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO') || tipo.includes('AGREGADO') || tipo.includes('RECUPERADO');
+
+  // Si está explícitamente marcado como NO PROCEDE o DESERTOR en Reclutamiento
+  if (stD1.includes('NO PROCEDE') || stD1.includes('NO_PROCEDE') || stD1.includes('DESERTO') || stD1.includes('DESERTOR')) {
+    return false;
+  }
 
   const asistioD1 = isAsistioStr(d1Raw);
   const faltaD1 = d1Raw === 'FALTA' || d1Raw === 'F' || d1Raw === 'NO';
@@ -2468,13 +2528,12 @@ export function isCandidateActiveRec(n) {
   // 4. Si faltó a Día 0 y no tiene asistencia en Día 1 -> NO cuenta
   if (faltaD0) return false;
 
-  // 5. Fallback si no tiene marcación pero está activo/reclutado
-  const est = String(n.estado || '').toUpperCase().trim();
-  if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) {
-    return true;
-  }
-
   return false;
+}
+
+export function isFormadorAsistio(sigla) {
+  const s = String(sigla || '').toUpperCase().trim();
+  return s === 'A' || s === 'I-OP' || s === 'ASISTIO' || s === 'PRESENTE';
 }
 
 export async function checkCalibracionDia1(grupo_codigo, campana) {
@@ -2489,16 +2548,20 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   }
   const recAsis = rawRecAsis || []
 
-  const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
+  let formQuery = supabase.from('consolidado_asistencias')
     .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
-    .eq('campana', campana)
     .order('created_at', { ascending: true })
+
+  if (campana) {
+    formQuery = formQuery.eq('campana', campana)
+  }
+  let { data: rawFormAsis } = await formQuery
 
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
   const formAsis = (rawFormAsis || []).map(row => {
-    let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia)
+    let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
     return {
       postulante_documento: normDoc(row.documento),
       sigla_asistencia: row.sigla,
@@ -2508,24 +2571,17 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     }
   }).filter(f => f.fecha_asistencia)
 
-  const bajasDia1Set = new Set()
-  for (const r of (rawFormAsis || [])) {
-    const doc = normDoc(r.documento)
-    const m = String(r.motivo_baja || '').toUpperCase()
-    const e = String(r.estado || '').toUpperCase()
-    const s = String(r.sigla || '').toUpperCase()
-    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
-      if (doc) bajasDia1Set.add(doc)
-    }
-  }
-
   const mapFormFull = new Map()
   for (const f of formAsis) {
     const doc = f.postulante_documento
-    if (!mapFormFull.has(doc)) {
-      mapFormFull.set(doc, f)
-    } else if (f.fecha_asistencia === fecha_dia1_ref) {
-      mapFormFull.set(doc, f)
+    if (fecha_dia1_ref) {
+      if (f.fecha_asistencia === fecha_dia1_ref) {
+        mapFormFull.set(doc, f)
+      }
+    } else {
+      if (!mapFormFull.has(doc)) {
+        mapFormFull.set(doc, f)
+      }
     }
   }
 
@@ -2541,18 +2597,18 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     const recCandidate = mapRec.get(doc)
 
     if (isRecuperoCapCandidate(recCandidate)) {
-      continue // RECUPERO CAP no genera discrepancia ni cuenta en Día 1
+      continue
     }
 
-    const isBajaDia1 = bajasDia1Set.has(doc)
+    const isEspecial = isEspecialExtemporaneo(recCandidate, formRecord ? [formRecord] : [], formRecord)
+    if (isEspecial) {
+      if (!recCandidate) continue;
+      const isPresentD1Form = formRecord && (formRecord.sigla_asistencia === 'A' || formRecord.sigla_asistencia === 'I-OP' || formRecord.sigla_asistencia === 'PRESENTE');
+      if (!isPresentD1Form) continue;
+    }
     
-    // Formador: Cuenta por ESTADO ACTIVO (no cesado ni baja)
-    const isFormAsistencia = formRecord ? (
-      !isBajaDia1 &&
-      String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
-      !String(formRecord.estado || '').toUpperCase().includes('BAJA') &&
-      formRecord.sigla_asistencia !== 'B'
-    ) : false
+    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
+    const isFormAsistencia = formRecord ? !isBajaForm : false
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
     
@@ -2569,7 +2625,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     newState = 'PENDIENTE'
   } else if (countRec !== countForm || !isCalibrated) {
     newState = 'DESCALIBRADO'
-  } else if (isCalibrated && countRec === countForm && countRec > 0) {
+  } else if (countRec > 0 && countForm > 0 && isCalibrated && countRec === countForm) {
     newState = 'CALIBRADO'
   } else {
     newState = 'PENDIENTE'
@@ -2600,11 +2656,15 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
   }
   const recAsis = rawRecAsis || [];
 
-  const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
+  let formQuery = supabase.from('consolidado_asistencias')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado')
     .eq('codigo_grupo', grupo_codigo)
-    .eq('campana', campana)
     .order('created_at', { ascending: true })
+
+  if (campana) {
+    formQuery = formQuery.eq('campana', campana)
+  }
+  const { data: rawFormAsis } = await formQuery
 
   const formAsis = (rawFormAsis || []).map(row => {
     let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
@@ -2613,6 +2673,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
+      tipo_reclutado: row.tipo_reclutado,
       fecha_asistencia: isoDate
     }
   }).filter(f => f.fecha_asistencia)
@@ -2638,18 +2699,19 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       continue
     }
 
-    const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
-    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
-    const formRecord = exactD1Record || latestRecord
+    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
+    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
+    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
-    const isBajaDia1Record = formRecord && formRecord.sigla_asistencia === 'B' && isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord)
-    
-    const isFormAsistencia = formRecord ? (
-      !isBajaDia1Record &&
-      String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
-      !String(formRecord.estado || '').toUpperCase().includes('BAJA') &&
-      formRecord.sigla_asistencia !== 'B'
-    ) : false
+    const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
+    if (isEspecial) {
+      if (!recCandidate) continue;
+      const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
+      if (!isPresentD1Form) continue;
+    }
+
+    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
+    const isFormAsistencia = formRecord ? !isBajaForm : false
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
     
@@ -2671,11 +2733,15 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
   }
   const recAsis = rawRecAsis || [];
   
-  const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, nombres, apellido_paterno, apellido_materno')
+  let formQuery = supabase.from('consolidado_asistencias')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado, nombres, apellido_paterno, apellido_materno')
     .eq('codigo_grupo', grupo_codigo)
-    .eq('campana', campana)
     .order('created_at', { ascending: true })
+
+  if (campana) {
+    formQuery = formQuery.eq('campana', campana)
+  }
+  const { data: rawFormAsis } = await formQuery
     
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
@@ -2688,6 +2754,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
       nombres: row.nombres,
       apellido_paterno: row.apellido_paterno,
       apellido_materno: row.apellido_materno,
+      tipo_reclutado: row.tipo_reclutado,
       fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia)
     }
   })
@@ -2733,30 +2800,50 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
       continue // RECUPERO CAP no genera discrepancia
     }
 
-    const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
-    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
-    const formRecord = exactD1Record || latestRecord
+    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
+    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
+    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
     
-    const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    
-    const isBajaDia1Pure = formRecord && formRecord.sigla_asistencia === 'B' && (isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord) || String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))
+    const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
+    if (isEspecial) {
+      if (!recCandidate) continue;
+      const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
+      if (!isPresentD1Form) continue;
+    }
 
-    // Formación: Cuenta por ESTADO ACTIVO (no cesado ni baja)
-    const isFormAsistencia = formRecord ? (
-      !isBajaDia1Pure &&
-      String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
-      !String(formRecord.estado || '').toUpperCase().includes('BAJA') &&
-      formRecord.sigla_asistencia !== 'B'
-    ) : false
+    const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
+    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
+    const isFormAsistencia = formRecord ? !isBajaForm : false
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
     
     if (isFormAsistencia !== isRecAsistencia) {
-      const displayFormSigla = isBajaDia1Pure ? 'BAJA DÍA 1' : (isFormAsistencia ? (formSigla === 'A' ? 'ASISTIO' : (formSigla || 'ACTIVO')) : (formSigla || 'Sin registro'))
-      const displayRecSigla = isRecAsistencia ? 'ASISTIO' : (recCandidate ? (recCandidate.estado || 'BAJA / FALTA') : 'SIN REGISTRO')
+      let displayFormSigla = 'SIN REGISTRO'
+      if (isBajaForm) {
+        displayFormSigla = 'CESADO (BAJA DÍA 1)'
+      } else if (isFormAsistencia) {
+        displayFormSigla = 'ACTIVO'
+      }
+
+      let displayRecSigla = 'SIN REGISTRO'
+      if (isRecAsistencia) {
+        displayRecSigla = 'ASISTIÓ'
+      } else if (recCandidate) {
+        const d1 = String(recCandidate.dia_1 || '').toUpperCase().trim()
+        const d0 = String(recCandidate.dia_0 || '').toUpperCase().trim()
+        const stD1 = String(recCandidate.status_dia_1 || '').toUpperCase().trim()
+        if (stD1.includes('NO PROCEDE') || stD1.includes('DESERTOR')) {
+          displayRecSigla = 'NO PROCEDE'
+        } else if (d1 === 'FALTA' || d0 === 'FALTA' || d1 === 'F' || d0 === 'F') {
+          displayRecSigla = 'FALTA'
+        } else {
+          displayRecSigla = recCandidate.estado === 'BAJA' ? 'CESADO' : (recCandidate.dia_1 || recCandidate.estado || 'FALTA')
+        }
+      }
+
       discrepancias.push({
         documento: doc,
-        nombre: mapNombres.get(doc) || 'Desconocido',
+        nombre: mapNombres.get(doc) || 'Postulante',
         sigla_formador: displayFormSigla,
         sigla_reclutador: displayRecSigla
       })
@@ -4255,10 +4342,20 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
   const cleanCodeStr = (val) => {
     if (!val) return '';
-    return String(val).trim().toUpperCase().split(' - ')[0].trim();
+    const base = String(val).trim().toUpperCase().split(' - ')[0].trim();
+    return base.replace(/-[0-9]+$/, '').trim();
   };
 
-  const codigos = [...new Set(gruposInfo.map(g => g.codigo).filter(Boolean))];
+  const allCodes = [];
+  gruposInfo.forEach(g => {
+    const c = g.codigo || g.grupo_codigo;
+    if (c) {
+      allCodes.push(c);
+      const base = cleanCodeStr(c);
+      if (base) allCodes.push(base);
+    }
+  });
+  const codigos = [...new Set(allCodes.filter(Boolean))];
   const campanas = [...new Set(gruposInfo.map(g => g.campana).filter(Boolean))];
 
   // 1. Consultas de configuración y asistencias_dia1_reclutador
@@ -4274,37 +4371,29 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .in('grupo_codigo', codigos),
       supabase.from('asistencias_dia1_reclutador')
         .select('postulante_documento, grupo_codigo, campana, sigla_inicial, sigla_final, motivo_baja')
+        .in('grupo_codigo', codigos),
+      supabase.from('nominas')
+        .select('documento, grupo_codigo, campana, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo')
         .in('grupo_codigo', codigos)
     ];
-
-    // Fallback directo si no hay postulantes cargados en memoria
-    if (activePostulantes.length === 0) {
-      promises.push(
-        supabase.from('nominas')
-          .select('documento, grupo_codigo, campana, dia_0, dia_1, activo')
-          .in('grupo_codigo', codigos)
-      );
-    } else {
-      promises.push(Promise.resolve({ data: null }));
-    }
 
     // Fallback directo si no hay asistencias cargadas en memoria
     if (activeAsistencias.length === 0) {
       promises.push(
         supabase.from('consolidado_asistencias')
-          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, fecha_registro_asistencia')
+          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia')
           .in('codigo_grupo', codigos)
       );
     } else {
       promises.push(Promise.resolve({ data: null }));
     }
 
-    const [cfgRes, recAsisRes, nomFallbackRes, asisFallbackRes] = await Promise.all(promises);
+    const [cfgRes, recAsisRes, nomRes, asisFallbackRes] = await Promise.all(promises);
     
     configAll = cfgRes.data || [];
     recAsisDia1All = recAsisRes.data || [];
-    if (nomFallbackRes?.data && activePostulantes.length === 0) {
-      activePostulantes = nomFallbackRes.data;
+    if (nomRes?.data && nomRes.data.length > 0) {
+      activePostulantes = nomRes.data;
     }
     if (asisFallbackRes?.data && activeAsistencias.length === 0) {
       activeAsistencias = asisFallbackRes.data;
@@ -4380,11 +4469,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     }
   });
 
-  const isAsistioStr = (val) => {
-    if (!val) return false;
-    const s = norm(val);
-    return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
-  };
 
   const results = [];
   for (const grupoInfo of gruposInfo) {
@@ -4397,18 +4481,50 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     
     let totalNomina = 0;
     let totalDia0 = 0;
-    let countRec = 0;
     
     // Obtener nóminas aislando estrictamente por campaña
     const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(baseGroupKey)) : null) || 
                        nominasGrouped.get(groupKey) || [];
-    const validNominas = rawNominas;
-      
-    // Obtener asistencias aislando estrictamente por campaña
-    const groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(baseGroupKey)) : null) || 
-                             formAsisGrouped.get(groupKey) || [];
+    
+    // Aislamiento estricto por Periodo y Semana para grupos proyectados y recurrentes
+    const targetPeriodo = grupoInfo.periodo ? String(grupoInfo.periodo).trim() : null;
+    const targetSemanaNum = String(grupoInfo.semana_label || grupoInfo.semana_trabajo || '').replace(/\D/g, '');
 
-    // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico de ESA campaña
+    let validNominas = rawNominas;
+    if (targetPeriodo) {
+      validNominas = validNominas.filter(n => {
+        const p = String(n.periodo_reclutado || n.periodo || '').trim();
+        if (p) return p === targetPeriodo;
+        const f = parseFechaAsistencia(n.fecha_registro || n.fecha_ingreso || n.created_at);
+        if (f) return f.replace(/-/g, '').substring(0, 6) === targetPeriodo;
+        return false;
+      });
+    }
+    if (targetSemanaNum && validNominas.length > 0) {
+      const bySemana = validNominas.filter(n => String(n.semana_trabajo || n.semana || '').replace(/\D/g, '') === targetSemanaNum);
+      if (bySemana.length > 0) {
+        validNominas = bySemana;
+      }
+    }
+      
+    // Obtener asistencias aislando estrictamente por campaña y periodo
+    let groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(baseGroupKey)) : null) || 
+                           formAsisGrouped.get(groupKey) || [];
+
+    if (targetPeriodo && groupFormAsisRaw.length > 0) {
+      groupFormAsisRaw = groupFormAsisRaw.filter(f => {
+        const p = String(f.periodo || f.periodo_asistencia || '').trim();
+        if (p) return p === targetPeriodo;
+        const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia || f.created_at);
+        if (d) return d.replace(/-/g, '').substring(0, 6) === targetPeriodo;
+        return false;
+      });
+    }
+
+    const rawFechaInicio = grupoInfo.fecha_inicio_capacitacion || grupoInfo.fecha_capacitacion || grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha;
+    const fechaInicioIso = parseFechaAsistencia(rawFechaInicio);
+
+    // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico de ESA campaña y periodo
     let effectiveCandidates = validNominas;
     if (effectiveCandidates.length === 0 && groupFormAsisRaw.length > 0) {
       const seenDocs = new Map();
@@ -4428,43 +4544,35 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     totalNomina = effectiveCandidates.length;
     totalDia0 = effectiveCandidates.filter(n => isAsistioStr(n.dia_0)).length;
 
-    for (const n of effectiveCandidates) {
-      const doc = normDoc(n.documento);
-      const recAsisItem = recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
-                          recAsisMap.get(`${normCamp}|${baseCode}|${doc}`) ||
-                          recAsisMap.get(`${cleanCode}|${doc}`);
-      
-      const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
-      const hasRecAsisDia1 = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
-      const isRecActive = isCandidateActiveRec(n);
-
-      if (isRecActive || hasRecAsisDia1) {
-        countRec++;
-      }
-    }
-
     const config = configMap.get(groupKey) || configMap.get(baseGroupKey) || (normCamp ? null : configMap.get(cleanCode));
     let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
-    let fecha_dia1_ref = config?.fecha_dia1 || null;
 
-    const fechaInicioIso = parseFechaAsistencia(grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha);
-
-    if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
-       let earliestIso = null;
-       
-       for (const row of groupFormAsisRaw) {
-         const dateVal = row.fecha_registro_asistencia || row.fecha_asistencia;
-         if (dateVal) {
-            const iso = parseFechaAsistencia(dateVal);
-            // Solo considerar fechas válidas dentro del rango cronológico del grupo
-            if (iso && (!fechaInicioIso || iso >= fechaInicioIso) && (!earliestIso || iso < earliestIso)) {
-              earliestIso = iso;
-            }
-         }
-       }
-       fecha_dia1_ref = earliestIso;
+    // 1. Prioridad: Fecha REAL de la primera asistencia registrada en sala (dato de verdad)
+    let fecha_dia1_ref = null;
+    if (groupFormAsisRaw.length > 0) {
+      let earliestIso = null;
+      for (const row of groupFormAsisRaw) {
+        const dateVal = row.fecha_registro_asistencia || row.fecha_asistencia;
+        if (dateVal) {
+          const iso = parseFechaAsistencia(dateVal);
+          // Si el grupo tuvo Día 0 en sábado (fechaInicioIso sábado), el Día 1 de formación es la fecha hábil siguiente (lunes)
+          const isSabadoInduccion = fechaInicioIso && new Date(fechaInicioIso + 'T12:00:00Z').getUTCDay() === 6 && totalDia0 > 0;
+          const minAllowedIso = isSabadoInduccion ? new Date(new Date(fechaInicioIso + 'T12:00:00Z').getTime() + 2 * 86400000).toISOString().substring(0, 10) : fechaInicioIso;
+          
+          if (iso && (!minAllowedIso || iso >= minAllowedIso) && (!earliestIso || iso < earliestIso)) {
+            earliestIso = iso;
+          }
+        }
+      }
+      fecha_dia1_ref = earliestIso;
     }
 
+    // 2. Fallback: Solo si el grupo aún no tiene asistencias registradas (proyectado / pendiente)
+    if (!fecha_dia1_ref) {
+      fecha_dia1_ref = config?.fecha_dia1 || null;
+    }
+
+    let countRec = 0;
     let countForm = 0;
     const discrepanciasList = [];
     if (fecha_dia1_ref && groupFormAsisRaw.length > 0) {
@@ -4476,6 +4584,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
             sigla_asistencia: row.sigla || row.sigla_asistencia,
             motivo_baja: row.motivo_baja,
             estado: row.estado,
+            tipo_reclutado: row.tipo_reclutado,
             fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia || row.fecha_asistencia)
           }
         });
@@ -4500,38 +4609,63 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       for (const doc of allDocs) {
         const studentRecords = formRecordsByDoc.get(doc) || [];
         const recCandidate = mapRec.get(doc);
-        const recAsisItem = recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || recAsisMap.get(`${cleanCode}|${doc}`);
+        const recAsisItem = recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
+                            recAsisMap.get(`${normCamp}|${baseCode}|${doc}`) || 
+                            recAsisMap.get(`${cleanCode}|${doc}`);
         
         if (isRecuperoCapCandidate(recCandidate)) {
           continue; // RECUPERO CAP no cuenta en Día 1 ni genera discrepancia
         }
 
-        const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref);
-        const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null;
-        const formRecord = exactD1Record || latestRecord;
+        const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
+        const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
+        const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null);
         
-        const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro';
-        const isBajaDia1Pure = formRecord && formRecord.sigla_asistencia === 'B' && (isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord) || String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+        const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord);
+        if (isEspecial) {
+          if (!recCandidate) continue;
+          const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
+          if (!isPresentD1Form) continue;
+        }
 
-        // Formación: Cuenta por ESTADO ACTIVO (no cesado ni baja)
-        const isFormAsistencia = formRecord ? (
-          !isBajaDia1Pure &&
-          norm(formRecord.estado) !== 'CESADO' &&
-          !norm(formRecord.estado).includes('BAJA') &&
-          norm(formRecord.sigla_asistencia) !== 'B'
-        ) : false;
+        const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO');
+        const isFormAsistencia = formRecord ? !isBajaForm : false;
         
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
         const isRecAsistencia = (recCandidate ? isCandidateActiveRec(recCandidate) : false) || isAuxAsistencia;
         
+        if (isRecAsistencia) countRec++;
         if (isFormAsistencia) countForm++;
 
         if (isFormAsistencia !== isRecAsistencia) {
+          let displayFormSigla = 'SIN REGISTRO';
+          if (isBajaForm) {
+            displayFormSigla = 'CESADO (BAJA DÍA 1)';
+          } else if (isFormAsistencia) {
+            displayFormSigla = 'ACTIVO';
+          }
+
+          let displayRecSigla = 'SIN REGISTRO';
+          if (isRecAsistencia) {
+            displayRecSigla = 'ASISTIÓ';
+          } else if (recCandidate) {
+            const d1 = String(recCandidate.dia_1 || '').toUpperCase().trim();
+            const d0 = String(recCandidate.dia_0 || '').toUpperCase().trim();
+            const stD1 = String(recCandidate.status_dia_1 || '').toUpperCase().trim();
+            if (stD1.includes('NO PROCEDE') || stD1.includes('DESERTOR')) {
+              displayRecSigla = 'NO PROCEDE';
+            } else if (d1 === 'FALTA' || d0 === 'FALTA' || d1 === 'F' || d0 === 'F') {
+              displayRecSigla = 'FALTA';
+            } else {
+              displayRecSigla = recCandidate.estado === 'BAJA' ? 'CESADO' : (recCandidate.dia_1 || recCandidate.estado || 'FALTA');
+            }
+          }
+
           discrepanciasList.push({
             documento: doc,
-            reclutador: isRecAsistencia ? 'ASISTIO' : (recCandidate ? (recCandidate.estado || 'BAJA / FALTA') : 'SIN REGISTRO'),
-            formador: isBajaDia1Pure ? 'BAJA DÍA 1' : (isFormAsistencia ? (formSigla === 'A' ? 'ASISTIO' : (formSigla || 'ACTIVO')) : (formSigla || 'Sin registro'))
+            reclutador: displayRecSigla,
+            formador: displayFormSigla
           });
         }
       }
@@ -5066,10 +5200,14 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       const mapFormFull = new Map();
       for (const f of formAsis) {
         const doc = f.postulante_documento;
-        if (!mapFormFull.has(doc)) {
-          mapFormFull.set(doc, f);
-        } else if (f.fecha_asistencia === fecha_dia1_ref) {
-          mapFormFull.set(doc, f);
+        if (fecha_dia1_ref) {
+          if (f.fecha_asistencia === fecha_dia1_ref) {
+            mapFormFull.set(doc, f);
+          }
+        } else {
+          if (!mapFormFull.has(doc)) {
+            mapFormFull.set(doc, f);
+          }
         }
       }
 
@@ -5088,14 +5226,10 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
         const isBajaDia1 = bajasDia1Set.has(doc);
         
-        const isFormAsistencia = formRecord ? (
-          !isBajaDia1 &&
-          String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
-          !String(formRecord.estado || '').toUpperCase().includes('BAJA') &&
-          formRecord.sigla_asistencia !== 'B'
-        ) : false;
+        // Formador: Cuenta como asistió si marcó A o I-OP en Día 1
+        const isFormAsistencia = formRecord ? isFormadorAsistio(formRecord.sigla_asistencia) : false;
 
-        const isRecAsistencia = recCandidate ? (!isBajaDia1 && isCandidateActiveRec(recCandidate)) : false;
+        const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
         
         if (isFormAsistencia) countForm++;
 
@@ -5460,9 +5594,5 @@ export function parseFechaAsistencia(raw) {
   return raw;
 }
 
-export function isAsistioStr(val) {
-  if (!val) return false;
-  const s = String(val).trim().toUpperCase();
-  return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
-}
+
 

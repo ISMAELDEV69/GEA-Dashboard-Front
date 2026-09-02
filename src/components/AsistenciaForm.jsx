@@ -133,23 +133,33 @@ const AttendanceRow = React.memo(function AttendanceRow({
           <div className="flex items-center gap-1.5">
             <AlertTriangle size={13} className="text-rose-500 dark:text-rose-400 flex-shrink-0" />
             <select
-              value={item.motivo_baja}
+              value={item.motivo_baja || (item.isFirstRecordGroup ? 'BAJA DIA 1' : '')}
               onChange={e => onMotiveChange(item.documento, e.target.value)}
               disabled={item.isLockedBaja}
               className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
             >
-              {(item.isEligibleBajaD1 || item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO' || String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') || String(item.motivo_baja || '').toUpperCase().includes('PERIODO GRACIA')) && (
+              {/* 1. Día 1 Oficial: Toda baja es exclusivamente BAJA DIA 1 */}
+              {item.isFirstRecordGroup && (
+                <option value="BAJA DIA 1">BAJA DIA 1</option>
+              )}
+
+              {/* 2. Días posteriores: Si es Agregado/Recuperado/Observado en periodo de gracia (≤ 3 días) */}
+              {!item.isFirstRecordGroup && item.isEligibleBajaD1 && (
                 <option value="BAJA DIA 1">BAJA DIA 1 (Periodo Gracia ≤ 3 Días)</option>
               )}
-              {(!item.motivo_baja || (!item.isEligibleBajaD1 && item.tipoReclutado !== 'AGREGADO' && item.tipoReclutado !== 'RECUPERADO' && item.tipoReclutado !== 'OBSERVADO' && !String(item.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))) && (
-                <option value="">-- Seleccionar Motivo de Formación --</option>
+
+              {/* 3. Días posteriores: Catálogo de Formación */}
+              {!item.isFirstRecordGroup && (
+                <>
+                  {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
+                  <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
+                  {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1' && m.motivo !== 'OBSERVADO').map(m => (
+                    <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                      {m.motivo}
+                    </option>
+                  ))}
+                </>
               )}
-              <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
-              {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1' && m.motivo !== 'OBSERVADO').map(m => (
-                <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                  {m.motivo}
-                </option>
-              ))}
             </select>
           </div>
         ) : (
@@ -903,7 +913,7 @@ export default function AsistenciaForm({
       if (newSigla !== 'B') {
         newMotivo = ''
       } else if (!newMotivo) {
-        if (item.isEligibleBajaD1 || item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO') {
+        if (item.isFirstRecordGroup || (item.isEligibleBajaD1 && (item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO'))) {
           newMotivo = 'BAJA DIA 1'
         }
       }
