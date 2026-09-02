@@ -208,7 +208,9 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
     try {
       const rowKey = `${grupo_codigo}|${campana}`
       setSavingRow(rowKey)
-      await updateGrupoFormador(grupo_codigo, campana, formador_documento || null)
+      const formadorObj = formadoresActivos.find(f => String(f.documento).trim() === String(formador_documento || '').trim())
+      const formadorNombre = formadorObj?.nombres_completos || formadorObj?.nombre_completo || ''
+      await updateGrupoFormador(grupo_codigo, campana, formador_documento || null, formadorNombre)
       
       setSuccessRow(rowKey)
       setTimeout(() => setSuccessRow(null), 2000)

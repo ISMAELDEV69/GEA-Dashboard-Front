@@ -143,7 +143,7 @@ export function enrichGruposWithStats(grupos = [], postulantes = []) {
 /** Metadata CAPACIDAD para panel de asistencia */
 export function grupoToAsistenciaMeta(grupo, formadores = []) {
   if (!grupo) return null
-  const formador = formadores.find(f => f.documento === grupo.formador_documento)
+  const formador = formadores.find(f => String(f.documento || f.dni || '').trim() === String(grupo.formador_documento || '').trim())
   return {
     codigo: grupo.codigo,
     segmento: grupo.segmento || '',
@@ -157,7 +157,7 @@ export function grupoToAsistenciaMeta(grupo, formadores = []) {
     meta_dia_1: grupo.meta_dia_1,
     estado: grupo.estado,
     formador_documento: grupo.formador_documento || '',
-    formador_nombre: formador?.nombre_completo || '',
+    formador_nombre: formador?.nombre_completo || formador?.datos_completos || formador?.nombres_completos || grupo.formador_nombre || grupo.formador || '',
     postulantes_activos: grupo.postulantes_activos,
   }
 }

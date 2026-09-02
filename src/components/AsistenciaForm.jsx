@@ -24,7 +24,7 @@ import {
   Laptop
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1, DB_MODE } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, DB_MODE } from '../lib/dataService'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
@@ -160,6 +160,20 @@ const AttendanceRow = React.memo(function AttendanceRow({
   )
 })
 
+function resolveFormadorDisplayName(formadoresList = [], doc = '', fallback = '') {
+  const cleanDoc = String(doc || '').trim()
+  if (cleanDoc) {
+    const found = formadoresList.find(f => String(f.documento || f.dni || '').trim() === cleanDoc)
+    if (found) {
+      return (found.nombre_completo || found.datos_completos || found.nombres_completos || fallback || 'SIN ASIGNAR').trim()
+    }
+  }
+  if (fallback && String(fallback).trim() && String(fallback).trim().toUpperCase() !== 'SIN ASIGNAR') {
+    return String(fallback).trim()
+  }
+  return 'SIN ASIGNAR'
+}
+
 export default function AsistenciaForm({
   grupos = [],
   postulantes = [],
@@ -189,6 +203,46 @@ export default function AsistenciaForm({
   const [calendarMonthIndex, setCalendarMonthIndex] = useState(-1)
   
   const [dia1Calibrado, setDia1Calibrado] = useState(false)
+  const [equipoFormacionData, setEquipoFormacionData] = useState([])
+  const [liveGrupoMeta, setLiveGrupoMeta] = useState(null)
+
+  useEffect(() => {
+    getEquipoFormacion().then(data => {
+      setEquipoFormacionData(data || [])
+    }).catch(() => {})
+  }, [])
+
+  const allFormadores = useMemo(() => {
+    const map = new Map()
+    ;(equipoFormacionData || []).forEach(f => {
+      const doc = String(f.documento || '').trim()
+      if (doc) {
+        map.set(doc, {
+          documento: doc,
+          nombre_completo: f.datos_completos || f.nombres_completos || f.nombre_completo || '',
+          datos_completos: f.datos_completos || f.nombres_completos || f.nombre_completo || '',
+          nombres_completos: f.datos_completos || f.nombres_completos || f.nombre_completo || '',
+          segmento: f.segmento || '',
+          subcampana: f.subcampana || ''
+        })
+      }
+    })
+    ;(formadores || []).forEach(f => {
+      const doc = String(f.documento || f.dni || '').trim()
+      if (doc) {
+        const existing = map.get(doc) || {}
+        map.set(doc, {
+          documento: doc,
+          nombre_completo: f.nombre_completo || f.datos_completos || f.nombres_completos || existing.nombre_completo || '',
+          datos_completos: f.nombre_completo || f.datos_completos || f.nombres_completos || existing.datos_completos || '',
+          nombres_completos: f.nombre_completo || f.datos_completos || f.nombres_completos || existing.nombres_completos || '',
+          segmento: f.segmento || existing.segmento || '',
+          subcampana: f.subcampana || existing.subcampana || ''
+        })
+      }
+    })
+    return Array.from(map.values())
+  }, [formadores, equipoFormacionData])
 
   // Persist filter selections
   useEffect(() => {
@@ -356,6 +410,16 @@ export default function AsistenciaForm({
     );
   }, [grupos, gruposFiltrados, selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana])
 
+  const effectiveGrupoObj = useMemo(() => {
+    if (!activeGrupoObj && !liveGrupoMeta) return null;
+    return {
+      ...(activeGrupoObj || {}),
+      ...(liveGrupoMeta || {}),
+      formador_documento: liveGrupoMeta?.formador_documento || activeGrupoObj?.formador_documento || '',
+      formador_nombre: liveGrupoMeta?.formador_nombre || activeGrupoObj?.formador_nombre || activeGrupoObj?.formador || ''
+    };
+  }, [activeGrupoObj, liveGrupoMeta]);
+
   // Explicit user-driven cascading filter handlers (avoid wiping localStorage restored values on mount)
   const handlePeriodoChange = (val) => {
     setSelectedPeriodo(val)
@@ -473,31 +537,36 @@ export default function AsistenciaForm({
             qNom = qNom.ilike('campana', `%${targetCampana}%`)
           }
 
-          let q2 = supabase
-            .from('consolidado_asistencias')
-            .select('documento, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, codigo_grupo, grupo, nombre_formador, documento_formador, tipo_reclutado, estado, sigla, motivo_baja, archivo_origen')
-            .or(`codigo_grupo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo},codigo_grupo.ilike.%${targetGrupoCodigo}%`)
-          if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
-            q2 = q2.or(`archivo_origen.ilike.%SEM${targetSemanaNum}%,archivo_origen.ilike.%SEM ${targetSemanaNum}%,archivo_origen.is.null`)
-          }
-          if (targetCampana) {
-            q2 = q2.ilike('campana', `%${targetCampana}%`)
+          let qCap = supabase
+            .from('capacidad_rys')
+            .select('*')
+            .eq('codigo', targetGrupoCodigo);
+          if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+            qCap = qCap.eq('campana', targetCampana);
           }
 
-          const [res1, resNom, res2] = await Promise.all([
+          const [res1, resNom, res2, resCap] = await Promise.all([
             q1,
             qNom,
-            q2
+            q2,
+            qCap
           ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
-            return [{ data: [] }, { data: [] }, { data: [] }];
+            return [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
           });
 
           let dataQ1 = res1?.data || [];
           let dataNom = resNom?.data || [];
           let dataQ2 = res2?.data || [];
+          let dataCap = resCap?.data || [];
 
           if (!isMounted) return;
+
+          if (dataCap && dataCap.length > 0) {
+            setLiveGrupoMeta(dataCap[0]);
+          } else {
+            setLiveGrupoMeta(null);
+          }
 
           const isRowMatchWeekAndPeriod = (row) => {
             // FIX: aplicar filtro de semana siempre, incluso si el campo es null/vacío en el row.
@@ -786,7 +855,10 @@ export default function AsistenciaForm({
     }
 
     // Formadores lookup map for O(1) name resolution
-    const formadoresMap = new Map(formadores.map(f => [f.documento, f.nombre_completo]))
+    const formadoresMap = new Map(formadores.map(f => [
+      String(f.documento || f.dni || '').trim(),
+      (f.nombre_completo || f.datos_completos || f.nombres_completos || '').trim()
+    ]))
 
     const groupDates = Array.from(new Set(groupRecordsAll.map(a => a.fecha_asistencia).filter(Boolean))).sort()
     const allDates = Array.from(new Set([...groupDates, fecha])).sort()
@@ -823,8 +895,8 @@ export default function AsistenciaForm({
         String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('BAJA DIA 1') ||
         String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('PERIODO GRACIA')
 
-      const docFormador = p.formador_documento || activeGrupoObj?.formador_documento || ''
-      const nombreFormador = formadoresMap.get(docFormador) || activeGrupoObj?.formador_nombre || ''
+      const docFormador = String(p.formador_documento || effectiveGrupoObj?.formador_documento || '').trim()
+      const nombreFormador = resolveFormadorDisplayName(allFormadores, docFormador, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador || '')
 
       let inheritedSigla = 'A'
       let inheritedMotivo = ''
@@ -934,9 +1006,9 @@ export default function AsistenciaForm({
     if (e) e.preventDefault();
     if (!selectedGrupo) return alert('Selecciona un grupo.')
     
-    const currentDoc = activeGrupoObj?.formador_documento;
-    const currentNombre = formadores.find(f => f.documento === currentDoc)?.nombre_completo;
-    if (!currentDoc || !currentNombre) {
+    const currentDoc = String(effectiveGrupoObj?.formador_documento || '').trim();
+    const currentNombre = resolveFormadorDisplayName(allFormadores, currentDoc, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador);
+    if (!currentDoc && (!currentNombre || currentNombre === 'SIN ASIGNAR')) {
       return alert('Este grupo no tiene un formador asignado o no se ha encontrado en la lista. Por favor, asigne un formador en la vista de Asignación antes de registrar la asistencia.');
     }
     
@@ -1056,10 +1128,10 @@ export default function AsistenciaForm({
   const handleCopySummary = async () => {
     if (displayedList.length === 0) return toast.warning('Sin datos', 'No hay postulantes cargados para copiar.')
     
-    const campana = activeGrupoObj?.campana || selectedCampana || 'SIN CAMPAÑA'
-    const docFormador = activeGrupoObj?.formador_documento || ''
-    const formador = formadores.find(f => f.documento === docFormador)?.nombre_completo || activeGrupoObj?.formador_nombre || 'SIN ASIGNAR'
-    const grupo = activeGrupoObj?.codigo || selectedGrupo || 'SIN GRUPO'
+    const campana = effectiveGrupoObj?.campana || selectedCampana || 'SIN CAMPAÑA'
+    const docFormador = effectiveGrupoObj?.formador_documento || ''
+    const formador = resolveFormadorDisplayName(allFormadores, docFormador, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador)
+    const grupo = effectiveGrupoObj?.codigo || selectedGrupo || 'SIN GRUPO'
     
     const targetGroup = activeGrupoObj?.codigo || selectedGrupo;
     const groupDates = [...new Set(asistencias
@@ -1466,7 +1538,7 @@ export default function AsistenciaForm({
             <input
               type="text"
               readOnly
-              value={activeGrupoObj ? (formadores.find(f => f.documento === activeGrupoObj.formador_documento)?.nombre_completo || 'SIN ASIGNAR') : ''}
+              value={effectiveGrupoObj ? resolveFormadorDisplayName(allFormadores, effectiveGrupoObj.formador_documento, effectiveGrupoObj.formador_nombre || effectiveGrupoObj.formador) : ''}
               placeholder="Formador"
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-secondary)] px-2 outline-none cursor-not-allowed uppercase truncate"
             />

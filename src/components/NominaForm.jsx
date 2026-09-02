@@ -472,8 +472,9 @@ export default function NominaForm({
       }
     }
     if (matchedGrupoPlan.formador_documento && formadores.length) {
-      const f = formadores.find(x => x.documento === matchedGrupoPlan.formador_documento)
-      if (f?.nombre_completo) setValue('formador_nombre', f.nombre_completo)
+      const f = formadores.find(x => String(x.documento || x.dni || '').trim() === String(matchedGrupoPlan.formador_documento).trim())
+      const fNom = f?.nombre_completo || f?.datos_completos || f?.nombres_completos
+      if (fNom) setValue('formador_nombre', fNom)
     }
   }, [step, matchedGrupoPlan, suggestedGrupo, setValue, getValues, formadores])
 

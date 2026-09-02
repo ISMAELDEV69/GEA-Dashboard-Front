@@ -1997,32 +1997,76 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
 
 export async function fetchFormadores() {
   if (DB_MODE === 'supabase') {
-    return withCache('formadores_list', 300000, async () => {
+    return withCache('formadores_list', 120000, async () => {
       const map = new Map()
-      const { data: formData } = await supabase
-        .from('formadores')
-        .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
-        .eq('estado', 'Activo')
-        .order('nombre_completo')
-      
-      if (formData) {
-        formData.forEach(f => {
-          const doc = String(f.documento || '').trim()
-          if (doc) {
-            map.set(doc, {
-              documento: doc,
-              nombre_completo: (f.nombre_completo || '').trim().toUpperCase(),
-              sede: f.sede || '',
-              segmento: f.segmento || '',
-              subcampana: f.subcampana || '',
-              cargo_contractual: f.cargo_contractual || 'FORMADOR',
-              cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
-              estado: (f.estado || 'Activo').trim()
-            })
-          }
-        })
+      // 1. Fetch de tabla formadores
+      try {
+        const { data: formData } = await supabase
+          .from('formadores')
+          .select('documento, nombre_completo, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado')
+          .order('nombre_completo')
+        
+        if (formData) {
+          formData.forEach(f => {
+            const doc = String(f.documento || '').trim()
+            if (doc) {
+              const nombre = (f.nombre_completo || '').trim().toUpperCase()
+              map.set(doc, {
+                documento: doc,
+                nombre_completo: nombre,
+                nombres_completos: nombre,
+                datos_completos: nombre,
+                sede: f.sede || '',
+                segmento: f.segmento || '',
+                subcampana: f.subcampana || '',
+                cargo_contractual: f.cargo_contractual || 'FORMADOR',
+                cargo_funcional: (f.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+                estado: (f.estado || 'Activo').trim()
+              })
+            }
+          })
+        }
+      } catch (e) {
+        console.warn('fetchFormadores: error reading formadores:', e)
       }
-      return [...map.values()]
+
+      // 2. Fetch de tabla equipo_formacion (merge y enriquecimiento)
+      try {
+        const { data: eqData, error } = await supabase
+          .from('equipo_formacion')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, datos_completos, sede, segmento, subcampana, cargo_contractual, cargo_funcional, estado, fecha_inicio, fecha_cese, bono_bruto, usuario_alix')
+          .order('nombres_completos')
+
+        if (!error && eqData) {
+          eqData.forEach(f => {
+            const doc = String(f.documento || '').trim()
+            if (doc) {
+              const existing = map.get(doc) || {}
+              const nombre = (f.datos_completos || f.nombres_completos || existing.nombre_completo || '').trim().toUpperCase()
+              map.set(doc, {
+                ...f,
+                documento: doc,
+                nombre_completo: nombre,
+                nombres_completos: nombre,
+                datos_completos: nombre,
+                sede: f.sede || existing.sede || '',
+                segmento: f.segmento || existing.segmento || '',
+                subcampana: f.subcampana || existing.subcampana || '',
+                cargo_contractual: f.cargo_contractual || existing.cargo_contractual || 'FORMADOR',
+                cargo_funcional: (f.cargo_funcional || existing.cargo_funcional || 'FORMADOR').trim().toUpperCase(),
+                estado: (f.estado || existing.estado || 'ACTIVO').trim().toUpperCase()
+              })
+            }
+          })
+        }
+      } catch (e) {
+        console.warn('fetchFormadores: error reading equipo_formacion:', e)
+      }
+
+      if (map.size > 0) {
+        return Array.from(map.values()).sort((a, b) => (a.nombre_completo || '').localeCompare(b.nombre_completo || ''))
+      }
+      return []
     })
   }
   // Local fallback
@@ -2030,6 +2074,8 @@ export async function fetchFormadores() {
   return list.map(f => ({
     documento: f.documento,
     nombre_completo: f.nombre_completo || f.nombre,
+    nombres_completos: f.nombre_completo || f.nombre,
+    datos_completos: f.nombre_completo || f.nombre,
     sede: f.sede || '',
     segmento: f.segmento || '',
     subcampana: f.subcampana || '',
@@ -3697,6 +3743,7 @@ export async function updateEquipoFormacion(documento, payload) {
       throw error;
     }
     invalidateCache('equipo_formacion');
+    invalidateCache('formadores_list');
     return data;
   }
   return null;
@@ -3719,6 +3766,7 @@ export async function addEquipoFormacion(payload) {
       throw error;
     }
     invalidateCache('equipo_formacion');
+    invalidateCache('formadores_list');
     return data;
   }
   return null;
@@ -3728,21 +3776,57 @@ export async function addEquipoFormacion(payload) {
 // ASIGNACION FORMADORES
 // ==========================================
 
-export async function updateGrupoFormador(grupo_codigo, campana, formador_documento) {
+export async function updateGrupoFormador(grupo_codigo, campana, formador_documento, formador_nombre) {
   if (DB_MODE === 'supabase') {
-    const { error } = await supabase
+    const payload = {
+      formador_documento: formador_documento ? String(formador_documento).trim() : null
+    };
+    if (formador_nombre !== undefined) {
+      payload.formador_nombre = formador_nombre ? String(formador_nombre).trim() : null;
+    }
+
+    let query = supabase
       .from('capacidad_rys')
-      .update({ formador_documento })
-      .eq('codigo', grupo_codigo)
-      .eq('campana', campana);
+      .update(payload)
+      .eq('codigo', grupo_codigo);
+
+    if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
+      query = query.eq('campana', campana);
+    }
+      
+    const { error } = await query;
       
     if (error) {
-      console.error('Error actualizando formador del grupo:', error);
-      throw error;
+      // Fallback si la columna formador_nombre no existe físicamente en capacidad_rys
+      if (payload.formador_nombre !== undefined) {
+        delete payload.formador_nombre;
+        let fbQuery = supabase
+          .from('capacidad_rys')
+          .update(payload)
+          .eq('codigo', grupo_codigo);
+        if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
+          fbQuery = fbQuery.eq('campana', campana);
+        }
+        const { error: fbError } = await fbQuery;
+        if (fbError) {
+          console.error('Error actualizando formador del grupo (fallback):', fbError);
+          throw fbError;
+        }
+      } else {
+        console.error('Error actualizando formador del grupo:', error);
+        throw error;
+      }
     }
     
+    // Invalidar cachés operativas
+    invalidateCache('grupos_capacidad');
+    invalidateCache('grupos_con_metas');
+    invalidateCache('grupos_dia1');
+    invalidateCache('formadores_list');
+    invalidateCache('equipo_formacion');
+
     // Auditar
-    mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { formador_documento });
+    mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { formador_documento, formador_nombre });
     
     return true;
   }
@@ -3751,7 +3835,7 @@ export async function updateGrupoFormador(grupo_codigo, campana, formador_docume
 
 export async function updateGrupoCapacidadField(grupo_codigo, campana, field, value) {
   if (DB_MODE === 'supabase') {
-    const query = supabase.from('capacidad_rys').update({ [field]: value || null }).eq('codigo', grupo_codigo);
+    let query = supabase.from('capacidad_rys').update({ [field]: value || null }).eq('codigo', grupo_codigo);
     if (campana && campana !== 'Sin Campaña') query.eq('campana', campana);
     const { error } = await query;
       
@@ -3760,7 +3844,9 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
       throw error;
     }
     
+    invalidateCache('grupos_capacidad');
     invalidateCache('grupos_con_metas');
+    invalidateCache('grupos_dia1');
     mockAuditLog('capacidad_rys', 'UPDATE', grupo_codigo, null, { [field]: value });
     return true;
   }
