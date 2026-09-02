@@ -323,6 +323,22 @@ export default function App() {
     }
   }, [loadAllData])
 
+  // ── ESCUCHA DE MUTACIONES LOCALES (Actualizaciones de nómina, Día 1, etc.) ──
+  useEffect(() => {
+    let timer = null
+    const handleDataMutation = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        loadAllData({ silent: true })
+      }, 400)
+    }
+    window.addEventListener('gea-data-mutation', handleDataMutation)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('gea-data-mutation', handleDataMutation)
+    }
+  }, [loadAllData])
+
   // ── JITTER DE ARRANQUE Y POLLING OPTIMIZADO (Page Visibility API + 15 min Interval) ──
   
   // 1. Jitter de arranque inicial (0 a 8 segundos): dispersa el login masivo de las 8:00 AM

@@ -2265,6 +2265,12 @@ export async function insertConsolidado(payloads) {
   invalidateCache('all_consolidado');
   invalidateCache('all_asistencias_bajas');
   invalidateCache('all_motivos_bajas');
+  invalidateCache('grupos_dia1');
+  invalidateCache('asistencias');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: targetGroup } }));
+    window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+  }
 }
 
 export async function fetchConsolidado() {

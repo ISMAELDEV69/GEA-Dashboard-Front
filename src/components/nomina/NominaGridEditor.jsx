@@ -597,6 +597,12 @@ export default function NominaGridEditor({
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
       }
 
+      // Invalidar cachés locales y notificar al estado global
+      invalidateCache('postulantes')
+      invalidateCache('grupos_dia1')
+      invalidateCache('grupos_con_metas')
+      window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: grupoCodigo, campana } }))
+
       setSavingStatus('saved')
       setTimeout(() => setSavingStatus('idle'), 2000)
       onSaveComplete?.()
@@ -672,6 +678,12 @@ export default function NominaGridEditor({
       if (selectedColumn === 'dia_1') {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
       }
+
+      // Invalidar cachés locales y notificar al estado global
+      invalidateCache('postulantes')
+      invalidateCache('grupos_dia1')
+      invalidateCache('grupos_con_metas')
+      window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: grupoCodigo, campana } }))
 
       setSavingStatus('saved')
       setTimeout(() => setSavingStatus('idle'), 2000)

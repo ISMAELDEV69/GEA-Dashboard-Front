@@ -839,10 +839,14 @@ export default function NominaFormPool({
       setImportProgress(100)
 
       // Invalidar caché en cascada
+      invalidateCache('postulantes')
       invalidateCache('all_consolidado')
       invalidateCache('resumen_cap_')
       invalidateCache('grupos_con_metas')
+      invalidateCache('grupos_dia1')
       invalidateCache('all_asistencias_bajas')
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'))
+      window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: bulkGrupo, campana: bulkCampana } }))
 
       const msgParts = []
       if (toInsert.length > 0) msgParts.push(`${toInsert.length} asignado${toInsert.length !== 1 ? 's' : ''}`)

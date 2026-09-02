@@ -123,11 +123,16 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     }
   }, [grupos.length, postulantes.length, asistencias.length])
 
-  // Escuchar refresco global
+  // Escuchar refresco global y mutaciones de datos
   useEffect(() => {
     const handleRefresh = () => loadReport(true)
+    const handleMutation = () => loadReport(false)
     window.addEventListener('gea-global-refresh', handleRefresh)
-    return () => window.removeEventListener('gea-global-refresh', handleRefresh)
+    window.addEventListener('gea-data-mutation', handleMutation)
+    return () => {
+      window.removeEventListener('gea-global-refresh', handleRefresh)
+      window.removeEventListener('gea-data-mutation', handleMutation)
+    }
   }, [grupos, postulantes, asistencias])
 
   // ─────────────────────────────────────────────────────────────────────────────
