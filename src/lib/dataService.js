@@ -80,8 +80,10 @@ export function invalidateCache(keyPrefix) {
 export function isBajaDia1(motivo, sigla, row) {
   const m = String(motivo || '').toUpperCase().trim();
   const s = String(sigla || '').toUpperCase().trim();
-  const t = String(row?.tipo_baja || row?.tipo || '').toUpperCase().trim();
+  const t = String(row?.tipo_baja || row?.tipo || row?.tipo_reclutado || '').toUpperCase().trim();
+  const stD1 = String(row?.status_dia_1 || '').toUpperCase().trim();
   
+  if (t === 'CESE' || t.includes('CESE') || stD1 === 'CESE' || stD1.includes('CESE')) return true;
   if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1')) return true;
   if (s === 'BD1' || s === 'D1') return true;
   if (
@@ -2511,9 +2513,10 @@ export function isCandidateActiveRec(n) {
   const d1Raw = String(n.dia_1 || '').toUpperCase().trim();
   const d0Raw = String(n.dia_0 || '').toUpperCase().trim();
   const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
+  const tipo = String(n.tipo_reclutado || n.estado || '').toUpperCase().trim();
 
-  // Si está explícitamente marcado como NO PROCEDE o DESERTOR en Reclutamiento
-  if (stD1.includes('NO PROCEDE') || stD1.includes('NO_PROCEDE') || stD1.includes('DESERTO') || stD1.includes('DESERTOR')) {
+  // Si está explícitamente marcado como CESE, NO PROCEDE o DESERTOR en Reclutamiento
+  if (stD1.includes('CESE') || tipo.includes('CESE') || stD1.includes('NO PROCEDE') || stD1.includes('NO_PROCEDE') || stD1.includes('DESERTO') || stD1.includes('DESERTOR')) {
     return false;
   }
 
@@ -2613,10 +2616,12 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       if (!isPresentD1Form) continue;
     }
     
-    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
-    const isFormAsistencia = formRecord ? !isBajaForm : false
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
+    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
 
-    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
+    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2716,10 +2721,12 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       if (!isPresentD1Form) continue;
     }
 
-    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
-    const isFormAsistencia = formRecord ? !isBajaForm : false
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
+    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
 
-    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
+    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
@@ -2823,18 +2830,26 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       if (!isPresentD1Form) continue;
     }
 
-    const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-    const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')
-    const isFormAsistencia = formRecord ? !isBajaForm : false
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
+    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
 
-    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
+    const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
     if (isFormAsistencia !== isRecAsistencia) {
-      let displayFormSigla = 'SIN REGISTRO'
+      let displayFormSigla = 'SIN REGISTRO';
       if (isBajaForm) {
-        displayFormSigla = 'CESADO (BAJA DÍA 1)'
-      } else if (isFormAsistencia) {
-        displayFormSigla = 'ACTIVO'
+        displayFormSigla = 'CESADO (BAJA DÍA 1)';
+      } else if (formRecord) {
+        const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
+        if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
+          displayFormSigla = 'FALTA (FI)';
+        } else if (isFormadorAsistio(fs)) {
+          displayFormSigla = 'ACTIVO';
+        } else {
+          displayFormSigla = fs || 'FALTA';
+        }
       }
 
       let displayRecSigla = 'SIN REGISTRO'
@@ -4640,8 +4655,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           if (!isPresentD1Form) continue;
         }
 
-        const isBajaForm = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO');
-        const isFormAsistencia = formRecord ? !isBajaForm : false;
+        const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+        const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
+        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
+        const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
         
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
@@ -4654,8 +4671,15 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           let displayFormSigla = 'SIN REGISTRO';
           if (isBajaForm) {
             displayFormSigla = 'CESADO (BAJA DÍA 1)';
-          } else if (isFormAsistencia) {
-            displayFormSigla = 'ACTIVO';
+          } else if (formRecord) {
+            const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
+            if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
+              displayFormSigla = 'FALTA (FI)';
+            } else if (isFormadorAsistio(fs)) {
+              displayFormSigla = 'ACTIVO';
+            } else {
+              displayFormSigla = fs || 'FALTA';
+            }
           }
 
           let displayRecSigla = 'SIN REGISTRO';
