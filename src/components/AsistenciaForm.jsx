@@ -857,23 +857,12 @@ export default function AsistenciaForm({
         // 1. Registro explícito guardado en la base de datos para ESTE grupo en ESTA fecha específica
         inheritedSigla = existing.sigla_asistencia || 'A'
         inheritedMotivo = (inheritedSigla === 'B') ? (existing.motivo_baja || '') : ''
-      } else if (prevList && prevList.length > 0) {
-        // 2. En días cronológicos posteriores (Día 2, Día 3...) dentro de ESTE MISMO GRUPO:
-        // Si en el día anterior de este mismo grupo se marcó como baja, conservar la baja
-        const lastPrev = prevList[0]
-        if (lastPrev.sigla_asistencia === 'B') {
-          inheritedSigla = 'B'
-          inheritedMotivo = lastPrev.motivo_baja || ''
-        } else {
-          inheritedSigla = 'A'
-          inheritedMotivo = ''
-        }
       } else if (isIngresoEspecial && isFirstRecordGroup) {
-        // 3. Ingreso especial en su primer día del grupo
+        // 2. Ingreso especial en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {
-        // 4. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A
+        // 3. Pizarra limpia: Todo postulante de Nómina activa inicia como ACTIVO / A
         inheritedSigla = 'A'
         inheritedMotivo = ''
       }
