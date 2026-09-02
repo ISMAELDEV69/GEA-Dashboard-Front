@@ -2480,9 +2480,25 @@ export function isAsistioStr(val) {
 
 export function isRecuperoCapCandidate(n) {
   if (!n) return false;
-  const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
+  const tipo = String(n.tipo_reclutado || n.tipo || '').toUpperCase().trim();
   const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-  return tipo.includes('RECUPERO') || stD1.includes('RECUPERO CAP') || stD1.includes('RECUPERO_CAP');
+  const obs = String(n.observacion_estado || '').toUpperCase().trim();
+  const estado = String(n.estado || '').toUpperCase().trim();
+
+  return tipo.includes('RECUPERO') || 
+         tipo.includes('AGREGADO CAP') || 
+         tipo.includes('AGREGADO_CAP') || 
+         tipo.includes('CAPACITACION') || 
+         tipo.includes('FORMACION') ||
+         stD1.includes('RECUPERO') || 
+         stD1.includes('AGREGADO CAP') || 
+         stD1.includes('AGREGADO_CAP') || 
+         stD1.includes('CAPACITACION') || 
+         stD1.includes('FORMACION') ||
+         obs.includes('AGREGADO CAP') || 
+         obs.includes('RECUPERO CAP') ||
+         estado.includes('AGREGADO CAP') ||
+         estado.includes('RECUPERO CAP');
 }
 
 export function isEspecialExtemporaneo(recCandidate, formRecords = [], formRecord = null) {
@@ -2605,7 +2621,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     const formRecord = mapFormFull.get(doc)
     const recCandidate = mapRec.get(doc)
 
-    if (isRecuperoCapCandidate(recCandidate)) {
+    if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue
     }
 
@@ -2712,7 +2728,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
     
-    if (isRecuperoCapCandidate(recCandidate)) {
+    if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue
     }
 
@@ -2827,8 +2843,8 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
     
-    if (isRecuperoCapCandidate(recCandidate)) {
-      continue // RECUPERO CAP no genera discrepancia
+    if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
+      continue // RECUPERO / AGREGADO CAP no genera discrepancia
     }
 
     if (!recCandidate) {
@@ -4658,8 +4674,8 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
                             recAsisMap.get(`${normCamp}|${baseCode}|${doc}`) || 
                             recAsisMap.get(`${cleanCode}|${doc}`);
         
-        if (isRecuperoCapCandidate(recCandidate)) {
-          continue; // RECUPERO CAP no cuenta en Día 1 ni genera discrepancia
+        if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
+          continue; // RECUPERO / AGREGADO CAP no cuenta en Día 1 ni genera discrepancia
         }
 
         if (!recCandidate) {
@@ -5279,8 +5295,8 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const formRecord = mapFormFull.get(doc)
         const recCandidate = mapRec.get(doc) 
 
-        if (isRecuperoCapCandidate(recCandidate)) {
-          continue; // RECUPERO CAP no se contabiliza en Día 1
+        if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
+          continue; // RECUPERO / AGREGADO CAP no se contabiliza en Día 1
         }
 
         if (!recCandidate) {
