@@ -545,19 +545,17 @@ export default function AsistenciaForm({
             qCap = qCap.eq('campana', targetCampana);
           }
 
-          const [res1, resNom, res2, resCap] = await Promise.all([
+          const [res1, resNom, resCap] = await Promise.all([
             q1,
             qNom,
-            q2,
             qCap
           ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
-            return [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+            return [{ data: [] }, { data: [] }, { data: [] }];
           });
 
           let dataQ1 = res1?.data || [];
           let dataNom = resNom?.data || [];
-          let dataQ2 = res2?.data || [];
           let dataCap = resCap?.data || [];
 
           if (!isMounted) return;
@@ -569,8 +567,6 @@ export default function AsistenciaForm({
           }
 
           const isRowMatchWeekAndPeriod = (row) => {
-            // FIX: aplicar filtro de semana siempre, incluso si el campo es null/vacío en el row.
-            // Antes, si row.semana_trabajo era null/0/undefined la condición no filtraba y pasaba todo.
             if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
               const rSem = parseInt(String(row.semana_trabajo || '').replace(/\D/g, ''), 10)
               if (isNaN(rSem) || rSem !== targetSemanaNum) return false
@@ -585,23 +581,13 @@ export default function AsistenciaForm({
           const docMap = new Map();
           const filteredQ1 = dataQ1.filter(isRowMatchWeekAndPeriod);
           const filteredNom = dataNom.filter(isRowMatchWeekAndPeriod);
-          const hasNominaData = (filteredNom && filteredNom.length > 0) || (filteredQ1 && filteredQ1.length > 0);
-
-          // Extraer mapa de motivos históricos de consolidado_asistencias
-          const historicalMotivosMap = new Map();
-          dataQ2.forEach(row => {
-            if (row.documento && row.motivo_baja && String(row.motivo_baja).trim() !== '' && String(row.motivo_baja).trim() !== 'null') {
-              historicalMotivosMap.set(row.documento, String(row.motivo_baja).trim());
-            }
-          });
 
           // 1. Postulantes de v_nominas_consolidado
           filteredQ1.forEach(row => {
             if (row.documento) {
-              const histMotivo = historicalMotivosMap.get(row.documento);
               docMap.set(row.documento, {
                 ...row,
-                motivo_baja: histMotivo || row.motivo_baja || '',
+                motivo_baja: row.motivo_baja || '',
                 campaign: row.campana,
                 observacion: row.observacion_reclutamiento
               });
@@ -611,48 +597,14 @@ export default function AsistenciaForm({
           // 2. Postulantes directos de tabla nominas (fuente de verdad oficial)
           filteredNom.forEach(row => {
             if (row.documento) {
-              const histMotivo = historicalMotivosMap.get(row.documento);
               docMap.set(row.documento, {
                 ...row,
-                motivo_baja: histMotivo || row.motivo_baja || '',
+                motivo_baja: row.motivo_baja || '',
                 campaign: row.campana,
                 observacion: row.observacion_reclutamiento
               });
             }
           });
-
-          // 3. Postulantes de consolidado_asistencias (SOLO como fallback para grupos legacy sin nómina digital)
-          if (!hasNominaData) {
-            dataQ2.forEach(row => {
-              if (row.documento && !docMap.has(row.documento)) {
-                const siglaLegacy = (row.sigla || '').toString().toUpperCase().trim()
-                const eraActivoLegacy = siglaLegacy === 'A' || siglaLegacy === 'I-OP'
-                const eraBajaLegacy = siglaLegacy === 'B'
-                const histMotivo = historicalMotivosMap.get(row.documento);
-                docMap.set(row.documento, {
-                  documento: row.documento,
-                  nombres: row.nombres || '',
-                  apellido_paterno: row.apellido_paterno || '',
-                  apellido_materno: row.apellido_materno || '',
-                  celular: row.celular || '—',
-                  telefono: row.celular || '—',
-                  condicion: row.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-                  campana: row.campana || targetCampana || '',
-                  grupo_codigo: row.codigo_grupo || row.grupo || targetGrupoCodigo,
-                  semana_trabajo: targetSemanaNum || null,
-                  periodo_reclutado: targetPeriodo || null,
-                  dia_0: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
-                  dia_1: eraActivoLegacy ? 'ASISTIO' : (eraBajaLegacy ? 'ASISTIO' : 'FALTA'),
-                  status_dia_1: row.tipo_reclutado || 'APTO',
-                  estado: row.estado || 'ACTIVO',
-                  sigla: row.sigla || '',
-                  motivo_baja: histMotivo || row.motivo_baja || '',
-                  formador_documento: row.documento_formador || '',
-                  formador_nombre: row.nombre_formador || ''
-                });
-              }
-            });
-          }
 
           setGroupPostulantesDirect(Array.from(docMap.values()));
         } catch (e) {
@@ -902,25 +854,34 @@ export default function AsistenciaForm({
       let inheritedMotivo = ''
 
       if (existing) {
-        inheritedSigla = existing.sigla_asistencia
-        inheritedMotivo = existing.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || ''
+        // 1. Registro explícito guardado en la base de datos para ESTE grupo en ESTA fecha específica
+        inheritedSigla = existing.sigla_asistencia || 'A'
+        inheritedMotivo = (inheritedSigla === 'B') ? (existing.motivo_baja || '') : ''
       } else if (prevList && prevList.length > 0) {
-        // Heredar del registro cronológico más reciente (permite reactivaciones sin trabas)
-        inheritedSigla = prevList[0].sigla_asistencia || 'A'
-        inheritedMotivo = pastMotiveFromRecords || prevList[0].motivo_baja || fallbackNominaMotive || ''
-      } else if (p.estado === 'CESADO' || p.estado === 'BAJA') {
-        inheritedSigla = 'B'
-        inheritedMotivo = pastMotiveFromRecords || fallbackNominaMotive || (isEligibleBajaD1 ? 'BAJA DIA 1' : '')
+        // 2. En días cronológicos posteriores (Día 2, Día 3...) dentro de ESTE MISMO GRUPO:
+        // Si en el día anterior de este mismo grupo se marcó como baja, conservar la baja
+        const lastPrev = prevList[0]
+        if (lastPrev.sigla_asistencia === 'B') {
+          inheritedSigla = 'B'
+          inheritedMotivo = lastPrev.motivo_baja || ''
+        } else {
+          inheritedSigla = 'A'
+          inheritedMotivo = ''
+        }
       } else if (isIngresoEspecial && isFirstRecordGroup) {
+        // 3. Ingreso especial en su primer día del grupo
         inheritedSigla = 'FI'
+        inheritedMotivo = ''
+      } else {
+        // 4. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A
+        inheritedSigla = 'A'
+        inheritedMotivo = ''
       }
 
       // Si la persona tiene sigla B, garantizar que tenga motivo de baja no vacío para no bloquear la pantalla
       if (inheritedSigla === 'B' && !inheritedMotivo) {
         if (pastMotiveFromRecords) {
           inheritedMotivo = pastMotiveFromRecords
-        } else if (fallbackNominaMotive) {
-          inheritedMotivo = fallbackNominaMotive
         } else if (isEligibleBajaD1) {
           inheritedMotivo = 'BAJA DIA 1'
         } else {
@@ -937,7 +898,7 @@ export default function AsistenciaForm({
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
       } else if (sigla === 'B' && !motivo_baja) {
-        motivo_baja = pastMotiveFromRecords || fallbackNominaMotive || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
+        motivo_baja = pastMotiveFromRecords || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
       }
 
       const isHistoricalBaja = (existing && existing.sigla_asistencia === 'B') || (!existing && inheritedSigla === 'B')
