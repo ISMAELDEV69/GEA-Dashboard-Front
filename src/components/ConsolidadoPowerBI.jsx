@@ -584,39 +584,6 @@ export default function ConsolidadoPowerBI() {
     return result;
   }, [data, getCapInfo]);
 
-  // ── Mapa de último estado por documento (fecha máxima) en un solo pase O(N) ──
-  const lastStateMap = useMemo(() => {
-    const latestDocMap = new Map();
-    for (let i = 0; i < validData.length; i++) {
-      const row = validData[i];
-      const doc = normalizeText(row.documento);
-      if (!doc) continue;
-      
-      const d = parseLocalDate(row.fecha_registro_asistencia);
-      const time = d ? d.getTime() : 0;
-      
-      const prev = latestDocMap.get(doc);
-      if (!prev || time >= prev.time) {
-        latestDocMap.set(doc, { time, row });
-      }
-    }
-
-    const result = new Map();
-    for (const [doc, { row }] of latestDocMap.entries()) {
-      const motivo = row?.motivo_baja || row?.motivo;
-      const sigla = row?.sigla;
-      if (isBajaDia1(motivo, sigla, row)) {
-        result.set(doc, 'BAJA DIA 1');
-      } else if (isBajaCapacitacion(row)) {
-        result.set(doc, 'CESADO');
-      } else {
-        result.set(doc, 'ACTIVO');
-      }
-    }
-
-    return result;
-  }, [validData]);
-
   // ── Jerarquía en Cascada Estricta (Periodo -> Semana -> Segmento -> Campaña -> GPE) ──
   const filterOptions = useMemo(() => {
     const matchPeriodo = (p) => filters.periodo === 'Todas' || String(p || '').trim() === String(filters.periodo).trim();
@@ -721,13 +688,46 @@ export default function ConsolidadoPowerBI() {
     });
   }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe]);
 
+  // ── Mapa de último estado por documento aislado estrictamente al Periodo/Semana/Campaña/GPE consultado ──
+  const lastStateMap = useMemo(() => {
+    const latestDocMap = new Map();
+    for (let i = 0; i < kpiFilteredData.length; i++) {
+      const row = kpiFilteredData[i];
+      const doc = normalizeText(row.documento);
+      if (!doc) continue;
+      
+      const d = parseLocalDate(row.fecha_registro_asistencia);
+      const time = d ? d.getTime() : 0;
+      
+      const prev = latestDocMap.get(doc);
+      if (!prev || time >= prev.time) {
+        latestDocMap.set(doc, { time, row });
+      }
+    }
+
+    const result = new Map();
+    for (const [doc, { row }] of latestDocMap.entries()) {
+      const motivo = row?.motivo_baja || row?.motivo;
+      const sigla = normalizeSigla(row?.sigla);
+      if (isBajaDia1(motivo, sigla, row)) {
+        result.set(doc, 'BAJA DIA 1');
+      } else if (isBajaCapacitacion(row) || sigla === 'B') {
+        result.set(doc, 'CESADO');
+      } else {
+        result.set(doc, 'ACTIVO');
+      }
+    }
+
+    return result;
+  }, [kpiFilteredData]);
+
   // ── Datos filtrados para la Tabla ──
   const filteredData = useMemo(() => {
     if (filters.estado === 'Todas') return kpiFilteredData;
 
     return kpiFilteredData.filter((row) => {
       const doc = normalizeText(row.documento);
-      const lastState = lastStateMap.get(doc) || normalizeEstado(row.estado);
+      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
       return lastState === filters.estado;
     });
   }, [kpiFilteredData, filters.estado, lastStateMap]);
@@ -851,7 +851,7 @@ export default function ConsolidadoPowerBI() {
     docMap.forEach((rows, doc) => {
       const docState = lastStateMap.get(doc) || 'SIN ESTADO';
       const isActivo = docState === 'ACTIVO';
-      const isDesertor = docState === 'CESADO';
+      const isDesertor = docState === 'CESADO' || docState === 'BAJA DIA 1';
       const attendedAny = rows.some((r) => {
         const s = normalizeSigla(r.sigla);
         return s === 'A' || s === 'I-OP';
