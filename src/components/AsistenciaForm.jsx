@@ -87,8 +87,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
       <td className="px-3 py-2 text-center text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{formatSpreadsheetDate(fecha)}</td>
       <td className="px-3 py-2 text-center whitespace-nowrap">
         <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wide ${
-          item.tipoReclutado === 'AGREGADO' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
-          item.tipoReclutado === 'RECUPERADO' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30' :
+          item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'AGREGADO CAP' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
+          item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'RECUPERADO CAP' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30' :
           item.tipoReclutado === 'OBSERVADO' ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30' :
           'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'
         }`}>
@@ -861,8 +861,8 @@ export default function AsistenciaForm({
           inheritedSigla = 'A'
           inheritedMotivo = ''
         }
-      } else if (isIngresoEspecial && isFirstRecordGroup) {
-        // 5. Ingreso especial en su primer día del grupo
+      } else if (isIngresoEspecial && isFirstRecordGroup && !isAsistioStr(dia1Val) && !isAsistioStr(dia0Val)) {
+        // 5. Ingreso especial no confirmado en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {

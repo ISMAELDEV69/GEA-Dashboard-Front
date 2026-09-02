@@ -80,7 +80,7 @@ export const OPERACION_COLUMNS = [
   { key: 'cargo_contractual', label: 'CARGO CONTRACTUAL', width: 200, type: 'select', options: ['AGENTE TMK OUTBOUND', 'AGENTE TMK INBOUND', 'AGENTE TMK RETENCIONES'] },
   { key: 'dia_0', label: 'DÍA 0', width: 120, type: 'select', options: ['ASISTIO', 'FALTA'] },
   { key: 'dia_0_obs', label: 'OBSERVACIONES DÍA 0', width: 200 },
-  { key: 'status_dia_1', label: 'STATUS DÍA 1', width: 120, type: 'select', options: ['APTO', 'RECUPERADO', 'AGREGADO', 'CESE', 'OBSERVADO'] },
+  { key: 'status_dia_1', label: 'STATUS DÍA 1', width: 140, type: 'select', options: ['APTO', 'RECUPERADO', 'AGREGADO', 'AGREGADO CAP', 'RECUPERADO CAP', 'CESE', 'OBSERVADO'] },
   { key: 'dia_1', label: 'DÍA 1', width: 120, type: 'select', options: ['ASISTIO', 'FALTA'] },
   { key: 'dia_1_obs', label: 'OBSERVACIONES DÍA 1', width: 200 },
   { key: 'evaluar', label: 'EVALUAR', width: 150, type: 'select', options: ['APROBADO', 'DESAPROBADO', 'NO DA EVALUAR', 'NO LE LLEGA EL CORREO', 'SIN STATUS', 'DESAPRUEBA Y DA SEGUNDO EVALUAR'] },
@@ -1480,7 +1480,7 @@ export default function NominaGridEditor({
                     {visibleColumns.map(col => {
                       const val = row[col.key] || '';
                       let badgeClass = 'text-[var(--text-primary)]';
-                      if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO') {
+                      if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO' || val === 'AGREGADO' || val === 'RECUPERADO' || val === 'AGREGADO CAP' || val === 'RECUPERADO CAP') {
                         badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
                       } else if (val === 'PENDIENTE' || val === 'FALTA' || val === 'DESAPROBADO' || val === 'CESE' || val === 'OBSERVADO') {
                         badgeClass = 'bg-red-500/10 text-red-400 font-bold';

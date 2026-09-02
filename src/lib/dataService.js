@@ -2482,44 +2482,26 @@ export function isRecuperoCapCandidate(n) {
   if (!n) return false;
   const tipo = String(n.tipo_reclutado || n.tipo || '').toUpperCase().trim();
   const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-  const obs = String(n.observacion_estado || '').toUpperCase().trim();
+  const obs = String(n.observacion_estado || n.observacion_dia_1 || n.observacion || '').toUpperCase().trim();
   const estado = String(n.estado || '').toUpperCase().trim();
 
-  return tipo.includes('RECUPERO') || 
-         tipo.includes('AGREGADO CAP') || 
+  // Solo se excluyen alumnos ingresados DIRECTAMENTE por Capacitacion/Formacion en sala
+  return tipo.includes('AGREGADO CAP') || 
          tipo.includes('AGREGADO_CAP') || 
-         tipo.includes('CAPACITACION') || 
-         tipo.includes('FORMACION') ||
-         stD1.includes('RECUPERO') || 
+         tipo.includes('RECUPERO CAP') || 
+         tipo.includes('RECUPERO_CAP') || 
          stD1.includes('AGREGADO CAP') || 
          stD1.includes('AGREGADO_CAP') || 
-         stD1.includes('CAPACITACION') || 
-         stD1.includes('FORMACION') ||
+         stD1.includes('RECUPERO CAP') || 
+         stD1.includes('RECUPERO_CAP') || 
          obs.includes('AGREGADO CAP') || 
-         obs.includes('RECUPERO CAP') ||
+         obs.includes('RECUPERO CAP') || 
          estado.includes('AGREGADO CAP') ||
          estado.includes('RECUPERO CAP');
 }
 
 export function isEspecialExtemporaneo(recCandidate, formRecords = [], formRecord = null) {
-  const checkStr = (val) => {
-    const s = String(val || '').toUpperCase().trim();
-    return s.includes('AGREGAD') || 
-           s.includes('REINCORPORA') || 
-           s.includes('OBSERVA') || 
-           s.includes('RECUPER');
-  };
-
-  const isRecSpecial = recCandidate && (
-    checkStr(recCandidate.status_dia_1) || 
-    checkStr(recCandidate.estado) || 
-    checkStr(recCandidate.tipo_reclutado)
-  );
-
-  const isFormSpecial = (formRecord && (checkStr(formRecord.tipo_reclutado) || checkStr(formRecord.estado) || checkStr(formRecord.condicion))) ||
-    formRecords.some(f => checkStr(f.tipo_reclutado) || checkStr(f.estado) || checkStr(f.condicion));
-
-  return Boolean(isRecSpecial || isFormSpecial);
+  return false;
 }
 
 export function isCandidateActiveRec(n) {
@@ -2596,30 +2578,28 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     }
   }).filter(f => f.fecha_asistencia)
 
-  const mapFormFull = new Map()
+  const formRecordsByDoc = new Map()
   for (const f of formAsis) {
-    const doc = f.postulante_documento
-    if (fecha_dia1_ref) {
-      if (f.fecha_asistencia === fecha_dia1_ref) {
-        mapFormFull.set(doc, f)
-      }
-    } else {
-      if (!mapFormFull.has(doc)) {
-        mapFormFull.set(doc, f)
-      }
-    }
+    const doc = normDoc(f.postulante_documento)
+    if (!doc) continue;
+    if (!formRecordsByDoc.has(doc)) formRecordsByDoc.set(doc, [])
+    formRecordsByDoc.get(doc).push(f)
   }
 
   const mapRec = new Map(recAsis.map(r => [normDoc(r.documento), r]))
-  const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
+  const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
   allDocs.delete('')
 
   let isCalibrated = true
   let countRec = 0
   let countForm = 0
   for (const doc of allDocs) {
-    const formRecord = mapFormFull.get(doc)
+    const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
+    const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
+    const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
+    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
+    const formRecord = exactD1Record || latestRecord
 
     if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue
@@ -2631,17 +2611,14 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
-    const isEspecial = isEspecialExtemporaneo(recCandidate, formRecord ? [formRecord] : [], formRecord)
-    if (isEspecial) {
-      if (!recCandidate) continue;
-      const isPresentD1Form = formRecord && (formRecord.sigla_asistencia === 'A' || formRecord.sigla_asistencia === 'I-OP' || formRecord.sigla_asistencia === 'PRESENTE');
-      if (!isPresentD1Form) continue;
-    }
-    
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
-    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
+    
+    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
+    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
+    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
@@ -2676,28 +2653,32 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
 
 export async function getCalibracionCounts(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return { rec: 0, form: 0 }
-  
+  return await getCalibracionCountFast(grupo_codigo, campana)
+}
+
+export async function getCalibracionCountFast(grupo_codigo, campana) {
+  if (DB_MODE !== 'supabase') return { rec: 0, form: 0 }
+
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
-  if (!fecha_dia1_ref) return { rec: 0, form: 0 }
-
-  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
-
+  
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (!rawRecAsis || rawRecAsis.length === 0) {
     const { data: fb } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo)
     if (fb && fb.length > 0) rawRecAsis = fb
   }
-  const recAsis = rawRecAsis || [];
+  const recAsis = rawRecAsis || []
 
   let formQuery = supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
     .order('created_at', { ascending: true })
 
   if (campana) {
     formQuery = formQuery.eq('campana', campana)
   }
-  const { data: rawFormAsis } = await formQuery
+  let { data: rawFormAsis } = await formQuery
+
+  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
   const formAsis = (rawFormAsis || []).map(row => {
     let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
@@ -2706,22 +2687,22 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
-      tipo_reclutado: row.tipo_reclutado,
       fecha_asistencia: isoDate
     }
   }).filter(f => f.fecha_asistencia)
 
   const formRecordsByDoc = new Map()
   for (const f of formAsis) {
-    const d = f.postulante_documento
-    if (!formRecordsByDoc.has(d)) formRecordsByDoc.set(d, [])
-    formRecordsByDoc.get(d).push(f)
+    const doc = normDoc(f.postulante_documento)
+    if (!doc) continue;
+    if (!formRecordsByDoc.has(doc)) formRecordsByDoc.set(doc, [])
+    formRecordsByDoc.get(doc).push(f)
   }
 
   const mapRec = new Map(recAsis.map(r => [normDoc(r.documento), r]))
   const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
   allDocs.delete('')
-  
+
   let countRec = 0
   let countForm = 0
   for (const doc of allDocs) {
@@ -2729,7 +2710,8 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const recCandidate = mapRec.get(doc)
     const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
     const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
-    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
+    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
+    const formRecord = exactD1Record || latestRecord
     
     if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue
@@ -2740,18 +2722,15 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
       // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera descalibración.
       continue
     }
-    
-    const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
-    if (isEspecial) {
-      if (!recCandidate) continue;
-      const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
-      if (!isPresentD1Form) continue;
-    }
 
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
-    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
+    
+    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
+    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
+    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
@@ -2843,7 +2822,8 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     const recCandidate = mapRec.get(doc)
     const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref)
     const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null
-    const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null)
+    const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
+    const formRecord = exactD1Record || latestRecord
     
     if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
       continue // RECUPERO / AGREGADO CAP no genera discrepancia
@@ -2855,17 +2835,14 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       continue
     }
     
-    const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord)
-    if (isEspecial) {
-      if (!recCandidate) continue;
-      const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
-      if (!isPresentD1Form) continue;
-    }
-
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
-    const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
+    
+    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
+    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
+    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
@@ -2875,10 +2852,10 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
         displayFormSigla = 'CESADO (BAJA DÍA 1)';
       } else if (formRecord) {
         const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
-        if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
-          displayFormSigla = 'FALTA (FI)';
-        } else if (isFormadorAsistio(fs)) {
+        if (isFormadorAsistio(fs) || isFormAsistencia) {
           displayFormSigla = 'ACTIVO';
+        } else if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
+          displayFormSigla = 'FALTA (FI)';
         } else {
           displayFormSigla = fs || 'FALTA';
         }
@@ -4674,7 +4651,8 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         
         const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
         const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
-        const formRecord = exactD1Record || (studentRecords.length > 0 && !fecha_dia1_ref ? studentRecords[studentRecords.length - 1] : null);
+        const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null;
+        const formRecord = exactD1Record || latestRecord;
 
         if (isRecuperoCapCandidate(recCandidate) || isRecuperoCapCandidate(formRecord)) {
           continue; // RECUPERO / AGREGADO CAP no cuenta en Día 1 ni genera discrepancia
@@ -4685,17 +4663,14 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           continue;
         }
         
-        const isEspecial = isEspecialExtemporaneo(recCandidate, studentRecords, formRecord);
-        if (isEspecial) {
-          if (!recCandidate) continue;
-          const isPresentD1Form = exactD1Record && (exactD1Record.sigla_asistencia === 'A' || exactD1Record.sigla_asistencia === 'I-OP' || exactD1Record.sigla_asistencia === 'PRESENTE');
-          if (!isPresentD1Form) continue;
-        }
-
         const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-        const isCeseForm = formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE');
-        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1(formRecord?.motivo_baja, formRecord?.sigla_asistencia, formRecord);
-        const isFormAsistencia = formRecord ? (isFormadorAsistio(formRecord.sigla_asistencia) && !isBajaForm) : false;
+        const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                           studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
+        
+        // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
+        // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
+        const isFormAsistencia = Boolean(formRecord && !isBajaForm);
         
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
@@ -4710,10 +4685,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
             displayFormSigla = 'CESADO (BAJA DÍA 1)';
           } else if (formRecord) {
             const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
-            if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
-              displayFormSigla = 'FALTA (FI)';
-            } else if (isFormadorAsistio(fs)) {
+            if (isFormadorAsistio(fs) || isFormAsistencia) {
               displayFormSigla = 'ACTIVO';
+            } else if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
+              displayFormSigla = 'FALTA (FI)';
             } else {
               displayFormSigla = fs || 'FALTA';
             }
@@ -4721,7 +4696,14 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
           let displayRecSigla = 'SIN REGISTRO';
           if (isRecAsistencia) {
-            displayRecSigla = 'ASISTIÓ';
+            const stD1 = String(recCandidate?.status_dia_1 || '').toUpperCase().trim();
+            if (stD1 === 'AGREGADO') {
+              displayRecSigla = 'ASISTIÓ (AGREGADO)';
+            } else if (stD1 === 'RECUPERADO') {
+              displayRecSigla = 'ASISTIÓ (RECUPERADO)';
+            } else {
+              displayRecSigla = 'ASISTIÓ';
+            }
           } else if (recCandidate) {
             const d1 = String(recCandidate.dia_1 || '').toUpperCase().trim();
             const d0 = String(recCandidate.dia_0 || '').toUpperCase().trim();
@@ -5305,8 +5287,8 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
         const isBajaDia1 = bajasDia1Set.has(doc);
         
-        // Formador: Cuenta como asistió si marcó A o I-OP en Día 1
-        const isFormAsistencia = formRecord ? isFormadorAsistio(formRecord.sigla_asistencia) : false;
+        // Formador: Cuenta a todos los aptos/activos recibidos (incluso con falta), salvo los que fueron Baja Día 1
+        const isFormAsistencia = Boolean(formRecord && !isBajaDia1);
 
         const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
         
