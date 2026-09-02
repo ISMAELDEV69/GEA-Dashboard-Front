@@ -2433,40 +2433,90 @@ export async function saveAsistenciasReclutador(grupo_codigo, campana, registros
   }
 }
 
+export function isRecuperoCapCandidate(n) {
+  if (!n) return false;
+  const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
+  const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
+  return tipo.includes('RECUPERO') || stD1.includes('RECUPERO CAP') || stD1.includes('RECUPERO_CAP');
+}
+
+export function isCandidateActiveRec(n) {
+  if (!n) return false;
+  if (isRecuperoCapCandidate(n)) return false; // RECUPERO CAP no se contabiliza para la cuota de Día 1
+  
+  const asistioD0 = isAsistioStr(n.dia_0);
+  const asistioD1 = isAsistioStr(n.dia_1);
+  const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
+  const tipo = String(n.tipo_reclutado || '').toUpperCase().trim();
+  const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO') || tipo.includes('AGREGADO') || tipo.includes('RECUPERADO');
+
+  // 1. Regular: Asistió a Día 0 (Inducción)
+  if (asistioD0) return true;
+
+  // 2. Agregado / Recuperado: Asistencia en Día 1
+  if (isAgregadoORecuperado && asistioD1) return true;
+
+  // 3. Fallback inicial si no tiene Día 0 / Día 1 especificado pero está reclutado
+  const est = String(n.estado || '').toUpperCase().trim();
+  if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO') && n.activo !== false) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function checkCalibracionDia1(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return
 
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
   
-  const { data: recAsis } = await supabase.from('nominas').select('documento, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, tipo_reclutado, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  const recAsis = rawRecAsis || []
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
     .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
     .eq('codigo_grupo', grupo_codigo)
-    const isCandidateActiveRec = (n) => {
-    if (!n) return false;
-    if (n.activo === false) return false;
-    const est = String(n.estado || '').toUpperCase().trim();
-    if (est.includes('BAJA') || est.includes('CES') || est.includes('DESER') || est.includes('DESIST') || est === 'INACTIVO') {
-      return false;
-    }
-    const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-    if (stD1 === 'CESE' || stD1.includes('BAJA') || stD1.includes('DESER')) {
-      return false;
-    }
-    const asistioD0 = isAsistioStr(n.dia_0);
-    const asistioD1 = isAsistioStr(n.dia_1);
-    const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO');
+    .eq('campana', campana)
+    .order('created_at', { ascending: true })
 
-    if (asistioD0) return true;
-    if (isAgregadoORecuperado && asistioD1) return true;
-    if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) return true;
-    return false;
-  };
+  const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
-  const mapRec = new Map(recAsis.map(r => [r.documento, r]))
+  const formAsis = (rawFormAsis || []).map(row => {
+    let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia)
+    return {
+      postulante_documento: normDoc(row.documento),
+      sigla_asistencia: row.sigla,
+      motivo_baja: row.motivo_baja,
+      estado: row.estado,
+      fecha_asistencia: isoDate
+    }
+  }).filter(f => f.fecha_asistencia)
+
+  const bajasDia1Set = new Set()
+  for (const r of (rawFormAsis || [])) {
+    const doc = normDoc(r.documento)
+    const m = String(r.motivo_baja || '').toUpperCase()
+    const e = String(r.estado || '').toUpperCase()
+    const s = String(r.sigla || '').toUpperCase()
+    if (m.includes('BAJA DIA 1') || e.includes('BAJA DIA 1') || (s === 'B' && m.includes('BAJA'))) {
+      if (doc) bajasDia1Set.add(doc)
+    }
+  }
+
+  const mapFormFull = new Map()
+  for (const f of formAsis) {
+    const doc = f.postulante_documento
+    if (!mapFormFull.has(doc)) {
+      mapFormFull.set(doc, f)
+    } else if (f.fecha_asistencia === fecha_dia1_ref) {
+      mapFormFull.set(doc, f)
+    }
+  }
+
+  const mapRec = new Map(recAsis.map(r => [normDoc(r.documento), r]))
   const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
-  
+  allDocs.delete('')
+
   let isCalibrated = true
   let countRec = 0
   let countForm = 0
@@ -2474,7 +2524,10 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     const formRecord = mapFormFull.get(doc)
     const recCandidate = mapRec.get(doc)
 
-    const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
+    if (isRecuperoCapCandidate(recCandidate)) {
+      continue // RECUPERO CAP no genera discrepancia ni cuenta en Día 1
+    }
+
     const isBajaDia1 = bajasDia1Set.has(doc)
     
     // Formador: Cuenta por ESTADO ACTIVO (no cesado ni baja)
@@ -2483,7 +2536,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
       !String(formRecord.estado || '').toUpperCase().includes('BAJA') &&
       formRecord.sigla_asistencia !== 'B'
-    ) : false;
+    ) : false
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false
     
@@ -2524,7 +2577,7 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
 
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
 
-  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, tipo_reclutado, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   const recAsis = rawRecAsis || [];
 
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
@@ -2551,29 +2604,9 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     formRecordsByDoc.get(d).push(f)
   }
 
-  const isCandidateActiveRec = (n) => {
-    if (!n) return false;
-    if (n.activo === false) return false;
-    const est = String(n.estado || '').toUpperCase().trim();
-    if (est.includes('BAJA') || est.includes('CES') || est.includes('DESER') || est.includes('DESIST') || est === 'INACTIVO') {
-      return false;
-    }
-    const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-    if (stD1 === 'CESE' || stD1.includes('BAJA') || stD1.includes('DESER')) {
-      return false;
-    }
-    const asistioD0 = isAsistioStr(n.dia_0);
-    const asistioD1 = isAsistioStr(n.dia_1);
-    const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO');
-
-    if (asistioD0) return true;
-    if (isAgregadoORecuperado && asistioD1) return true;
-    if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) return true;
-    return false;
-  };
-
   const mapRec = new Map(recAsis.map(r => [normDoc(r.documento), r]))
   const allDocs = new Set([...formRecordsByDoc.keys(), ...mapRec.keys()])
+  allDocs.delete('')
   
   let countRec = 0
   let countForm = 0
@@ -2581,6 +2614,10 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
     
+    if (isRecuperoCapCandidate(recCandidate)) {
+      continue
+    }
+
     const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
     const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
     const formRecord = exactD1Record || latestRecord
@@ -2607,7 +2644,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
 
   const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
 
-  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  const { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, tipo_reclutado, activo, apellido_paterno, apellido_materno, nombres').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   const recAsis = rawRecAsis || [];
   
   const { data: rawFormAsis } = await supabase.from('consolidado_asistencias')
@@ -2641,27 +2678,6 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     formRecordsByDoc.get(doc).push(f)
   }
 
-  const isCandidateActiveRec = (n) => {
-    if (!n) return false;
-    if (n.activo === false) return false;
-    const est = String(n.estado || '').toUpperCase().trim();
-    if (est.includes('BAJA') || est.includes('CES') || est.includes('DESER') || est.includes('DESIST') || est === 'INACTIVO') {
-      return false;
-    }
-    const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-    if (stD1 === 'CESE' || stD1.includes('BAJA') || stD1.includes('DESER')) {
-      return false;
-    }
-    const asistioD0 = isAsistioStr(n.dia_0);
-    const asistioD1 = isAsistioStr(n.dia_1);
-    const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO');
-
-    if (asistioD0) return true;
-    if (isAgregadoORecuperado && asistioD1) return true;
-    if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) return true;
-    return false;
-  };
-
   const mapRec = new Map()
   recAsis.forEach(r => {
     const doc = normDoc(r.documento)
@@ -2689,6 +2705,10 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
     
+    if (isRecuperoCapCandidate(recCandidate)) {
+      continue // RECUPERO CAP no genera discrepancia
+    }
+
     const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref)
     const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null
     const formRecord = exactD1Record || latestRecord
@@ -2697,7 +2717,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana) {
     
     const isBajaDia1Pure = formRecord && formRecord.sigla_asistencia === 'B' && (isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord) || String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'))
 
-    // Formación: Cuenta por ESTADO ACTIVO (no cesado)
+    // Formación: Cuenta por ESTADO ACTIVO (no cesado ni baja)
     const isFormAsistencia = formRecord ? (
       !isBajaDia1Pure &&
       String(formRecord.estado || '').toUpperCase() !== 'CESADO' &&
@@ -4381,27 +4401,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       effectiveCandidates = Array.from(seenDocs.values());
     }
 
-    const isCandidateActiveRec = (n) => {
-      if (!n) return false;
-      if (n.activo === false) return false;
-      const est = norm(n.estado);
-      if (est.includes('BAJA') || est.includes('CES') || est.includes('DESER') || est.includes('DESIST') || est === 'INACTIVO') {
-        return false;
-      }
-      const stD1 = norm(n.status_dia_1);
-      if (stD1 === 'CESE' || stD1.includes('BAJA') || stD1.includes('DESER')) {
-        return false;
-      }
-      const asistioD0 = isAsistioStr(n.dia_0);
-      const asistioD1 = isAsistioStr(n.dia_1);
-      const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO');
-
-      if (asistioD0) return true;
-      if (isAgregadoORecuperado && asistioD1) return true;
-      if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) return true;
-      return false;
-    };
-
     totalNomina = effectiveCandidates.length;
     totalDia0 = effectiveCandidates.filter(n => isAsistioStr(n.dia_0)).length;
 
@@ -4479,13 +4478,15 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         const recCandidate = mapRec.get(doc);
         const recAsisItem = recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || recAsisMap.get(`${cleanCode}|${doc}`);
         
-        // Buscar registro de fecha Día 1 o el más reciente
+        if (isRecuperoCapCandidate(recCandidate)) {
+          continue; // RECUPERO CAP no cuenta en Día 1 ni genera discrepancia
+        }
+
         const exactD1Record = studentRecords.find(r => r.fecha_asistencia === fecha_dia1_ref);
         const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null;
         const formRecord = exactD1Record || latestRecord;
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro';
-        
         const isBajaDia1Pure = formRecord && formRecord.sigla_asistencia === 'B' && (isBajaDia1(formRecord.motivo_baja, formRecord.sigla_asistencia, formRecord) || String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
 
         // Formación: Cuenta por ESTADO ACTIVO (no cesado ni baja)
@@ -4999,27 +5000,6 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
       }
     }
 
-    const isCandidateActiveRec = (n) => {
-      if (!n) return false;
-      if (n.activo === false) return false;
-      const est = String(n.estado || '').toUpperCase().trim();
-      if (est.includes('BAJA') || est.includes('CES') || est.includes('DESER') || est.includes('DESIST') || est === 'INACTIVO') {
-        return false;
-      }
-      const stD1 = String(n.status_dia_1 || '').toUpperCase().trim();
-      if (stD1 === 'CESE' || stD1.includes('BAJA') || stD1.includes('DESER')) {
-        return false;
-      }
-      const asistioD0 = isAsistioStr(n.dia_0);
-      const asistioD1 = isAsistioStr(n.dia_1);
-      const isAgregadoORecuperado = stD1.includes('AGREGADO') || stD1.includes('RECUPERADO');
-
-      if (asistioD0) return true;
-      if (isAgregadoORecuperado && asistioD1) return true;
-      if (!n.dia_0 && !n.dia_1 && (est === 'RECLUTADO' || est === 'ACTIVO')) return true;
-      return false;
-    };
-
     for (const n of validNominas) {
       if (isCandidateActiveRec(n)) {
         const isBajaDia1 = bajasDia1Set.has(n.documento);
@@ -5071,10 +5051,15 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
 
       const mapRec = new Map(validNominas.map(r => [r.documento, r]))
       const allDocs = new Set([...mapFormFull.keys(), ...mapRec.keys()])
+      allDocs.delete('')
       let isCalibrated = true
       for (const doc of allDocs) {
         const formRecord = mapFormFull.get(doc)
         const recCandidate = mapRec.get(doc) 
+
+        if (isRecuperoCapCandidate(recCandidate)) {
+          continue; // RECUPERO CAP no se contabiliza en Día 1
+        }
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
         const isBajaDia1 = bajasDia1Set.has(doc);
