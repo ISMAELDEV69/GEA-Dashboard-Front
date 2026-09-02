@@ -729,9 +729,28 @@ export default function AsistenciaForm({
         }
       }
       
-      // Los postulantes registrados por Reclutamiento en este grupo aparecen para que el Formador pueda registrar su asistencia
       if (p.activo === false) return false
-      return true
+
+      // Regla de Negocio Oficial:
+      // 1. Regular: Si el reclutador marcó ASISTIO en Día 0 -> Viaja a la marcación
+      // 2. Agregado / Recuperado: Si tuvo FALTA en Día 0 pero es Agregado/Recuperado con ASISTIO en Día 1 -> Viaja a la marcación
+      const dia0Val = String(p.dia_0 || '').toUpperCase().trim()
+      const dia1Val = String(p.dia_1 || '').toUpperCase().trim()
+      const statusDia1Val = String(p.status_dia_1 || '').toUpperCase().trim()
+
+      const asistioD0 = dia0Val === 'ASISTIO' || dia0Val === 'ASISTIÓ' || dia0Val === 'A' || dia0Val === 'SI'
+      const asistioD1 = dia1Val === 'ASISTIO' || dia1Val === 'ASISTIÓ' || dia1Val === 'A' || dia1Val === 'SI'
+      const isAgregadoORecuperado = statusDia1Val.includes('AGREGADO') || statusDia1Val.includes('RECUPERADO')
+
+      if (asistioD0) {
+        return true
+      }
+
+      if (isAgregadoORecuperado && asistioD1) {
+        return true
+      }
+
+      return false
     })
     
     setMissingDataCandidates([])
