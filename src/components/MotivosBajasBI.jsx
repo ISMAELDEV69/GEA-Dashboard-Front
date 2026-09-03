@@ -64,10 +64,10 @@ export default function MotivosBajasBI() {
   const [selectedSegmento, setSelectedSegmento] = useState('TODAS');
   const [selectedCampana, setSelectedCampana] = useState('TODAS');
   const [selectedGrupo, setSelectedGrupo] = useState('TODAS');
-  const [selectedPeriodo, setSelectedPeriodo] = useState('TODAS');
+  const [selectedPeriodo, setSelectedPeriodo] = useState('PERIODO ACTIVO (60 DÍAS)');
   const [selectedSemana, setSelectedSemana] = useState('TODAS');
 
-  const loadData = useCallback(async (force = false) => {
+  const loadData = useCallback(async (force = false, options = {}) => {
     if (force) {
       invalidateCache('all_motivos_bajas');
       invalidateCache('all_consolidado');
@@ -75,7 +75,7 @@ export default function MotivosBajasBI() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchMotivosBajasData();
+      const res = await fetchMotivosBajasData(options);
       setData({
         consolidado: res?.consolidado || [],
         capacidades: res?.capacidades || [],
@@ -229,7 +229,7 @@ export default function MotivosBajasBI() {
       segmentos: sortAlpha(segmentos),
       campanas: sortAlpha(campanas),
       grupos: sortAlpha(grupos),
-      periodos: ['TODAS', ...Array.from(periodos).sort().reverse()],
+      periodos: ['PERIODO ACTIVO (60 DÍAS)', ...Array.from(periodos).filter(p => p !== 'PERIODO ACTIVO (60 DÍAS)' && p !== 'TODAS' && p !== 'HISTÓRICO COMPLETO').sort().reverse(), 'HISTÓRICO COMPLETO'],
       semanas: ['TODAS', ...sortedSemanas],
     };
   }, [enrichedConsolidado, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo]);
@@ -240,7 +240,7 @@ export default function MotivosBajasBI() {
       if (selectedSegmento !== 'TODAS' && row._segmento !== selectedSegmento) return false;
       if (selectedCampana !== 'TODAS' && row._campana !== selectedCampana) return false;
       if (selectedGrupo !== 'TODAS' && row._gpe !== selectedGrupo) return false;
-      if (selectedPeriodo !== 'TODAS' && row._periodo !== selectedPeriodo) return false;
+      if (selectedPeriodo !== 'TODAS' && selectedPeriodo !== 'PERIODO ACTIVO (60 DÍAS)' && selectedPeriodo !== 'HISTÓRICO COMPLETO' && row._periodo !== selectedPeriodo) return false;
       if (selectedSemana !== 'TODAS' && row._semana !== selectedSemana) return false;
       return true;
     });
@@ -625,10 +625,16 @@ export default function MotivosBajasBI() {
             { label: 'Segmento', val: selectedSegmento, set: (v) => { setSelectedSegmento(v); setSelectedCampana('TODAS'); setSelectedGrupo('TODAS'); }, opts: filterOptions.segmentos, reset: () => setSelectedSegmento('TODAS') },
             { label: 'Campaña', val: selectedCampana, set: (v) => { setSelectedCampana(v); setSelectedGrupo('TODAS'); }, opts: filterOptions.campanas, reset: () => setSelectedCampana('TODAS') },
             { label: 'Grupo', val: selectedGrupo, set: setSelectedGrupo, opts: filterOptions.grupos, reset: () => setSelectedGrupo('TODAS') },
-            { label: 'Periodo', val: selectedPeriodo, set: (v) => { setSelectedPeriodo(v); setSelectedSemana('TODAS'); }, opts: filterOptions.periodos, reset: () => setSelectedPeriodo('TODAS') },
+            { label: 'Periodo', val: selectedPeriodo, set: (v) => { 
+              setSelectedPeriodo(v); 
+              setSelectedSemana('TODAS');
+              if (v === 'HISTÓRICO COMPLETO') {
+                loadData(false, { all: true });
+              }
+            }, opts: filterOptions.periodos, reset: () => setSelectedPeriodo('PERIODO ACTIVO (60 DÍAS)') },
             { label: 'Semana', val: selectedSemana, set: setSelectedSemana, opts: filterOptions.semanas, reset: () => setSelectedSemana('TODAS') },
           ].map(({ label, val, set, opts, reset }) => {
-            const isActive = val !== 'TODAS';
+            const isActive = val !== 'TODAS' && val !== 'PERIODO ACTIVO (60 DÍAS)';
             return (
               <div 
                 key={label} 
@@ -665,13 +671,13 @@ export default function MotivosBajasBI() {
             );
           })}
 
-          {(selectedSegmento !== 'TODAS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODAS' || selectedPeriodo !== 'TODAS' || selectedSemana !== 'TODAS') && (
+          {(selectedSegmento !== 'TODAS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODAS' || selectedPeriodo !== 'PERIODO ACTIVO (60 DÍAS)' || selectedSemana !== 'TODAS') && (
             <button
               onClick={() => {
                 setSelectedSegmento('TODAS');
                 setSelectedCampana('TODAS');
                 setSelectedGrupo('TODAS');
-                setSelectedPeriodo('TODAS');
+                setSelectedPeriodo('PERIODO ACTIVO (60 DÍAS)');
                 setSelectedSemana('TODAS');
               }}
               className="px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-600 dark:text-rose-400 hover:bg-rose-500 hover:text-white text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs"

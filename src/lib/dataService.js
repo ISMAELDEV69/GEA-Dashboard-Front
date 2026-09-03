@@ -57,6 +57,10 @@ async function withCache(key, ttlMs = 300000, fetcher) {
   // 3. Consulta de red a Supabase
   const data = await fetcher();
   if (data !== null && data !== undefined) {
+    if (apiCache.size >= 15) {
+      const oldestKey = apiCache.keys().next().value;
+      apiCache.delete(oldestKey);
+    }
     apiCache.set(key, { data, timestamp: now });
     setPersistentItem(key, data).catch(() => {});
   }
@@ -378,13 +382,32 @@ export function getDescuentosSetGlobal() {
   });
 }
 
-async function fetchAllConsolidado() {
-  return withCache('all_consolidado', 180000, async () => {
-    // 1. Obtener conteo exacto ultra-rápido (head query, ~40ms)
-    const { count, error: countErr } = await supabase
+export async function fetchAllConsolidado({ periodo = null, all = false } = {}) {
+  let cacheKey = 'all_consolidado_recent';
+  if (all) {
+    cacheKey = 'all_consolidado_full';
+  } else if (periodo) {
+    cacheKey = `consolidado_periodo_${periodo}`;
+  }
+
+  return withCache(cacheKey, 180000, async () => {
+    let countQuery = supabase
       .from('consolidado_asistencias')
       .select('*', { count: 'exact', head: true });
-    
+
+    let cutoffIso = null;
+    if (!all && !periodo) {
+      // Ventana de últimos ~60 días
+      const d = new Date();
+      d.setDate(d.getDate() - 60);
+      cutoffIso = d.toISOString();
+      countQuery = countQuery.gte('created_at', cutoffIso);
+    } else if (periodo) {
+      const pClean = String(periodo).trim();
+      countQuery = countQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%${pClean}%`);
+    }
+
+    const { count, error: countErr } = await countQuery;
     if (countErr) throw countErr;
 
     const totalCount = count || 0;
@@ -393,13 +416,20 @@ async function fetchAllConsolidado() {
     const step = 5000;
     const chunkPromises = [];
     for (let from = 0; from < totalCount; from += step) {
-      chunkPromises.push(
-        supabase
-          .from('consolidado_asistencias')
-          .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
-          .order('created_at', { ascending: true })
-          .range(from, from + step - 1)
-      );
+      let dataQuery = supabase
+        .from('consolidado_asistencias')
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
+        .order('created_at', { ascending: true })
+        .range(from, from + step - 1);
+
+      if (!all && !periodo && cutoffIso) {
+        dataQuery = dataQuery.gte('created_at', cutoffIso);
+      } else if (periodo) {
+        const pClean = String(periodo).trim();
+        dataQuery = dataQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%${pClean}%`);
+      }
+
+      chunkPromises.push(dataQuery);
     }
 
     const [descSet, ...results] = await Promise.all([
@@ -426,6 +456,7 @@ async function fetchAllConsolidado() {
     return allData;
   });
 }
+
 export async function getFirstDateFormador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return null;
 
