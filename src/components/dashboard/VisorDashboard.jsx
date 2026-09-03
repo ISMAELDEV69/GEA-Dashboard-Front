@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from 'recharts'
 import { Users, GraduationCap, Award, DollarSign, TrendingUp, Target, MapPin, Megaphone } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
 import {
   computeGlobalMetrics, buildConsolidadoFunnel, buildExecutiveNarrative,
   buildCampanaPerformance, buildSedeRetention, buildMotiveData, buildFuenteOfertaData,
@@ -15,8 +16,44 @@ import PageHeader from '../ui/PageHeader'
 import Card, { CardHeader } from '../ui/Card'
 
 export default function VisorDashboard({ postulantes = [], asistencias = [], grupos = [], campanasMetas = [] }) {
+  const [financialKpis, setFinancialKpis] = useState(null)
+
+  useEffect(() => {
+    let isMounted = true
+    async function fetchKpis() {
+      try {
+        const { data, error } = await supabase.rpc('get_visor_kpis_financieros')
+        if (error) throw error
+        if (isMounted && data) {
+          setFinancialKpis(data)
+        }
+      } catch (err) {
+        console.error('Error cargando KPIs financieros de visor:', err)
+      }
+    }
+    fetchKpis()
+    return () => { isMounted = false }
+  }, [])
+
   const metrics = useMemo(() => computeGlobalMetrics(postulantes, asistencias, grupos), [postulantes, asistencias, grupos])
-  const funnel = useMemo(() => buildConsolidadoFunnel(postulantes, asistencias), [postulantes, asistencias])
+
+  const funnel = useMemo(() => {
+    const baseFunnel = buildConsolidadoFunnel(postulantes, asistencias)
+    if (!financialKpis) return baseFunnel
+    const total = postulantes.length || 1
+    return baseFunnel.map(stage => {
+      if (stage.etapa.includes('Test')) {
+        const c = financialKpis.con_test_psico ?? 0
+        return { ...stage, cantidad: c, pct: Math.round((c / total) * 100) }
+      }
+      if (stage.etapa.includes('Día 0') || stage.etapa.includes('Dia 0') || stage.etapa.includes('Evaluación')) {
+        const c = financialKpis.eval_d0_done ?? 0
+        return { ...stage, cantidad: c, pct: Math.round((c / total) * 100) }
+      }
+      return stage
+    })
+  }, [postulantes, asistencias, financialKpis])
+
   const campanas = useMemo(() => buildCampanaPerformance(postulantes, asistencias), [postulantes, asistencias])
   const sedes = useMemo(() => buildSedeRetention(postulantes, asistencias), [postulantes, asistencias])
   const motivos = useMemo(() => buildMotiveData(asistencias), [asistencias])
@@ -24,7 +61,10 @@ export default function VisorDashboard({ postulantes = [], asistencias = [], gru
   const periodos = useMemo(() => buildPeriodTrend(postulantes), [postulantes])
   const stories = useMemo(() => buildExecutiveNarrative(metrics, funnel, campanas, motivos), [metrics, funnel, campanas, motivos])
 
-  const costoTotal = metrics.totalRemuneracion + metrics.totalBonos
+  const finalRemuneracion = Number(financialKpis?.total_remuneracion ?? metrics.totalRemuneracion) || 0
+  const finalBonos = Number(financialKpis?.total_bonos ?? metrics.totalBonos) || 0
+  const costoTotal = finalRemuneracion + finalBonos
+  const finalEvalD0Pending = financialKpis?.eval_d0_pending ?? metrics.evalD0Pending
 
   if (metrics.total === 0) {
     return (
@@ -61,8 +101,8 @@ export default function VisorDashboard({ postulantes = [], asistencias = [], gru
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard label="CESE Día 1" value={metrics.dia1Cese} sub="Deserción temprana" accent={metrics.dia1Cese > 0 ? '#ef4444' : '#10b981'} />
-        <KpiCard label="Eval. D0 pendiente" value={metrics.evalD0Pending} accent={metrics.evalD0Pending > 0 ? '#f59e0b' : '#10b981'} />
-        <KpiCard label="Remuneración pipeline" value={`S/ ${metrics.totalRemuneracion.toLocaleString('es-PE')}`} icon={DollarSign} accent="#2dd4bf" />
+        <KpiCard label="Eval. D0 pendiente" value={finalEvalD0Pending} accent={finalEvalD0Pending > 0 ? '#f59e0b' : '#10b981'} />
+        <KpiCard label="Remuneración pipeline" value={`S/ ${finalRemuneracion.toLocaleString('es-PE')}`} icon={DollarSign} accent="#2dd4bf" />
         <KpiCard label="Costo total proyectado" value={`S/ ${costoTotal.toLocaleString('es-PE')}`} sub="Base + bonos" icon={DollarSign} accent="#f59e0b" />
       </div>
 
