@@ -279,6 +279,8 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   // 5. HANDLERS DE FILTRO ATÓMICOS
   // ─────────────────────────────────────────────────────────────────────────────
   const handlePeriodoChange = (val) => {
+    setSelectedGroupDetail(null)
+    setDiscrepancias([])
     setFilters(prev => ({
       ...prev,
       periodo: val,
@@ -290,6 +292,8 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   }
 
   const handleSemanaChange = (val) => {
+    setSelectedGroupDetail(null)
+    setDiscrepancias([])
     setFilters(prev => ({
       ...prev,
       semana: val,
@@ -300,6 +304,8 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   }
 
   const handleSegmentoChange = (val) => {
+    setSelectedGroupDetail(null)
+    setDiscrepancias([])
     setFilters(prev => {
       // Si la campaña actual pertenece al nuevo segmento, se conserva; de lo contrario se resetea
       const validCampanas = val 
@@ -320,6 +326,8 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   }
 
   const handleCampanaChange = (val) => {
+    setSelectedGroupDetail(null)
+    setDiscrepancias([])
     setFilters(prev => {
       // Si no había segmento seleccionado y se elige una campaña, auto-inferir el segmento
       let autoSegmento = prev.segmento
@@ -338,6 +346,8 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   }
 
   const handleGrupoChange = (val) => {
+    setSelectedGroupDetail(null)
+    setDiscrepancias([])
     setFilters(prev => ({
       ...prev,
       grupo: val

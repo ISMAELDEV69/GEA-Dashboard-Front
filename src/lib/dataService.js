@@ -415,8 +415,12 @@ async function fetchAllConsolidado() {
       }
     }
 
+    // Marcar si el registro cuenta con descuento aprobado sin removerlo del historial de asistencias
     if (descSet && descSet.size > 0) {
-      allData = allData.filter(row => !descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)));
+      for (let i = 0; i < allData.length; i++) {
+        const row = allData[i];
+        row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo));
+      }
     }
 
     return allData;
@@ -856,7 +860,7 @@ function buildNominaPayload(payload, ids) {
   }
 }
 
-export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, celular_emergencia, contacto_emergencia, parentesco, correo, genero, fecha_nacimiento, edad, estado_civil, n_hijos, nivel_academico, carrera, entidad, nacionalidad, lugar_nacimiento, lugar_residencia, distrito_residencia, direccion_domicilio, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, exp_call_center, exp_tipo_campana, exp_tiempo_campana, exp_otra, exp_tiempo_otra, grupo_codigo, modalidad, condicion, horario_gestion, descanso, envio_dni, test_psicologico, validacion_pc, evaluacion_dia_0, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, pago_capacitacion, fecha_inscripcion_curso, fecha_ingreso, tipo_trabajo, tipo_contratacion, razon_social, rango_salarial, remuneracion, bono_variable, bono_movilidad, bono_bienvenida, bono_permanencia, bono_asistencia_perfecta, cargo_contractual, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, doc_cv, doc_dni_adjunto, doc_certijoven, doc_recibo_servicios, doc_ficha_datos, doc_autorizacion, created_at';
+export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, celular_emergencia, contacto_emergencia, parentesco, correo, genero, fecha_nacimiento, edad, estado_civil, n_hijos, nivel_academico, carrera, entidad, nacionalidad, lugar_nacimiento, lugar_residencia, distrito_residencia, direccion_domicilio, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, exp_call_center, exp_tipo_campana, exp_tiempo_campana, exp_otra, exp_tiempo_otra, grupo_codigo, modalidad, condicion, horario_gestion, descanso, envio_dni, test_psicologico, validacion_pc, evaluacion_dia_0, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, pago_capacitacion, fecha_inscripcion_curso, fecha_ingreso, tipo_trabajo, tipo_contratacion, razon_social, rango_salarial, remuneracion, bono_variable, bono_movilidad, bono_bienvenida, bono_permanencia, bono_asistencia_perfecta, cargo_contractual, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, created_at';
 
 /**
  * QW-2: Limita la descarga inicial de postulantes a 5000 registros para evitar transferencias
@@ -2633,10 +2637,13 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   let newState = 'PENDIENTE'
   if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
     newState = 'PENDIENTE'
-  } else if (countRec !== countForm || !isCalibrated) {
-    newState = 'DESCALIBRADO'
+  } else if (countRec > 0 && countForm === 0) {
+    // Reclutamiento ya registró nómina pero Formación aún no pasa lista de Día 1
+    newState = 'PENDIENTE'
   } else if (countRec > 0 && countForm > 0 && isCalibrated && countRec === countForm) {
     newState = 'CALIBRADO'
+  } else if (countRec > 0 && countForm > 0 && (countRec !== countForm || !isCalibrated)) {
+    newState = 'DESCALIBRADO'
   } else {
     newState = 'PENDIENTE'
   }
@@ -4376,10 +4383,17 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
   const norm = (val) => String(val || '').trim().toUpperCase();
   const normDoc = (val) => String(val || '').trim().replace(/\D/g, '') || String(val || '').trim().toUpperCase();
-  const cleanCodeStr = (val) => {
+  
+  // Limpieza segura de sufijos de presentación sin recortar el identificador del grupo (ej: GPE-2026013 se mantiene intacto)
+  const cleanGroupCode = (val) => {
     if (!val) return '';
-    const base = String(val).trim().toUpperCase().split(' - ')[0].trim();
-    return base.replace(/-[0-9]+$/, '').trim();
+    return String(val)
+      .trim()
+      .toUpperCase()
+      .replace(/\s*\(SEM\s*\d+.*?\)/i, '')
+      .replace(/\s*-\s*SEM\s*\d+.*$/i, '')
+      .replace(/_\d+$/, '')
+      .trim();
   };
 
   const allCodes = [];
@@ -4387,12 +4401,11 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const c = g.codigo || g.grupo_codigo;
     if (c) {
       allCodes.push(c);
-      const base = cleanCodeStr(c);
-      if (base) allCodes.push(base);
+      const clean = cleanGroupCode(c);
+      if (clean) allCodes.push(clean);
     }
   });
   const codigos = [...new Set(allCodes.filter(Boolean))];
-  const campanas = [...new Set(gruposInfo.map(g => g.campana).filter(Boolean))];
 
   // 1. Consultas de configuración y asistencias_dia1_reclutador
   let configAll = [];
@@ -4409,7 +4422,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('postulante_documento, grupo_codigo, campana, sigla_inicial, sigla_final, motivo_baja')
         .in('grupo_codigo', codigos),
       supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo')
+        .select('documento, grupo_codigo, campana, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
         .in('grupo_codigo', codigos)
     ];
 
@@ -4417,7 +4430,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     if (activeAsistencias.length === 0) {
       promises.push(
         supabase.from('consolidado_asistencias')
-          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia')
+          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo')
           .in('codigo_grupo', codigos)
       );
     } else {
@@ -4442,10 +4455,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (configAll) {
     configAll.forEach(c => {
       const code = norm(c.grupo_codigo);
-      const baseCode = cleanCodeStr(c.grupo_codigo);
+      const cleanCode = cleanGroupCode(c.grupo_codigo);
       const camp = norm(c.campana);
       if (camp && code) configMap.set(`${camp}|${code}`, c);
-      if (camp && baseCode) configMap.set(`${camp}|${baseCode}`, c);
+      if (camp && cleanCode) configMap.set(`${camp}|${cleanCode}`, c);
       if (code && !configMap.has(code)) configMap.set(code, c);
     });
   }
@@ -4455,22 +4468,22 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (recAsisDia1All) {
     recAsisDia1All.forEach(r => {
       const code = norm(r.grupo_codigo);
-      const baseCode = cleanCodeStr(r.grupo_codigo);
+      const cleanCode = cleanGroupCode(r.grupo_codigo);
       const camp = norm(r.campana);
       const doc = norm(r.postulante_documento);
       if (doc) {
         if (camp && code) recAsisMap.set(`${camp}|${code}|${doc}`, r);
-        if (camp && baseCode) recAsisMap.set(`${camp}|${baseCode}|${doc}`, r);
+        if (camp && cleanCode) recAsisMap.set(`${camp}|${cleanCode}|${doc}`, r);
         if (code && !recAsisMap.has(`${code}|${doc}`)) recAsisMap.set(`${code}|${doc}`, r);
       }
     });
   }
 
-  // 2. Indexación Dual O(1) de Nóminas / Postulantes en memoria (Aislada por Campaña)
+  // 2. Indexación O(1) de Nóminas / Postulantes en memoria por Código Exacto y Campaña
   const nominasGrouped = new Map();
   activePostulantes.forEach(n => {
     const code = norm(n.grupo_codigo);
-    const baseCode = cleanCodeStr(n.grupo_codigo);
+    const cleanCode = cleanGroupCode(n.grupo_codigo);
     const camp = norm(n.campana);
     
     if (camp && code) {
@@ -4478,19 +4491,23 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
       nominasGrouped.get(key).push(n);
     }
-    if (camp && baseCode && baseCode !== code) {
-      const baseKey = `${camp}|${baseCode}`;
-      if (!nominasGrouped.has(baseKey)) nominasGrouped.set(baseKey, []);
-      nominasGrouped.get(baseKey).push(n);
+    if (camp && cleanCode && cleanCode !== code) {
+      const cleanKey = `${camp}|${cleanCode}`;
+      if (!nominasGrouped.has(cleanKey)) nominasGrouped.set(cleanKey, []);
+      nominasGrouped.get(cleanKey).push(n);
+    }
+    if (code) {
+      if (!nominasGrouped.has(code)) nominasGrouped.set(code, []);
+      nominasGrouped.get(code).push(n);
     }
   });
 
-  // 3. Indexación Dual O(1) de Asistencias en memoria (Aislada por Campaña)
+  // 3. Indexación O(1) de Asistencias en memoria por Código Exacto y Campaña
   const formAsisGrouped = new Map();
   activeAsistencias.forEach(f => {
     const rawCode = f.grupo_codigo || f.codigo_grupo;
     const code = norm(rawCode);
-    const baseCode = cleanCodeStr(rawCode);
+    const cleanCode = cleanGroupCode(rawCode);
     const camp = norm(f.campana);
     
     if (camp && code) {
@@ -4498,31 +4515,35 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
       formAsisGrouped.get(key).push(f);
     }
-    if (camp && baseCode && baseCode !== code) {
-      const baseKey = `${camp}|${baseCode}`;
-      if (!formAsisGrouped.has(baseKey)) formAsisGrouped.set(baseKey, []);
-      formAsisGrouped.get(baseKey).push(f);
+    if (camp && cleanCode && cleanCode !== code) {
+      const cleanKey = `${camp}|${cleanCode}`;
+      if (!formAsisGrouped.has(cleanKey)) formAsisGrouped.set(cleanKey, []);
+      formAsisGrouped.get(cleanKey).push(f);
+    }
+    if (code) {
+      if (!formAsisGrouped.has(code)) formAsisGrouped.set(code, []);
+      formAsisGrouped.get(code).push(f);
     }
   });
-
 
   const results = [];
   for (const grupoInfo of gruposInfo) {
     const { codigo: grupo_codigo, campana } = grupoInfo;
-    const cleanCode = norm(grupo_codigo);
-    const baseCode = cleanCodeStr(grupo_codigo);
+    const exactCode = norm(grupo_codigo);
+    const cleanCode = cleanGroupCode(grupo_codigo);
     const normCamp = norm(campana);
-    const groupKey = `${normCamp}|${cleanCode}`;
-    const baseGroupKey = `${normCamp}|${baseCode}`;
+    const groupKey = `${normCamp}|${exactCode}`;
+    const cleanGroupKey = `${normCamp}|${cleanCode}`;
     
     let totalNomina = 0;
     let totalDia0 = 0;
     
-    // Obtener nóminas aislando estrictamente por campaña
-    const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(baseGroupKey)) : null) || 
-                       nominasGrouped.get(groupKey) || [];
+    // Obtener nóminas por código exacto y campaña
+    const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(cleanGroupKey)) : null) || 
+                       nominasGrouped.get(exactCode) || 
+                       nominasGrouped.get(cleanCode) || [];
     
-    // Aislamiento estricto por Periodo y Semana para grupos proyectados y recurrentes
+    // Aislamiento estricto por Periodo y Semana
     const targetPeriodo = grupoInfo.periodo ? String(grupoInfo.periodo).trim() : null;
     const targetSemanaNum = String(grupoInfo.semana_label || grupoInfo.semana_trabajo || '').replace(/\D/g, '');
 
@@ -4533,7 +4554,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         if (p) return p === targetPeriodo;
         const f = parseFechaAsistencia(n.fecha_registro || n.fecha_ingreso || n.created_at);
         if (f) return f.replace(/-/g, '').substring(0, 6) === targetPeriodo;
-        return false;
+        return true;
       });
     }
     if (targetSemanaNum && validNominas.length > 0) {
@@ -4543,9 +4564,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
     }
       
-    // Obtener asistencias aislando estrictamente por campaña y periodo
-    let groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(baseGroupKey)) : null) || 
-                           formAsisGrouped.get(groupKey) || [];
+    // Obtener asistencias por código exacto y campaña
+    let groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(cleanGroupKey)) : null) || 
+                           formAsisGrouped.get(exactCode) || 
+                           formAsisGrouped.get(cleanCode) || [];
 
     if (targetPeriodo && groupFormAsisRaw.length > 0) {
       groupFormAsisRaw = groupFormAsisRaw.filter(f => {
@@ -4553,34 +4575,18 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         if (p) return p === targetPeriodo;
         const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia || f.created_at);
         if (d) return d.replace(/-/g, '').substring(0, 6) === targetPeriodo;
-        return false;
+        return true;
       });
     }
 
     const rawFechaInicio = grupoInfo.fecha_inicio_capacitacion || grupoInfo.fecha_capacitacion || grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha;
     const fechaInicioIso = parseFechaAsistencia(rawFechaInicio);
 
-    // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico de ESA campaña y periodo
-    let effectiveCandidates = validNominas;
-    if (effectiveCandidates.length === 0 && groupFormAsisRaw.length > 0) {
-      const seenDocs = new Map();
-      groupFormAsisRaw.forEach(r => {
-        const doc = r.documento || r.postulante_documento;
-        if (doc && !seenDocs.has(doc)) {
-          seenDocs.set(doc, {
-            documento: doc,
-            dia_0: 'ASISTIO',
-            dia_1: 'ASISTIO'
-          });
-        }
-      });
-      effectiveCandidates = Array.from(seenDocs.values());
-    }
-
+    const effectiveCandidates = validNominas;
     totalNomina = effectiveCandidates.length;
     totalDia0 = effectiveCandidates.filter(n => isAsistioStr(n.dia_0)).length;
 
-    const config = configMap.get(groupKey) || configMap.get(baseGroupKey) || (normCamp ? null : configMap.get(cleanCode));
+    const config = configMap.get(groupKey) || configMap.get(cleanGroupKey) || configMap.get(exactCode) || configMap.get(cleanCode);
     let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
 
     // 1. Prioridad: Fecha REAL de la primera asistencia registrada en sala (dato de verdad)
@@ -4603,15 +4609,23 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       fecha_dia1_ref = earliestIso;
     }
 
-    // 2. Fallback: Solo si el grupo aún no tiene asistencias registradas (proyectado / pendiente)
+    // 2. Fallback: Configuración o fecha proyectada según capacidad_rys
     if (!fecha_dia1_ref) {
-      fecha_dia1_ref = config?.fecha_dia1 || null;
+      fecha_dia1_ref = config?.fecha_dia1 || grupoInfo.fecha_dia_1 || null;
+      if (!fecha_dia1_ref && fechaInicioIso) {
+        const start = new Date(fechaInicioIso + 'T12:00:00Z');
+        if (String(grupo_codigo).startsWith('GPE')) {
+          start.setUTCDate(start.getUTCDate() + 1);
+          if (start.getUTCDay() === 0) start.setUTCDate(start.getUTCDate() + 1);
+        }
+        fecha_dia1_ref = start.toISOString().split('T')[0];
+      }
     }
 
     let countRec = 0;
     let countForm = 0;
     const discrepanciasList = [];
-    if (fecha_dia1_ref && groupFormAsisRaw.length > 0) {
+    if (groupFormAsisRaw.length > 0) {
       const formAsis = groupFormAsisRaw
         .filter(f => (f.fecha_registro_asistencia || f.fecha_asistencia))
         .map(row => {
@@ -4645,11 +4659,11 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       for (const doc of allDocs) {
         const studentRecords = formRecordsByDoc.get(doc) || [];
         const recCandidate = mapRec.get(doc);
-        const recAsisItem = recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
-                            recAsisMap.get(`${normCamp}|${baseCode}|${doc}`) || 
-                            recAsisMap.get(`${cleanCode}|${doc}`);
+        const recAsisItem = recAsisMap.get(`${normCamp}|${exactCode}|${doc}`) || 
+                            recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
+                            recAsisMap.get(`${exactCode}|${doc}`);
         
-        const d1Records = studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref);
+        const d1Records = fecha_dia1_ref ? studentRecords.filter(r => r.fecha_asistencia === fecha_dia1_ref) : [];
         const exactD1Record = d1Records.length > 0 ? d1Records[d1Records.length - 1] : null;
         const latestRecord = studentRecords.length > 0 ? studentRecords[studentRecords.length - 1] : null;
         const formRecord = exactD1Record || latestRecord;
@@ -4730,18 +4744,25 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         estado_calibracion = 'PENDIENTE';
       } else if (countRec > 0 && countForm > 0 && countRec === countForm) {
         estado_calibracion = 'CALIBRADO';
-      } else if (countRec !== countForm) {
+      } else if (countRec > 0 && countForm > 0 && countRec !== countForm) {
         estado_calibracion = 'DESCALIBRADO';
       } else {
         estado_calibracion = 'PENDIENTE';
       }
     } else {
-      // Si no hay fecha Día 1 o no hay registros de formador para este grupo/campaña
-      if (countRec > 0 && fecha_dia1_ref) {
-        estado_calibracion = 'DESCALIBRADO';
-      } else {
-        estado_calibracion = 'PENDIENTE';
+      // El formador aún no ha registrado asistencias en sala para este grupo
+      // Si reclutamiento ya llenó nómina para semanas presentes/futuras (ej: SEM 36), se calculan sus postulantes activos pero el estado queda PENDIENTE
+      for (const recCandidate of effectiveCandidates) {
+        const doc = normDoc(recCandidate.documento);
+        const recAsisItem = recAsisMap.get(`${normCamp}|${exactCode}|${doc}`) || 
+                            recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
+                            recAsisMap.get(`${exactCode}|${doc}`);
+        const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
+        const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
+        const isRecAsistencia = isCandidateActiveRec(recCandidate) || isAuxAsistencia;
+        if (isRecAsistencia) countRec++;
       }
+      estado_calibracion = 'PENDIENTE';
     }
 
     results.push({
