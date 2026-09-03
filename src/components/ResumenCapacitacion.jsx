@@ -307,17 +307,20 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     const total = kpis.total_nomina || 0;
     const d1 = kpis.asistio_dia1 || 0;
     const ojt = kpis.activos_ojt || 0;
+    const desertoresOjt = kpis.desertores_ojt || 0;
     const iop = kpis.ingresos_iop || 0;
     const rq = kpis.rq_solicitado || 0;
+    const qIniciaOjt = ojt + iop + desertoresOjt;
     const ojt_transito = segmentData.reduce((acc, s) => acc + s.enTransito, 0);
 
     return {
       d1_vs_nomina: total > 0 ? ((d1 / total) * 100).toFixed(1) : '0.0',
-      ojt_vs_d1: d1 > 0 ? ((ojt / d1) * 100).toFixed(1) : '0.0',
+      ojt_vs_d1: d1 > 0 ? ((qIniciaOjt / d1) * 100).toFixed(1) : '0.0',
       iop_vs_nomina: total > 0 ? ((iop / total) * 100).toFixed(1) : '0.0',
-      iop_vs_ojt: ojt > 0 ? ((iop / ojt) * 100).toFixed(1) : '0.0',
+      iop_vs_ojt: qIniciaOjt > 0 ? ((iop / qIniciaOjt) * 100).toFixed(1) : '0.0',
       cumplimiento_rq: rq > 0 ? ((iop / rq) * 100).toFixed(1) : '0.0',
-      ojt_transito
+      ojt_transito,
+      qIniciaOjt
     };
   }, [kpis, segmentData]);
 
@@ -462,8 +465,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     };
   }, [kpis, filters.periodo]);
 
-  // Datos para Embudo Lineal
+  // Datos para Embudo Lineal Calibrado
   const funnelData = useMemo(() => {
+    const qIniciaOjt = kpiPercentages.qIniciaOjt || ((kpis.activos_ojt || 0) + (kpis.ingresos_iop || 0) + (kpis.desertores_ojt || 0));
+    const dropD1 = (100 - parseFloat(kpiPercentages.d1_vs_nomina)).toFixed(1);
+    const dropOjt = (100 - parseFloat(kpiPercentages.ojt_vs_d1)).toFixed(1);
+    const dropIop = (100 - parseFloat(kpiPercentages.iop_vs_ojt)).toFixed(1);
+
     return [
       {
         etapa: '1. Reclutados',
@@ -478,15 +486,15 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         nombre: 'Inicio Formación',
         valor: kpis.asistio_dia1,
         pct: `${kpiPercentages.d1_vs_nomina}%`,
-        drop: `${(100 - parseFloat(kpiPercentages.d1_vs_nomina)).toFixed(1)}% caída`,
+        drop: `${dropD1}% caída`,
         fill: '#818CF8'
       },
       {
-        etapa: '3. Activos OJT',
+        etapa: '3. Pase a OJT',
         nombre: 'Pase a OJT / Nesting',
-        valor: kpis.activos_ojt,
+        valor: qIniciaOjt,
         pct: `${kpiPercentages.ojt_vs_d1}% vs D1`,
-        drop: `${(100 - parseFloat(kpiPercentages.ojt_vs_d1)).toFixed(1)}% caída`,
+        drop: `${dropOjt}% caída`,
         fill: '#2DD4BF'
       },
       {
@@ -494,7 +502,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         nombre: 'Pase a Operación',
         valor: kpis.ingresos_iop,
         pct: `${kpiPercentages.iop_vs_ojt}% vs OJT`,
-        drop: `${(100 - parseFloat(kpiPercentages.iop_vs_ojt)).toFixed(1)}% caída`,
+        drop: `${dropIop}% caída`,
         fill: '#FBBF24'
       }
     ];
@@ -1068,7 +1076,12 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
               <div className="mt-4 pt-3 border-t border-[var(--border-normal)] flex flex-wrap items-center justify-between text-xs text-[var(--text-secondary)] gap-2">
                 <span>Total Evaluados: <strong className="text-[var(--text-primary)]">{kpis.total_nomina.toLocaleString()}</strong></span>
-                <span>Graduación: <strong className="text-amber-400 font-mono">{kpis.ingresos_iop.toLocaleString()} I-OP</strong></span>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-[var(--text-muted)] font-mono">
+                    En OJT: <strong className="text-teal-400">{kpis.activos_ojt.toLocaleString()}</strong>
+                  </span>
+                  <span>Graduación: <strong className="text-amber-400 font-mono">{kpis.ingresos_iop.toLocaleString()} I-OP</strong></span>
+                </div>
               </div>
             </div>
 
