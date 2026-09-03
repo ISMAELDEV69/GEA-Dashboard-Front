@@ -90,7 +90,7 @@ export const ALL_NAV = [
   { id: 'capacidad', label: 'Capacidad RYS', icon: Layers, description: 'Planificación de grupos y metas', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asignacion_formador', label: 'Asignar Formador', icon: UserCheck, description: 'Distribución de formadores', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asistencia', label: 'Marcación Asistencia', icon: ClipboardCheck, description: 'Registro diario A / F / B', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys'] },
+  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'] },
   { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor'] },
   { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'visor', 'reclutador'] },
   { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos', roles: ['admin', 'jefe_rys', 'coordinador_rys', 'jefe_capacitacion'] },

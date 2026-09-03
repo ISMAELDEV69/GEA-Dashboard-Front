@@ -563,6 +563,7 @@ export default function ConsolidadoPowerBI() {
       const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
       const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
+      const rowCampana = cap?.campana || campana;
 
       const txtEstado = String(row.estado || '').toUpperCase();
       const txtMotivo = String(row.motivo_baja || '').toUpperCase();
@@ -572,13 +573,14 @@ export default function ConsolidadoPowerBI() {
       
       result[i] = {
         ...row,
-        _campana: campana,
+        _campana: rowCampana,
+        _rawCampana: campana,
         _gpe: gpe,
         _periodo: rowPeriodo,
         _semana: rowSemana,
         _segmento: rowSegmento,
         isBajaDia1: isBajaDia1Val,
-        isDescuento: false
+        isDescuento: Boolean(row.isDescuento)
       };
     }
     return result;

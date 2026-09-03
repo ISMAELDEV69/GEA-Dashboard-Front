@@ -136,9 +136,9 @@ export default function NominaGridEditor({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
 
-  // ── Role Permissions & Read-Only Mode ───────────────────────────
-  const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion', 'visor'].includes(currentRole)
-  const isReadOnly = isCapacitacionRole
+  // ── Role Permissions & Read-Only Mode (Solo Reclutamiento y Administrador pueden editar) ──
+  const isRecruitmentRole = ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'].includes(currentRole)
+  const isReadOnly = !isRecruitmentRole
 
   // ── Duplicate Detection & Delete Management ─────────────────────
   const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
