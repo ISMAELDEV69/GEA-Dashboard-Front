@@ -397,9 +397,11 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
 
     let cutoffIso = null;
     if (!all && !periodo) {
-      // Ventana de últimos ~60 días
+      // Periodo actual + mes anterior (ej. 1 de Agosto si estamos en Septiembre)
       const d = new Date();
-      d.setDate(d.getDate() - 60);
+      d.setDate(1);
+      d.setMonth(d.getMonth() - 1);
+      d.setHours(0, 0, 0, 0);
       cutoffIso = d.toISOString();
       countQuery = countQuery.gte('created_at', cutoffIso);
     } else if (periodo) {
