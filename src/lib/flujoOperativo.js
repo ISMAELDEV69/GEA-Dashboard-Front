@@ -146,6 +146,28 @@ export function resolveFormadorDocumento(userProfile, formadores = []) {
   return null
 }
 
+export function resolveFormadorSegment(userProfile, formadores = []) {
+  if (!userProfile) return ''
+  if (userProfile.segmento) return String(userProfile.segmento).trim().toUpperCase()
+
+  const doc = resolveFormadorDocumento(userProfile, formadores)
+  if (doc) {
+    const f = formadores.find(x => String(x.documento || x.dni || '').trim() === doc)
+    if (f?.segmento) return String(f.segmento).trim().toUpperCase()
+  }
+
+  const normalize = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+  const userAlix = normalize(userProfile.nombre || userProfile.usuario_alix || userProfile.alix || '')
+  const nombre = userProfile.nombre_completo || userProfile.nombre || ''
+
+  const match = formadores.find(f => {
+    const fAlix = normalize(f.usuario_alix || f.alix || '')
+    return (userAlix && fAlix === userAlix) || (nombre && nameMatches(f.nombre_completo || f.datos_completos, nombre))
+  })
+
+  return match?.segmento ? String(match.segmento).trim().toUpperCase() : ''
+}
+
 export function filterPostulantesReclutador(postulantes, userProfile, reclutadores = []) {
   if (!userProfile) return []
   const normalize = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()

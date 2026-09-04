@@ -24,7 +24,8 @@ import {
   Laptop
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, DB_MODE } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE } from '../lib/dataService'
+import { resolveFormadorSegment } from '../lib/flujoOperativo'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
@@ -71,7 +72,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
   fecha,
   onStatusChange,
   onMotiveChange,
-  motivosBaja
+  motivosBaja,
+  isReadOnly = false
 }) {
   const isBaja = item.sigla === 'B'
   const estadoLabel = isBaja ? 'CESADO' : 'ACTIVO'
@@ -110,9 +112,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
             <select
               value={item.sigla}
               onChange={(e) => onStatusChange(item.documento, e.target.value)}
-              disabled={item.isLockedBaja}
-              className={`w-full rounded-md py-1 px-1.5 font-black text-center text-xs outline-none shadow-xs cursor-pointer transition-all border border-[var(--border-normal)] ${
-                item.isLockedBaja ? 'cursor-not-allowed opacity-70' : 'hover:scale-105 active:scale-95'
+              disabled={isReadOnly || item.isLockedBaja}
+              className={`w-full rounded-md py-1 px-1.5 font-black text-center text-xs outline-none shadow-xs transition-all border border-[var(--border-normal)] ${
+                isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:scale-105 active:scale-95'
               }`}
               style={{
                 backgroundColor: siglaOpt?.bgVar || 'var(--bg-elevated)',
@@ -135,8 +137,10 @@ const AttendanceRow = React.memo(function AttendanceRow({
             <select
               value={item.motivo_baja || (item.isFirstRecordGroup ? 'BAJA DIA 1' : '')}
               onChange={e => onMotiveChange(item.documento, e.target.value)}
-              disabled={item.isLockedBaja}
-              className="w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none"
+              disabled={isReadOnly || item.isLockedBaja}
+              className={`w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
+                isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-60' : ''
+              }`}
             >
               {/* Opción limpia universal: BAJA DIA 1 */}
               <option value="BAJA DIA 1">BAJA DIA 1</option>
@@ -423,6 +427,43 @@ export default function AsistenciaForm({
     };
   }, [activeGrupoObj, liveGrupoMeta]);
 
+  // ── Control de Permisos y Llave por Segmento ────────────────────
+  const currentEffectiveRole = String(userRole || userProfile?.rol || 'admin').toLowerCase().trim()
+  const isSuperAdmin = ['admin', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'calidad'].includes(currentEffectiveRole)
+  const isReclutador = currentEffectiveRole === 'reclutador'
+  const isFormador = currentEffectiveRole === 'formador'
+
+  const userSegmento = useMemo(() => {
+    return resolveFormadorSegment(userProfile, allFormadores)
+  }, [userProfile, allFormadores])
+
+  const grupoSegmento = useMemo(() => {
+    return String(effectiveGrupoObj?.segmento || selectedSegmento || '').trim().toUpperCase()
+  }, [effectiveGrupoObj, selectedSegmento])
+
+  const { isReadOnly, readOnlyReason } = useMemo(() => {
+    if (isSuperAdmin) {
+      return { isReadOnly: false, readOnlyReason: null }
+    }
+    if (isReclutador) {
+      return {
+        isReadOnly: true,
+        readOnlyReason: 'VISTA_INFORMATIVA_RECLUTAMIENTO'
+      }
+    }
+    if (isFormador) {
+      // Si ambos segmentos existen y son distintos -> bloqueo por segmento
+      if (userSegmento && grupoSegmento && userSegmento !== grupoSegmento) {
+        return {
+          isReadOnly: true,
+          readOnlyReason: 'SEGMENTO_BLOQUEADO'
+        }
+      }
+      return { isReadOnly: false, readOnlyReason: null }
+    }
+    return { isReadOnly: false, readOnlyReason: null }
+  }, [isSuperAdmin, isReclutador, isFormador, userSegmento, grupoSegmento])
+
   // Explicit user-driven cascading filter handlers (avoid wiping localStorage restored values on mount)
   const handlePeriodoChange = (val) => {
     setSelectedPeriodo(val)
@@ -665,12 +706,15 @@ export default function AsistenciaForm({
         if (aPer && aPer !== targetPeriodo && !aPer.includes(targetPeriodo) && !targetPeriodo.includes(aPer)) continue
       }
 
+      const recFecha = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia
+      if (!recFecha) continue
+
       groupRecordsAll.push(a)
       mappedDocs.add(a.postulante_documento)
 
-      if (a.fecha_asistencia === fecha) {
+      if (recFecha === fecha) {
         recordsByDocOnDate.set(a.postulante_documento, a)
-      } else if (a.fecha_asistencia < fecha) {
+      } else if (recFecha < fecha) {
         let arr = previousRecordsByDoc.get(a.postulante_documento)
         if (!arr) {
           arr = []
@@ -683,7 +727,11 @@ export default function AsistenciaForm({
     // Sort previous records for each doc by date descending
     for (const [doc, arr] of previousRecordsByDoc.entries()) {
       if (arr.length > 1) {
-        arr.sort((a, b) => b.fecha_asistencia.localeCompare(a.fecha_asistencia))
+        arr.sort((a, b) => {
+          const fa = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia || ''
+          const fb = parseFechaAsistencia(b.fecha_asistencia || b.fecha_registro_asistencia || b.fecha) || b.fecha_asistencia || ''
+          return fb.localeCompare(fa)
+        })
       }
     }
 
@@ -766,14 +814,15 @@ export default function AsistenciaForm({
 
     let firstDateOfGroup = null
     if (groupRecordsAll.length > 0) {
-      firstDateOfGroup = groupRecordsAll[0].fecha_asistencia
+      firstDateOfGroup = parseFechaAsistencia(groupRecordsAll[0].fecha_asistencia || groupRecordsAll[0].fecha_registro_asistencia || groupRecordsAll[0].fecha) || groupRecordsAll[0].fecha_asistencia
       for (let i = 1; i < groupRecordsAll.length; i++) {
-        if (groupRecordsAll[i].fecha_asistencia < firstDateOfGroup) {
-          firstDateOfGroup = groupRecordsAll[i].fecha_asistencia
+        const itemFecha = parseFechaAsistencia(groupRecordsAll[i].fecha_asistencia || groupRecordsAll[i].fecha_registro_asistencia || groupRecordsAll[i].fecha) || groupRecordsAll[i].fecha_asistencia
+        if (itemFecha && (!firstDateOfGroup || itemFecha < firstDateOfGroup)) {
+          firstDateOfGroup = itemFecha
         }
       }
     }
-    const isFirstRecordGroup = groupRecordsAll.length === 0 || fecha <= firstDateOfGroup
+    const isFirstRecordGroup = groupRecordsAll.length === 0 || (firstDateOfGroup && fecha <= firstDateOfGroup)
 
     const uniquePostulantes = []
     const seenDocs = new Set()
@@ -796,7 +845,7 @@ export default function AsistenciaForm({
       (f.nombre_completo || f.datos_completos || f.nombres_completos || '').trim()
     ]))
 
-    const groupDates = Array.from(new Set(groupRecordsAll.map(a => a.fecha_asistencia).filter(Boolean))).sort()
+    const groupDates = Array.from(new Set(groupRecordsAll.map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia).filter(Boolean))).sort()
     const allDates = Array.from(new Set([...groupDates, fecha])).sort()
     const trainingDayIndex = allDates.indexOf(fecha) + 1
 
@@ -818,10 +867,11 @@ export default function AsistenciaForm({
       const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
       
       const prevList = previousRecordsByDoc.get(p.documento) || []
-      const effectiveAttendedDays = prevList.filter(r => r.sigla_asistencia === 'A' || r.sigla_asistencia === 'I-OP').length
+      const effectiveAttendedDays = prevList.filter(r => (r.sigla_asistencia || r.sigla) === 'A' || (r.sigla_asistencia || r.sigla) === 'I-OP').length
 
       // 1. Motivo histórico previo en asistencias registradas y nómina
-      const pastBajaRecord = prevList.find(r => r.sigla_asistencia === 'B')
+      const pastBajaRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
+      const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
       const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
       const fallbackNominaMotive = p.motivo_baja && String(p.motivo_baja).trim() !== '' && String(p.motivo_baja).trim() !== 'null' ? String(p.motivo_baja).trim() : ''
 
@@ -838,7 +888,7 @@ export default function AsistenciaForm({
       let inheritedSigla = 'A'
       let inheritedMotivo = ''
 
-      if (existing && existing.sigla_asistencia === 'B') {
+      if (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) {
         // 1. Registro explícito de baja guardado en la base de datos para esta fecha
         inheritedSigla = 'B'
         inheritedMotivo = existing.motivo_baja || pastMotiveFromRecords || ''
@@ -848,25 +898,37 @@ export default function AsistenciaForm({
         inheritedSigla = 'B'
         inheritedMotivo = pastBajaRecord.motivo_baja || pastMotiveFromRecords || ''
       } else if (existing) {
-        // 3. Registro explícito guardado (activo/falta) para esta fecha
-        inheritedSigla = existing.sigla_asistencia || 'A'
+        // 3. Registro explícito guardado (activo/falta/I-OP) para esta fecha
+        inheritedSigla = existing.sigla_asistencia || existing.sigla || 'A'
+        inheritedMotivo = existing.motivo_baja || ''
+      } else if (pastIopRecord) {
+        // 4. Si el candidato ya pasó a Ingreso a Operación (I-OP) en cualquier fecha anterior del grupo:
+        // Permanece en I-OP en todos los días posteriores de capacitación
+        inheritedSigla = 'I-OP'
         inheritedMotivo = ''
       } else if (prevList && prevList.length > 0) {
-        // 4. En días posteriores sin guardar: heredar del día previo más reciente
+        // 5. En días posteriores sin guardar: heredar del día previo más reciente (I-OP, FI, FJ, etc.)
         const lastPrev = prevList[0]
-        if (lastPrev.sigla_asistencia === 'B') {
+        const lastSigla = lastPrev.sigla_asistencia || lastPrev.sigla || 'A'
+        if (lastSigla === 'B') {
           inheritedSigla = 'B'
           inheritedMotivo = lastPrev.motivo_baja || pastMotiveFromRecords || ''
+        } else if (lastSigla === 'I-OP') {
+          inheritedSigla = 'I-OP'
+          inheritedMotivo = ''
+        } else if (lastSigla === 'FI' || lastSigla === 'FJ') {
+          inheritedSigla = lastSigla
+          inheritedMotivo = ''
         } else {
           inheritedSigla = 'A'
           inheritedMotivo = ''
         }
       } else if (isIngresoEspecial && isFirstRecordGroup && !isAsistioStr(dia1Val) && !isAsistioStr(dia0Val)) {
-        // 5. Ingreso especial no confirmado en su primer día del grupo
+        // 6. Ingreso especial no confirmado en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {
-        // 6. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
+        // 7. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
         inheritedSigla = 'A'
         inheritedMotivo = ''
       }
@@ -894,7 +956,7 @@ export default function AsistenciaForm({
         motivo_baja = pastMotiveFromRecords || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
       }
 
-      const isHistoricalBaja = (existing && existing.sigla_asistencia === 'B') || (!existing && inheritedSigla === 'B')
+      const isHistoricalBaja = (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || (!existing && inheritedSigla === 'B')
       const isLockedBaja = false
 
       return {
@@ -924,6 +986,7 @@ export default function AsistenciaForm({
   }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado])
 
   const handleStatusChange = useCallback((doc, newSigla) => {
+    if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
       let newMotivo = item.motivo_baja
@@ -937,20 +1000,22 @@ export default function AsistenciaForm({
       userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }
     }))
-  }, [])
+  }, [isReadOnly])
 
   const handleMotiveChange = useCallback((doc, newMotivo) => {
+    if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
       userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: newMotivo })
       return { ...item, motivo_baja: newMotivo }
     }))
-  }, [])
+  }, [isReadOnly])
 
   // Fast 1-click bulk mark as attended
   const handleMarkAllAttended = () => {
+    if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
-      if (item.isLateInclusion || item.isLockedBaja) return item;
+      if (item.isLateInclusion || item.isLockedBaja || item.sigla === 'B' || item.sigla === 'I-OP') return item;
       userEditsRef.current.set(item.documento, { sigla: 'A', motivo_baja: '' })
       return { ...item, sigla: 'A', motivo_baja: '' }
     }))
@@ -958,6 +1023,16 @@ export default function AsistenciaForm({
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();
+    if (isReadOnly) {
+      if (readOnlyReason === 'SEGMENTO_BLOQUEADO') {
+        toast.error(`Modo solo lectura: Este grupo es de ${grupoSegmento} y tu segmento es ${userSegmento}.`);
+      } else if (readOnlyReason === 'VISTA_INFORMATIVA_RECLUTAMIENTO') {
+        toast.info('Vista informativa: Reclutamiento gestiona la asistencia y nómina en el módulo Nóminas.');
+      } else {
+        toast.error('No tienes permisos para modificar la asistencia de este grupo.');
+      }
+      return;
+    }
     if (!selectedGrupo) return alert('Selecciona un grupo.')
     
     const currentDoc = String(effectiveGrupoObj?.formador_documento || '').trim();
@@ -1328,11 +1403,12 @@ export default function AsistenciaForm({
           {/* Guardar Cambios */}
           <button
             onClick={handleSave}
-            disabled={saving || !selectedGrupo}
+            disabled={saving || !selectedGrupo || isReadOnly}
             className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs h-7 px-3.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_12px_rgba(16,185,129,0.3)] cursor-pointer"
+            title={isReadOnly ? 'Edición deshabilitada (modo solo lectura)' : 'Guardar Cambios'}
           >
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            <span>{saving ? 'Guardando...' : 'Guardar Cambios'}</span>
+            <span>{saving ? 'Guardando...' : (isReadOnly ? 'Solo Lectura' : 'Guardar Cambios')}</span>
           </button>
 
           {/* Calendario */}
@@ -1385,6 +1461,39 @@ export default function AsistenciaForm({
           </div>
         </div>
       </div>
+
+      {/* ── ALERTA INFORMATIVA DE PERMISOS / LLAVE DE SEGMENTO ── */}
+      {isReadOnly && (
+        <div className={`px-3.5 py-2 rounded-xl flex items-center justify-between gap-3 shrink-0 shadow-xs border ${
+          readOnlyReason === 'SEGMENTO_BLOQUEADO'
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+            : readOnlyReason === 'VISTA_INFORMATIVA_RECLUTAMIENTO'
+            ? 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300'
+            : 'bg-slate-500/10 border-slate-500/30 text-slate-700 dark:text-slate-300'
+        }`}>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle size={15} className="shrink-0" />
+            <span className="text-xs font-semibold leading-relaxed">
+              {readOnlyReason === 'SEGMENTO_BLOQUEADO' ? (
+                <>
+                  <strong className="font-bold">Modo Solo Lectura (Llave de Segmento):</strong> Este grupo pertenece al segmento <span className="px-1.5 py-0.2 rounded font-black uppercase bg-amber-500/20 text-amber-800 dark:text-amber-200">{grupoSegmento}</span> y tu segmento asignado es <span className="px-1.5 py-0.2 rounded font-black uppercase bg-amber-500/20 text-amber-800 dark:text-amber-200">{userSegmento || 'OTRO'}</span>. Los formadores solo pueden editar grupos de su mismo segmento para evitar cruces accidentales.
+                </>
+              ) : readOnlyReason === 'VISTA_INFORMATIVA_RECLUTAMIENTO' ? (
+                <>
+                  <strong className="font-bold">Vista Informativa (Reclutamiento):</strong> Estás consultando el avance de capacitación. La gestión de asistencias de reclutamiento (Día 0, Día 1 y documentos) se realiza en el módulo de <strong className="underline">Nóminas</strong>.
+                </>
+              ) : (
+                <>
+                  <strong className="font-bold">Modo Solo Lectura:</strong> Vista protegida de solo consulta.
+                </>
+              )}
+            </span>
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/10 dark:bg-white/10 shrink-0">
+            Solo Lectura
+          </span>
+        </div>
+      )}
 
       {/* ── 2. HIGH-DENSITY CASCADE FILTERS RIBBON (Height ~50px) ── */}
       <div className="p-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-xs shrink-0">
@@ -1723,7 +1832,7 @@ export default function AsistenciaForm({
             <span className="text-[10px] bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-muted)] font-mono font-bold px-2 py-0.5 rounded-md">
               {displayedList.length} cargados
             </span>
-            {displayedList.length > 0 && (
+            {displayedList.length > 0 && !isReadOnly && (
               <button
                 onClick={handleMarkAllAttended}
                 className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all active:scale-95 shadow-xs cursor-pointer"
@@ -1811,6 +1920,7 @@ export default function AsistenciaForm({
                     onStatusChange={handleStatusChange}
                     onMotiveChange={handleMotiveChange}
                     motivosBaja={motivosBaja}
+                    isReadOnly={isReadOnly}
                   />
                 ))}
               </tbody>

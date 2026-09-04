@@ -93,10 +93,10 @@ function ReclutadorDashboard({
 
   // ── NIVEL 1 DE LLAVE: Postulantes filtrados por Reclutador ──
   const postulantesByRecruiter = useMemo(() => {
+    if (selectedRecName !== 'ALL') {
+      return postulantes.filter(p => matchRecruiter(p.reclutador, selectedRecName))
+    }
     if (isAdmin) {
-      if (selectedRecName !== 'ALL') {
-        return postulantes.filter(p => matchRecruiter(p.reclutador, selectedRecName))
-      }
       return postulantes
     }
     return filterPostulantesReclutador(postulantes, userProfile, reclutadores)
@@ -247,7 +247,7 @@ function ReclutadorDashboard({
 
   const activeFiltersCount = useMemo(() => {
     let count = 0
-    if (isAdmin && selectedRecName !== 'ALL') count++
+    if (selectedRecName !== 'ALL') count++
     if (selectedCampana !== 'ALL') count++
     if (selectedGrupo !== 'ALL') count++
     if (selectedPeriodo !== 'ALL') count++
@@ -255,7 +255,7 @@ function ReclutadorDashboard({
     if (selectedExpCall !== 'ALL') count++
     if (selectedEstado !== 'ALL') count++
     return count
-  }, [isAdmin, selectedRecName, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, selectedExpCall, selectedEstado])
+  }, [selectedRecName, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, selectedExpCall, selectedEstado])
 
   const resetAllFilters = () => {
     setSelectedRecName('ALL')
@@ -268,14 +268,13 @@ function ReclutadorDashboard({
   }
 
   const effectiveProfile = useMemo(() => {
-    if (!isAdmin) return userProfile
     if (selectedRecName === 'ALL') return userProfile
     return {
       ...userProfile,
       nombre: selectedRecName,
       nombre_completo: selectedRecName,
     }
-  }, [isAdmin, selectedRecName, userProfile])
+  }, [selectedRecName, userProfile])
 
   const myDocs = useMemo(() => new Set(myPostulantes.map(p => p.documento)), [myPostulantes])
   const myAsist = useMemo(() => asistencias.filter(a => myDocs.has(a.postulante_documento)), [asistencias, myDocs])
@@ -408,32 +407,30 @@ function ReclutadorDashboard({
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5">
-          {/* 1. Reclutador (Admin only: sólo usuarios del equipo de reclutamiento) */}
-          {isAdmin && (
-            <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
-                <UserCheck size={11} className="text-blue-500" />
-                <span>Reclutador</span>
-              </label>
-              <select
-                value={selectedRecName}
-                onChange={(e) => handleRecruiterChange(e.target.value)}
-                className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-cyan-500 truncate"
-              >
-                <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                  Todos ({postulantes.length})
-                </option>
-                {reclutadoresList.map((recName) => {
-                  const count = postulantes.filter(p => matchRecruiter(p.reclutador, recName)).length
-                  return (
-                    <option key={recName} value={recName} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                      {recName} ({count})
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
-          )}
+          {/* 1. Reclutador (Permite alternar entre la cartera personal y la de compañeros/equipo) */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-black uppercase text-[var(--text-muted)] flex items-center gap-1">
+              <UserCheck size={11} className="text-blue-500" />
+              <span>Reclutador</span>
+            </label>
+            <select
+              value={selectedRecName}
+              onChange={(e) => handleRecruiterChange(e.target.value)}
+              className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 rounded-xl text-xs font-bold outline-none cursor-pointer shadow-xs focus:ring-1 focus:ring-cyan-500 truncate"
+            >
+              <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                {isAdmin ? `Todos (${postulantes.length})` : `Mi Cartera Personal`}
+              </option>
+              {reclutadoresList.map((recName) => {
+                const count = postulantes.filter(p => matchRecruiter(p.reclutador, recName)).length
+                return (
+                  <option key={recName} value={recName} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+                    {recName} ({count})
+                  </option>
+                )
+              })}
+            </select>
+          </div>
 
           {/* 2. Campaña (en cascada) */}
           <div className="space-y-1">
