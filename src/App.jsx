@@ -78,20 +78,20 @@ const PerformanceScorecardIndividual = lazyWithRetry(() => import('./components/
 
 // ── RBAC: Navegación de Vistas por Rol ──────────────────────────────────────────
 export const ALL_NAV = [
-  { id: 'scorecard_individual', label: 'KPIS - Asesor', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'] },
-  { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'attendancebi', label: 'Dispersión BI', icon: Activity, description: 'Métricas de retención diaria', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'dashboard', label: 'Dashboard General', icon: LayoutDashboard, description: 'Control Operativo y SLAs', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'] },
-  { id: 'reportedia1', label: 'Reporte Día 1', icon: Radio, description: 'Calibración inicial de grupos', roles: ['admin', 'visor', 'reclutador', 'formador', 'coordinador_rys', 'jefe_rys'] },
+  { id: 'scorecard_individual', label: 'KPIS - Asesor', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
+  { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'attendancebi', label: 'Dispersión BI', icon: Activity, description: 'Métricas de retención diaria', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'dashboard', label: 'Dashboard General', icon: LayoutDashboard, description: 'Control Operativo y SLAs', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
+  { id: 'reportedia1', label: 'Reporte Día 1', icon: Radio, description: 'Calibración inicial de grupos', roles: ['admin', 'visor', 'reclutador', 'formador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
   { id: 'cartera_reclutador', label: 'Mi Cartera', icon: Users, description: 'Métricas, metas y postulantes', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'] },
   { id: 'capacidad', label: 'Capacidad RYS', icon: Layers, description: 'Planificación de grupos y metas', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asignacion_formador', label: 'Asignar Formador', icon: UserCheck, description: 'Distribución de formadores', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asistencia', label: 'Marcación Asistencia', icon: ClipboardCheck, description: 'Registro diario A / F / B', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'] },
-  { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor'] },
+  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
+  { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor', 'calidad'] },
   { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'visor', 'reclutador'] },
   { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos', roles: ['admin', 'jefe_rys', 'coordinador_rys', 'jefe_capacitacion'] },
   { id: 'descuentos_form', label: 'Cargar Descuentos', icon: Layers, description: 'Ingreso de incidencias', roles: ['admin', 'formador', 'reclutador'] },
@@ -99,7 +99,7 @@ export const ALL_NAV = [
   { id: 'equipo_reclutamiento', label: 'Eq. Reclutamiento', icon: Users, description: 'Directorio de reclutadores', roles: ['admin', 'coordinador_rys', 'jefe_rys'] },
   { id: 'equipo_formacion', label: 'Equipo Formación', icon: GraduationCap, description: 'Directorio de formadores', roles: ['admin', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'config', label: 'Configuraciones', icon: LayoutDashboard, description: 'Motivos de Baja y otros', roles: ['admin'] },
-  { id: 'legacy_dashboards', label: 'Dashboards', icon: BarChart3, description: 'Panel de Control', roles: ['admin', 'formador', 'visor', 'reclutador', 'coordinador_rys', 'jefe_rys'] },
+  { id: 'legacy_dashboards', label: 'Dashboards', icon: BarChart3, description: 'Panel de Control', roles: ['admin', 'formador', 'visor', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
   { id: 'dashboards_admin', label: 'Gestor Dashboards', icon: BarChart3, description: 'Administrar enlaces', roles: ['admin'] },
   { id: 'role_permissions', label: 'Permisos de Roles', icon: Shield, description: 'Gestor de Accesos', roles: ['admin'] },
   { id: 'users', label: 'Usuarios', icon: Users, description: 'Gestión de Cuentas', roles: ['admin'] },
@@ -168,7 +168,7 @@ export default function App() {
         setUserProfile({
           id: session.user.id,
           nombre: meta.nombre || session.user.email?.split('@')[0] || 'Usuario',
-          rol: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'].includes(metaRol) ? metaRol : 'visor',
+          rol: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'].includes(metaRol) ? metaRol : 'visor',
         })
       })
   }, [session])

@@ -54,6 +54,7 @@ const VIEW_ROLE_MODES = [
   { id: 'coordinador_rys', label: 'CR', title: 'Coordinador RYS' },
   { id: 'jefe_rys', label: 'JR', title: 'Jefe RYS' },
   { id: 'jefe_capacitacion', label: 'JC', title: 'Jefe Capacitación' },
+  { id: 'calidad', label: 'Q', title: 'Calidad' },
 ]
 
 export default function AppHeader({

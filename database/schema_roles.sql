@@ -68,5 +68,6 @@ VALUES
     ('supervisor_capacitacion', 'Supervisor Cap.', 'SC', 'Gestión y supervisión de equipos de formación.', 'bg-orange-500/10 text-orange-500 border-orange-500/20', 'bg-orange-500', 'Users'),
     ('coordinador_rys', 'Coordinador RYS', 'CR', 'Coordinación operativa de reclutamiento y selección.', 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20', 'bg-cyan-500', 'UserPlus'),
     ('jefe_rys', 'Jefe RYS', 'JR', 'Jefatura general de reclutamiento y selección.', 'bg-sky-500/10 text-sky-500 border-sky-500/20', 'bg-sky-500', 'Shield'),
-    ('jefe_capacitacion', 'Jefe Cap.', 'JC', 'Jefatura general de formación y capacitación.', 'bg-amber-500/10 text-amber-500 border-amber-500/20', 'bg-amber-500', 'BookOpen')
+    ('jefe_capacitacion', 'Jefe Cap.', 'JC', 'Jefatura general de formación y capacitación.', 'bg-amber-500/10 text-amber-500 border-amber-500/20', 'bg-amber-500', 'BookOpen'),
+    ('calidad', 'Calidad', 'Q', 'Monitoreo, control de calidad y auditoría de procesos en modo visor.', 'bg-teal-500/10 text-teal-500 border-teal-500/20', 'bg-teal-500', 'CheckSquare')
 ON CONFLICT (id) DO NOTHING;

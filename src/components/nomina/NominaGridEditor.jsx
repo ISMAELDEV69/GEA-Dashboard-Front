@@ -6,8 +6,8 @@ import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, 
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key, isSelected = false) {
-  const group1 = ['celular', 'celular_referencia', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
-  const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final'];
+  const group1 = ['celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
+  const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final', 'revision_estado'];
   const group3 = ['validacion_reingreso', 'fecha_validacion', 'observacion_reingreso'];
   
   if (isSelected) {
@@ -33,6 +33,7 @@ function getHeaderColor(key, isSelected = false) {
 export const POSTULANTE_COLUMNS = [
   { key: 'celular', label: 'CELULAR', width: 130 },
   { key: 'celular_referencia', label: 'CEL. REF.', width: 130 },
+  { key: 'usuario_whatsapp', label: 'USUARIO WHATSAPP', width: 170 },
   { key: 'correo', label: 'CORREO', width: 220 },
   { key: 'genero', label: 'GÉNERO', width: 110 },
   { key: 'fecha_nacimiento', label: 'F. NACIMIENTO', width: 130 },
@@ -40,7 +41,6 @@ export const POSTULANTE_COLUMNS = [
   { key: 'estado_civil', label: 'ESTADO CIVIL', width: 130 },
   { key: 'n_hijos', label: 'N° HIJOS', width: 90, type: 'number' },
   { key: 'nivel_academico', label: 'NIVEL ACADÉMICO', width: 160 },
-
   { key: 'carrera', label: 'CARRERA', width: 160 },
   { key: 'distrito_residencia', label: 'DISTRITO', width: 150 },
   { key: 'lugar_residencia', label: 'LUGAR RESIDENCIA', width: 160 },
@@ -77,6 +77,7 @@ export const OPERACION_COLUMNS = [
   { key: 'bono_bienvenida', label: 'BONO BIENVENIDA', width: 120, type: 'number' },
   { key: 'bono_permanencia', label: 'BONO PERMANENCIA', width: 120, type: 'number' },
   { key: 'bono_asistencia_perfecta', label: 'BONO ASIST. PERF.', width: 120, type: 'number' },
+  { key: 'bono_nocturno', label: 'BONO NOCTURNO', width: 130, type: 'number' },
   { key: 'cargo_contractual', label: 'CARGO CONTRACTUAL', width: 200, type: 'select', options: ['AGENTE TMK OUTBOUND', 'AGENTE TMK INBOUND', 'AGENTE TMK RETENCIONES'] },
   { key: 'dia_0', label: 'DÍA 0', width: 120, type: 'select', options: ['ASISTIO', 'FALTA'] },
   { key: 'dia_0_obs', label: 'OBSERVACIONES DÍA 0', width: 200 },
@@ -97,6 +98,7 @@ export const DOCUMENTOS_COLUMNS = [
   { key: 'doc_autorizacion', label: 'AUTORIZACIÓN', width: 120, type: 'select', options: ['OK', 'PENDIENTE'] },
   { key: 'status_final', label: 'STATUS FINAL', width: 120, type: 'select', options: ['COMPLETO', 'PENDIENTE', 'DESISTE', 'NO PROCEDE'] },
   { key: 'observacion_final', label: 'OBS. FINAL', width: 200 },
+  { key: 'revision_estado', label: 'REVISIÓN DE ESTADO', width: 170, type: 'select', options: ['ACTIVO', 'CESE', '-'] },
   { key: 'validacion_reingreso', label: 'VALIDACIÓN DE REINGRESO', width: 160, type: 'select', options: ['REINGRESO', 'NO REINGRESO'] },
   { key: 'fecha_validacion', label: 'FECHA DE VALIDACIÓN', width: 150, type: 'date' },
   { key: 'observacion_reingreso', label: 'OBSERVACIÓN REINGRESO', width: 200 }
@@ -138,8 +140,8 @@ export default function NominaGridEditor({
 
   // ── Role Permissions & Read-Only Mode (Solo Reclutamiento y Administrador pueden editar) ──
   const isRecruitmentRole = ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'].includes(currentRole)
-  const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion', 'visor'].includes(currentRole) || !isRecruitmentRole
-  const isReadOnly = isCapacitacionRole
+  const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion'].includes(currentRole)
+  const isReadOnly = !isRecruitmentRole
 
   // ── Duplicate Detection & Delete Management ─────────────────────
   const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
@@ -501,7 +503,7 @@ export default function NominaGridEditor({
       let query = supabase
         .from('nominas')
         .select('*')
-        .eq('activo', true)
+        .neq('estado', 'DESASIGNADO')
         .order('apellido_paterno', { ascending: true })
         .limit(5000)
 

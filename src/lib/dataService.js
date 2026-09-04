@@ -168,7 +168,7 @@ export function normalizarMotivo(motivoCrudo) {
   return m;
 }
 
-const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion']
+const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad']
 
 function profileFromSession(sessionUser) {
   const meta = sessionUser?.user_metadata || {}
@@ -820,6 +820,7 @@ function buildNominaPayload(payload, ids) {
     nombres: payload.nombres,
     celular: payload.celular,
     celular_referencia: payload.celular_referencia || null,
+    usuario_whatsapp: payload.usuario_whatsapp || null,
     celular_emergencia: payload.celular_emergencia || null,
     contacto_emergencia: payload.contacto_emergencia || null,
     parentesco: payload.parentesco || null,
@@ -876,6 +877,7 @@ function buildNominaPayload(payload, ids) {
     bono_bienvenida: payload.bono_bienvenida ?? null,
     bono_permanencia: payload.bono_permanencia ?? null,
     bono_asistencia_perfecta: payload.bono_asistencia_perfecta ?? null,
+    bono_nocturno: payload.bono_nocturno ?? null,
     cargo_contractual: payload.cargo_contractual || null,
     dia_0: payload.dia_0 || null,
     dia_0_obs: payload.dia_0_obs || null,
@@ -888,12 +890,13 @@ function buildNominaPayload(payload, ids) {
     doc_recibo_servicios: payload.doc_recibo_servicios || null,
     doc_ficha_datos: payload.doc_ficha_datos || null,
     doc_autorizacion: payload.doc_autorizacion || null,
+    revision_estado: payload.revision_estado || null,
     observacion_estado: payload.observacion_estado || null,
     estado: payload.estado || 'EN_CAPACITACION',
   }
 }
 
-export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, correo, genero, edad, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, grupo_codigo, modalidad, condicion, horario_gestion, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_ingreso, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, created_at';
+export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, usuario_whatsapp, correo, genero, edad, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, grupo_codigo, modalidad, condicion, horario_gestion, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_ingreso, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, created_at';
 
 /**
  * QW-2: Limita la descarga inicial de postulantes a 5000 registros para evitar transferencias
@@ -4262,20 +4265,7 @@ export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana,
     console.warn("RPC adjudicar_postulantes_pool no disponible, usando fallback cliente:", rpcErr)
   }
 
-  // 2. Fallback resiliente en cliente si el RPC aún no fue desplegado en Supabase
-  const docs = postulantes.map(p => String(p.documento || '').trim()).filter(Boolean)
-  if (docs.length > 0) {
-    try {
-      await supabase
-        .from('nominas')
-        .update({ activo: false, updated_at: new Date().toISOString() })
-        .in('documento', docs)
-        .neq('grupo_codigo', cleanGrupo)
-    } catch (deactErr) {
-      console.warn("Aviso al desactivar procesos anteriores en fallback:", deactErr)
-    }
-  }
-
+  // 2. Inserción directa de nuevos registros en cliente (preservando historial previo de otros grupos)
   const { data: insData, error: insErr } = await supabase
     .from('nominas')
     .insert(postulantes)
@@ -4890,12 +4880,17 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
   const results = [];
   for (const grupoInfo of gruposInfo) {
-    const { codigo: grupo_codigo, campana, fecha_inicio_ojt } = grupoInfo;
+    const { codigo: grupo_codigo, campana, fecha_inicio_ojt, area_traslado } = grupoInfo;
     const cleanCode = norm(grupo_codigo);
     const baseCode = getBaseCode(grupo_codigo);
     const normCamp = norm(campana);
     const groupKey = `${normCamp}|${cleanCode}`;
     const baseGroupKey = `${normCamp}|${baseCode}`;
+    
+    // Regla de Día 1: Solo los grupos de RECLUTAMIENTO y RECUPERADO suman a Día 1 y Deserción.
+    // Grupos de CAPACITACIÓN y TRASLADOS NO se consideran para la suma de Día 1 (son recapacitaciones/traslados).
+    const areaNorm = norm(area_traslado || 'RECLUTAMIENTO');
+    const isDia1Eligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
     
     // Obtener nóminas aislando estrictamente por campaña
     const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(baseGroupKey)) : null) || 
@@ -4917,21 +4912,26 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Fallback: Si no hay nóminas pero hay asistencias en el consolidado histórico
-    let effectiveCandidates = validNominas;
-    if (effectiveCandidates.length === 0 && groupFormAsisRaw.length > 0) {
-      const seenDocs = new Map();
+    // Fallback y unificación de postulantes: nóminas válidas + alumnos registrados directamente por el Formador
+    let effectiveCandidates = [...validNominas];
+    if (groupFormAsisRaw.length > 0) {
+      const candidateDocs = new Set(effectiveCandidates.map(c => norm(c.documento)));
+      const seenRawDocs = new Set();
       groupFormAsisRaw.forEach(r => {
-        const doc = r.documento || r.postulante_documento;
-        if (doc && !seenDocs.has(doc)) {
-          seenDocs.set(doc, {
+        const doc = norm(r.documento || r.postulante_documento);
+        if (doc && !candidateDocs.has(doc) && !seenRawDocs.has(doc)) {
+          seenRawDocs.add(doc);
+          effectiveCandidates.push({
             documento: doc,
+            nombres: r.nombres || '',
+            apellido_paterno: r.apellido_paterno || '',
+            apellido_materno: r.apellido_materno || '',
+            condicion: r.condicion_laboral || r.condicion || grupoInfo.condicion || 'FULL TIME',
             dia_0: 'ASISTIO',
             dia_1: 'ASISTIO'
           });
         }
       });
-      effectiveCandidates = Array.from(seenDocs.values());
     }
 
     const total_nomina = effectiveCandidates.length;
@@ -4940,8 +4940,10 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     let asistio_dia1 = 0;
     let activos_actuales = 0;
     let activos_ojt = 0;
+    let desertores_ct = 0;
     let desertores_ojt = 0;
     let ingresos_iop = 0;
+    let ingresos_iop_ftes = 0;
 
     const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
     const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
@@ -4949,9 +4951,14 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const fechaOjtTarget = fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida' ? parseFechaAsistencia(fecha_inicio_ojt) : null;
 
     for (const n of effectiveCandidates) {
-      const doc = n.documento;
+      const doc = norm(n.documento);
       const records = asisByDoc.get(doc) || [];
       
+      // Condición laboral para ponderación FTE: FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE
+      const rawCond = records[0]?.condicion_laboral || records[0]?.condicion || n.condicion || n.condicion_laboral || grupoInfo.condicion || 'FULL TIME';
+      const isPartTime = String(rawCond || '').toUpperCase().includes('PART');
+      const fteWeight = isPartTime ? 0.5 : 1.0;
+
       // Tiene I-OP o pase formal a operación?
       const tieneIngreso = records.some(r => {
         const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
@@ -4960,6 +4967,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       });
       if (tieneIngreso) {
         ingresos_iop++;
+        ingresos_iop_ftes += fteWeight;
       }
 
       // Día 0
@@ -4972,19 +4980,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         asistio_dia0++;
       }
       
-      // Día 1
-      const d1 = String(n.dia_1 || '').toUpperCase().trim();
-      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO';
-      const hasD1Attendance = records.some(r => {
-        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT';
-      });
-      const dia1Asistio = d1 === 'ASISTIO' || hasD1Nomina || hasD1Attendance || tieneIngreso;
-
-      if (dia1Asistio) {
-        asistio_dia1++;
-      }
-
+      // Identificar si tiene baja Día 1 o baja general en registros de Formación
       let isBajaDia1 = false;
       let isBajaGeneral = false;
       let fechaUltimaBaja = null;
@@ -5005,13 +5001,29 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         }
       }
 
-      // Activo en OJT? Basado en fecha_inicio_ojt programada en capacidad_rys O sigla explícita de OJT
+      // Día 1 oficial para Capacitación:
+      // Según la regla oficial: SOLO SUMAN los grupos de RECLUTAMIENTO y RECUPERADO.
+      // Los grupos de CAPACITACIÓN y TRASLADOS NO se consideran para la suma al Día 1.
+      let dia1Asistio = false;
+      if (isDia1Eligible && groupFormAsisRaw.length > 0 && records.length > 0) {
+        const hasAttendanceInClass = records.some(r => {
+          const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+          return s === 'A' || s === 'FJ' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT' || (s === 'B' && !isBajaDia1);
+        });
+        dia1Asistio = (hasAttendanceInClass || tieneIngreso) && !isBajaDia1;
+      }
+
+      if (dia1Asistio) {
+        asistio_dia1++;
+      }
+
+      // Activo en OJT, Desertor en OJT o Desertor en Teoría (CT)?
       let isOjtActive = false;
       let isOjtDesertor = false;
+      let isCtDesertor = false;
 
-      if (tieneIngreso) {
-        isOjtActive = true;
-      } else if (dia1Asistio && !isBajaDia1) {
+      if (dia1Asistio) {
+        // ¿Llegó a pisar la fase de OJT?
         const attendedInOjt = records.some(r => {
           const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
           const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
@@ -5020,14 +5032,23 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
           const isDateInOjt = Boolean(fechaOjtTarget && rDate && rDate >= fechaOjtTarget);
           const isSiglaOjt = sigla === 'OJT' || sigla === 'I-OP';
           
-          return (isDateInOjt || isSiglaOjt) && (sigla === 'A' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
-        });
+          return (isDateInOjt || isSiglaOjt) && (sigla === 'A' || sigla === 'FJ' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
+        }) || tieneIngreso;
 
         if (attendedInOjt) {
-          if (!isBajaGeneral) {
+          if (tieneIngreso) {
             isOjtActive = true;
-          } else if (fechaUltimaBaja && (!fechaOjtTarget || fechaUltimaBaja >= fechaOjtTarget)) {
+          } else if (!isBajaGeneral) {
+            isOjtActive = true;
+          } else {
             isOjtDesertor = true;
+          }
+        } else {
+          // Permaneció en Teoría (CT): si fue baja antes de OJT o el grupo ya cerró sin graduar a I-OP:
+          if (isBajaGeneral) {
+            isCtDesertor = true;
+          } else if (isGrupoCerrado && !tieneIngreso) {
+            isCtDesertor = true;
           }
         }
       }
@@ -5038,9 +5059,12 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (isOjtDesertor) {
         desertores_ojt++;
       }
+      if (isCtDesertor) {
+        desertores_ct++;
+      }
 
-      // Activo Actual? (Postulantes que pasaron Día 1, no son baja, no han salido a I-OP, y el grupo sigue abierto)
-      if (!isGrupoCerrado && dia1Asistio && !isBajaDia1 && !isBajaGeneral && !tieneIngreso) {
+      // Activo Actual en Aula (sigue en aula de teoría, no ha pasado a OJT ni es baja, y grupo sigue abierto)
+      if (!isGrupoCerrado && dia1Asistio && !isBajaGeneral && !tieneIngreso && !isOjtActive) {
         activos_actuales++;
       }
     }
@@ -5134,6 +5158,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       periodo: (grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '') || (grupoInfo.periodo ? String(grupoInfo.periodo).trim() : ''),
       periodo_ingreso_op: grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '',
       periodo_inicio: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
+      area_traslado: (area_traslado && String(area_traslado).trim() !== '') ? String(area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO',
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',
       sede: sede || 'LIMA',
@@ -5155,8 +5180,10 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       asistio_dia1,
       activos_actuales,
       activos_ojt,
+      desertores_ct,
       desertores_ojt,
       ingresos_iop,
+      ingresos_iop_ftes,
       asistencias_raw: groupFormAsisRaw || []
     });
   }

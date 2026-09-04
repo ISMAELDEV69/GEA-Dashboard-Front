@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   Users, UserPlus, Shield, RefreshCw, Search,
   ChevronDown, Check, X, Loader2, AlertCircle, Edit2,
-  Crown, Mail, Lock, TrendingUp, BookOpen, Briefcase, Key
+  Crown, Mail, Lock, TrendingUp, BookOpen, Briefcase, Key, CheckSquare
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { createUserAccount, adminResetUserPassword, updateUserRole, getEquipoReclutamiento, getEquipoFormacion, updateEquipoFormacion, updateEquipoReclutamiento, fetchAppRoles } from '../lib/dataService'
@@ -33,7 +33,8 @@ function RoleBadge({ rol, appRoles }) {
     'Users': Users,
     'UserPlus': UserPlus,
     'Shield': Shield,
-    'Key': Key
+    'Key': Key,
+    'CheckSquare': CheckSquare
   }[r.icon] || Shield
 
   return (

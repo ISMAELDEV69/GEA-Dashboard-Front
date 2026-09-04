@@ -51,7 +51,7 @@ import { parseExcelDate } from './capacidadRysSchema.js'
 
 export const NOMINA_DB_FIELDS = [
   'marca_temporal', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede', 'tipo_documento', 'documento',
-  'apellido_paterno', 'apellido_materno', 'nombres', 'celular', 'celular_referencia', 'correo',
+  'apellido_paterno', 'apellido_materno', 'nombres', 'celular', 'celular_referencia', 'usuario_whatsapp', 'correo',
   'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera',
   'nacionalidad', 'lugar_residencia', 'distrito_residencia', 'direccion_domicilio',
   'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra',
@@ -59,10 +59,10 @@ export const NOMINA_DB_FIELDS = [
   'condicion', 'horario_gestion', 'descanso', 'envio_dni', 'test_psicologico', 'validacion_pc',
   'evaluacion_dia_0', 'fecha_inicio_capacitacion', 'fecha_fin_capacitacion', 'fecha_conexion_ojt',
   'fecha_conexion_op', 'pago_capacitacion', 'tipo_contratacion', 'razon_social', 'remuneracion',
-  'bono_variable', 'bono_movilidad', 'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta',
+  'bono_variable', 'bono_movilidad', 'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno',
   'cargo_contractual', 'dia_0', 'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs',
   'doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos',
-  'doc_autorizacion', 'status_final', 'observacion_final', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar',
+  'doc_autorizacion', 'status_final', 'observacion_final', 'revision_estado', 'validacion_reingreso', 'fecha_validacion', 'observacion_reingreso', 'evaluar', 'obs_evaluar',
   'estado', 'observacion_estado', 'activo'
 ]
 
@@ -79,6 +79,19 @@ const HEADER_ALIASES = {
   nombres: ['NOMBRES COMPLETOS'],
   celular: ['NÚMERO DE CELULAR / MÓVIL', 'NÚMERO DE CELULAR', 'CELULAR'],
   celular_referencia: ['NÚMERO DE CELULAR DE REFERENCIA'],
+  usuario_whatsapp: [
+    'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HALLAS MODIFICADO ASI :',
+    'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HAYAS MODIFICADO ASI :',
+    'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HAYAS MODIFICADO',
+    'BRINDAME EL USUARIO DE TU WTSP',
+    'BRINDAME EL USUARIO DE TU WHATSAPP',
+    'USUARIO DE TU WTSP',
+    'USUARIO DE TU WHATSAPP',
+    'USUARIO WTSP',
+    'USUARIO WHATSAPP',
+    'WTSP',
+    'WHATSAPP'
+  ],
   correo: ['CORREO ELECTRONICO'],
   genero: ['GÉNERO O SEXO DEL POSTULANTE'],
   fecha_nacimiento: ['FECHA DE NACIMIENTO'],
@@ -331,10 +344,11 @@ export function parseGoogleFormRow(row, colIdx) {
   let rawDia1 = normalizeAsistencia(get('dia_1'))
   let rawDia0Obs = str('dia_0_obs')
   let rawDia1Obs = str('dia_1_obs')
-  let rawObs = str('observacion_reclutamiento') || str('usuario_whatsapp')
+  let rawUsuarioWhatsapp = str('usuario_whatsapp')
+  let rawObs = str('observacion_reclutamiento')
 
   // Normalizar detección de AGREGADO / AGREGADO A DÍA X
-  const allRowText = [rawStatusDia1, rawDia0, rawDia1, rawDia0Obs, rawDia1Obs, rawObs]
+  const allRowText = [rawStatusDia1, rawDia0, rawDia1, rawDia0Obs, rawDia1Obs, rawObs, rawUsuarioWhatsapp]
     .filter(Boolean)
     .join(' ')
     .toUpperCase()
@@ -383,6 +397,7 @@ export function parseGoogleFormRow(row, colIdx) {
     nombres: rawNombres ? rawNombres.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
     celular: normPhone('celular') || normPhone('celular_referencia'),
     celular_referencia: normPhone('celular_referencia'),
+    usuario_whatsapp: rawUsuarioWhatsapp ? rawUsuarioWhatsapp.replace(/[\r\n]+/g, ' ').trim() : null,
     correo: normLower('correo'),
     genero: normUpper('genero'),
     fecha_nacimiento: parseExcelDate(get('fecha_nacimiento')),
@@ -528,7 +543,7 @@ export function applyNominaPayloadToForm(payload = {}, setValue) {
   
   const fields = [
     'documento', 'tipo_documento', 'apellido_paterno', 'apellido_materno', 'nombres',
-    'celular', 'celular_referencia', 'correo', 'genero', 'fecha_nacimiento', 'edad',
+    'celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad',
     'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'nacionalidad',
     'lugar_residencia', 'distrito_residencia', 'direccion_domicilio', 'exp_call_center',
     'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra', 'fuente_oferta',
@@ -537,8 +552,8 @@ export function applyNominaPayloadToForm(payload = {}, setValue) {
     'validacion_pc', 'evaluacion_dia_0', 'fecha_inicio_capacitacion', 'fecha_fin_capacitacion',
     'fecha_conexion_ojt', 'fecha_conexion_op', 'pago_capacitacion', 'tipo_contratacion',
     'razon_social', 'remuneracion', 'bono_variable', 'bono_movilidad', 'bono_bienvenida',
-    'bono_permanencia', 'bono_asistencia_perfecta', 'cargo_contractual', 'dia_0',
-    'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs', 'estado', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede'
+    'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno', 'cargo_contractual', 'dia_0',
+    'dia_0_obs', 'status_dia_1', 'dia_1', 'dia_1_obs', 'revision_estado', 'estado', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede'
   ]
 
   fields.forEach(field => {

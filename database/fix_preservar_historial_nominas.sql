@@ -1,8 +1,19 @@
 -- ==============================================================================
--- RPC: Adjudicación Atómica y Segura de Postulantes desde el Pool / Bolsa
--- Resuelve: Concurrencia, RLS y preservación histórica completa de postulantes
+-- FIX: Preservación Histórica de Nóminas y Postulantes en Reingresos
+-- 1. Reactiva todos los registros históricos válidos en la tabla nominas
+-- 2. Actualiza la función RPC public.adjudicar_postulantes_pool para NO
+--    desactivar registros de reclutadores/semanas previas al adjudicar.
 -- ==============================================================================
 
+-- 1. REACTIVACIÓN DE REGISTROS HISTÓRICOS VÁLIDOS
+-- Reactiva registros que no hayan sido eliminados explícitamente (estado = 'DESASIGNADO')
+UPDATE public.nominas
+SET activo = true,
+    updated_at = NOW()
+WHERE COALESCE(activo, false) = false
+  AND COALESCE(estado, '') != 'DESASIGNADO';
+
+-- 2. ACTUALIZACIÓN DEL RPC DE ADJUDICACIÓN ATÓMICA
 CREATE OR REPLACE FUNCTION public.adjudicar_postulantes_pool(
   p_target_grupo    VARCHAR,
   p_target_campana  VARCHAR,
@@ -60,7 +71,6 @@ BEGIN
         apellido_materno = COALESCE(NULLIF(TRIM(v_item->>'apellido_materno'), ''), apellido_materno),
         celular = COALESCE(NULLIF(TRIM(v_item->>'celular'), ''), celular),
         celular_referencia = COALESCE(NULLIF(TRIM(v_item->>'celular_referencia'), ''), celular_referencia),
-        usuario_whatsapp = COALESCE(NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''), usuario_whatsapp),
         correo = COALESCE(NULLIF(TRIM(v_item->>'correo'), ''), correo),
         genero = COALESCE(NULLIF(TRIM(v_item->>'genero'), ''), genero),
         fecha_nacimiento = CASE 
@@ -99,7 +109,6 @@ BEGIN
         apellido_materno,
         celular,
         celular_referencia,
-        usuario_whatsapp,
         correo,
         genero,
         fecha_nacimiento,
@@ -173,7 +182,6 @@ BEGIN
         TRIM(COALESCE(v_item->>'apellido_materno', '')),
         NULLIF(TRIM(v_item->>'celular'), ''),
         NULLIF(TRIM(v_item->>'celular_referencia'), ''),
-        NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''),
         NULLIF(TRIM(v_item->>'correo'), ''),
         NULLIF(TRIM(v_item->>'genero'), ''),
         CASE WHEN v_item->>'fecha_nacimiento' IS NOT NULL AND v_item->>'fecha_nacimiento' <> '' THEN (v_item->>'fecha_nacimiento')::DATE ELSE NULL END,

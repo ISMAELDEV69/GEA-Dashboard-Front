@@ -584,7 +584,8 @@ export default function NominaFormPool({
           String(d.nombres || '').toLowerCase().includes(q) ||
           String(d.apellido_paterno || '').toLowerCase().includes(q) ||
           String(d.apellido_materno || '').toLowerCase().includes(q) ||
-          String(d.celular || '').toLowerCase().includes(q)
+          String(d.celular || '').toLowerCase().includes(q) ||
+          String(d.usuario_whatsapp || '').toLowerCase().includes(q)
         )
       })
     }
@@ -1026,7 +1027,7 @@ export default function NominaFormPool({
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
             type="text"
-            placeholder="Filtrar por DNI, Nombres, Apellidos o Teléfono…"
+            placeholder="Filtrar por DNI, Nombres, Apellidos, Teléfono o WhatsApp…"
             value={search}
             onChange={e => {
               setSearch(e.target.value)
@@ -1146,6 +1147,7 @@ export default function NominaFormPool({
                   { label: 'Nombre Completo', minW: 'min-w-[220px]' },
                   { label: 'Celular', minW: 'min-w-[110px]' },
                   { label: 'Cel. Ref.', minW: 'min-w-[110px]' },
+                  { label: 'Usuario WhatsApp', minW: 'min-w-[150px]' },
                   { label: 'Correo', minW: 'min-w-[180px]' },
                   { label: 'Género', minW: 'min-w-[90px]' },
                   { label: 'F. Nacimiento', minW: 'min-w-[110px]' },
@@ -1326,6 +1328,13 @@ export default function NominaFormPool({
                     {/* Celular Referencia */}
                     <td className="p-3 font-mono text-xs whitespace-nowrap align-top min-w-[110px]">
                       <span className="text-[var(--text-secondary)]">{d.celular_referencia || '—'}</span>
+                    </td>
+
+                    {/* Usuario WhatsApp */}
+                    <td className="p-3 text-xs whitespace-nowrap align-top min-w-[150px]">
+                      <span className={d.usuario_whatsapp ? "text-emerald-500 font-medium" : "text-[var(--text-secondary)]"}>
+                        {d.usuario_whatsapp || '—'}
+                      </span>
                     </td>
 
                     {/* Correo Electrónico */}

@@ -176,15 +176,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       return pVal ? String(pVal).trim() : null;
     }).filter(Boolean));
     
-    // 2. Segmentos Oficiales (filtrados por periodo activo)
-    const subSegmentos = dataset.filter(g => {
+    // Subfiltro por periodo activo
+    const subPeriodo = dataset.filter(g => {
       const pVal = g.periodo_ingreso_op || g.periodo;
       return filters.periodo === 'Todos' || String(pVal || '').trim() === String(filters.periodo || '').trim();
     });
-    const segmentos = new Set(subSegmentos.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
+
+    // 2. Segmentos Oficiales (filtrados por periodo activo)
+    const segmentos = new Set(subPeriodo.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
     
     // 3. Campañas (filtradas por periodo y segmento activos)
-    const subCampanas = subSegmentos.filter(g => filters.segmento === 'Todos' || normalizeSegmento(g.segmento, g.campana) === filters.segmento);
+    const subCampanas = subPeriodo.filter(g => filters.segmento === 'Todos' || normalizeSegmento(g.segmento, g.campana) === filters.segmento);
     const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
     
     // 4. Grupos (filtrados por campaña activa)
@@ -236,13 +238,20 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Totales Scorecard
   const kpis = useMemo(() => {
     return filteredData.reduce((acc, curr) => {
-      const rqVal = curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0);
+      // Regla de Negocio Interna: Solo los grupos de RECLUTAMIENTO representan el requerimiento solicitado (RQ) por la empresa
+      const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      const rqVal = isRqEligible ? (curr.rq_ftes_solicitado !== undefined && curr.rq_ftes_solicitado !== null
+        ? Number(curr.rq_ftes_solicitado)
+        : (curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0))) : 0;
       acc.rq_solicitado += rqVal;
       acc.total_nomina += (curr.total_nomina || 0);
       acc.asistio_dia1 += (curr.asistio_dia1 || 0);
       acc.activos_ojt += (curr.activos_ojt || 0);
+      acc.desertores_ct += (curr.desertores_ct || 0);
       acc.desertores_ojt += (curr.desertores_ojt || 0);
       acc.ingresos_iop += (curr.ingresos_iop || 0);
+      acc.ingresos_iop_ftes += (curr.ingresos_iop_ftes !== undefined ? Number(curr.ingresos_iop_ftes) : Number(curr.ingresos_iop || 0));
       acc.activos_actuales += (curr.activos_actuales || 0);
       return acc;
     }, {
@@ -250,8 +259,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       total_nomina: 0,
       asistio_dia1: 0,
       activos_ojt: 0,
+      desertores_ct: 0,
       desertores_ojt: 0,
       ingresos_iop: 0,
+      ingresos_iop_ftes: 0,
       activos_actuales: 0
     });
   }, [filteredData]);
@@ -259,23 +270,28 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Desglose por Segmento (Tabla y Gráficos)
   const segmentData = useMemo(() => {
     const segMap = {
-      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 },
-      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 },
-      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 },
-      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 },
-      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 }
+      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
+      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
+      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
+      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
+      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 }
     };
 
     filteredData.forEach(d => {
       const segKey = normalizeSegmento(d.segmento, d.campana);
-      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, grupos: 0 });
+      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 });
 
-      const rqVal = d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0);
+      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      const rqVal = isRqEligible ? (d.rq_ftes_solicitado !== undefined && d.rq_ftes_solicitado !== null
+        ? Number(d.rq_ftes_solicitado)
+        : (d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0))) : 0;
       target.rq += rqVal;
       target.reclutados += (d.total_nomina || 0);
       target.d1 += (d.asistio_dia1 || 0);
       target.ojt += (d.activos_ojt || 0);
       target.iop += (d.ingresos_iop || 0);
+      target.iopFtes += (d.ingresos_iop_ftes !== undefined ? Number(d.ingresos_iop_ftes) : Number(d.ingresos_iop || 0));
       target.grupos += 1;
     });
 
@@ -283,7 +299,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const convD1 = s.reclutados > 0 ? ((s.d1 / s.reclutados) * 100) : 0;
       const retOjt = s.d1 > 0 ? ((s.ojt / s.d1) * 100) : 0;
       const convIop = s.d1 > 0 ? ((s.iop / s.d1) * 100) : 0;
-      const cumplRq = s.rq > 0 ? ((s.iop / s.rq) * 100) : 0;
+      const cumplRq = s.rq > 0 ? ((s.iopFtes / s.rq) * 100) : 0;
       const desertores = Math.max(0, s.d1 - (s.ojt || 0) - (s.iop || 0));
       const pctDesercion = s.d1 > 0 ? ((desertores / s.d1) * 100) : 0;
       const enTransito = Math.max(0, s.ojt - s.iop);
@@ -309,6 +325,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     const ojt = kpis.activos_ojt || 0;
     const desertoresOjt = kpis.desertores_ojt || 0;
     const iop = kpis.ingresos_iop || 0;
+    const iopFtes = kpis.ingresos_iop_ftes || 0;
     const rq = kpis.rq_solicitado || 0;
     const qIniciaOjt = ojt + iop + desertoresOjt;
     const ojt_transito = segmentData.reduce((acc, s) => acc + s.enTransito, 0);
@@ -318,7 +335,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       ojt_vs_d1: d1 > 0 ? ((qIniciaOjt / d1) * 100).toFixed(1) : '0.0',
       iop_vs_nomina: total > 0 ? ((iop / total) * 100).toFixed(1) : '0.0',
       iop_vs_ojt: qIniciaOjt > 0 ? ((iop / qIniciaOjt) * 100).toFixed(1) : '0.0',
-      cumplimiento_rq: rq > 0 ? ((iop / rq) * 100).toFixed(1) : '0.0',
+      cumplimiento_rq: rq > 0 ? ((iopFtes / rq) * 100).toFixed(1) : '0.0',
       ojt_transito,
       qIniciaOjt
     };
@@ -514,19 +531,25 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     const d1 = kpis.asistio_dia1 || 0;
     const rq = kpis.rq_solicitado || 0;
     const iop = kpis.ingresos_iop || 0;
+    const iopFtes = kpis.ingresos_iop_ftes || 0;
     const ojt = kpis.activos_ojt || 0;
+    const desertoresCt = kpis.desertores_ct || 0;
     const desertoresOjt = kpis.desertores_ojt || 0;
+    const activosActuales = kpis.activos_actuales || 0;
     
-    // 1. Deserción Global
-    const desertoresTotal = Math.max(0, d1 - (kpis.activos_actuales || 0) - iop);
+    // 1. Deserción Global de Capacitación
+    // En cohortes finalizadas: (d1 - iop) / d1. En cohortes activas: protege a quienes siguen en aula u OJT.
+    const totalActivos = activosActuales + ojt;
+    const desertoresRegistrados = desertoresCt + desertoresOjt;
+    const desertoresTotal = Math.max(desertoresRegistrados, Math.max(0, d1 - totalActivos - iop));
     const pctDesercionGlobal = d1 > 0 ? (desertoresTotal / d1) * 100 : 0;
 
     // 2. Deserción CT (Aula / Capacitación Teórica)
-    const desertoresCT = Math.max(0, d1 - ojt - iop - desertoresOjt);
-    const pctDesercionCT = d1 > 0 ? (desertoresCT / d1) * 100 : 0;
+    // Mide a los alumnos que cayeron en la etapa teórica antes de entrar a OJT
+    const pctDesercionCT = d1 > 0 ? (desertoresCt / d1) * 100 : 0;
 
-    // 3. Dotación FTEs
-    const pctDotacion = rq > 0 ? (iop / rq) * 100 : (iop > 0 ? 100 : 0);
+    // 3. Dotación FTEs (Ponderación: FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE)
+    const pctDotacion = rq > 0 ? (iopFtes / rq) * 100 : (iopFtes > 0 ? 100 : 0);
 
     // 4. Deserción OJT
     const qIniciaOjt = ojt + iop + desertoresOjt;
@@ -536,6 +559,11 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const num = Number(n) || 0;
       if (num >= 1000) return `${(num / 1000).toFixed(2).replace('.', ',')} mil`;
       return num.toLocaleString('es-PE');
+    };
+
+    const formatFte = (n) => {
+      const num = Number(n) || 0;
+      return num % 1 === 0 ? num.toLocaleString('es-PE') : num.toFixed(1).replace('.', ',');
     };
 
     return {
@@ -552,7 +580,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         target: 20.00,
         subMetrics: [
           { label: 'Q Día 1', value: d1.toLocaleString('es-PE') },
-          { label: 'Desertores CT', value: desertoresCT.toLocaleString('es-PE') }
+          { label: 'Desertores CT', value: desertoresCt.toLocaleString('es-PE') }
         ]
       },
       dotacion: {
@@ -560,7 +588,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         target: 80.00,
         subMetrics: [
           { label: "RQ FTE's", value: formatNum(rq) },
-          { label: "Dotación FTE's", value: formatNum(iop) }
+          { label: "Dotación FTE's", value: formatFte(iopFtes) }
         ]
       },
       desercionOJT: {
@@ -584,14 +612,16 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
           rq: 0,
           d1: 0,
           iop: 0,
+          iopFtes: 0,
           activosOjt: 0,
           desertores: 0
         });
       }
       const item = map.get(fName);
-      item.rq += Number(g.rq_solicitado || g.rq_ftes_solicitado) || 0;
+      item.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
       item.d1 += Number(g.asistio_dia1) || 0;
       item.iop += Number(g.ingresos_iop) || 0;
+      item.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
       item.activosOjt += Number(g.activos_ojt) || 0;
       
       const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
@@ -599,7 +629,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     });
 
     return Array.from(map.values()).map(f => {
-      const pctDot = f.rq > 0 ? (f.iop / f.rq) * 100 : (f.d1 > 0 ? (f.iop / f.d1) * 100 : 0);
+      const pctDot = f.rq > 0 ? (f.iopFtes / f.rq) * 100 : (f.d1 > 0 ? (f.iop / f.d1) * 100 : 0);
       const pctDes = f.d1 > 0 ? (f.desertores / f.d1) * 100 : 0;
       return {
         ...f,
@@ -611,22 +641,23 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   const modalidadRankingList = useMemo(() => {
     const map = {
-      PRESENCIAL: { nombre: 'PRESENCIAL', rq: 0, d1: 0, iop: 0, desertores: 0 },
-      REMOTO: { nombre: 'REMOTO', rq: 0, d1: 0, iop: 0, desertores: 0 }
+      PRESENCIAL: { nombre: 'PRESENCIAL', rq: 0, d1: 0, iop: 0, iopFtes: 0, desertores: 0 },
+      REMOTO: { nombre: 'REMOTO', rq: 0, d1: 0, iop: 0, iopFtes: 0, desertores: 0 }
     };
 
     filteredData.forEach(g => {
       const mod = String(g.modalidad || '').toUpperCase().includes('REM') ? 'REMOTO' : 'PRESENCIAL';
       const target = map[mod];
-      target.rq += Number(g.rq_solicitado || g.rq_ftes_solicitado) || 0;
+      target.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
       target.d1 += Number(g.asistio_dia1) || 0;
       target.iop += Number(g.ingresos_iop) || 0;
+      target.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
       const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
       target.desertores += desert;
     });
 
     return Object.values(map).map(m => {
-      const pctDot = m.rq > 0 ? (m.iop / m.rq) * 100 : (m.d1 > 0 ? (m.iop / m.d1) * 100 : 0);
+      const pctDot = m.rq > 0 ? (m.iopFtes / m.rq) * 100 : (m.d1 > 0 ? (m.iop / m.d1) * 100 : 0);
       const pctDes = m.d1 > 0 ? (m.desertores / m.d1) * 100 : 0;
       return {
         ...m,
@@ -792,7 +823,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       {/* ── BARRA DE FILTROS CRUZADOS ── */}
       <div className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
         {/* Periodo */}
-        <div className="flex-1 min-w-[140px]">
+        <div className="flex-1 min-w-[130px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Periodo</label>
           <select
             value={filters.periodo}
@@ -1402,6 +1433,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                   <th className="py-3 px-3">Grupo / GPE</th>
                   <th className="py-3 px-3">Formador a Cargo</th>
                   <th className="py-3 px-3">Campaña</th>
+                  <th className="py-3 px-3">Área / Origen</th>
                   <th className="py-3 px-3">Segmento</th>
                   <th className="py-3 px-3">Local / Sede</th>
                   <th className="py-3 px-2 text-center">Semana</th>
@@ -1428,6 +1460,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-[var(--text-secondary)] truncate max-w-[150px]" title={d.campana}>{d.campana}</td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          (d.area_traslado || 'RECLUTAMIENTO') === 'RECLUTAMIENTO'
+                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                            : (d.area_traslado || '') === 'RECUPERADO'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        }`}>
+                          {d.area_traslado || 'RECLUTAMIENTO'}
+                        </span>
+                      </td>
                       <td className="py-2.5 px-3 text-[var(--text-muted)] whitespace-nowrap">{normalizeSegmento(d.segmento, d.campana)}</td>
                       <td className="py-2.5 px-3 text-[var(--text-secondary)] whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-300 border border-slate-500/20 text-[11px] font-semibold">
@@ -1454,7 +1497,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 })}
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="py-12 text-center text-[var(--text-muted)]">
+                    <td colSpan={13} className="py-12 text-center text-[var(--text-muted)]">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-cyan-400" />
                       <p className="font-bold text-xs">No hay cohortes que coincidan con los filtros seleccionados.</p>
                     </td>
