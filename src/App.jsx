@@ -78,7 +78,7 @@ const PerformanceScorecardIndividual = lazyWithRetry(() => import('./components/
 
 // ── RBAC: Navegación de Vistas por Rol ──────────────────────────────────────────
 export const ALL_NAV = [
-  { id: 'scorecard_individual', label: 'KPIS - Asesor', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
+  { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
   { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },

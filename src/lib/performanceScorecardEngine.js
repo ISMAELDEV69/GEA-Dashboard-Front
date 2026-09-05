@@ -1,11 +1,11 @@
 /**
  * performanceScorecardEngine.js
- * Motor analítico de Ficha de Desempeño 360° (Estilo GEA ATC)
- * Especializado para Reclutadores y Formadores (Trainers) de GEA Perú.
- * Calibración de Datos, Búsqueda Multi-Criterio (DNI / Alias / Nombre) y Cuartiles.
+ * Motor analítico de Ficha de Desempeño 360° (GEA Dashboard)
+ * Especializado para Reclutadores (RyS) y Formadores (Capacitación).
+ * Calibración de Datos Reales, Funnel Operativo, Evolución Semanal y Trazabilidad Nominal.
  */
 
-// ── Normalización de Cadenas Uniforme (Sin Acentos ni Espacios Extras) ──────
+// ── Normalización de Cadenas Uniforme ───────────────────────────────────────
 export const norm = (val) => String(val || '')
   .trim()
   .toUpperCase()
@@ -56,6 +56,20 @@ export const parseDateStr = (raw) => {
   return null
 }
 
+export const formatSemanaLabel = (raw) => {
+  if (!raw) return 'Semana ?'
+  const str = String(raw).trim().toUpperCase()
+  const m = str.match(/(\d+)/)
+  if (m) return `Sem ${m[1]}`
+  return str
+}
+
+export const extractSemanaNum = (raw) => {
+  if (!raw) return 0
+  const m = String(raw).match(/(\d+)/)
+  return m ? parseInt(m[1], 10) : 0
+}
+
 // ── Asignación de Estrellas (1 a 5) ─────────────────────────────────────────
 export function computeStars(pct) {
   if (pct >= 100) return 5
@@ -74,20 +88,20 @@ export function assignQuartiles(list = [], scoreKey = 'score') {
     const rank = idx + 1
     const percentile = ((n - rank) / Math.max(1, n - 1)) * 100
     let quartile = 'Q4'
-    let quartileColor = '#f43f5e' // Neon Rose
+    let quartileColor = '#f43f5e'
     let quartileLabel = 'Cuartil Q4 - En Riesgo'
 
     if (percentile >= 75 || rank <= Math.ceil(n * 0.25)) {
       quartile = 'Q1'
-      quartileColor = '#10b981' // Neon Emerald
+      quartileColor = '#10b981'
       quartileLabel = 'Cuartil Q1 - Top Performance'
     } else if (percentile >= 50 || rank <= Math.ceil(n * 0.50)) {
       quartile = 'Q2'
-      quartileColor = '#06b6d4' // Neon Cyan
+      quartileColor = '#06b6d4'
       quartileLabel = 'Cuartil Q2 - Destacado'
     } else if (percentile >= 25 || rank <= Math.ceil(n * 0.75)) {
       quartile = 'Q3'
-      quartileColor = '#f59e0b' // Neon Amber
+      quartileColor = '#f59e0b'
       quartileLabel = 'Cuartil Q3 - Regular'
     }
 
@@ -116,8 +130,8 @@ export function computeAllRecruitersPerformance(
   formadoresCatalog = []
 ) {
   const recruiterMap = new Map()
-  
-  // Set de postulantes con asistencia en Día 1, Ingreso OP o Bajas
+
+  // Sets de postulantes con asistencia
   const opDocs = attendanceIndexes?.opDocsSet || new Set()
   const bajasDocs = attendanceIndexes?.bajasDocsSet || new Set()
   const d1Docs = new Set()
@@ -125,7 +139,7 @@ export function computeAllRecruitersPerformance(
   asistencias.forEach(a => {
     const doc = a.postulante_documento || a.documento
     if (!doc) return
-    const sigla = a.sigla_asistencia
+    const sigla = a.sigla_asistencia || a.sigla
     if (sigla === 'I-OP') {
       opDocs.add(doc)
       d1Docs.add(doc)
@@ -136,7 +150,7 @@ export function computeAllRecruitersPerformance(
     }
   })
 
-  // Catalog de Formadores para exclusión estricta
+  // Catálogo de formadores para exclusión
   const formadorNamesSet = new Set()
   ;(formadoresCatalog || []).forEach(f => {
     const n = typeof f === 'string' ? f : (f?.nombre_completo || f?.nombre || '')
@@ -145,7 +159,7 @@ export function computeAllRecruitersPerformance(
     if (f?.documento || f?.dni) formadorNamesSet.add(norm(f.documento || f.dni))
   })
 
-  // Catalog Map para enriquecer DNI y usuario
+  // Enriquecer catálogo de reclutadores
   const catMap = new Map()
   ;(reclutadoresCatalog || []).forEach(r => {
     const name = typeof r === 'string' ? r : (r?.nombre_completo || r?.nombre || '')
@@ -164,7 +178,6 @@ export function computeAllRecruitersPerformance(
     const recName = (p.reclutador || 'SIN RECLUTADOR').trim()
     if (!recName || norm(recName) === 'SIN RECLUTADOR') return
 
-    // Si es un formador y no es un reclutador explícito de catálogo, no agrupar como reclutador
     const isExplicitRec = catMap.has(norm(recName))
     if (!isExplicitRec && (formadorNamesSet.has(norm(recName)) || (p.reclutador_dni && formadorNamesSet.has(norm(p.reclutador_dni))))) {
       return
@@ -214,8 +227,6 @@ export function computeAllRecruitersPerformance(
         norm(p.motivo_baja).includes('SELECCION')
       )
       
-      // Calibración estricta de Q Día 1:
-      // Debe tener marca de asistencia en D1 (A, FJ, T, I-OP), o dia_1 === 'ASISTIO', o estado CAPACITACION/INGRESO_OP
       const d1Field = norm(p.dia_1)
       const statusD1 = norm(p.status_dia_1)
       const hasD1 = d1Docs.has(doc) || 
@@ -240,13 +251,12 @@ export function computeAllRecruitersPerformance(
       }
     })
 
-    // ── VINCULACIÓN DIRECTA CON "METAS Y EQUIPOS" (capacidad_rys + grupo_reclutadores) ──
+    // Vinculación con metas reales de capacidad_rys
     let metaRqReal = 0
     let metaDia1Real = 0
     let gruposAsignadosCount = 0
 
     ;(campanasMetas || []).forEach(g => {
-      // Buscar si el reclutador está asignado en este grupo
       const recMetaItem = (g.reclutadores_metas || []).find(rm => 
         matchPerson(rm.nombre_completo, recName) ||
         (rm.documento && (rm.documento === recObj.dni || String(recObj.dni).includes(rm.documento))) ||
@@ -258,26 +268,25 @@ export function computeAllRecruitersPerformance(
         metaRqReal += (Number(recMetaItem.meta_rq_individual) || 0)
         metaDia1Real += (Number(recMetaItem.meta_dia_1_individual) || 0)
       } else if (recObj.grupos && recObj.grupos.has(g.grupo_codigo)) {
-        // Si tiene postulantes en el grupo pero sin cuota individual explícita
         gruposAsignadosCount++
       }
     })
 
-    // Meta final calibrada (Metas y Equipos o cuota base del período)
-    const metaVolumen = metaRqReal > 0 ? metaRqReal : Math.max(total, 35)
-    const metaQDia1 = metaDia1Real > 0 ? metaDia1Real : Math.max(1, Math.round(metaVolumen * 0.70))
-    const metaIngresosOP = Math.max(1, Math.round(metaVolumen * 0.45))
+    const hasExplicitMeta = metaRqReal > 0
+    const metaVolumen = hasExplicitMeta ? metaRqReal : total
+    const metaQDia1 = metaDia1Real > 0 ? metaDia1Real : Math.round(metaVolumen * 0.70)
+    const metaIngresosOP = Math.round(metaVolumen * 0.45)
 
-    const pctCumplimientoVolumen = Math.min(200, Math.round((total / metaVolumen) * 100))
+    const pctCumplimientoVolumen = hasExplicitMeta ? Math.min(200, Math.round((total / metaVolumen) * 100)) : 100
     const pctConversionOP = total > 0 ? Math.round((ingresantesOP / total) * 100) : 0
     const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
     const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
 
-    // Score Ponderado: 40% Ingresantes OP + 30% Q Día 1 + 30% Volumen Meta - Penalidad Bajas Imputables
+    // Score Ponderado: 45% Pases a OP + 35% Día 1 + 20% Volumen
     const score = Math.max(0, Math.round(
-      (pctConversionOP * 0.40) +
-      (pctQDia1 * 0.30) +
-      (pctCumplimientoVolumen * 0.30) -
+      (pctConversionOP * 0.45) +
+      (pctQDia1 * 0.35) +
+      (pctCumplimientoVolumen * 0.20) -
       (pctBajasImputables * 0.15)
     ))
 
@@ -298,6 +307,7 @@ export function computeAllRecruitersPerformance(
       metaIngresosOP,
       metaRqReal,
       metaDia1Real,
+      hasExplicitMeta,
       gruposAsignadosCount,
       pctCumplimientoVolumen,
       pctConversionOP,
@@ -311,7 +321,7 @@ export function computeAllRecruitersPerformance(
   return assignQuartiles(recruiterScores, 'score')
 }
 
-// ── Detalle Individual y Evolución Diaria del Reclutador ────────────────────
+// ── Detalle Individual, Funnel y Semanas del Reclutador ────────────────────
 export function getRecruiterIndividualDetails(
   targetIdentifier,
   postulantes = [],
@@ -332,17 +342,8 @@ export function getRecruiterIndividualDetails(
   if (!rankedItem) return null
 
   const myPostulantes = postulantes.filter(p => matchPerson(p.reclutador, rankedItem.nombre))
-  
-  const today = new Date()
-  const currentDay = today.getDate()
-  const totalDaysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
-  const daysPassed = Math.max(1, currentDay)
 
-  const runRateFactor = totalDaysInMonth / daysPassed
-  const projectedVolumen = Math.round(rankedItem.totalPostulantes * runRateFactor)
-  const projectedIngresantesOP = Math.round(rankedItem.ingresantesOP * runRateFactor)
-
-  // Calcular ranking dinámico dentro del mismo Segmento de negocio
+  // Posición en segmento
   const mySeg = norm(rankedItem.segmento || 'GENERAL')
   const segRecruiters = allRankedRecruiters
     .filter(r => norm(r.segmento || 'GENERAL') === mySeg)
@@ -351,55 +352,125 @@ export function getRecruiterIndividualDetails(
   const segmentRank = Math.max(1, segRecruiters.findIndex(r => r.nombre === rankedItem.nombre) + 1)
   const totalInSegment = Math.max(1, segRecruiters.length)
 
-  let runRateMsg = `Si sigues a este ritmo alcanzarás ~${projectedIngresantesOP} INGRESANTES A LA OPERACIÓN.`
-  let runRateStatus = 'success'
-  if (projectedIngresantesOP >= rankedItem.metaIngresosOP) {
-    runRateMsg += ` ✔️ Superarías tu meta mensual (${rankedItem.metaIngresosOP}).`
-  } else {
-    const diff = rankedItem.metaIngresosOP - projectedIngresantesOP
-    runRateMsg += ` ⚠️ Faltarían ~${diff} para alcanzar la meta (${rankedItem.metaIngresosOP}).`
-    runRateStatus = 'warning'
-  }
+  // ── 1. FUNNEL DE CONVERSIÓN REAL (EMBUDO OPERATIVO) ───────────────────────
+  const totalPosts = rankedItem.totalPostulantes
+  const qDia1 = rankedItem.qDia1
+  const enCap = rankedItem.enCapacitacion
+  const op = rankedItem.ingresantesOP
+  const bajas = rankedItem.bajas
 
-  const dailyMap = new Map()
-  for (let d = 1; d <= Math.min(daysPassed, totalDaysInMonth); d++) {
-    const label = `${d}`
-    dailyMap.set(label, {
-      dia: label,
-      postulantes: 0,
-      qDia1: 0,
-      ingresantesOP: 0,
-      bajas: 0
-    })
-  }
+  const funnel = [
+    {
+      stage: 'Citados / Enviados',
+      label: 'Postulantes',
+      count: totalPosts,
+      pct: 100,
+      subtext: `${totalPosts} citaciones confirmadas`,
+      color: '#6366f1' // Indigo
+    },
+    {
+      stage: 'Asistieron Día 1',
+      label: 'Efectividad Inicial',
+      count: qDia1,
+      pct: totalPosts > 0 ? Math.round((qDia1 / totalPosts) * 100) : 0,
+      subtext: `${qDia1} asistieron al primer día`,
+      dropCount: totalPosts - qDia1,
+      dropPct: totalPosts > 0 ? Math.round(((totalPosts - qDia1) / totalPosts) * 100) : 0,
+      color: '#06b6d4' // Cyan
+    },
+    {
+      stage: 'En Formación / OJT',
+      label: 'Retención de Aula',
+      count: enCap + op,
+      pct: totalPosts > 0 ? Math.round(((enCap + op) / totalPosts) * 100) : 0,
+      subtext: `${enCap} activos en capacitación`,
+      dropCount: qDia1 - (enCap + op),
+      dropPct: qDia1 > 0 ? Math.round(((qDia1 - (enCap + op)) / qDia1) * 100) : 0,
+      color: '#8b5cf6' // Violet
+    },
+    {
+      stage: 'Ingresantes a OP',
+      label: 'Conversión Final',
+      count: op,
+      pct: totalPosts > 0 ? Math.round((op / totalPosts) * 100) : 0,
+      subtext: `${op} pasaron a operaciones`,
+      color: '#10b981' // Emerald
+    }
+  ]
+
+  // ── 2. EVOLUCIÓN POR SEMANAS OPERATIVAS REALES ────────────────────────────
+  const weekMap = new Map()
 
   myPostulantes.forEach(p => {
-    const dateStr = parseDateStr(p.fecha_ingreso || p.fecha_registro || p.created_at)
-    if (dateStr) {
-      const dNum = parseInt(dateStr.split('-')[2], 10)
-      const label = `${dNum}`
-      if (dailyMap.has(label)) {
-        const row = dailyMap.get(label)
-        row.postulantes++
-        const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
-        const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
-        const d1Field = norm(p.dia_1)
-        const statusD1 = norm(p.status_dia_1)
-        const hasD1 = d1Field === 'ASISTIO' || d1Field === 'A' || d1Field.includes('ASIST') || statusD1 === 'RECUPERADO' || statusD1 === 'AGREGADO' || norm(p.estado) === 'CAPACITACION' || isOP
-
-        if (hasD1) row.qDia1++
-        if (isOP) row.ingresantesOP++
-        if (isBaja) row.bajas++
+    let semLabel = formatSemanaLabel(p.semana_trabajo || p.semana || p.semana_label)
+    if (semLabel === 'Semana ?') {
+      const gCode = p.grupo_codigo
+      if (gCode) {
+        const meta = campanasMetas.find(g => (g.grupo_codigo || g.codigo) === gCode)
+        if (meta && (meta.semana || meta.semana_trabajo || meta.semana_label)) {
+          semLabel = formatSemanaLabel(meta.semana || meta.semana_trabajo || meta.semana_label)
+        }
       }
+    }
+
+    if (!weekMap.has(semLabel)) {
+      weekMap.set(semLabel, {
+        semana: semLabel,
+        semanaNum: extractSemanaNum(semLabel),
+        postulantes: 0,
+        qDia1: 0,
+        ingresantesOP: 0,
+        bajas: 0
+      })
+    }
+
+    const w = weekMap.get(semLabel)
+    w.postulantes++
+
+    const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
+    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+    const d1Field = norm(p.dia_1)
+    const statusD1 = norm(p.status_dia_1)
+    const hasD1 = d1Field === 'ASISTIO' || d1Field === 'A' || d1Field.includes('ASIST') || statusD1 === 'RECUPERADO' || statusD1 === 'AGREGADO' || norm(p.estado) === 'CAPACITACION' || isOP
+
+    if (hasD1) w.qDia1++
+    if (isOP) w.ingresantesOP++
+    if (isBaja) w.bajas++
+  })
+
+  const weeklyEvolution = Array.from(weekMap.values())
+    .sort((a, b) => (a.semanaNum || 999) - (b.semanaNum || 999))
+    .map(w => ({
+      ...w,
+      pctD1: w.postulantes > 0 ? Math.round((w.qDia1 / w.postulantes) * 100) : 0,
+      pctOP: w.postulantes > 0 ? Math.round((w.ingresantesOP / w.postulantes) * 100) : 0
+    }))
+
+  // ── 3. DISTRIBUCIÓN DE MOTIVOS DE BAJA REALES ────────────────────────────
+  const motivosMap = new Map()
+  let totalBajasContadas = 0
+
+  myPostulantes.forEach(p => {
+    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+    if (isBaja) {
+      totalBajasContadas++
+      const mRaw = norm(p.motivo_baja || 'DESCONOCIDO / SIN MOTIVO')
+      motivosMap.set(mRaw, (motivosMap.get(mRaw) || 0) + 1)
     }
   })
 
-  const dailyEvolution = Array.from(dailyMap.values())
+  const motivosBajaBreakdown = Array.from(motivosMap.entries())
+    .map(([motivo, count]) => ({
+      motivo,
+      count,
+      pct: totalBajasContadas > 0 ? Math.round((count / totalBajasContadas) * 100) : 0
+    }))
+    .sort((a, b) => b.count - a.count)
 
-  // Desglose de rendimiento por Grupo asignado (Individual vs Equipo)
+  // ── 4. DESGLOSE DE GRUPOS ASIGNADOS ──────────────────────────────────────
   const gruposBreakdown = []
   const groupCodesSet = new Set(myPostulantes.map(p => norm(p.grupo_codigo)).filter(Boolean))
-  
+
   ;(campanasMetas || []).forEach(g => {
     const gCode = g.grupo_codigo || g.codigo
     const gCodeNorm = norm(gCode)
@@ -408,123 +479,68 @@ export function getRecruiterIndividualDetails(
       (rm.documento && (rm.documento === rankedItem.dni || String(rankedItem.dni).includes(rm.documento))) ||
       (rm.alias && norm(rm.alias) === norm(rankedItem.usuario))
     )
-    
+
     if (recMeta || groupCodesSet.has(gCodeNorm)) {
       const postsInGroup = myPostulantes.filter(p => norm(p.grupo_codigo) === gCodeNorm)
-      const totalPosts = postsInGroup.length
+      const tPosts = postsInGroup.length
       const qD1 = postsInGroup.filter(p => norm(p.dia_1) === 'ASISTIO' || norm(p.dia_1) === 'A' || norm(p.estado) === 'CAPACITACION' || norm(p.estado) === 'INGRESO_OP').length
       const ingresantes = postsInGroup.filter(p => norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES').length
-      
+      const bajasG = postsInGroup.filter(p => norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)).length
+
       const metaRqInd = Number(recMeta?.meta_rq_individual) || 0
       const metaDia1Ind = Number(recMeta?.meta_dia_1_individual) || 0
       const rqGrupal = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
-      const metaDia1Grupal = Number(g.meta_dia_1_grupal || g.meta_dia_1) || 0
 
       gruposBreakdown.push({
         codigo: gCode || 'Grupo General',
         campana: g.campana_nombre || g.campana || 'Sin Campaña',
-        sede: g.sede || '-',
+        sede: g.sede || 'LIMA',
         modalidad: g.modalidad || '-',
-        horario: g.horario || g.rango_horario || '-',
-        postulantesEnviados: totalPosts,
+        semana: formatSemanaLabel(g.semana || g.semana_trabajo || g.semana_label),
+        postulantesEnviados: tPosts,
         qDia1: qD1,
         ingresantesOP: ingresantes,
+        bajas: bajasG,
         metaRqIndividual: metaRqInd,
         metaDia1Individual: metaDia1Ind,
         rqGrupal,
-        metaDia1Grupal,
-        pctAvanceRqInd: metaRqInd > 0 ? Math.min(200, Math.round((totalPosts / metaRqInd) * 100)) : (totalPosts > 0 ? 100 : 0),
-        pctAvanceD1Ind: metaDia1Ind > 0 ? Math.min(200, Math.round((qD1 / metaDia1Ind) * 100)) : (qD1 > 0 ? 100 : 0),
-        reclutadoresEquipoCount: (g.reclutadores_metas || []).length || 1
+        pctAvanceRq: metaRqInd > 0 ? Math.round((tPosts / metaRqInd) * 100) : (tPosts > 0 ? 100 : 0)
       })
     }
   })
 
-  // Si tiene postulantes en grupos que no están en campanasMetas
-  groupCodesSet.forEach(gCodeNorm => {
-    const already = gruposBreakdown.some(gb => norm(gb.codigo) === gCodeNorm)
-    if (!already) {
-      const postsInGroup = myPostulantes.filter(p => norm(p.grupo_codigo) === gCodeNorm)
-      const totalPosts = postsInGroup.length
-      const qD1 = postsInGroup.filter(p => norm(p.dia_1) === 'ASISTIO' || norm(p.dia_1) === 'A' || norm(p.estado) === 'CAPACITACION' || norm(p.estado) === 'INGRESO_OP').length
-      const ingresantes = postsInGroup.filter(p => norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES').length
-      const sampleP = postsInGroup[0] || {}
+  // ── 5. TABLA DE TRAZABILIDAD NOMINAL (POSTULANTES) ────────────────────────
+  const postulantesNominal = myPostulantes.map(p => {
+    const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
+    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+    const d1Field = norm(p.dia_1)
+    const hasD1 = d1Field === 'ASISTIO' || d1Field === 'A' || d1Field.includes('ASIST') || norm(p.estado) === 'CAPACITACION' || isOP
 
-      gruposBreakdown.push({
-        codigo: sampleP.grupo_codigo || gCodeNorm,
-        campana: sampleP.campana || 'Sin Campaña',
-        sede: sampleP.sede || '-',
-        modalidad: sampleP.modalidad || '-',
-        horario: sampleP.rango_horario || '-',
-        postulantesEnviados: totalPosts,
-        qDia1: qD1,
-        ingresantesOP: ingresantes,
-        metaRqIndividual: 0,
-        metaDia1Individual: 0,
-        rqGrupal: 0,
-        metaDia1Grupal: 0,
-        pctAvanceRqInd: 100,
-        pctAvanceD1Ind: 100,
-        reclutadoresEquipoCount: 1
-      })
+    return {
+      documento: p.documento || '-',
+      nombre_completo: p.nombre_completo || `${p.apellido_paterno || ''} ${p.apellido_materno || ''} ${p.nombres || ''}`.trim() || 'Sin Nombre',
+      campana: p.campana || 'Sin Campaña',
+      grupo_codigo: p.grupo_codigo || '-',
+      semana: formatSemanaLabel(p.semana_trabajo || p.semana || p.semana_label),
+      fecha_registro: parseDateStr(p.fecha_ingreso || p.fecha_registro || p.created_at) || '-',
+      dia_1: hasD1 ? 'Asistió' : (p.dia_1 ? String(p.dia_1) : 'No Asistió'),
+      estado: isOP ? 'INGRESO OP' : (isBaja ? 'BAJA' : (hasD1 ? 'CAPACITACIÓN' : (p.estado || 'REGISTRADO'))),
+      motivo_baja: p.motivo_baja || '-',
+      isOP,
+      isBaja,
+      hasD1
     }
   })
-
-  const objetivos = [
-    {
-      id: 'volumen',
-      label: 'Postulantes Enviados',
-      actual: rankedItem.totalPostulantes,
-      meta: `${rankedItem.metaVolumen} meta`,
-      pct: rankedItem.pctCumplimientoVolumen,
-      stars: computeStars(rankedItem.pctCumplimientoVolumen),
-      proyeccion: `Proyección al cierre: ~${projectedVolumen} postulantes`,
-      color: '#818cf8'
-    },
-    {
-      id: 'q_dia1',
-      label: 'Q DÍA 1 (Asistentes en Aula)',
-      actual: rankedItem.qDia1,
-      meta: `${rankedItem.metaQDia1 || Math.round(rankedItem.totalPostulantes * 0.70)} obj`,
-      pct: rankedItem.pctQDia1,
-      stars: computeStars(rankedItem.pctQDia1),
-      proyeccion: `Tasa Q Día 1: ${rankedItem.pctQDia1}% sobre citados`,
-      color: '#06b6d4'
-    },
-    {
-      id: 'ingresos_op',
-      label: 'INGRESANTES A LA OPERACIÓN',
-      actual: rankedItem.ingresantesOP,
-      meta: `${rankedItem.metaIngresosOP} meta`,
-      pct: rankedItem.pctConversionOP,
-      stars: computeStars(rankedItem.pctConversionOP),
-      proyeccion: runRateMsg,
-      status: runRateStatus,
-      color: '#10b981'
-    },
-    {
-      id: 'bajas_imputables',
-      label: 'Control de Bajas Imputables',
-      actual: `${rankedItem.bajasImputables} bajas`,
-      meta: '≤ 5% máx',
-      pct: Math.max(0, 100 - rankedItem.pctBajasImputables * 4),
-      stars: rankedItem.pctBajasImputables <= 5 ? 5 : (rankedItem.pctBajasImputables <= 10 ? 3 : 1),
-      proyeccion: `Impacto en selección: ${rankedItem.pctBajasImputables}% de bajas atribuibles`,
-      color: '#f43f5e'
-    }
-  ]
 
   return {
     ...rankedItem,
     segmentRank,
     totalInSegment,
-    runRateMsg,
-    runRateStatus,
-    projectedVolumen,
-    projectedIngresantesOP,
-    objetivos,
-    dailyEvolution,
-    gruposBreakdown
+    funnel,
+    weeklyEvolution,
+    motivosBajaBreakdown,
+    gruposBreakdown,
+    postulantesNominal
   }
 }
 
@@ -540,18 +556,17 @@ export function computeAllTrainersPerformance(
 ) {
   const trainerMap = new Map()
 
-  // Map de grupos para resolver formador por grupo_codigo
   const grupoTrainerMap = new Map()
   ;(grupos || []).forEach(g => {
     const gCode = norm(g.codigo || g.grupo_codigo)
     const tDoc = g.formador_documento || g.documento_formador || ''
     const tName = g.formador_nombre || g.formador || g.responsable || ''
     if (gCode && (tDoc || tName)) {
-      grupoTrainerMap.set(gCode, { doc: tDoc, name: tName })
+      grupoTrainerMap.set(gCode, { doc: tDoc, name: tName, grupo: g })
     }
   })
 
-  // Catalog Map para enriquecer DNI, usuario y alix de formadores
+  // Catalog Map
   const catMap = new Map()
   ;(formadoresCatalog || []).forEach(f => {
     const name = typeof f === 'string' ? f : (f?.nombre_completo || f?.datos_completos || f?.nombre || '')
@@ -568,7 +583,6 @@ export function computeAllTrainersPerformance(
     if (doc) catMap.set(norm(doc), item)
     if (user) catMap.set(norm(user), item)
 
-    // Pre-cargar formador de catálogo
     const primeKey = name ? norm(name) : (doc ? norm(doc) : norm(user))
     if (primeKey && !trainerMap.has(primeKey)) {
       trainerMap.set(primeKey, {
@@ -583,19 +597,19 @@ export function computeAllTrainersPerformance(
         bajasSet: new Set(),
         faltasSinBaja: 0,
         totalAsistenciasPosibles: 0,
-        asistenciasEfectivas: 0
+        asistenciasEfectivas: 0,
+        gruposSet: new Set()
       })
     }
   })
 
-  // 1. Indexar asistencias por formador
+  // Indexar asistencias
   asistencias.forEach(a => {
     let trainerDoc = a.documento_formador || a.formador_documento || ''
     let trainerName = a.nombre_formador || a.formador_nombre || ''
+    const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
     
-    // Si no viene en la asistencia, resolver mediante grupo
-    if (!trainerDoc && !trainerName) {
-      const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
+    if (!trainerDoc && !trainerName && gCode) {
       const gInfo = grupoTrainerMap.get(gCode)
       if (gInfo) {
         trainerDoc = gInfo.doc
@@ -620,16 +634,18 @@ export function computeAllTrainersPerformance(
         bajasSet: new Set(),
         faltasSinBaja: 0,
         totalAsistenciasPosibles: 0,
-        asistenciasEfectivas: 0
+        asistenciasEfectivas: 0,
+        gruposSet: new Set()
       })
     }
 
     const tObj = trainerMap.get(key)
     const doc = a.postulante_documento || a.documento
     if (doc) tObj.alumnosSet.add(doc)
+    if (gCode) tObj.gruposSet.add(gCode)
     tObj.asistenciasList.push(a)
 
-    const sigla = a.sigla_asistencia
+    const sigla = a.sigla_asistencia || a.sigla
     tObj.totalAsistenciasPosibles++
 
     if (sigla === 'I-OP') {
@@ -644,7 +660,7 @@ export function computeAllTrainersPerformance(
     }
   })
 
-  // 2. Asociar postulantes de grupos asignados si no tienen asistencias aún
+  // Asociar postulantes si existen en los grupos asignados
   postulantes.forEach(p => {
     const gCode = norm(p.grupo_codigo)
     const gInfo = grupoTrainerMap.get(gCode)
@@ -653,8 +669,12 @@ export function computeAllTrainersPerformance(
       if (key && trainerMap.has(key)) {
         const tObj = trainerMap.get(key)
         if (p.documento) tObj.alumnosSet.add(p.documento)
+        tObj.gruposSet.add(gCode)
         if (norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES') {
           if (p.documento) tObj.ingresantesOPSet.add(p.documento)
+        }
+        if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
+          if (p.documento) tObj.bajasSet.add(p.documento)
         }
       }
     }
@@ -662,15 +682,14 @@ export function computeAllTrainersPerformance(
 
   const trainerScores = []
 
-  trainerMap.forEach((tObj, tKey) => {
+  trainerMap.forEach((tObj) => {
     const totalAlumnos = tObj.alumnosSet.size
-    if (totalAlumnos === 0) return // Excluir formadores sin alumnos en los filtros seleccionados
+    if (totalAlumnos === 0) return
 
     const ingresantesOP = tObj.ingresantesOPSet.size
     const bajas = tObj.bajasSet.size
     const activosEnAula = Math.max(0, totalAlumnos - bajas - ingresantesOP)
 
-    // Ausentismo: Mide todas las faltas de asesores que NO fueron dados de baja
     const ausentismoCount = tObj.faltasSinBaja
     const pctAusentismo = tObj.totalAsistenciasPosibles > 0 
       ? Math.round((ausentismoCount / tObj.totalAsistenciasPosibles) * 100) 
@@ -682,13 +701,11 @@ export function computeAllTrainersPerformance(
 
     const pctRetencionOP = totalAlumnos > 0 ? Math.round((ingresantesOP / totalAlumnos) * 100) : 0
 
-    const metaRetencion = 80
-    const metaIngresantes = Math.max(1, Math.round(Math.max(totalAlumnos, 20) * 0.80))
-
+    // Score Ponderado del Formador: 50% Retención OP + 35% Asistencia - 15% Ausentismo
     const score = Math.max(0, Math.round(
-      (pctRetencionOP * 0.45) +
+      (pctRetencionOP * 0.50) +
       (pctAsistencia * 0.35) +
-      (Math.max(0, 100 - pctAusentismo * 2) * 0.20)
+      (Math.max(0, 100 - pctAusentismo * 2) * 0.15)
     ))
 
     trainerScores.push({
@@ -705,21 +722,24 @@ export function computeAllTrainersPerformance(
       pctAusentismo,
       pctAsistencia,
       pctRetencionOP,
-      metaRetencion,
-      metaIngresantes,
+      gruposCount: tObj.gruposSet.size,
       score,
-      asistencias: tObj.asistenciasList
+      asistencias: tObj.asistenciasList,
+      alumnosSet: tObj.alumnosSet,
+      gruposSet: tObj.gruposSet
     })
   })
 
   return assignQuartiles(trainerScores, 'score')
 }
 
-// ── Detalle Individual y Evolución Diaria del Formador ───────────────────────
+// ── Detalle Individual, Funnel y Semanas del Formador ───────────────────────
 export function getTrainerIndividualDetails(
   targetIdentifier,
   asistencias = [],
-  allRankedTrainers = []
+  allRankedTrainers = [],
+  grupos = [],
+  postulantes = []
 ) {
   if (!allRankedTrainers.length) return null
 
@@ -733,14 +753,7 @@ export function getTrainerIndividualDetails(
 
   if (!rankedItem) return null
 
-  const today = new Date()
-  const currentDay = today.getDate()
-  const totalDaysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
-  const daysPassed = Math.max(1, currentDay)
-
-  const runRateFactor = totalDaysInMonth / daysPassed
-  const projectedIngresantes = Math.round(rankedItem.ingresantesOP * runRateFactor)
-
+  // Posición en segmento
   const mySeg = norm(rankedItem.segmento || 'CAPACITACIÓN')
   const segTrainers = allRankedTrainers
     .filter(t => norm(t.segmento || 'CAPACITACIÓN') === mySeg)
@@ -749,108 +762,173 @@ export function getTrainerIndividualDetails(
   const segmentRank = Math.max(1, segTrainers.findIndex(t => t.nombre === rankedItem.nombre) + 1)
   const totalInSegment = Math.max(1, segTrainers.length)
 
-  let runRateMsg = `Proyección estimada: ~${projectedIngresantes} INGRESANTES A LA OPERACIÓN.`
-  let runRateStatus = 'success'
-  if (projectedIngresantes >= rankedItem.metaIngresantes) {
-    runRateMsg += ` ✔️ Cumplirías el objetivo de retención (${rankedItem.metaIngresantes}).`
-  } else {
-    const diff = rankedItem.metaIngresantes - projectedIngresantes
-    runRateMsg += ` ⚠️ Brecha proyectada de ~${diff} alumnos respecto a la meta.`
-    runRateStatus = 'warning'
-  }
+  // ── 1. FUNNEL DE RETENCIÓN DE AULA (FORMADOR) ─────────────────────────────
+  const totalAlumnos = rankedItem.totalAlumnos
+  const pctAsist = rankedItem.pctAsistencia
+  const activos = rankedItem.activosEnAula
+  const op = rankedItem.ingresantesOP
+  const bajas = rankedItem.bajas
 
-  const dailyMap = new Map()
-  for (let d = 1; d <= Math.min(daysPassed, totalDaysInMonth); d++) {
-    const label = `${d}`
-    dailyMap.set(label, {
-      dia: label,
-      presentes: 0,
-      ausentismo: 0,
-      bajas: 0,
-      ingresantesOP: 0,
-      pctAsistenciaDia: 0
-    })
-  }
-
-  (rankedItem.asistencias || []).forEach(a => {
-    const dateStr = parseDateStr(a.fecha_asistencia || a.fecha_registro_asistencia)
-    if (dateStr) {
-      const dNum = parseInt(dateStr.split('-')[2], 10)
-      const label = `${dNum}`
-      if (dailyMap.has(label)) {
-        const row = dailyMap.get(label)
-        const sigla = a.sigla_asistencia
-        if (sigla === 'I-OP') {
-          row.ingresantesOP++
-          row.presentes++
-        } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'T') {
-          row.presentes++
-        } else if (sigla === 'B') {
-          row.bajas++
-        } else if (sigla === 'F') {
-          row.ausentismo++
-        }
-      }
-    }
-  })
-
-  dailyMap.forEach(row => {
-    const totalDia = row.presentes + row.ausentismo + row.bajas
-    row.pctAsistenciaDia = totalDia > 0 ? Math.round((row.presentes / totalDia) * 100) : 100
-  })
-
-  const dailyEvolution = Array.from(dailyMap.values())
-
-  const objetivos = [
+  const funnel = [
     {
-      id: 'ingresos_op_formacion',
-      label: 'INGRESANTES A LA OPERACIÓN (Pases Aprobados)',
-      actual: rankedItem.ingresantesOP,
-      meta: `${rankedItem.metaIngresantes} meta`,
-      pct: rankedItem.pctRetencionOP,
-      stars: computeStars(rankedItem.pctRetencionOP),
-      proyeccion: runRateMsg,
-      status: runRateStatus,
-      color: '#10b981'
+      stage: 'Nómina Inicial en Aula',
+      label: 'Alumnos Recibidos',
+      count: totalAlumnos,
+      pct: 100,
+      subtext: `${totalAlumnos} alumnos asignados en cohortes`,
+      color: '#8b5cf6'
     },
     {
-      id: 'asistencia_aula',
-      label: '% Asistencia Diaria en Aula',
-      actual: `${rankedItem.pctAsistencia}%`,
-      meta: '≥ 85% objetivo',
-      pct: rankedItem.pctAsistencia,
-      stars: computeStars(rankedItem.pctAsistencia),
-      proyeccion: `Promedio de asistencia efectiva registrada`,
+      stage: 'Asistencia Efectiva',
+      label: 'Cumplimiento Asistencia',
+      count: Math.round(totalAlumnos * (pctAsist / 100)),
+      pct: pctAsist,
+      subtext: `${pctAsist}% asistencia promedio en aula`,
       color: '#06b6d4'
     },
     {
-      id: 'control_ausentismo',
-      label: 'Cantidad de Ausentismo (Faltas Activas)',
-      actual: `${rankedItem.ausentismoCount} faltas`,
-      meta: '≤ 5% esperado',
-      pct: Math.max(0, 100 - rankedItem.pctAusentismo * 5),
-      stars: rankedItem.pctAusentismo <= 5 ? 5 : (rankedItem.pctAusentismo <= 12 ? 3 : 1),
-      proyeccion: `Mide faltas de asesores que no fueron dados de baja`,
-      color: '#f59e0b'
+      stage: 'Activos Cursando / OJT',
+      label: 'En Proceso',
+      count: activos,
+      pct: totalAlumnos > 0 ? Math.round((activos / totalAlumnos) * 100) : 0,
+      subtext: `${activos} alumnos en formación activa`,
+      color: '#3b82f6'
     },
     {
-      id: 'retencion_global',
-      label: '% Retención de Capacitación',
-      actual: `${rankedItem.pctRetencionOP}%`,
-      meta: `${rankedItem.metaRetencion}% objetivo`,
-      pct: rankedItem.pctRetencionOP,
-      stars: computeStars(rankedItem.pctRetencionOP),
-      proyeccion: `Total alumnos gestionados: ${rankedItem.totalAlumnos} (${rankedItem.activosEnAula} en aula)`,
-      color: '#818cf8'
+      stage: 'Graduados a Operación (OP)',
+      label: 'Pases Exitosos',
+      count: op,
+      pct: totalAlumnos > 0 ? Math.round((op / totalAlumnos) * 100) : 0,
+      subtext: `${op} alumnos certificados a producción`,
+      color: '#10b981'
     }
   ]
 
+  // ── 2. EVOLUCIÓN POR SEMANAS DE ASISTENCIA ────────────────────────────────
+  const weekMap = new Map()
+  const grupoInfoMap = new Map()
+  ;(grupos || []).forEach(g => {
+    const c = norm(g.codigo || g.grupo_codigo)
+    if (c) grupoInfoMap.set(c, g)
+  })
+
+  ;(rankedItem.asistencias || []).forEach(a => {
+    const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
+    const gObj = grupoInfoMap.get(gCode)
+    const semLabel = formatSemanaLabel(gObj?.semana || gObj?.semana_trabajo || gObj?.semana_label || a.semana)
+
+    if (!weekMap.has(semLabel)) {
+      weekMap.set(semLabel, {
+        semana: semLabel,
+        semanaNum: extractSemanaNum(semLabel),
+        asistenciasEfectivas: 0,
+        faltas: 0,
+        bajas: 0,
+        ingresantesOP: 0,
+        totalMarcaciones: 0
+      })
+    }
+
+    const w = weekMap.get(semLabel)
+    w.totalMarcaciones++
+    const sigla = a.sigla_asistencia || a.sigla
+
+    if (sigla === 'I-OP') {
+      w.ingresantesOP++
+      w.asistenciasEfectivas++
+    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'T') {
+      w.asistenciasEfectivas++
+    } else if (sigla === 'B') {
+      w.bajas++
+    } else if (sigla === 'F') {
+      w.faltas++
+    }
+  })
+
+  const weeklyEvolution = Array.from(weekMap.values())
+    .sort((a, b) => (a.semanaNum || 999) - (b.semanaNum || 999))
+    .map(w => ({
+      ...w,
+      pctAsistencia: w.totalMarcaciones > 0 ? Math.round((w.asistenciasEfectivas / w.totalMarcaciones) * 100) : 0
+    }))
+
+  // ── 3. MOTIVOS DE DESERCIÓN / BAJA EN CAPACITACIÓN ────────────────────────
+  const motivosMap = new Map()
+  let totalBajasContadas = 0
+
+  ;(rankedItem.asistencias || []).forEach(a => {
+    const sigla = a.sigla_asistencia || a.sigla
+    if (sigla === 'B' || a.motivo_baja) {
+      totalBajasContadas++
+      const mRaw = norm(a.motivo_baja || 'DESERCIÓN EN AULA')
+      motivosMap.set(mRaw, (motivosMap.get(mRaw) || 0) + 1)
+    }
+  })
+
+  const motivosBajaBreakdown = Array.from(motivosMap.entries())
+    .map(([motivo, count]) => ({
+      motivo,
+      count,
+      pct: totalBajasContadas > 0 ? Math.round((count / totalBajasContadas) * 100) : 0
+    }))
+    .sort((a, b) => b.count - a.count)
+
+  // ── 4. DESGLOSE DE GRUPOS / AULAS GESTIONADAS ─────────────────────────────
+  const myGrupos = (grupos || []).filter(g => {
+    const gCode = norm(g.codigo || g.grupo_codigo)
+    const tDoc = g.formador_documento || g.documento_formador
+    const tName = g.formador_nombre || g.formador || g.responsable
+    return matchPerson(tName, rankedItem.nombre) || (tDoc && tDoc === rankedItem.dni) || (rankedItem.gruposSet && rankedItem.gruposSet.has(gCode))
+  })
+
+  const gruposBreakdown = myGrupos.map(g => {
+    const gCode = g.codigo || g.grupo_codigo
+    const gPosts = (postulantes || []).filter(p => norm(p.grupo_codigo) === norm(gCode))
+    const totalG = gPosts.length
+    const opG = gPosts.filter(p => norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES').length
+    const bajasG = gPosts.filter(p => norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)).length
+
+    return {
+      codigo: gCode,
+      campana: g.campana || 'Sin Campaña',
+      sede: g.sede || 'LIMA',
+      semana: formatSemanaLabel(g.semana || g.semana_trabajo || g.semana_label),
+      alumnos: totalG,
+      ingresantesOP: opG,
+      bajas: bajasG,
+      pctRetencion: totalG > 0 ? Math.round((opG / totalG) * 100) : 0
+    }
+  })
+
+  // ── 5. TRAZABILIDAD NOMINAL (ALUMNOS ASIGNADOS) ───────────────────────────
+  const alumnosDocsSet = rankedItem.alumnosSet || new Set()
+  const alumnosNominal = (postulantes || [])
+    .filter(p => alumnosDocsSet.has(p.documento))
+    .map(p => {
+      const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
+      const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+
+      return {
+        documento: p.documento || '-',
+        nombre_completo: p.nombre_completo || `${p.apellido_paterno || ''} ${p.apellido_materno || ''} ${p.nombres || ''}`.trim() || 'Sin Nombre',
+        campana: p.campana || 'Sin Campaña',
+        grupo_codigo: p.grupo_codigo || '-',
+        semana: formatSemanaLabel(p.semana_trabajo || p.semana || p.semana_label),
+        estado: isOP ? 'GRADUADO OP' : (isBaja ? 'BAJA EN AULA' : (p.estado || 'EN CURSO')),
+        motivo_baja: p.motivo_baja || '-',
+        isOP,
+        isBaja
+      }
+    })
+
   return {
     ...rankedItem,
-    runRateMsg,
-    runRateStatus,
-    projectedIngresantes,
-    objetivos,
-    dailyEvolution
+    segmentRank,
+    totalInSegment,
+    funnel,
+    weeklyEvolution,
+    motivosBajaBreakdown,
+    gruposBreakdown,
+    alumnosNominal
   }
 }

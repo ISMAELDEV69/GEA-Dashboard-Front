@@ -8,7 +8,7 @@ import { ALL_NAV } from '../App'
 
 // Note: 'perfil' and other non-module views are not included here, only manageable ones
 export const AVAILABLE_MODULES = [
-  { id: 'scorecard_individual', label: 'KPIS - Asesor' },
+  { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador' },
   { id: 'resumen_capacitacion', label: 'Resumen Capacitación' },
   { id: 'cartera_reclutador', label: 'Mi Cartera' },
   { id: 'consolidado', label: 'Control de Asistencia' },
