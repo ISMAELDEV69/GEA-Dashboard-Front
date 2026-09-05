@@ -459,6 +459,74 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
   });
 }
 
+export async function fetchConsolidadoOnDemand({ semana = null, gpe = null, campana = null } = {}) {
+  if (DB_MODE !== 'supabase') return [];
+
+  const cleanSem = semana && semana !== 'Todas' ? String(semana).trim().toUpperCase() : null;
+  const cleanGpe = gpe && gpe !== 'Todas' ? String(gpe).trim().toUpperCase() : null;
+  const cleanCamp = campana && campana !== 'Todas' && campana !== 'Sin campaña' ? String(campana).trim().toUpperCase() : null;
+
+  if (!cleanSem && !cleanGpe) return [];
+
+  const semNum = cleanSem ? cleanSem.replace(/\D/g, '') : '';
+  const semTag = semNum ? `SEM${semNum}` : cleanSem;
+
+  const cacheKey = `ondemand_${cleanGpe || 'all'}_${semTag || 'all'}_${cleanCamp || 'all'}`;
+
+  return withCache(cacheKey, 300000, async () => {
+    const buildBaseQuery = () => {
+      let q = supabase
+        .from('consolidado_asistencias')
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen');
+
+      if (cleanGpe) {
+        q = q.or(`codigo_grupo.ilike.%${cleanGpe}%,grupo.ilike.%${cleanGpe}%`);
+      } else if (semTag) {
+        q = q.ilike('archivo_origen', `%${semTag}%`);
+      }
+
+      if (cleanCamp) {
+        q = q.ilike('campana', `%${cleanCamp}%`);
+      }
+      return q.order('created_at', { ascending: true });
+    };
+
+    let allData = [];
+    let from = 0;
+    const step = 2500;
+    let hasMore = true;
+
+    while (hasMore) {
+      const q = buildBaseQuery().range(from, from + step - 1);
+      const { data, error } = await q;
+      if (error) {
+        console.error('Error fetching on demand:', error);
+        throw error;
+      }
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        if (data.length < step || allData.length >= 10000) {
+          hasMore = false;
+        } else {
+          from += step;
+        }
+      } else {
+        hasMore = false;
+      }
+    }
+
+    const descSet = await getDescuentosSetGlobal();
+    if (descSet && descSet.size > 0) {
+      for (let i = 0; i < allData.length; i++) {
+        const row = allData[i];
+        row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo));
+      }
+    }
+
+    return allData;
+  });
+}
+
 export async function getFirstDateFormador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return null;
 

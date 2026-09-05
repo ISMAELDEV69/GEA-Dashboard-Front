@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, useCallback } from 'react';
+import { useEffect, useId, useMemo, useState, useCallback, useRef } from 'react';
 import { 
   AlertCircle, 
   CalendarDays, 
@@ -23,7 +23,7 @@ import {
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
-import { fetchDashboardData, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
+import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import * as XLSX from 'xlsx';
 
 const STATUS_META = {
@@ -469,6 +469,7 @@ export default function ConsolidadoPowerBI() {
   const [capacidades, setCapacidades] = useState([]);
   const [descuentos, setDescuentos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -481,6 +482,7 @@ export default function ConsolidadoPowerBI() {
     gpe: 'Todas', 
     estado: 'Todas' 
   });
+  const fetchedFiltersRef = useRef(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -677,6 +679,99 @@ export default function ConsolidadoPowerBI() {
       return next;
     });
   };
+
+  // ── Carga Quirúrgica Bajo Demanda (On-Demand Fetch) para optimizar Egress ──
+  useEffect(() => {
+    if (loading) return;
+
+    const targetSemana = filters.semana !== 'Todas' ? filters.semana : null;
+    const targetGpe = filters.gpe !== 'Todas' ? filters.gpe : null;
+    const targetCampana = filters.campana !== 'Todas' && filters.campana !== 'Sin campaña' ? filters.campana : null;
+    const targetPeriodo = filters.periodo !== 'Todas' ? filters.periodo : null;
+
+    if (!targetSemana && !targetGpe && !targetPeriodo) return;
+
+    const requestKey = `${targetGpe || 'all'}_${targetSemana || 'all'}_${targetPeriodo || 'all'}_${targetCampana || 'all'}`;
+    if (fetchedFiltersRef.current.has(requestKey)) return;
+
+    // 1. Caso Semana / GPE específico
+    if (targetGpe || targetSemana) {
+      const hasData = validData.some((row) => {
+        if (targetGpe && row._gpe === targetGpe) {
+          if (!targetCampana || row._campana === targetCampana) return true;
+        }
+        if (!targetGpe && targetSemana && row._semana === targetSemana) {
+          if (!targetCampana || row._campana === targetCampana) return true;
+        }
+        return false;
+      });
+
+      if (!hasData) {
+        let isMounted = true;
+        setLoadingHistorical(true);
+        fetchedFiltersRef.current.add(requestKey);
+
+        fetchConsolidadoOnDemand({
+          semana: targetSemana,
+          gpe: targetGpe,
+          campana: targetCampana
+        }).then((newRows) => {
+          if (!isMounted) return;
+          if (newRows && newRows.length > 0) {
+            setData((prev) => {
+              const existingIds = new Set(prev.map((r) => r.id));
+              const fresh = newRows.filter((r) => !existingIds.has(r.id));
+              return fresh.length > 0 ? [...prev, ...fresh] : prev;
+            });
+          }
+        }).catch((err) => {
+          console.error('Error al descargar registros históricos:', err);
+        }).finally(() => {
+          if (isMounted) setLoadingHistorical(false);
+        });
+
+        return () => {
+          isMounted = false;
+        };
+      }
+    } else if (targetPeriodo && !targetSemana && !targetGpe) {
+      // 2. Caso Período seleccionado pero sin semana específica
+      const hasPeriodData = validData.some((row) => row._periodo === targetPeriodo);
+      if (!hasPeriodData) {
+        const periodSemanas = Array.from(new Set(
+          allCapacidadItems.filter((c) => c.periodo === targetPeriodo).map((c) => c.semana).filter(Boolean)
+        ));
+
+        if (periodSemanas.length > 0) {
+          let isMounted = true;
+          setLoadingHistorical(true);
+          fetchedFiltersRef.current.add(requestKey);
+
+          Promise.all(
+            periodSemanas.map((sem) => fetchConsolidadoOnDemand({ semana: sem, campana: targetCampana }))
+          ).then((results) => {
+            if (!isMounted) return;
+            const flat = results.flat();
+            if (flat.length > 0) {
+              setData((prev) => {
+                const existingIds = new Set(prev.map((r) => r.id));
+                const fresh = flat.filter((r) => !existingIds.has(r.id));
+                return fresh.length > 0 ? [...prev, ...fresh] : prev;
+              });
+            }
+          }).catch((err) => {
+            console.error('Error al descargar período histórico:', err);
+          }).finally(() => {
+            if (isMounted) setLoadingHistorical(false);
+          });
+
+          return () => {
+            isMounted = false;
+          };
+        }
+      }
+    }
+  }, [filters.semana, filters.gpe, filters.campana, filters.periodo, loading, validData, allCapacidadItems]);
 
   // ── Datos filtrados para Indicadores / KPIs ──
   const kpiFilteredData = useMemo(() => {
@@ -1025,6 +1120,12 @@ export default function ConsolidadoPowerBI() {
           <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
             Control de Asistencia <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· consolidado bi</span>
           </h2>
+          {loadingHistorical && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[9px] font-bold text-cyan-400 animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
+              <span>Cargando histórico...</span>
+            </span>
+          )}
         </div>
 
         {/* Inline Compact Filter Badges (Jerarquía: Periodo -> Semana -> Segmento -> Campaña -> GPE -> Estado) */}
@@ -1254,8 +1355,18 @@ export default function ConsolidadoPowerBI() {
               {pivotRows.length === 0 && (
                 <tr>
                   <td colSpan={7 + uniqueDates.length} className="px-4 py-16 text-center text-[var(--text-muted)]">
-                    <AlertCircle size={32} className="mx-auto mb-2 text-[var(--text-faint)]" />
-                    <p className="font-bold text-xs">No hay registros de asistencia que coincidan con los filtros.</p>
+                    {loadingHistorical ? (
+                      <div className="flex flex-col items-center justify-center">
+                        <Loader2 size={32} className="mx-auto mb-2 text-cyan-500 animate-spin" />
+                        <p className="font-bold text-xs text-cyan-400">Descargando registros históricos bajo demanda...</p>
+                        <p className="text-[10px] text-[var(--text-muted)] mt-1">Conectando con Supabase de forma quirúrgica para optimizar el consumo de red.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <AlertCircle size={32} className="mx-auto mb-2 text-[var(--text-faint)]" />
+                        <p className="font-bold text-xs">No hay registros de asistencia que coincidan con los filtros.</p>
+                      </>
+                    )}
                   </td>
                 </tr>
               )}

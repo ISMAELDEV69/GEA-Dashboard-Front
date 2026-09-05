@@ -228,6 +228,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         const matchDoc = String(d.grupo_codigo || '').toLowerCase().includes(q) ||
           String(d.campana || '').toLowerCase().includes(q) ||
           String(d.formador || '').toLowerCase().includes(q) ||
+          String(d.estado || '').toLowerCase().includes(q) ||
           String(segNorm).toLowerCase().includes(q);
         if (!matchDoc) return false;
       }
@@ -238,9 +239,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Totales Scorecard
   const kpis = useMemo(() => {
     return filteredData.reduce((acc, curr) => {
-      // Regla de Negocio Interna: Solo los grupos de RECLUTAMIENTO representan el requerimiento solicitado (RQ) por la empresa
+      // Regla de Negocio Interna: Solo los grupos de RECLUTAMIENTO y RECUPERADO representan el requerimiento solicitado (RQ)
       const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
       const rqVal = isRqEligible ? (curr.rq_ftes_solicitado !== undefined && curr.rq_ftes_solicitado !== null
         ? Number(curr.rq_ftes_solicitado)
         : (curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0))) : 0;
@@ -282,7 +283,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 });
 
       const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
       const rqVal = isRqEligible ? (d.rq_ftes_solicitado !== undefined && d.rq_ftes_solicitado !== null
         ? Number(d.rq_ftes_solicitado)
         : (d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0))) : 0;
@@ -1434,6 +1435,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                   <th className="py-3 px-3">Formador a Cargo</th>
                   <th className="py-3 px-3">Campaña</th>
                   <th className="py-3 px-3">Área / Origen</th>
+                  <th className="py-3 px-3 text-center">Estado</th>
                   <th className="py-3 px-3">Segmento</th>
                   <th className="py-3 px-3">Local / Sede</th>
                   <th className="py-3 px-2 text-center">Semana</th>
@@ -1447,7 +1449,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
               </thead>
               <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
-                  const req = d.requerimiento || d.rq_solicitado || 0;
+                  const areaNorm = String(d.area_traslado || 'RECLUTAMIENTO').trim().toUpperCase();
+                  const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
+                  const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
+                  const estadoStr = String(d.estado || 'CERRADO').toUpperCase().trim();
 
                   return (
                     <tr key={`${d.grupo_codigo}_${d.campana}_${i}`} className="hover:bg-[var(--surface-hover)] transition-colors font-medium">
@@ -1469,6 +1474,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                             : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                         }`}>
                           {d.area_traslado || 'RECLUTAMIENTO'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                          estadoStr.includes('CURSO')
+                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                            : estadoStr.includes('PROYEC')
+                            ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
+                            : 'bg-slate-500/15 text-slate-300 border border-slate-500/30'
+                        }`}>
+                          {estadoStr}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-[var(--text-muted)] whitespace-nowrap">{normalizeSegmento(d.segmento, d.campana)}</td>
@@ -1497,7 +1513,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 })}
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="py-12 text-center text-[var(--text-muted)]">
+                    <td colSpan={14} className="py-12 text-center text-[var(--text-muted)]">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-cyan-400" />
                       <p className="font-bold text-xs">No hay cohortes que coincidan con los filtros seleccionados.</p>
                     </td>
