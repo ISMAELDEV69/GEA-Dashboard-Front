@@ -77,8 +77,8 @@ function PerformanceScorecardIndividual({
   // ── Estados de Control y Filtros ────────────────────────────────────────
   const [activeRole, setActiveRole] = useState(isTrainerUser ? 'FORMADOR' : 'RECLUTADOR')
   const [filterPeriodo, setFilterPeriodo] = useState('Todos')
-  const [filterSegmento, setFilterSegmento] = useState('Todos')
-  const [filterCampana, setFilterCampana] = useState('Todos')
+  const [filterSegmento, setFilterSegmento] = useState('Todos Segmentos')
+  const [filterCampana, setFilterCampana] = useState('Todas Campañas')
   const [filterGrupo, setFilterGrupo] = useState('Todos los Grupos')
   const [selectedIdentifier, setSelectedIdentifier] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -220,60 +220,66 @@ function PerformanceScorecardIndividual({
     return ['Todos los Grupos', ...Array.from(set).sort()]
   }, [postulantes, grupos, filterPeriodo, filterSegmento, filterCampana, getPPeriodo, getPSegmento, getPCampana])
 
+  // Helpers de validación de filtros activos
+  const isPeriodoAll = useCallback((p) => !p || p === 'Todos' || p === 'Todos los Períodos', [])
+  const isSegmentoAll = useCallback((s) => !s || s === 'Todos' || s === 'Todos Segmentos', [])
+  const isCampanaAll = useCallback((c) => !c || c === 'Todos' || c === 'Todas Campañas' || c === 'Todas', [])
+  const isGrupoAll = useCallback((g) => !g || g === 'Todos' || g === 'Todos los Grupos', [])
+
   // Filtrado de Datos Base
   const filteredPostulantes = useMemo(() => {
     return postulantes.filter(p => {
-      if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return false
-      if (filterSegmento !== 'Todos Segmentos' && getPSegmento(p) !== filterSegmento) return false
-      if (filterCampana !== 'Todas Campañas' && getPCampana(p) !== filterCampana) return false
-      if (filterGrupo !== 'Todos los Grupos' && (p.grupo_codigo || '').trim().toUpperCase() !== filterGrupo) return false
+      if (!isPeriodoAll(filterPeriodo) && getPPeriodo(p) !== filterPeriodo) return false
+      if (!isSegmentoAll(filterSegmento) && getPSegmento(p) !== filterSegmento) return false
+      if (!isCampanaAll(filterCampana) && getPCampana(p) !== filterCampana) return false
+      if (!isGrupoAll(filterGrupo) && (p.grupo_codigo || '').trim().toUpperCase() !== filterGrupo) return false
       return true
     })
-  }, [postulantes, filterPeriodo, filterSegmento, filterCampana, filterGrupo, getPPeriodo, getPSegmento, getPCampana])
+  }, [postulantes, filterPeriodo, filterSegmento, filterCampana, filterGrupo, getPPeriodo, getPSegmento, getPCampana, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll])
 
   const filteredGrupos = useMemo(() => {
     return grupos.filter(g => {
-      if (filterPeriodo !== 'Todos') {
+      if (!isPeriodoAll(filterPeriodo)) {
         const per = normalizePeriodo(g.periodo)
         if (per && per !== filterPeriodo) return false
       }
-      if (filterSegmento !== 'Todos Segmentos') {
+      if (!isSegmentoAll(filterSegmento)) {
         const seg = (g.segmento || '').trim().toUpperCase()
         if (seg && seg !== filterSegmento) return false
       }
-      if (filterCampana !== 'Todas Campañas') {
+      if (!isCampanaAll(filterCampana)) {
         const camp = (g.campana || '').trim().toUpperCase()
         if (camp && camp !== filterCampana) return false
       }
-      if (filterGrupo !== 'Todos los Grupos') {
+      if (!isGrupoAll(filterGrupo)) {
         const code = (g.codigo || g.grupo_codigo || '').trim().toUpperCase()
         if (code !== filterGrupo) return false
       }
       return true
     })
-  }, [grupos, filterPeriodo, filterSegmento, filterCampana, filterGrupo])
+  }, [grupos, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll])
 
   const filteredCampanasMetas = useMemo(() => {
     return campanasMetas.filter(g => {
-      if (filterPeriodo !== 'Todos') {
+      if (!isPeriodoAll(filterPeriodo)) {
         const per = normalizePeriodo(g.periodo)
         if (per && per !== filterPeriodo) return false
       }
-      if (filterSegmento !== 'Todos Segmentos') {
+      if (!isSegmentoAll(filterSegmento)) {
         const seg = (g.segmento || '').trim().toUpperCase()
         if (seg && seg !== filterSegmento) return false
       }
-      if (filterCampana !== 'Todas Campañas') {
+      if (!isCampanaAll(filterCampana)) {
         const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
         if (camp && camp !== filterCampana) return false
       }
-      if (filterGrupo !== 'Todos los Grupos') {
+      if (!isGrupoAll(filterGrupo)) {
         const code = (g.grupo_codigo || g.codigo || '').trim().toUpperCase()
         if (code !== filterGrupo) return false
       }
       return true
     })
-  }, [campanasMetas, filterPeriodo, filterSegmento, filterCampana, filterGrupo])
+  }, [campanasMetas, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll])
 
   const filteredAsistencias = useMemo(() => {
     const validGroupCodes = new Set(filteredGrupos.map(g => norm(g.codigo || g.grupo_codigo)).filter(Boolean))
@@ -285,17 +291,17 @@ function PerformanceScorecardIndividual({
       const camp = (a.campana || '').trim().toUpperCase()
       const seg = (a.segmento || '').trim().toUpperCase()
 
-      if (filterGrupo !== 'Todos los Grupos') {
+      if (!isGrupoAll(filterGrupo)) {
         if (gCode !== norm(filterGrupo) && !validPostulanteDocs.has(doc)) return false
       }
       if (gCode && validGroupCodes.has(gCode)) return true
       if (doc && validPostulanteDocs.has(doc)) return true
-      if (filterCampana !== 'Todas Campañas' && camp !== filterCampana) return false
-      if (filterSegmento !== 'Todos Segmentos' && seg && seg !== filterSegmento) return false
+      if (!isCampanaAll(filterCampana) && camp !== filterCampana) return false
+      if (!isSegmentoAll(filterSegmento) && seg && seg !== filterSegmento) return false
       if (gCode && validGroupCodes.size > 0 && !validGroupCodes.has(gCode)) return false
       return true
     })
-  }, [asistencias, filteredGrupos, filteredPostulantes, filterCampana, filterSegmento, filterGrupo])
+  }, [asistencias, filteredGrupos, filteredPostulantes, filterCampana, filterSegmento, filterGrupo, isGrupoAll, isCampanaAll, isSegmentoAll])
 
   // Motor Analítico
   const rankedRecruiters = useMemo(() => {

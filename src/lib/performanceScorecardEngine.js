@@ -82,7 +82,17 @@ export function computeStars(pct) {
 // ── Cálculo de Cuartiles (Q1 a Q4) ──────────────────────────────────────────
 export function assignQuartiles(list = [], scoreKey = 'score') {
   if (!list.length) return []
-  const sorted = [...list].sort((a, b) => (b[scoreKey] || 0) - (a[scoreKey] || 0))
+  const sorted = [...list].sort((a, b) => {
+    const diff = (b[scoreKey] || 0) - (a[scoreKey] || 0)
+    if (diff !== 0) return diff
+    const diffOP = (b.ingresantesOP || 0) - (a.ingresantesOP || 0)
+    if (diffOP !== 0) return diffOP
+    const diffD1 = (b.qDia1 || b.asistenciasEfectivas || 0) - (a.qDia1 || a.asistenciasEfectivas || 0)
+    if (diffD1 !== 0) return diffD1
+    const diffVol = (b.totalPostulantes || b.totalAlumnos || 0) - (a.totalPostulantes || a.totalAlumnos || 0)
+    if (diffVol !== 0) return diffVol
+    return (a.nombre || '').localeCompare(b.nombre || '')
+  })
   const n = sorted.length
   return sorted.map((item, idx) => {
     const rank = idx + 1
@@ -332,12 +342,16 @@ export function getRecruiterIndividualDetails(
   if (!allRankedRecruiters.length) return null
 
   const target = norm(targetIdentifier)
-  const rankedItem = allRankedRecruiters.find(r => 
-    norm(r.nombre) === target ||
-    norm(r.dni) === target ||
-    norm(r.usuario) === target ||
-    matchPerson(r.nombre, targetIdentifier)
-  ) || allRankedRecruiters[0]
+  let rankedItem = allRankedRecruiters.find(r => norm(r.nombre) === target)
+  if (!rankedItem && target) {
+    rankedItem = allRankedRecruiters.find(r => (r.dni && norm(r.dni) === target) || (r.usuario && norm(r.usuario) === target))
+  }
+  if (!rankedItem && target) {
+    rankedItem = allRankedRecruiters.find(r => matchPerson(r.nombre, targetIdentifier))
+  }
+  if (!rankedItem) {
+    rankedItem = allRankedRecruiters[0]
+  }
 
   if (!rankedItem) return null
 
@@ -349,7 +363,7 @@ export function getRecruiterIndividualDetails(
     .filter(r => norm(r.segmento || 'GENERAL') === mySeg)
     .sort((a, b) => (b.score || 0) - (a.score || 0))
 
-  const segmentRank = Math.max(1, segRecruiters.findIndex(r => r.nombre === rankedItem.nombre) + 1)
+  const segmentRank = Math.max(1, segRecruiters.findIndex(r => norm(r.nombre) === norm(rankedItem.nombre)) + 1)
   const totalInSegment = Math.max(1, segRecruiters.length)
 
   // ── 1. FUNNEL DE CONVERSIÓN REAL (EMBUDO OPERATIVO) ───────────────────────
@@ -744,12 +758,16 @@ export function getTrainerIndividualDetails(
   if (!allRankedTrainers.length) return null
 
   const target = norm(targetIdentifier)
-  const rankedItem = allRankedTrainers.find(t => 
-    norm(t.nombre) === target ||
-    norm(t.dni) === target ||
-    norm(t.usuario) === target ||
-    matchPerson(t.nombre, targetIdentifier)
-  ) || allRankedTrainers[0]
+  let rankedItem = allRankedTrainers.find(t => norm(t.nombre) === target)
+  if (!rankedItem && target) {
+    rankedItem = allRankedTrainers.find(t => (t.dni && norm(t.dni) === target) || (t.usuario && norm(t.usuario) === target))
+  }
+  if (!rankedItem && target) {
+    rankedItem = allRankedTrainers.find(t => matchPerson(t.nombre, targetIdentifier))
+  }
+  if (!rankedItem) {
+    rankedItem = allRankedTrainers[0]
+  }
 
   if (!rankedItem) return null
 
@@ -759,7 +777,7 @@ export function getTrainerIndividualDetails(
     .filter(t => norm(t.segmento || 'CAPACITACIÓN') === mySeg)
     .sort((a, b) => (b.score || 0) - (a.score || 0))
 
-  const segmentRank = Math.max(1, segTrainers.findIndex(t => t.nombre === rankedItem.nombre) + 1)
+  const segmentRank = Math.max(1, segTrainers.findIndex(t => norm(t.nombre) === norm(rankedItem.nombre)) + 1)
   const totalInSegment = Math.max(1, segTrainers.length)
 
   // ── 1. FUNNEL DE RETENCIÓN DE AULA (FORMADOR) ─────────────────────────────
