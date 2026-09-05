@@ -2278,18 +2278,26 @@ export async function deleteMotivoBaja(motivoId) {
 export async function insertConsolidado(payloads) {
   if (DB_MODE !== 'supabase' || !payloads || payloads.length === 0) return;
   
-  // Limpiar duplicados previos de esa misma fecha y grupo antes de insertar el estado más fresco
+  // Limpiar duplicados previos de esa misma fecha, grupo Y CAMPAÑA antes de insertar el estado más fresco
   const sample = payloads[0];
   const targetGroup = sample.codigo_grupo || sample.grupo;
   const targetFecha = sample.fecha_registro_asistencia;
+  const targetCampana = sample.campana;
   
   if (targetGroup && targetFecha) {
     try {
-      await supabase
+      let delQuery = supabase
         .from('consolidado_asistencias')
         .delete()
         .eq('codigo_grupo', targetGroup)
         .eq('fecha_registro_asistencia', targetFecha);
+
+      if (targetCampana) {
+        delQuery = delQuery.eq('campana', targetCampana);
+      }
+
+      const { error: delErr } = await delQuery;
+      if (delErr) console.warn('Aviso al limpiar registros previos del día:', delErr);
     } catch (cleanErr) {
       console.warn('Aviso al limpiar registros previos del día:', cleanErr);
     }
@@ -3479,7 +3487,8 @@ export async function insertDescuentosBulk(payloads, userEmail) {
       comentario_rys: isFueraDePlazo ? 'APROBACION 48 HORAS HABILES.' : '',
       procede: isFueraDePlazo ? 'PROCEDE' : 'PENDIENTE',
       
-      usuario_registro: userEmail || 'admin'
+      usuario_registro: userEmail || 'admin',
+      fecha_registro: new Date().toISOString()
     };
   });
 
@@ -3491,7 +3500,46 @@ export async function insertDescuentosBulk(payloads, userEmail) {
   });
   
   invalidateCache('descuentos_set_global');
-  return { inserted: batch.length };
+  invalidateCache('mis_descuentos_user');
+  return { inserted: batch.length, batch };
+}
+
+export async function fetchMisDescuentos(userEmail = null, isAdmin = false) {
+  if (DB_MODE !== 'supabase') return [];
+  
+  try {
+    let query = supabase
+      .from('descuentos')
+      .select('*')
+      .order('fecha_registro', { ascending: false })
+      .limit(500);
+
+    if (!isAdmin && userEmail) {
+      query = query.eq('usuario_registro', userEmail);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.warn("Error en fetchMisDescuentos, intentando fallback:", err);
+    // Fallback: ordenar por ID descendente
+    try {
+      const { data: fbData, error: fbErr } = await supabase
+        .from('descuentos')
+        .select('*')
+        .order('id', { ascending: false })
+        .limit(500);
+      if (fbErr) throw fbErr;
+      if (!isAdmin && userEmail) {
+        return (fbData || []).filter(d => String(d.usuario_registro || '').toLowerCase() === String(userEmail).toLowerCase());
+      }
+      return fbData || [];
+    } catch (e) {
+      console.error("Error definitivo en fetchMisDescuentos:", e);
+      return [];
+    }
+  }
 }
 
 export async function updateDescuentosAutorizacionBulk(ids, estado, comentario) {

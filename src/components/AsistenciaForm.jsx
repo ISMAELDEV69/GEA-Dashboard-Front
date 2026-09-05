@@ -1086,7 +1086,7 @@ export default function AsistenciaForm({
           nombres: itemInfo?.nombres || '',
           celular: itemInfo?.celular || '',
           condicion_laboral: itemInfo?.condicion_laboral || '',
-          campana: itemInfo?.campana || '',
+          campana: itemInfo?.campana || activeGrupoObj?.campana || selectedCampana || '',
           grupo: targetGroup,
           documento_formador: itemInfo?.docFormador || '',
           nombre_formador: itemInfo?.nombreFormador || '',
