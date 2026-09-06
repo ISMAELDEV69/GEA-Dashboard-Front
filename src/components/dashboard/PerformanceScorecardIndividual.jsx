@@ -97,43 +97,83 @@ function PerformanceScorecardIndividual({
     return digits.length >= 6 ? digits.slice(0, 6) : digits
   }
 
-  // Mapa de resolución de grupos
+  // Inferencia y resolución determinística de Segmento oficial
+  const resolveSegmento = useCallback((seg, camp) => {
+    const s = String(seg || '').trim().toUpperCase()
+    if (s && s !== 'GENERAL' && s !== 'NULL' && s !== 'UNDEFINED') return s
+    const c = String(camp || '').trim().toUpperCase()
+    if (c.includes('LIPIGAS')) return 'LIPIGAS'
+    if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR')) return 'CLARO CHILE'
+    if (c.includes('RETENCION') || c.includes('RETENCIONES') || c.includes('CONTENCI') || c.includes('DESCUENTO')) return 'CLARO PERU RETENCIONES'
+    if (c.includes('OUT') || c.includes('UPGRADE') || c.includes('PREVENTIVA') || c.includes('PORTA') || c.includes('RENOVACION')) return 'CLARO PERU OUT'
+    return 'CLARO PERU'
+  }, [])
+
+  // Resolución de período priorizando PERÍODO DE INGRESO A OPERACIÓN de capacidad_rys
+  const getGPeriodo = useCallback((g) => {
+    if (!g) return ''
+    const directIngreso = normalizePeriodo(g.periodo_ingreso_op || g.periodo_ingreso)
+    if (directIngreso && directIngreso.length === 6) return directIngreso
+
+    if (g.fecha_ingreso_op) {
+      const fromFechaIngreso = normalizePeriodo(g.fecha_ingreso_op)
+      if (fromFechaIngreso && fromFechaIngreso.length === 6) return fromFechaIngreso
+    }
+
+    const perGen = normalizePeriodo(g.periodo)
+    if (perGen && perGen.length === 6) return perGen
+    return ''
+  }, [])
+
+  // Mapa de resolución de grupos con Período de Ingreso y Segmento oficial
   const grupoInfoMap = useMemo(() => {
     const map = new Map()
-    const addG = (code, periodo, segmento, campana) => {
+    const addG = (code, periodo, segmento, campana, gObj) => {
       const c = norm(code)
       if (!c) return
+      const camp = (campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(segmento, camp)
+      const per = getGPeriodo(gObj) || normalizePeriodo(periodo)
       map.set(c, {
-        periodo: normalizePeriodo(periodo),
-        segmento: (segmento || '').trim().toUpperCase(),
-        campana: (campana || '').trim().toUpperCase()
+        periodo: per,
+        segmento: seg,
+        campana: camp
       })
     }
-    ;(grupos || []).forEach(g => addG(g.codigo || g.grupo_codigo, g.periodo, g.segmento, g.campana))
-    ;(campanasMetas || []).forEach(g => addG(g.codigo || g.grupo_codigo || g.codigo_grupo, g.periodo, g.segmento, g.campana_nombre || g.campana))
+    ;(grupos || []).forEach(g => addG(g.codigo || g.grupo_codigo, g.periodo, g.segmento, g.campana, g))
+    ;(campanasMetas || []).forEach(g => addG(g.codigo || g.grupo_codigo || g.codigo_grupo, g.periodo, g.segmento, g.campana_nombre || g.campana, g))
     return map
-  }, [grupos, campanasMetas])
+  }, [grupos, campanasMetas, resolveSegmento, getGPeriodo])
 
   const getPPeriodo = useCallback((p) => {
-    const direct = normalizePeriodo(p.periodo_reclutado || p.periodo || p.periodo_rys)
-    if (direct && direct.length === 6) return direct
+    const directIngreso = normalizePeriodo(p.periodo_ingreso_op || p.periodo_ingreso)
+    if (directIngreso && directIngreso.length === 6) return directIngreso
+
+    if (p.fecha_ingreso_op) {
+      const fromFechaOP = normalizePeriodo(p.fecha_ingreso_op)
+      if (fromFechaOP && fromFechaOP.length === 6) return fromFechaOP
+    }
+
     if (p.grupo_codigo) {
       const g = grupoInfoMap.get(norm(p.grupo_codigo))
       if (g && g.periodo) return g.periodo
     }
+
+    const direct = normalizePeriodo(p.periodo_reclutado || p.periodo || p.periodo_rys)
+    if (direct && direct.length === 6) return direct
+
     const fromDate = normalizePeriodo(p.fecha_ingreso || p.fecha_registro || p.marca_temporal || p.created_at)
     if (fromDate && fromDate.length === 6) return fromDate
     return ''
   }, [grupoInfoMap])
 
   const getPSegmento = useCallback((p) => {
-    if (p.segmento && p.segmento.trim()) return p.segmento.trim().toUpperCase()
     if (p.grupo_codigo) {
       const g = grupoInfoMap.get(norm(p.grupo_codigo))
       if (g && g.segmento) return g.segmento
     }
-    return 'GENERAL'
-  }, [grupoInfoMap])
+    return resolveSegmento(p.segmento, p.campana)
+  }, [grupoInfoMap, resolveSegmento])
 
   const getPCampana = useCallback((p) => {
     if (p.campana && p.campana.trim()) return p.campana.trim().toUpperCase()
@@ -145,63 +185,75 @@ function PerformanceScorecardIndividual({
   }, [grupoInfoMap])
 
   // ── Opciones de Filtros en Cascada ─────────────────────────────────────
+  // Períodos: limitados estrictamente al año en curso (2026)
   const periodosOptions = useMemo(() => {
     const set = new Set()
     postulantes.forEach(p => {
       const per = getPPeriodo(p)
-      if (per && per.length === 6) set.add(per)
+      if (per && per.startsWith('2026')) set.add(per)
     })
     campanasMetas.forEach(g => {
-      const per = normalizePeriodo(g.periodo)
-      if (per && per.length === 6) set.add(per)
+      const per = getGPeriodo(g)
+      if (per && per.startsWith('2026')) set.add(per)
     })
     grupos.forEach(g => {
-      const per = normalizePeriodo(g.periodo)
-      if (per && per.length === 6) set.add(per)
+      const per = getGPeriodo(g)
+      if (per && per.startsWith('2026')) set.add(per)
     })
     return ['Todos', ...Array.from(set).sort((a, b) => b.localeCompare(a))]
-  }, [postulantes, campanasMetas, grupos, getPPeriodo])
+  }, [postulantes, campanasMetas, grupos, getPPeriodo, getGPeriodo])
 
+  // Segmentos disponibles según período
   const segmentosOptions = useMemo(() => {
     const set = new Set()
     postulantes.forEach(p => {
       if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return
       const seg = getPSegmento(p)
-      if (seg) set.add(seg)
+      if (seg && seg !== 'GENERAL') set.add(seg)
     })
     campanasMetas.forEach(g => {
-      if (filterPeriodo !== 'Todos' && normalizePeriodo(g.periodo) !== filterPeriodo) return
-      if (g.segmento && g.segmento.trim()) set.add(g.segmento.trim().toUpperCase())
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (seg && seg !== 'GENERAL') set.add(seg)
     })
     grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && normalizePeriodo(g.periodo) !== filterPeriodo) return
-      if (g.segmento && g.segmento.trim()) set.add(g.segmento.trim().toUpperCase())
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (seg && seg !== 'GENERAL') set.add(seg)
     })
     return ['Todos Segmentos', ...Array.from(set).sort()]
-  }, [postulantes, campanasMetas, grupos, filterPeriodo, getPPeriodo, getPSegmento])
+  }, [postulantes, campanasMetas, grupos, filterPeriodo, getPPeriodo, getPSegmento, getGPeriodo, resolveSegmento])
 
+  // Campañas disponibles: estrictamente filtradas por el segmento seleccionado
   const campanasOptions = useMemo(() => {
     const set = new Set()
     postulantes.forEach(p => {
       if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return
-      if (filterSegmento !== 'Todos Segmentos' && getPSegmento(p) !== filterSegmento) return
+      const seg = getPSegmento(p)
+      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
       const camp = getPCampana(p)
-      if (camp) set.add(camp)
+      if (camp && camp !== 'GENERAL') set.add(camp)
     })
     campanasMetas.forEach(g => {
-      if (filterPeriodo !== 'Todos' && normalizePeriodo(g.periodo) !== filterPeriodo) return
-      if (filterSegmento !== 'Todos Segmentos' && g.segmento && g.segmento.trim().toUpperCase() !== filterSegmento) return
-      const camp = g.campana_nombre || g.campana
-      if (camp && camp.trim()) set.add(camp.trim().toUpperCase())
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
+      if (camp && camp !== 'GENERAL') set.add(camp)
     })
     grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && normalizePeriodo(g.periodo) !== filterPeriodo) return
-      if (filterSegmento !== 'Todos Segmentos' && g.segmento && g.segmento.trim().toUpperCase() !== filterSegmento) return
-      if (g.campana && g.campana.trim()) set.add(g.campana.trim().toUpperCase())
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
+      if (camp && camp !== 'GENERAL') set.add(camp)
     })
     return ['Todas Campañas', ...Array.from(set).sort()]
-  }, [postulantes, campanasMetas, grupos, filterPeriodo, filterSegmento, getPPeriodo, getPSegmento, getPCampana])
+  }, [postulantes, campanasMetas, grupos, filterPeriodo, filterSegmento, getPPeriodo, getPSegmento, getPCampana, getGPeriodo, resolveSegmento])
 
+  // Grupos disponibles: estrictamente filtrados por período, segmento y campaña
   const gruposOptions = useMemo(() => {
     const set = new Set()
     postulantes.forEach(p => {
@@ -210,15 +262,39 @@ function PerformanceScorecardIndividual({
       if (filterCampana !== 'Todas Campañas' && getPCampana(p) !== filterCampana) return
       if (p.grupo_codigo && p.grupo_codigo.trim()) set.add(p.grupo_codigo.trim().toUpperCase())
     })
+    campanasMetas.forEach(g => {
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
+      if (filterCampana !== 'Todas Campañas' && camp !== filterCampana) return
+      const code = (g.grupo_codigo || g.codigo || g.codigo_grupo || '').trim().toUpperCase()
+      if (code) set.add(code)
+    })
     grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && normalizePeriodo(g.periodo) !== filterPeriodo) return
-      if (filterSegmento !== 'Todos Segmentos' && (g.segmento || '').trim().toUpperCase() !== filterSegmento) return
-      if (filterCampana !== 'Todas Campañas' && (g.campana || '').trim().toUpperCase() !== filterCampana) return
-      const code = g.codigo || g.grupo_codigo
-      if (code && code.trim()) set.add(code.trim().toUpperCase())
+      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const camp = (g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
+      if (filterCampana !== 'Todas Campañas' && camp !== filterCampana) return
+      const code = (g.codigo || g.grupo_codigo || '').trim().toUpperCase()
+      if (code) set.add(code)
     })
     return ['Todos los Grupos', ...Array.from(set).sort()]
-  }, [postulantes, grupos, filterPeriodo, filterSegmento, filterCampana, getPPeriodo, getPSegmento, getPCampana])
+  }, [postulantes, campanasMetas, grupos, filterPeriodo, filterSegmento, filterCampana, getPPeriodo, getPSegmento, getPCampana, getGPeriodo, resolveSegmento])
+
+  // Auto-reset dependiente en cascada para evitar filtros cruzados
+  useEffect(() => {
+    if (filterCampana !== 'Todas Campañas' && !campanasOptions.includes(filterCampana)) {
+      setFilterCampana('Todas Campañas')
+    }
+  }, [filterSegmento, campanasOptions, filterCampana])
+
+  useEffect(() => {
+    if (filterGrupo !== 'Todos los Grupos' && !gruposOptions.includes(filterGrupo)) {
+      setFilterGrupo('Todos los Grupos')
+    }
+  }, [filterSegmento, filterCampana, gruposOptions, filterGrupo])
 
   // Helpers de validación de filtros activos
   const isPeriodoAll = useCallback((p) => !p || p === 'Todos' || p === 'Todos los Períodos', [])
@@ -240,46 +316,38 @@ function PerformanceScorecardIndividual({
   const filteredGrupos = useMemo(() => {
     return grupos.filter(g => {
       if (!isPeriodoAll(filterPeriodo)) {
-        const per = normalizePeriodo(g.periodo)
+        const per = getGPeriodo(g)
         if (per && per !== filterPeriodo) return false
       }
-      if (!isSegmentoAll(filterSegmento)) {
-        const seg = (g.segmento || '').trim().toUpperCase()
-        if (seg && seg !== filterSegmento) return false
-      }
-      if (!isCampanaAll(filterCampana)) {
-        const camp = (g.campana || '').trim().toUpperCase()
-        if (camp && camp !== filterCampana) return false
-      }
+      const camp = (g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (!isSegmentoAll(filterSegmento) && seg !== filterSegmento) return false
+      if (!isCampanaAll(filterCampana) && camp !== filterCampana) return false
       if (!isGrupoAll(filterGrupo)) {
         const code = (g.codigo || g.grupo_codigo || '').trim().toUpperCase()
         if (code !== filterGrupo) return false
       }
       return true
     })
-  }, [grupos, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll])
+  }, [grupos, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll, getGPeriodo, resolveSegmento])
 
   const filteredCampanasMetas = useMemo(() => {
     return campanasMetas.filter(g => {
       if (!isPeriodoAll(filterPeriodo)) {
-        const per = normalizePeriodo(g.periodo)
+        const per = getGPeriodo(g)
         if (per && per !== filterPeriodo) return false
       }
-      if (!isSegmentoAll(filterSegmento)) {
-        const seg = (g.segmento || '').trim().toUpperCase()
-        if (seg && seg !== filterSegmento) return false
-      }
-      if (!isCampanaAll(filterCampana)) {
-        const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
-        if (camp && camp !== filterCampana) return false
-      }
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (!isSegmentoAll(filterSegmento) && seg !== filterSegmento) return false
+      if (!isCampanaAll(filterCampana) && camp !== filterCampana) return false
       if (!isGrupoAll(filterGrupo)) {
-        const code = (g.grupo_codigo || g.codigo || '').trim().toUpperCase()
+        const code = (g.grupo_codigo || g.codigo || g.codigo_grupo || '').trim().toUpperCase()
         if (code !== filterGrupo) return false
       }
       return true
     })
-  }, [campanasMetas, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll])
+  }, [campanasMetas, filterPeriodo, filterSegmento, filterCampana, filterGrupo, isPeriodoAll, isSegmentoAll, isCampanaAll, isGrupoAll, getGPeriodo, resolveSegmento])
 
   const filteredAsistencias = useMemo(() => {
     const validGroupCodes = new Set(filteredGrupos.map(g => norm(g.codigo || g.grupo_codigo)).filter(Boolean))
@@ -289,19 +357,33 @@ function PerformanceScorecardIndividual({
       const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
       const doc = a.postulante_documento || a.documento
       const camp = (a.campana || '').trim().toUpperCase()
-      const seg = (a.segmento || '').trim().toUpperCase()
+      const seg = resolveSegmento(a.segmento, camp)
 
+      // 1. Filtro estricto de Grupo
       if (!isGrupoAll(filterGrupo)) {
-        if (gCode !== norm(filterGrupo) && !validPostulanteDocs.has(doc)) return false
+        if (gCode !== norm(filterGrupo)) return false
       }
-      if (gCode && validGroupCodes.has(gCode)) return true
-      if (doc && validPostulanteDocs.has(doc)) return true
-      if (!isCampanaAll(filterCampana) && camp !== filterCampana) return false
-      if (!isSegmentoAll(filterSegmento) && seg && seg !== filterSegmento) return false
-      if (gCode && validGroupCodes.size > 0 && !validGroupCodes.has(gCode)) return false
+
+      // 2. Filtro estricto de Campaña
+      if (!isCampanaAll(filterCampana)) {
+        if (camp !== filterCampana) return false
+      }
+
+      // 3. Filtro estricto de Segmento
+      if (!isSegmentoAll(filterSegmento)) {
+        if (seg !== filterSegmento) return false
+      }
+
+      // 4. Filtro de Período y Coherencia de Grupos/Postulantes
+      if (!isPeriodoAll(filterPeriodo)) {
+        if (gCode && validGroupCodes.size > 0 && !validGroupCodes.has(gCode) && !validPostulanteDocs.has(doc)) {
+          return false
+        }
+      }
+
       return true
     })
-  }, [asistencias, filteredGrupos, filteredPostulantes, filterCampana, filterSegmento, filterGrupo, isGrupoAll, isCampanaAll, isSegmentoAll])
+  }, [asistencias, filteredGrupos, filteredPostulantes, filterCampana, filterSegmento, filterGrupo, filterPeriodo, isGrupoAll, isCampanaAll, isSegmentoAll, isPeriodoAll, resolveSegmento])
 
   // Motor Analítico
   const rankedRecruiters = useMemo(() => {

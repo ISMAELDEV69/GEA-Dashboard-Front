@@ -988,7 +988,26 @@ export function computeAllTrainersPerformance(
     }
   })
 
-  // Indexar asistencias
+  // 1. Identificar estrictamente a los postulantes con Baja Día 1 (imputan a RyS, NO al Formador)
+  const bajasDia1Docs = new Set()
+  asistencias.forEach(a => {
+    const doc = norm(a.postulante_documento || a.documento)
+    if (!doc) return
+    const sigla = norm(a.sigla_asistencia || a.sigla)
+    const motivo = norm(a.motivo_baja)
+    const estado = norm(a.estado)
+    if (motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1' || isCandidateDia1Baja(a)) {
+      bajasDia1Docs.add(doc)
+    }
+  })
+  postulantes.forEach(p => {
+    const doc = norm(p.documento)
+    if (doc && isCandidateDia1Baja(p)) {
+      bajasDia1Docs.add(doc)
+    }
+  })
+
+  // 2. Indexar asistencias de formadores
   asistencias.forEach(a => {
     let trainerDoc = a.documento_formador || a.formador_documento || ''
     let trainerName = a.nombre_formador || a.formador_nombre || ''
@@ -1026,7 +1045,8 @@ export function computeAllTrainersPerformance(
 
     const tObj = trainerMap.get(key)
     const doc = norm(a.postulante_documento || a.documento)
-    if (doc) tObj.alumnosSet.add(doc)
+    // El alumno recibido en aula no debe contar a quien fue baja día 1 de selección
+    if (doc && !bajasDia1Docs.has(doc)) tObj.alumnosSet.add(doc)
     if (gCode) tObj.gruposSet.add(gCode)
     tObj.asistenciasList.push(a)
 
@@ -1039,7 +1059,8 @@ export function computeAllTrainersPerformance(
     } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       tObj.asistenciasEfectivas++
     } else if (sigla === 'B') {
-      if (doc) tObj.bajasSet.add(doc)
+      // Regla Contact Center: Baja Día 1 imputa al reclutador, NO al formador
+      if (doc && !bajasDia1Docs.has(doc)) tObj.bajasSet.add(doc)
     } else if (sigla === 'F' || sigla === 'FI') {
       tObj.faltasSinBaja++
     }
@@ -1054,13 +1075,14 @@ export function computeAllTrainersPerformance(
       if (key && trainerMap.has(key)) {
         const tObj = trainerMap.get(key)
         const doc = norm(p.documento)
-        if (doc) tObj.alumnosSet.add(doc)
+        if (doc && !bajasDia1Docs.has(doc)) tObj.alumnosSet.add(doc)
         tObj.gruposSet.add(gCode)
         if (norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES') {
           if (doc) tObj.ingresantesOPSet.add(doc)
         }
         if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
-          if (doc) tObj.bajasSet.add(doc)
+          // Excluir bajas día 1
+          if (doc && !bajasDia1Docs.has(doc)) tObj.bajasSet.add(doc)
         }
       }
     }
@@ -1128,6 +1150,25 @@ export function getTrainerIndividualDetails(
 ) {
   const isConsolidated = !targetIdentifier || targetIdentifier === 'TODOS' || targetIdentifier === 'ALL'
 
+  // Identificar postulantes con Baja Día 1 para excluirlos de las métricas del formador
+  const bajasDia1Docs = new Set()
+  asistencias.forEach(a => {
+    const doc = norm(a.postulante_documento || a.documento)
+    if (!doc) return
+    const sigla = norm(a.sigla_asistencia || a.sigla)
+    const motivo = norm(a.motivo_baja)
+    const estado = norm(a.estado)
+    if (motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1' || isCandidateDia1Baja(a)) {
+      bajasDia1Docs.add(doc)
+    }
+  })
+  postulantes.forEach(p => {
+    const doc = norm(p.documento)
+    if (doc && isCandidateDia1Baja(p)) {
+      bajasDia1Docs.add(doc)
+    }
+  })
+
   let baseDetails = null
   let myAsistencias = []
   let myAlumnosSet = new Set()
@@ -1136,11 +1177,11 @@ export function getTrainerIndividualDetails(
     myAsistencias = asistencias || []
     postulantes.forEach(p => {
       const d = norm(p.documento)
-      if (d) myAlumnosSet.add(d)
+      if (d && !bajasDia1Docs.has(d)) myAlumnosSet.add(d)
     })
     myAsistencias.forEach(a => {
       const d = norm(a.postulante_documento || a.documento)
-      if (d) myAlumnosSet.add(d)
+      if (d && !bajasDia1Docs.has(d)) myAlumnosSet.add(d)
     })
 
     const totalAlumnos = myAlumnosSet.size
@@ -1160,7 +1201,7 @@ export function getTrainerIndividualDetails(
       } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
         asistenciasEfectivas++
       } else if (sigla === 'B') {
-        if (doc) bajasSet.add(doc)
+        if (doc && !bajasDia1Docs.has(doc)) bajasSet.add(doc)
       } else if (sigla === 'F' || sigla === 'FI') {
         faltasSinBaja++
       }
@@ -1172,7 +1213,7 @@ export function getTrainerIndividualDetails(
         if (doc) opSet.add(doc)
       }
       if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
-        if (doc) bajasSet.add(doc)
+        if (doc && !bajasDia1Docs.has(doc)) bajasSet.add(doc)
       }
     })
 
@@ -1323,6 +1364,8 @@ export function getTrainerIndividualDetails(
   let totalBajasContadas = 0
 
   myAsistencias.forEach(a => {
+    const doc = norm(a.postulante_documento || a.documento)
+    if (doc && bajasDia1Docs.has(doc)) return
     const sigla = norm(a.sigla_asistencia || a.sigla)
     if (sigla === 'B' || a.motivo_baja) {
       totalBajasContadas++
