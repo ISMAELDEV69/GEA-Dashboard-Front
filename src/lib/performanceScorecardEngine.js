@@ -2,7 +2,7 @@
  * performanceScorecardEngine.js
  * Motor analítico de Ficha de Desempeño 360° (GEA Dashboard)
  * Especializado para Reclutadores (RyS) y Formadores (Capacitación).
- * Calibración estricta de Nómina, Día 1, Ingresos a Operación y Consolidado Operativo.
+ * Calibración estricta de Nómina, Día 1 de Formación, Conversión a OP sobre Día 1 e Indicadores BPO.
  */
 
 // ── Normalización de Cadenas Uniforme ───────────────────────────────────────
@@ -33,7 +33,7 @@ export const matchPerson = (fieldVal, target, catalogObj = null) => {
   // Coincidencia por subcadena solo si es suficientemente larga y específica
   if ((f.length >= 8 && t.length >= 8) && (f.startsWith(t) || t.startsWith(f))) return true
 
-  // Coincidencia por palabras: requiere que coincidan al menos 2 palabras significativas (evita colisiones en apellidos comunes)
+  // Coincidencia por palabras: requiere que coincidan al menos 2 palabras significativas
   const fWords = f.split(/\s+/).filter(w => w.length >= 3 && !['DEL', 'LOS', 'LAS', 'SAN', 'DE', 'LA'].includes(w))
   const tWords = t.split(/\s+/).filter(w => w.length >= 3 && !['DEL', 'LOS', 'LAS', 'SAN', 'DE', 'LA'].includes(w))
   if (fWords.length >= 2 && tWords.length >= 2) {
@@ -61,6 +61,23 @@ export const parseDateStr = (raw) => {
     // fallback
   }
   return null
+}
+
+export const getISOWeekFromDate = (rawDate) => {
+  const dateStr = parseDateStr(rawDate)
+  if (!dateStr) return null
+  const d = new Date(dateStr + 'T12:00:00Z')
+  if (isNaN(d.getTime())) return null
+  const target = new Date(d.valueOf())
+  const dayNr = (d.getUTCDay() + 6) % 7
+  target.setUTCDate(target.getUTCDate() - dayNr + 3)
+  const firstThursday = target.valueOf()
+  target.setUTCMonth(0, 1)
+  if (target.getUTCDay() !== 4) {
+    target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7)
+  }
+  const weekNum = 1 + Math.ceil((firstThursday - target) / 604800000)
+  return `Sem ${weekNum}`
 }
 
 export const formatSemanaLabel = (raw) => {
@@ -152,7 +169,6 @@ export function computeStars(pct) {
 // ── Ordenamiento Operativo por Volumen y Conversión ─────────────────────────
 export function assignQuartiles(list = [], scoreKey = 'score') {
   if (!list.length) return []
-  // Ordenamiento primario por Volumen (Postulantes/Alumnos) y luego por Ingresos a OP
   const sorted = [...list].sort((a, b) => {
     const diffVol = (b.totalPostulantes || b.totalAlumnos || 0) - (a.totalPostulantes || a.totalAlumnos || 0)
     if (diffVol !== 0) return diffVol
@@ -194,6 +210,135 @@ export function assignQuartiles(list = [], scoreKey = 'score') {
       quartileLabel
     }
   })
+}
+
+// ── 3. MOTOR DE MAQUETAS (INDICADORES DE CONTACT CENTER) ────────────────────
+export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
+  if (!data) return []
+
+  if (role === 'RECLUTADOR') {
+    const efectividadCitacion = data.totalPostulantes > 0 
+      ? Math.round((data.qDia1 / data.totalPostulantes) * 100) 
+      : 0
+    // Regla de Negocio Oficial: Conversión a OP se mide estrictamente sobre los que asistieron a Día 1 de Formación
+    const conversionOP = data.qDia1 > 0 
+      ? Math.round((data.ingresantesOP / data.qDia1) * 100) 
+      : 0
+    const retencionFormacion = data.qDia1 > 0 
+      ? Math.round(((data.enCapacitacion + data.ingresantesOP) / data.qDia1) * 100) 
+      : 0
+    const pctBajasImputables = data.totalPostulantes > 0 
+      ? Math.round((data.bajasImputables / data.totalPostulantes) * 100) 
+      : 0
+
+    return [
+      {
+        nombre: 'Efectividad de Citación (Día 1 / Nómina)',
+        descripcion: 'Asistentes efectivos a Día 1 sobre total citados',
+        actual: efectividadCitacion,
+        meta: 70,
+        unidad: '%',
+        tipo: 'mayor_es_mejor',
+        cumple: efectividadCitacion >= 70,
+        estado: efectividadCitacion >= 70 ? 'CUMPLE' : (efectividadCitacion >= 55 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: efectividadCitacion >= 70 ? '#10b981' : (efectividadCitacion >= 55 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.qDia1} de ${data.totalPostulantes} postulantes`
+      },
+      {
+        nombre: 'Conversión a Operación (Ingreso a OP / Día 1)',
+        descripcion: 'Pases exitosos a producción sobre asistentes Día 1',
+        actual: conversionOP,
+        meta: 75,
+        unidad: '%',
+        tipo: 'mayor_es_mejor',
+        cumple: conversionOP >= 75,
+        estado: conversionOP >= 75 ? 'CUMPLE' : (conversionOP >= 40 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: conversionOP >= 75 ? '#10b981' : (conversionOP >= 40 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.ingresantesOP} de ${data.qDia1} alumnos de Día 1`
+      },
+      {
+        nombre: 'Retención de Aula (Activos + OP / Día 1)',
+        descripcion: 'Alumnos que no desertaron durante el proceso lectivo',
+        actual: retencionFormacion,
+        meta: 80,
+        unidad: '%',
+        tipo: 'mayor_es_mejor',
+        cumple: retencionFormacion >= 80,
+        estado: retencionFormacion >= 80 ? 'CUMPLE' : (retencionFormacion >= 60 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: retencionFormacion >= 80 ? '#10b981' : (retencionFormacion >= 60 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.enCapacitacion + data.ingresantesOP} retenidos en aula`
+      },
+      {
+        nombre: 'Calidad de Reclutamiento (Bajas Imputables)',
+        descripcion: 'Deserciones tempranas por perfil no calificado o documentación',
+        actual: pctBajasImputables,
+        meta: 5,
+        unidad: '%',
+        tipo: 'menor_es_mejor',
+        cumple: pctBajasImputables <= 5,
+        estado: pctBajasImputables <= 5 ? 'CUMPLE' : (pctBajasImputables <= 10 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: pctBajasImputables <= 5 ? '#10b981' : (pctBajasImputables <= 10 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.bajasImputables} bajas imputables a selección`
+      }
+    ]
+  } else {
+    // Formadores
+    const pctAsistencia = data.pctAsistencia || 0
+    const pctRetencionOP = data.pctRetencionOP || 0
+    const pctAusentismo = data.pctAusentismo || 0
+    const deserionAula = data.totalAlumnos > 0 ? Math.round((data.bajas / data.totalAlumnos) * 100) : 0
+
+    return [
+      {
+        nombre: 'Asistencia Efectiva en Aula',
+        descripcion: 'Cumplimiento de presencia y puntualidad diaria',
+        actual: pctAsistencia,
+        meta: 90,
+        unidad: '%',
+        tipo: 'mayor_es_mejor',
+        cumple: pctAsistencia >= 90,
+        estado: pctAsistencia >= 90 ? 'CUMPLE' : (pctAsistencia >= 80 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: pctAsistencia >= 90 ? '#10b981' : (pctAsistencia >= 80 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.asistenciasEfectivas || 0} asistencias registradas`
+      },
+      {
+        nombre: 'Certificados a Operación (Curve Pass-Rate)',
+        descripcion: 'Alumnos graduados y certificados que pasaron a producción',
+        actual: pctRetencionOP,
+        meta: 75,
+        unidad: '%',
+        tipo: 'mayor_es_mejor',
+        cumple: pctRetencionOP >= 75,
+        estado: pctRetencionOP >= 75 ? 'CUMPLE' : (pctRetencionOP >= 50 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: pctRetencionOP >= 75 ? '#10b981' : (pctRetencionOP >= 50 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.ingresantesOP} certificados a operaciones`
+      },
+      {
+        nombre: 'Tasa de Deserción en Capacitación',
+        descripcion: 'Porcentaje de bajas registradas durante el período en aula',
+        actual: deserionAula,
+        meta: 15,
+        unidad: '%',
+        tipo: 'menor_es_mejor',
+        cumple: deserionAula <= 15,
+        estado: deserionAula <= 15 ? 'CUMPLE' : (deserionAula <= 25 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: deserionAula <= 15 ? '#10b981' : (deserionAula <= 25 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.bajas} bajas ocurridas en aula`
+      },
+      {
+        nombre: 'Control de Ausentismo y Faltas',
+        descripcion: 'Faltas activas que impactan la curva de aprendizaje',
+        actual: pctAusentismo,
+        meta: 10,
+        unidad: '%',
+        tipo: 'menor_es_mejor',
+        cumple: pctAusentismo <= 10,
+        estado: pctAusentismo <= 10 ? 'CUMPLE' : (pctAusentismo <= 18 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
+        color: pctAusentismo <= 10 ? '#10b981' : (pctAusentismo <= 18 ? '#f59e0b' : '#f43f5e'),
+        detalle: `${data.ausentismoCount} faltas en período`
+      }
+    ]
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -348,12 +493,12 @@ export function computeAllRecruitersPerformance(
     const metaIngresosOP = Math.round(metaVolumen * 0.45)
 
     const pctCumplimientoVolumen = hasExplicitMeta ? Math.min(200, Math.round((total / metaVolumen) * 100)) : 100
-    const pctConversionOP = total > 0 ? Math.round((ingresantesOP / total) * 100) : 0
+    // Regla de Contact Center: Conversión a OP sobre Día 1
+    const pctConversionOP = qDia1 > 0 ? Math.round((ingresantesOP / qDia1) * 100) : 0
     const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
     const pctBajas = total > 0 ? Math.round((bajas / total) * 100) : 0
     const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
 
-    // Score Ponderado: 45% Pases a OP + 35% Día 1 + 20% Volumen
     const score = Math.max(0, Math.round(
       (pctConversionOP * 0.45) +
       (pctQDia1 * 0.35) +
@@ -460,7 +605,8 @@ export function getRecruiterIndividualDetails(
     })
 
     const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
-    const pctConversionOP = total > 0 ? Math.round((ingresantesOP / total) * 100) : 0
+    // Regla de Contact Center: Conversión a OP sobre Día 1
+    const pctConversionOP = qDia1 > 0 ? Math.round((ingresantesOP / qDia1) * 100) : 0
     const pctBajas = total > 0 ? Math.round((bajas / total) * 100) : 0
     const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
 
@@ -505,7 +651,6 @@ export function getRecruiterIndividualDetails(
     if (!rankedItem) return null
 
     baseDetails = { ...rankedItem, isConsolidated: false }
-    // Fuente Única de la Verdad: los postulantes asignados a este reclutador
     myPostulantes = rankedItem.postulantes || []
   }
 
@@ -514,7 +659,6 @@ export function getRecruiterIndividualDetails(
   const qDia1 = baseDetails.qDia1
   const enCap = baseDetails.enCapacitacion
   const op = baseDetails.ingresantesOP
-  const bajas = baseDetails.bajas
 
   const funnel = [
     {
@@ -526,11 +670,11 @@ export function getRecruiterIndividualDetails(
       color: '#6366f1' // Indigo
     },
     {
-      stage: 'Asistieron Día 1',
+      stage: 'Asistieron Día 1 (Formación)',
       label: 'Efectividad Inicial',
       count: qDia1,
       pct: totalPosts > 0 ? Math.round((qDia1 / totalPosts) * 100) : 0,
-      subtext: `${qDia1} asistieron al primer día`,
+      subtext: `${qDia1} iniciaron aula de capacitación`,
       dropCount: Math.max(0, totalPosts - qDia1),
       dropPct: totalPosts > 0 ? Math.round(((totalPosts - qDia1) / totalPosts) * 100) : 0,
       color: '#06b6d4' // Cyan
@@ -539,18 +683,18 @@ export function getRecruiterIndividualDetails(
       stage: 'En Formación / OJT',
       label: 'Retención de Aula',
       count: enCap + op,
-      pct: totalPosts > 0 ? Math.round(((enCap + op) / totalPosts) * 100) : 0,
-      subtext: `${enCap} activos en capacitación`,
+      pct: qDia1 > 0 ? Math.round(((enCap + op) / qDia1) * 100) : 0,
+      subtext: `${enCap} en capacitación + ${op} en producción`,
       dropCount: Math.max(0, qDia1 - (enCap + op)),
       dropPct: qDia1 > 0 ? Math.round(((qDia1 - (enCap + op)) / qDia1) * 100) : 0,
       color: '#8b5cf6' // Violet
     },
     {
       stage: 'Ingresantes a OP',
-      label: 'Conversión Final',
+      label: 'Conversión sobre Día 1',
       count: op,
-      pct: totalPosts > 0 ? Math.round((op / totalPosts) * 100) : 0,
-      subtext: `${op} ingresaron a operaciones`,
+      pct: qDia1 > 0 ? Math.round((op / qDia1) * 100) : 0,
+      subtext: `${op} ingresaron a operaciones (${baseDetails.pctConversionOP}% de Día 1)`,
       color: '#10b981' // Emerald
     }
   ]
@@ -569,8 +713,10 @@ export function getRecruiterIndividualDetails(
         }
       }
     }
+    // Resolución inteligente de semana por fecha para evitar barra "General"
     if (!semLabel || semLabel === 'Semana ?') {
-      semLabel = 'General'
+      const fromDate = getISOWeekFromDate(p.fecha_ingreso || p.fecha_registro || p.created_at)
+      semLabel = fromDate || 'Sem 35'
     }
 
     if (!weekMap.has(semLabel)) {
@@ -601,7 +747,7 @@ export function getRecruiterIndividualDetails(
     .map(w => ({
       ...w,
       pctD1: w.postulantes > 0 ? Math.round((w.qDia1 / w.postulantes) * 100) : 0,
-      pctOP: w.postulantes > 0 ? Math.round((w.ingresantesOP / w.postulantes) * 100) : 0
+      pctOP: w.qDia1 > 0 ? Math.round((w.ingresantesOP / w.qDia1) * 100) : 0
     }))
 
   // ── 3. DISTRIBUCIÓN DE MOTIVOS DE BAJA REALES ────────────────────────────
@@ -624,52 +770,7 @@ export function getRecruiterIndividualDetails(
     }))
     .sort((a, b) => b.count - a.count)
 
-  // ── 4. DESGLOSE DE GRUPOS ASIGNADOS ──────────────────────────────────────
-  const gruposBreakdown = []
-  const groupCodesSet = new Set(myPostulantes.map(p => norm(p.grupo_codigo)).filter(Boolean))
-
-  ;(campanasMetas || []).forEach(g => {
-    const gCode = g.grupo_codigo || g.codigo
-    const gCodeNorm = norm(gCode)
-
-    if (baseDetails.isConsolidated || groupCodesSet.has(gCodeNorm)) {
-      const postsInGroup = myPostulantes.filter(p => norm(p.grupo_codigo) === gCodeNorm)
-      const tPosts = postsInGroup.length
-      if (tPosts === 0 && !baseDetails.isConsolidated) return
-
-      const qD1 = postsInGroup.filter(p => isCandidateDia1Asistio(p, opDocs, d1Docs)).length
-      const ingresantes = postsInGroup.filter(p => isCandidateIngresoOP(p, opDocs)).length
-      const bajasG = postsInGroup.filter(p => isCandidateBaja(p, bajasDocs)).length
-
-      const recMeta = (g.reclutadores_metas || []).find(rm => 
-        matchPerson(rm.nombre_completo, baseDetails.nombre) ||
-        (rm.documento && (rm.documento === baseDetails.dni || String(baseDetails.dni).includes(rm.documento))) ||
-        (rm.alias && norm(rm.alias) === norm(baseDetails.usuario))
-      )
-
-      const metaRqInd = Number(recMeta?.meta_rq_individual) || 0
-      const metaDia1Ind = Number(recMeta?.meta_dia_1_individual) || 0
-      const rqGrupal = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
-
-      gruposBreakdown.push({
-        codigo: gCode || 'Grupo General',
-        campana: g.campana_nombre || g.campana || 'Sin Campaña',
-        sede: g.sede || 'LIMA',
-        modalidad: g.modalidad || '-',
-        semana: formatSemanaLabel(g.semana || g.semana_trabajo || g.semana_label),
-        postulantesEnviados: tPosts,
-        qDia1: qD1,
-        ingresantesOP: ingresantes,
-        bajas: bajasG,
-        metaRqIndividual: metaRqInd,
-        metaDia1Individual: metaDia1Ind,
-        rqGrupal,
-        pctAvanceRq: metaRqInd > 0 ? Math.round((tPosts / metaRqInd) * 100) : (tPosts > 0 ? 100 : 0)
-      })
-    }
-  })
-
-  // ── 5. TABLA DE TRAZABILIDAD NOMINAL (POSTULANTES) ────────────────────────
+  // ── 4. TABLA DE TRAZABILIDAD NOMINAL (POSTULANTES) ────────────────────────
   const postulantesNominal = myPostulantes.map(p => {
     const isOP = isCandidateIngresoOP(p, opDocs)
     const isBaja = isCandidateBaja(p, bajasDocs)
@@ -692,12 +793,15 @@ export function getRecruiterIndividualDetails(
     }
   })
 
+  // ── 5. INDICADORES DE CONTACT CENTER (MAQUETAS / SLAS) ────────────────────
+  const indicadores = getIndicadoresMaqueta(baseDetails, 'RECLUTADOR')
+
   return {
     ...baseDetails,
     funnel,
     weeklyEvolution,
     motivosBajaBreakdown,
-    gruposBreakdown,
+    indicadores,
     postulantesNominal
   }
 }
@@ -1050,7 +1154,11 @@ export function getTrainerIndividualDetails(
   myAsistencias.forEach(a => {
     const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
     const gObj = grupoInfoMap.get(gCode)
-    const semLabel = formatSemanaLabel(gObj?.semana || gObj?.semana_trabajo || gObj?.semana_label || a.semana)
+    let semLabel = formatSemanaLabel(gObj?.semana || gObj?.semana_trabajo || gObj?.semana_label || a.semana)
+    if (!semLabel || semLabel === 'Semana ?') {
+      const fromDate = getISOWeekFromDate(a.fecha_registro_asistencia || a.fecha_asistencia || a.created_at)
+      semLabel = fromDate || 'Sem 35'
+    }
 
     if (!weekMap.has(semLabel)) {
       weekMap.set(semLabel, {
@@ -1108,35 +1216,7 @@ export function getTrainerIndividualDetails(
     }))
     .sort((a, b) => b.count - a.count)
 
-  // ── 4. DESGLOSE DE GRUPOS / AULAS GESTIONADAS ─────────────────────────────
-  const myGrupos = (grupos || []).filter(g => {
-    if (baseDetails.isConsolidated) return true
-    const gCode = norm(g.codigo || g.grupo_codigo)
-    const tDoc = g.formador_documento || g.documento_formador
-    const tName = g.formador_nombre || g.formador || g.responsable
-    return matchPerson(tName, baseDetails.nombre) || (tDoc && tDoc === baseDetails.dni) || (baseDetails.gruposSet && baseDetails.gruposSet.has(gCode))
-  })
-
-  const gruposBreakdown = myGrupos.map(g => {
-    const gCode = g.codigo || g.grupo_codigo
-    const gPosts = (postulantes || []).filter(p => norm(p.grupo_codigo) === norm(gCode))
-    const totalG = gPosts.length
-    const opG = gPosts.filter(p => norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES').length
-    const bajasG = gPosts.filter(p => norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)).length
-
-    return {
-      codigo: gCode,
-      campana: g.campana || 'Sin Campaña',
-      sede: g.sede || 'LIMA',
-      semana: formatSemanaLabel(g.semana || g.semana_trabajo || g.semana_label),
-      alumnos: totalG,
-      ingresantesOP: opG,
-      bajas: bajasG,
-      pctRetencion: totalG > 0 ? Math.round((opG / totalG) * 100) : 0
-    }
-  })
-
-  // ── 5. TRAZABILIDAD NOMINAL (ALUMNOS ASIGNADOS) ───────────────────────────
+  // ── 4. TRAZABILIDAD NOMINAL (ALUMNOS ASIGNADOS) ───────────────────────────
   const alumnosNominal = (postulantes || [])
     .filter(p => myAlumnosSet.has(norm(p.documento)))
     .map(p => {
@@ -1159,12 +1239,15 @@ export function getTrainerIndividualDetails(
       }
     })
 
+  // ── 5. INDICADORES DE CONTACT CENTER (MAQUETAS / SLAS) ────────────────────
+  const indicadores = getIndicadoresMaqueta(baseDetails, 'FORMADOR')
+
   return {
     ...baseDetails,
     funnel,
     weeklyEvolution,
     motivosBajaBreakdown,
-    gruposBreakdown,
+    indicadores,
     alumnosNominal
   }
 }

@@ -764,7 +764,7 @@ function PerformanceScorecardIndividual({
                     {individualData.ingresantesOP}
                   </span>
                   <span className="text-[10px] text-emerald-400/80 font-bold mt-1">
-                    {individualData.pctConversionOP}% de conversión final
+                    {individualData.pctConversionOP}% de conversión sobre Día 1
                   </span>
                 </div>
 
@@ -879,7 +879,7 @@ function PerformanceScorecardIndividual({
               </div>
 
               <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] text-[11px] text-slate-400 flex items-center justify-between">
-                <span>Efectividad global de proceso:</span>
+                <span>Conversión a Operación (sobre Día 1):</span>
                 <span className="font-mono font-bold text-emerald-400 text-xs">
                   {activeRole === 'RECLUTADOR' ? `${individualData.pctConversionOP}% a Operación` : `${individualData.pctRetencionOP}% a Operación`}
                 </span>
@@ -974,52 +974,78 @@ function PerformanceScorecardIndividual({
             </div>
           )}
 
-          {/* ── 6. DESGLOSE POR GRUPOS ASIGNADOS ── */}
-          {individualData.gruposBreakdown && individualData.gruposBreakdown.length > 0 && (
-            <div className="bg-[var(--surface)] p-5 rounded-2xl border border-[var(--border-subtle)] shadow-sm space-y-3">
+          {/* ── 6. TABLERO DE INDICADORES (METAS OPERATIVAS / MAQUETAS CONTACT CENTER) ── */}
+          {individualData.indicadores && individualData.indicadores.length > 0 && (
+            <div className="bg-[var(--surface)] p-5 rounded-2xl border border-[var(--border-subtle)] shadow-sm space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
                 <div className="flex items-center gap-2">
-                  <Layers size={16} className="text-purple-400" />
+                  <Target size={17} className="text-cyan-400" />
                   <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-                    Desglose por Grupos Asignados (Aporte y Desempeño por Cohorte)
+                    INDICADORES
                   </h3>
                 </div>
-                <span className="text-xs font-bold text-slate-400 font-mono">
-                  {individualData.gruposBreakdown.length} {individualData.gruposBreakdown.length === 1 ? 'grupo' : 'grupos'}
+                <span className="text-[10px] font-mono text-slate-400 font-bold uppercase">
+                  Metas y Maquetas Operativas
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-slate-800">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead className="bg-slate-900/90 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                    <tr>
-                      <th className="py-2.5 px-3">Código</th>
-                      <th className="py-2.5 px-3">Campaña</th>
-                      <th className="py-2.5 px-3">Sede</th>
-                      <th className="py-2.5 px-2 text-center">Semana</th>
-                      <th className="py-2.5 px-2 text-right">Aporte</th>
-                      <th className="py-2.5 px-2 text-right">Q Día 1</th>
-                      <th className="py-2.5 px-2 text-right">Pases a OP</th>
-                      <th className="py-2.5 px-2 text-right">Bajas</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800 font-mono">
-                    {individualData.gruposBreakdown.map((g, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="py-2.5 px-3 font-bold text-cyan-400 whitespace-nowrap">{g.codigo}</td>
-                        <td className="py-2.5 px-3 font-sans font-medium text-slate-200 truncate max-w-[160px]">{g.campana}</td>
-                        <td className="py-2.5 px-3 text-slate-400">{g.sede}</td>
-                        <td className="py-2.5 px-2 text-center text-slate-300">{g.semana}</td>
-                        <td className="py-2.5 px-2 text-right font-bold text-indigo-400">
-                          {activeRole === 'RECLUTADOR' ? g.postulantesEnviados : g.alumnos}
-                        </td>
-                        <td className="py-2.5 px-2 text-right text-cyan-400">{g.qDia1 ?? '-'}</td>
-                        <td className="py-2.5 px-2 text-right font-bold text-emerald-400">{g.ingresantesOP}</td>
-                        <td className="py-2.5 px-2 text-right text-rose-400">{g.bajas}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {individualData.indicadores.map((ind, idx) => (
+                  <div 
+                    key={idx} 
+                    className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex flex-col justify-between space-y-3 hover:border-slate-700 transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-slate-200 leading-snug">
+                          {ind.nombre}
+                        </span>
+                        <span 
+                          className="px-2 py-0.5 rounded text-[9px] font-bold font-mono tracking-wider shrink-0"
+                          style={{
+                            backgroundColor: `${ind.color}18`,
+                            color: ind.color,
+                            border: `1px solid ${ind.color}40`
+                          }}
+                        >
+                          {ind.estado}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                        {ind.descripcion}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-baseline justify-between text-xs font-mono">
+                        <span className="text-2xl font-black" style={{ color: ind.color }}>
+                          {ind.actual}{ind.unidad}
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          Meta: <strong className="text-slate-200 font-bold">{ind.tipo === 'menor_es_mejor' ? '≤' : '≥'} {ind.meta}{ind.unidad}</strong>
+                        </span>
+                      </div>
+
+                      {/* Barra de Progreso Visual */}
+                      <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden p-0.5 border border-slate-700/50">
+                        <div 
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.min(100, Math.max(5, (ind.actual / (ind.meta || 1)) * 100))}%`,
+                            backgroundColor: ind.color
+                          }}
+                        />
+                      </div>
+
+                      <div className="text-[9.5px] text-slate-500 font-mono flex items-center justify-between">
+                        <span>{ind.detalle}</span>
+                        <span className="font-bold" style={{ color: ind.color }}>
+                          {ind.cumple ? '✓ Cumple' : '! Desvío'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
