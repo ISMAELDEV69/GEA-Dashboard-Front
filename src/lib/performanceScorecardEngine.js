@@ -94,32 +94,74 @@ export const extractSemanaNum = (raw) => {
   return m ? parseInt(m[1], 10) : 0
 }
 
+// ── Normalización de Motivos Operativos ────────────────────────────────────
+export function normalizarMotivo(motivoCrudo) {
+  if (!motivoCrudo) return 'SIN ESPECIFICAR'
+  const m = String(motivoCrudo).trim().toUpperCase()
+  if (!m || m === 'NULL' || m === 'UNDEFINED' || m === 'BAJA' || m === 'CESADO' || m === 'INACTIVO' || m === 'SIN ESPECIFICAR' || m === 'BAJA SIN ESPECIFICAR') {
+    return 'SIN ESPECIFICAR'
+  }
+  if (m.includes('NO CONTACTO')) return 'NO CONTACTO'
+  if (m.includes('DOCUMENTAC')) return 'FALTA DOCUMENTACIÓN'
+  if (m.includes('FAMILIAR')) return 'FAMILIAR'
+  if (m.includes('SALUD')) return 'SALUD'
+  if (m.includes('OFERTA') && m.includes('NO FAVORABLE')) return 'OFERTA NO FAVORABLE'
+  if (m.includes('MEJOR OFERTA') || m.includes('OFERTA LABORAL')) return 'MEJOR OFERTA LABORAL'
+  if (m.includes('ESTUDIO') || m.includes('ESTUDIA')) return 'ESTUDIOS'
+  if (m.includes('VIAJE')) return 'VIAJE'
+  if (m.includes('FACILIDADES TECNIC') || m.includes('FACILIDADES TÉCNIC')) return 'FACILIDADES TÉCNICAS'
+  if (m.includes('FALTA') && (m.includes('CONSECUTIV') || m.includes('CONSTANTE') || m.includes('REITERAD'))) return 'FALTAS CONSECUTIVAS'
+  if (m.includes('TARDANZA')) return 'TARDANZAS CONSECUTIVAS'
+  if (m.includes('BLACK LIST CLIENTE')) return 'BLACK LIST CLIENTE'
+  if (m.includes('BLACK LIST') || m.includes('BLACKLIST')) return 'BLACK LIST GEA'
+  if (m.includes('HABILIDAD COMERCIAL')) return 'HABILIDAD COMERCIAL'
+  if (m.includes('HABILIDAD ATC')) return 'HABILIDAD ATC'
+  if (m.includes('DICCION') || m.includes('DICCIÓN')) return 'DICCIÓN'
+  if (m.includes('DESAPROBADO')) return 'DESAPROBADO'
+  if (m.includes('ECONOM') || m.includes('ECONÓM')) return 'ECONÓMICO'
+  if (m.includes('REINGRESO')) return 'REINGRESO NO APTO'
+  if (m.includes('DESISTIMIENTO')) return 'DESISTIMIENTO'
+  if (m.includes('DISTANCIA')) return 'DISTANCIA'
+  if (m.includes('ACTITUD')) return 'ACTITUD'
+  if (m.includes('PC') || m.includes('EQUIPO')) return 'MANEJO DE PC / EQUIPO'
+  if (m.includes('OTRO CALL') || m.includes('USUARIO ACTIVO')) return 'USUARIO ACTIVO OTRO CALL'
+  if (m.includes('PERFIL')) return 'PERFIL DEL POSTULANTE'
+  if (m.includes('BAJA DIA 1') || m.includes('BAJA D1')) return 'BAJA DÍA 1'
+  return m
+}
+
 // ── Calibración Estricta de Estados Operativos ─────────────────────────────
-export function isCandidateDia1Baja(p) {
+export function isCandidateDia1Baja(p, bajasDia1Docs = null) {
+  const doc = norm(p.documento || p.postulante_documento)
+  if (doc && bajasDia1Docs && bajasDia1Docs.has(doc)) return true
+
   const m = norm(p.motivo_baja)
   const e = norm(p.estado)
-  const t = norm(p.tipo_baja || p.tipo_reclutado)
+  const t = norm(p.tipo_baja || p.tipo_reclutado || p.tipo)
   const stD1 = norm(p.status_dia_1)
   const d1 = norm(p.dia_1)
 
   if (d1 === 'NO ASISTIO' || d1 === 'NO ASISTIÓ' || d1 === 'FALTA' || d1 === 'FALTO') return true
-  if (t === 'CESE' || t.includes('CESE') || stD1.includes('CESE')) return true
+  if (t === 'CESE' || t.includes('CESE') || stD1.includes('CESE') || stD1 === 'CESE') return true
+  if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1')) return true
   if (m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('BAJA D1') || m.includes('CESE DIA 1') || m.includes('CESE DÍA 1')) return true
   if (e.includes('BAJA DIA 1') || e.includes('BAJA DÍA 1') || e.includes('CESE DIA 1')) return true
   return false
 }
 
 export function isCandidateIngresoOP(p, opDocs = null) {
-  const doc = norm(p.documento)
+  const doc = norm(p.documento || p.postulante_documento)
   if (doc && opDocs && opDocs.has(doc)) return true
   const e = norm(p.estado)
   return e === 'INGRESO_OP' || e === 'EN_OPERACIONES' || e === 'OPERACIONES' || e.includes('INGRESO_OP')
 }
 
-export function isCandidateDia1Asistio(p, opDocs = null, d1Docs = null) {
-  if (isCandidateDia1Baja(p)) return false
+export function isCandidateDia1Asistio(p, opDocs = null, d1Docs = null, bajasDia1Docs = null) {
+  if (isCandidateDia1Baja(p, bajasDia1Docs)) return false
 
-  const doc = norm(p.documento)
+  const doc = norm(p.documento || p.postulante_documento)
+  if (doc && bajasDia1Docs && bajasDia1Docs.has(doc)) return false
+
   const isOP = isCandidateIngresoOP(p, opDocs)
   if (isOP) return true
 
@@ -136,25 +178,54 @@ export function isCandidateDia1Asistio(p, opDocs = null, d1Docs = null) {
   return false
 }
 
-export function isCandidateBaja(p, bajasDocs = null) {
-  const doc = norm(p.documento)
+export function isCandidateBaja(p, bajasDocs = null, bajasMotivoMap = null) {
+  const doc = norm(p.documento || p.postulante_documento)
   if (doc && bajasDocs && bajasDocs.has(doc)) return true
+  if (doc && bajasMotivoMap && bajasMotivoMap.has(doc)) return true
   const e = norm(p.estado)
   if (e === 'BAJA' || e === 'CESADO' || e.includes('BAJA')) return true
   if (p.motivo_baja && String(p.motivo_baja).trim().length > 0 && norm(p.motivo_baja) !== 'NULL') return true
   return false
 }
 
-export function isCandidateImputable(p) {
-  if (!isCandidateBaja(p)) return false
-  const m = norm(p.motivo_baja)
-  const t = norm(p.tipo_baja)
-  return p.baja_imputable === true || 
-    t === 'IMPUTABLE' || 
-    m.includes('PERFIL') || 
-    m.includes('SELECCION') || 
-    m.includes('DOCUMENTACION') || 
-    m.includes('NO CUMPLE')
+export function isCandidateImputable(p, bajasMotivoMap = null, bajasAtribMap = null) {
+  const doc = norm(p.documento || p.postulante_documento)
+  
+  // 1. Atribución explícita en asistencias
+  if (doc && bajasAtribMap) {
+    const atrib = norm(bajasAtribMap.get(doc))
+    if (atrib === 'RECLUTADOR') return true
+  }
+
+  // 2. Marcación directa en postulante
+  if (p.baja_imputable === true) return true
+  const t = norm(p.tipo_baja || p.tipo_reclutado || p.tipo)
+  if (t === 'IMPUTABLE' || t.includes('IMPUTABLE')) return true
+
+  // 3. Revisar motivo en postulante o en historial de asistencias
+  const motivosToCheck = []
+  if (p.motivo_baja) motivosToCheck.push(String(p.motivo_baja))
+  if (doc && bajasMotivoMap && bajasMotivoMap.has(doc)) {
+    motivosToCheck.push(...bajasMotivoMap.get(doc))
+  }
+
+  if (motivosToCheck.length === 0 && !isCandidateBaja(p)) return false
+
+  const IMPUTABLE_KEYWORDS = [
+    'PERFIL', 'SELECCION', 'SELECCIÓN', 'DOCUMENTACION', 'DOCUMENTACIÓN', 'FALTA DOCUMENT',
+    'BLACK LIST', 'BLACKLIST', 'FRAUDE', 'NO CUMPLE', 'PC', 'EQUIPO', 'USB',
+    'MANEJO DE PC', 'FACILIDADES TECNICA', 'FACILIDADES TÉCNICA', 'HABILIDAD',
+    'DICCION', 'DICCIÓN', 'ACTITUD', 'REINGRESO', 'OTRO CALL', 'USUARIO ACTIVO',
+    'RYS', 'RECLUTAMIENTO', 'EDAD'
+  ]
+
+  for (const mRaw of motivosToCheck) {
+    const m = norm(mRaw)
+    if (!m || m === 'NULL' || m === 'UNDEFINED') continue
+    if (IMPUTABLE_KEYWORDS.some(k => m.includes(k))) return true
+  }
+
+  return false
 }
 
 // ── Asignación de Estrellas (1 a 5) ─────────────────────────────────────────
@@ -218,17 +289,17 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
 
   if (role === 'RECLUTADOR') {
     const efectividadCitacion = data.totalPostulantes > 0 
-      ? Math.round((data.qDia1 / data.totalPostulantes) * 100) 
+      ? parseFloat(((data.qDia1 / data.totalPostulantes) * 100).toFixed(1))
       : 0
     // Regla de Negocio Oficial: Conversión a OP se mide estrictamente sobre los que asistieron a Día 1 de Formación
     const conversionOP = data.qDia1 > 0 
-      ? Math.round((data.ingresantesOP / data.qDia1) * 100) 
+      ? parseFloat(((data.ingresantesOP / data.qDia1) * 100).toFixed(1))
       : 0
     const retencionFormacion = data.qDia1 > 0 
-      ? Math.round(((data.enCapacitacion + data.ingresantesOP) / data.qDia1) * 100) 
+      ? parseFloat((((data.enCapacitacion + data.ingresantesOP) / data.qDia1) * 100).toFixed(1))
       : 0
     const pctBajasImputables = data.totalPostulantes > 0 
-      ? Math.round((data.bajasImputables / data.totalPostulantes) * 100) 
+      ? parseFloat(((data.bajasImputables / data.totalPostulantes) * 100).toFixed(1))
       : 0
 
     return [
@@ -266,11 +337,11 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
         cumple: retencionFormacion >= 80,
         estado: retencionFormacion >= 80 ? 'CUMPLE' : (retencionFormacion >= 60 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
         color: retencionFormacion >= 80 ? '#10b981' : (retencionFormacion >= 60 ? '#f59e0b' : '#f43f5e'),
-        detalle: `${data.enCapacitacion + data.ingresantesOP} retenidos en aula`
+        detalle: `${data.enCapacitacion + data.ingresantesOP} retenidos de ${data.qDia1} Día 1`
       },
       {
         nombre: 'Calidad de Reclutamiento (Bajas Imputables)',
-        descripcion: 'Deserciones tempranas por perfil no calificado o documentación',
+        descripcion: 'Deserciones por perfil, documentación o mala preselección',
         actual: pctBajasImputables,
         meta: 5,
         unidad: '%',
@@ -278,7 +349,7 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
         cumple: pctBajasImputables <= 5,
         estado: pctBajasImputables <= 5 ? 'CUMPLE' : (pctBajasImputables <= 10 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
         color: pctBajasImputables <= 5 ? '#10b981' : (pctBajasImputables <= 10 ? '#f59e0b' : '#f43f5e'),
-        detalle: `${data.bajasImputables} bajas imputables a selección`
+        detalle: `${data.bajasImputables} imputables (${data.bajas || 0} bajas totales)`
       }
     ]
   } else {
@@ -286,7 +357,7 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
     const pctAsistencia = data.pctAsistencia || 0
     const pctRetencionOP = data.pctRetencionOP || 0
     const pctAusentismo = data.pctAusentismo || 0
-    const deserionAula = data.totalAlumnos > 0 ? Math.round((data.bajas / data.totalAlumnos) * 100) : 0
+    const deserionAula = data.totalAlumnos > 0 ? parseFloat(((data.bajas / data.totalAlumnos) * 100).toFixed(1)) : 0
 
     return [
       {
@@ -311,7 +382,7 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
         cumple: pctRetencionOP >= 75,
         estado: pctRetencionOP >= 75 ? 'CUMPLE' : (pctRetencionOP >= 50 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
         color: pctRetencionOP >= 75 ? '#10b981' : (pctRetencionOP >= 50 ? '#f59e0b' : '#f43f5e'),
-        detalle: `${data.ingresantesOP} certificados a operaciones`
+        detalle: `${data.ingresantesOP} certificados de ${data.totalAlumnos} alumnos`
       },
       {
         nombre: 'Tasa de Deserción en Capacitación',
@@ -323,7 +394,7 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
         cumple: deserionAula <= 15,
         estado: deserionAula <= 15 ? 'CUMPLE' : (deserionAula <= 25 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
         color: deserionAula <= 15 ? '#10b981' : (deserionAula <= 25 ? '#f59e0b' : '#f43f5e'),
-        detalle: `${data.bajas} bajas ocurridas en aula`
+        detalle: `${data.bajas} bajas de ${data.totalAlumnos} alumnos`
       },
       {
         nombre: 'Control de Ausentismo y Faltas',
@@ -335,7 +406,7 @@ export function getIndicadoresMaqueta(data, role = 'RECLUTADOR') {
         cumple: pctAusentismo <= 10,
         estado: pctAusentismo <= 10 ? 'CUMPLE' : (pctAusentismo <= 18 ? 'EN ALERTA' : 'DESVÍO CRÍTICO'),
         color: pctAusentismo <= 10 ? '#10b981' : (pctAusentismo <= 18 ? '#f59e0b' : '#f43f5e'),
-        detalle: `${data.ausentismoCount} faltas en período`
+        detalle: `${data.ausentismoCount} faltas registradas`
       }
     ]
   }
@@ -358,16 +429,34 @@ export function computeAllRecruitersPerformance(
   // Sets de postulantes con asistencia
   const opDocs = new Set(attendanceIndexes?.opDocsSet || [])
   const bajasDocs = new Set(attendanceIndexes?.bajasDocsSet || [])
+  const bajasDia1Docs = new Set()
   const d1Docs = new Set()
+  const bajasMotivoMap = new Map()
+  const bajasAtribMap = new Map()
 
   asistencias.forEach(a => {
     const doc = norm(a.postulante_documento || a.documento)
     if (!doc) return
     const sigla = norm(a.sigla_asistencia || a.sigla)
-    const motivo = norm(a.motivo_baja)
+    const motivoRaw = a.motivo_baja || ''
+    const motivo = norm(motivoRaw)
     const estado = norm(a.estado)
+    const atrib = norm(a.atribucion_baja)
 
-    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1'
+    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1' || isCandidateDia1Baja(a)
+
+    if (isB1) {
+      bajasDia1Docs.add(doc)
+      bajasDocs.add(doc)
+    }
+
+    if (motivoRaw) {
+      if (!bajasMotivoMap.has(doc)) bajasMotivoMap.set(doc, [])
+      bajasMotivoMap.get(doc).push(motivoRaw)
+    }
+    if (atrib) {
+      bajasAtribMap.set(doc, atrib)
+    }
 
     if (sigla === 'I-OP') {
       opDocs.add(doc)
@@ -380,6 +469,11 @@ export function computeAllRecruitersPerformance(
     } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       d1Docs.add(doc)
     }
+  })
+
+  // Purga rigurosa: Quien fue Baja en Día 1 jamás cuenta como asistente a Día 1
+  bajasDia1Docs.forEach(doc => {
+    d1Docs.delete(doc)
   })
 
   // Catálogo de formadores para exclusión de RyS
@@ -450,9 +544,9 @@ export function computeAllRecruitersPerformance(
 
     recObj.postulantes.forEach(p => {
       const isOP = isCandidateIngresoOP(p, opDocs)
-      const isBaja = isCandidateBaja(p, bajasDocs)
-      const isImputable = isCandidateImputable(p)
-      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
+      const isBaja = isCandidateBaja(p, bajasDocs, bajasMotivoMap)
+      const isImputable = isCandidateImputable(p, bajasMotivoMap, bajasAtribMap)
+      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs, bajasDia1Docs)
 
       if (hasD1) qDia1++
 
@@ -550,15 +644,33 @@ export function getRecruiterIndividualDetails(
   // Index de asistencias para coherencia
   const opDocs = new Set(attendanceIndexes?.opDocsSet || [])
   const bajasDocs = new Set(attendanceIndexes?.bajasDocsSet || [])
+  const bajasDia1Docs = new Set()
   const d1Docs = new Set()
+  const bajasMotivoMap = new Map()
+  const bajasAtribMap = new Map()
 
   asistencias.forEach(a => {
     const doc = norm(a.postulante_documento || a.documento)
     if (!doc) return
     const sigla = norm(a.sigla_asistencia || a.sigla)
-    const motivo = norm(a.motivo_baja)
+    const motivoRaw = a.motivo_baja || ''
+    const motivo = norm(motivoRaw)
     const estado = norm(a.estado)
-    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1'
+    const atrib = norm(a.atribucion_baja)
+    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1' || isCandidateDia1Baja(a)
+
+    if (isB1) {
+      bajasDia1Docs.add(doc)
+      bajasDocs.add(doc)
+    }
+
+    if (motivoRaw) {
+      if (!bajasMotivoMap.has(doc)) bajasMotivoMap.set(doc, [])
+      bajasMotivoMap.get(doc).push(motivoRaw)
+    }
+    if (atrib) {
+      bajasAtribMap.set(doc, atrib)
+    }
 
     if (sigla === 'I-OP') {
       opDocs.add(doc)
@@ -569,6 +681,11 @@ export function getRecruiterIndividualDetails(
     } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       d1Docs.add(doc)
     }
+  })
+
+  // Purga estricta: quien tuvo Baja en Día 1 jamás cuenta como asistente de Día 1
+  bajasDia1Docs.forEach(doc => {
+    d1Docs.delete(doc)
   })
 
   const isConsolidated = !targetIdentifier || targetIdentifier === 'TODOS' || targetIdentifier === 'ALL'
@@ -589,9 +706,9 @@ export function getRecruiterIndividualDetails(
 
     myPostulantes.forEach(p => {
       const isOP = isCandidateIngresoOP(p, opDocs)
-      const isBaja = isCandidateBaja(p, bajasDocs)
-      const isImputable = isCandidateImputable(p)
-      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
+      const isBaja = isCandidateBaja(p, bajasDocs, bajasMotivoMap)
+      const isImputable = isCandidateImputable(p, bajasMotivoMap, bajasAtribMap)
+      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs, bajasDia1Docs)
 
       if (hasD1) qDia1++
       if (isOP) {
@@ -604,11 +721,11 @@ export function getRecruiterIndividualDetails(
       }
     })
 
-    const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
+    const pctQDia1 = total > 0 ? parseFloat(((qDia1 / total) * 100).toFixed(1)) : 0
     // Regla de Contact Center: Conversión a OP sobre Día 1
-    const pctConversionOP = qDia1 > 0 ? Math.round((ingresantesOP / qDia1) * 100) : 0
-    const pctBajas = total > 0 ? Math.round((bajas / total) * 100) : 0
-    const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
+    const pctConversionOP = qDia1 > 0 ? parseFloat(((ingresantesOP / qDia1) * 100).toFixed(1)) : 0
+    const pctBajas = total > 0 ? parseFloat(((bajas / total) * 100).toFixed(1)) : 0
+    const pctBajasImputables = total > 0 ? parseFloat(((bajasImputables / total) * 100).toFixed(1)) : 0
 
     baseDetails = {
       nombre: 'TODOS LOS RECLUTADORES (CONSOLIDADO)',
@@ -673,27 +790,27 @@ export function getRecruiterIndividualDetails(
       stage: 'Asistieron Día 1 (Formación)',
       label: 'Efectividad Inicial',
       count: qDia1,
-      pct: totalPosts > 0 ? Math.round((qDia1 / totalPosts) * 100) : 0,
+      pct: totalPosts > 0 ? parseFloat(((qDia1 / totalPosts) * 100).toFixed(1)) : 0,
       subtext: `${qDia1} iniciaron aula de capacitación`,
       dropCount: Math.max(0, totalPosts - qDia1),
-      dropPct: totalPosts > 0 ? Math.round(((totalPosts - qDia1) / totalPosts) * 100) : 0,
+      dropPct: totalPosts > 0 ? parseFloat((((totalPosts - qDia1) / totalPosts) * 100).toFixed(1)) : 0,
       color: '#06b6d4' // Cyan
     },
     {
       stage: 'En Formación / OJT',
       label: 'Retención de Aula',
       count: enCap + op,
-      pct: qDia1 > 0 ? Math.round(((enCap + op) / qDia1) * 100) : 0,
+      pct: qDia1 > 0 ? parseFloat((((enCap + op) / qDia1) * 100).toFixed(1)) : 0,
       subtext: `${enCap} en capacitación + ${op} en producción`,
       dropCount: Math.max(0, qDia1 - (enCap + op)),
-      dropPct: qDia1 > 0 ? Math.round(((qDia1 - (enCap + op)) / qDia1) * 100) : 0,
+      dropPct: qDia1 > 0 ? parseFloat((((qDia1 - (enCap + op)) / qDia1) * 100).toFixed(1)) : 0,
       color: '#8b5cf6' // Violet
     },
     {
       stage: 'Ingresantes a OP',
       label: 'Conversión sobre Día 1',
       count: op,
-      pct: qDia1 > 0 ? Math.round((op / qDia1) * 100) : 0,
+      pct: qDia1 > 0 ? parseFloat(((op / qDia1) * 100).toFixed(1)) : 0,
       subtext: `${op} ingresaron a operaciones (${baseDetails.pctConversionOP}% de Día 1)`,
       color: '#10b981' // Emerald
     }
@@ -734,8 +851,8 @@ export function getRecruiterIndividualDetails(
     w.postulantes++
 
     const isOP = isCandidateIngresoOP(p, opDocs)
-    const isBaja = isCandidateBaja(p, bajasDocs)
-    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
+    const isBaja = isCandidateBaja(p, bajasDocs, bajasMotivoMap)
+    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs, bajasDia1Docs)
 
     if (hasD1) w.qDia1++
     if (isOP) w.ingresantesOP++
@@ -746,8 +863,8 @@ export function getRecruiterIndividualDetails(
     .sort((a, b) => (a.semanaNum || 999) - (b.semanaNum || 999))
     .map(w => ({
       ...w,
-      pctD1: w.postulantes > 0 ? Math.round((w.qDia1 / w.postulantes) * 100) : 0,
-      pctOP: w.qDia1 > 0 ? Math.round((w.ingresantesOP / w.qDia1) * 100) : 0
+      pctD1: w.postulantes > 0 ? parseFloat(((w.qDia1 / w.postulantes) * 100).toFixed(1)) : 0,
+      pctOP: w.qDia1 > 0 ? parseFloat(((w.ingresantesOP / w.qDia1) * 100).toFixed(1)) : 0
     }))
 
   // ── 3. DISTRIBUCIÓN DE MOTIVOS DE BAJA REALES ────────────────────────────
@@ -755,10 +872,13 @@ export function getRecruiterIndividualDetails(
   let totalBajasContadas = 0
 
   myPostulantes.forEach(p => {
-    if (isCandidateBaja(p, bajasDocs)) {
+    if (isCandidateBaja(p, bajasDocs, bajasMotivoMap)) {
       totalBajasContadas++
-      const mRaw = norm(p.motivo_baja || 'DESCONOCIDO / SIN MOTIVO')
-      motivosMap.set(mRaw, (motivosMap.get(mRaw) || 0) + 1)
+      const doc = norm(p.documento || p.postulante_documento)
+      const mList = [p.motivo_baja, ...(bajasMotivoMap.get(doc) || [])].filter(Boolean)
+      const mRaw = mList[0] || 'DESERCIÓN / SIN ESPECIFICAR'
+      const mNorm = normalizarMotivo(mRaw)
+      motivosMap.set(mNorm, (motivosMap.get(mNorm) || 0) + 1)
     }
   })
 
@@ -766,15 +886,18 @@ export function getRecruiterIndividualDetails(
     .map(([motivo, count]) => ({
       motivo,
       count,
-      pct: totalBajasContadas > 0 ? Math.round((count / totalBajasContadas) * 100) : 0
+      pct: totalBajasContadas > 0 ? parseFloat(((count / totalBajasContadas) * 100).toFixed(1)) : 0
     }))
     .sort((a, b) => b.count - a.count)
 
   // ── 4. TABLA DE TRAZABILIDAD NOMINAL (POSTULANTES) ────────────────────────
   const postulantesNominal = myPostulantes.map(p => {
     const isOP = isCandidateIngresoOP(p, opDocs)
-    const isBaja = isCandidateBaja(p, bajasDocs)
-    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
+    const isBaja = isCandidateBaja(p, bajasDocs, bajasMotivoMap)
+    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs, bajasDia1Docs)
+    const doc = norm(p.documento || p.postulante_documento)
+    const mList = [p.motivo_baja, ...(bajasMotivoMap.get(doc) || [])].filter(Boolean)
+    const motivoFinal = mList.length > 0 ? normalizarMotivo(mList[0]) : '-'
 
     return {
       documento: p.documento || '-',
@@ -786,7 +909,7 @@ export function getRecruiterIndividualDetails(
       fecha_registro: parseDateStr(p.fecha_ingreso || p.fecha_registro || p.created_at) || '-',
       dia_1: hasD1 ? 'Asistió' : (p.dia_1 ? String(p.dia_1) : 'No Asistió'),
       estado: isOP ? 'INGRESO OP' : (isBaja ? 'BAJA' : (hasD1 ? 'CAPACITACIÓN' : (p.estado || 'REGISTRADO'))),
-      motivo_baja: p.motivo_baja || '-',
+      motivo_baja: motivoFinal,
       isOP,
       isBaja,
       hasD1
@@ -1203,8 +1326,9 @@ export function getTrainerIndividualDetails(
     const sigla = norm(a.sigla_asistencia || a.sigla)
     if (sigla === 'B' || a.motivo_baja) {
       totalBajasContadas++
-      const mRaw = norm(a.motivo_baja || 'DESERCIÓN EN AULA')
-      motivosMap.set(mRaw, (motivosMap.get(mRaw) || 0) + 1)
+      const mRaw = a.motivo_baja || 'DESERCIÓN EN AULA'
+      const mNorm = normalizarMotivo(mRaw)
+      motivosMap.set(mNorm, (motivosMap.get(mNorm) || 0) + 1)
     }
   })
 
@@ -1212,7 +1336,7 @@ export function getTrainerIndividualDetails(
     .map(([motivo, count]) => ({
       motivo,
       count,
-      pct: totalBajasContadas > 0 ? Math.round((count / totalBajasContadas) * 100) : 0
+      pct: totalBajasContadas > 0 ? parseFloat(((count / totalBajasContadas) * 100).toFixed(1)) : 0
     }))
     .sort((a, b) => b.count - a.count)
 
