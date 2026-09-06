@@ -80,7 +80,7 @@ function PerformanceScorecardIndividual({
   const [filterSegmento, setFilterSegmento] = useState('Todos Segmentos')
   const [filterCampana, setFilterCampana] = useState('Todas Campañas')
   const [filterGrupo, setFilterGrupo] = useState('Todos los Grupos')
-  const [selectedIdentifier, setSelectedIdentifier] = useState('')
+  const [selectedIdentifier, setSelectedIdentifier] = useState('TODOS')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false)
   const [showNominalTable, setShowNominalTable] = useState(false)
@@ -335,38 +335,49 @@ function PerformanceScorecardIndividual({
       )
       if (selfMatch) return selfMatch.nombre
     }
-    if (selectedIdentifier) {
-      const match = activePersonList.find(p => 
-        norm(p.nombre) === norm(selectedIdentifier) || 
-        norm(p.dni) === norm(selectedIdentifier) || 
-        norm(p.usuario) === norm(selectedIdentifier)
-      )
-      if (match) return match.nombre
+    if (!selectedIdentifier || selectedIdentifier === 'TODOS' || selectedIdentifier === 'ALL') {
+      return 'TODOS'
     }
-    if (activePersonList.length > 0) return activePersonList[0].nombre
-    return ''
+    const match = activePersonList.find(p => 
+      norm(p.nombre) === norm(selectedIdentifier) || 
+      norm(p.dni) === norm(selectedIdentifier) || 
+      norm(p.usuario) === norm(selectedIdentifier)
+    )
+    if (match) return match.nombre
+    return 'TODOS'
   }, [isSelfLocked, selfIdentifier, selectedIdentifier, activePersonList])
 
   useEffect(() => {
-    if (activePersonList.length > 0) {
+    if (selectedIdentifier !== 'TODOS' && activePersonList.length > 0) {
       const exists = activePersonList.some(p => norm(p.nombre) === norm(selectedIdentifier))
       if (!exists) {
-        setSelectedIdentifier(activePersonList[0].nombre)
+        setSelectedIdentifier('TODOS')
       }
-    } else {
-      setSelectedIdentifier('')
     }
   }, [activePersonList, selectedIdentifier])
 
-  // Detalle individual
+  // Detalle individual o consolidado
   const individualData = useMemo(() => {
     if (!currentTargetIdentifier) return null
     if (activeRole === 'RECLUTADOR') {
-      return getRecruiterIndividualDetails(currentTargetIdentifier, filteredPostulantes, filteredAsistencias, rankedRecruiters, filteredCampanasMetas)
+      return getRecruiterIndividualDetails(
+        currentTargetIdentifier, 
+        filteredPostulantes, 
+        filteredAsistencias, 
+        rankedRecruiters, 
+        filteredCampanasMetas,
+        attendanceIndexes
+      )
     } else {
-      return getTrainerIndividualDetails(currentTargetIdentifier, filteredAsistencias, rankedTrainers, filteredGrupos, filteredPostulantes)
+      return getTrainerIndividualDetails(
+        currentTargetIdentifier, 
+        filteredAsistencias, 
+        rankedTrainers, 
+        filteredGrupos, 
+        filteredPostulantes
+      )
     }
-  }, [activeRole, currentTargetIdentifier, filteredPostulantes, filteredAsistencias, rankedRecruiters, rankedTrainers, filteredCampanasMetas, filteredGrupos])
+  }, [activeRole, currentTargetIdentifier, filteredPostulantes, filteredAsistencias, rankedRecruiters, rankedTrainers, filteredCampanasMetas, filteredGrupos, attendanceIndexes])
 
   // Buscador de colaboradores
   const searchResults = useMemo(() => {
@@ -463,7 +474,7 @@ function PerformanceScorecardIndividual({
                 value={filterPeriodo}
                 onChange={(e) => {
                   setFilterPeriodo(e.target.value)
-                  setSelectedIdentifier('')
+                  setSelectedIdentifier('TODOS')
                 }}
                 className="bg-transparent font-bold text-slate-100 outline-none cursor-pointer"
               >
@@ -481,7 +492,7 @@ function PerformanceScorecardIndividual({
                 value={filterSegmento}
                 onChange={(e) => {
                   setFilterSegmento(e.target.value)
-                  setSelectedIdentifier('')
+                  setSelectedIdentifier('TODOS')
                 }}
                 className="bg-transparent font-bold text-slate-100 outline-none cursor-pointer max-w-[130px] truncate"
               >
@@ -499,7 +510,7 @@ function PerformanceScorecardIndividual({
                 value={filterCampana}
                 onChange={(e) => {
                   setFilterCampana(e.target.value)
-                  setSelectedIdentifier('')
+                  setSelectedIdentifier('TODOS')
                 }}
                 className="bg-transparent font-bold text-slate-100 outline-none cursor-pointer max-w-[140px] truncate"
               >
@@ -517,7 +528,7 @@ function PerformanceScorecardIndividual({
                 value={filterGrupo}
                 onChange={(e) => {
                   setFilterGrupo(e.target.value)
-                  setSelectedIdentifier('')
+                  setSelectedIdentifier('TODOS')
                 }}
                 className="bg-transparent font-bold text-slate-100 outline-none cursor-pointer max-w-[140px] truncate"
               >
@@ -551,9 +562,16 @@ function PerformanceScorecardIndividual({
                 }}
                 className="flex-1 h-9 px-3 bg-slate-900/80 border border-slate-700 hover:border-cyan-500 rounded-xl text-xs font-bold text-slate-100 outline-none cursor-pointer transition-colors"
               >
+                <option value="TODOS" className="bg-slate-900 text-cyan-300 font-bold">
+                  {activeRole === 'RECLUTADOR' 
+                    ? `[ TODOS LOS RECLUTADORES (CONSOLIDADO) ] • ${filteredPostulantes.length} postulantes` 
+                    : `[ TODOS LOS FORMADORES (CONSOLIDADO) ] • ${filteredGrupos.length} aulas`}
+                </option>
                 {activePersonList.map((person) => (
                   <option key={person.nombre} value={person.nombre} className="bg-slate-900 text-slate-100">
-                    #{person.rank} • {person.nombre} ({person.quartile} - {person.score} pts) • {activeRole === 'RECLUTADOR' ? `${person.totalPostulantes} postulantes` : `${person.totalAlumnos} alumnos`}
+                    {person.nombre} • {activeRole === 'RECLUTADOR' 
+                      ? `${person.totalPostulantes} postulantes (${person.qDia1} Día 1 • ${person.ingresantesOP} a OP)` 
+                      : `${person.totalAlumnos} alumnos (${person.pctAsistencia}% Asist. • ${person.ingresantesOP} a OP)`}
                   </option>
                 ))}
               </select>
@@ -603,10 +621,15 @@ function PerformanceScorecardIndividual({
                       >
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-slate-200 truncate">{person.nombre}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">{person.dni ? `DNI: ${person.dni}` : ''}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {person.dni ? `DNI: ${person.dni} • ` : ''}
+                            {activeRole === 'RECLUTADOR' 
+                              ? `${person.totalPostulantes} postulantes` 
+                              : `${person.totalAlumnos} alumnos`}
+                          </p>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono" style={{ color: person.quartileColor }}>
-                          #{person.rank} • {person.quartile}
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/20">
+                          {person.qDia1 ?? person.asistenciasEfectivas} Día 1 • {person.ingresantesOP} OP
                         </span>
                       </button>
                     ))
@@ -622,62 +645,90 @@ function PerformanceScorecardIndividual({
 
       {individualData ? (
         <>
-          {/* ── 2. HERO CARD: IDENTIDAD Y POSICIÓN EN RANKING ── */}
+          {/* ── 2. HERO CARD: IDENTIDAD Y DESEMPEÑO OPERATIVO ── */}
           <div className="bg-[var(--surface)] p-5 rounded-2xl border border-[var(--border-subtle)] shadow-md flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 text-white font-black text-xl shadow-lg">
-                {individualData.nombre.slice(0, 2).toUpperCase()}
+                {individualData.isConsolidated ? (
+                  <Layers size={26} />
+                ) : (
+                  individualData.nombre.slice(0, 2).toUpperCase()
+                )}
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg sm:text-xl font-black text-[var(--text-primary)] uppercase">
                     {individualData.nombre}
                   </h1>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
-                    Activo
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    individualData.isConsolidated
+                      ? 'bg-cyan-500/15 border border-cyan-500/30 text-cyan-400'
+                      : 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+                  }`}>
+                    {individualData.isConsolidated ? 'Vista Consolidada' : 'Activo'}
                   </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text-secondary)] mt-1">
-                  <span>Rol: <strong className="text-[var(--text-primary)]">{activeRole === 'RECLUTADOR' ? 'Especialista de RyS' : 'Formador Titular'}</strong></span>
-                  {individualData.dni && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)] mt-1">
+                  {individualData.isConsolidated ? (
+                    <span>
+                      Filtros activos: <strong className="text-cyan-400">{filterCampana}</strong> • Grupo: <strong className="text-purple-400">{filterGrupo}</strong> • Período: <strong className="text-indigo-400">{filterPeriodo}</strong>
+                    </span>
+                  ) : (
                     <>
+                      <span>Rol: <strong className="text-[var(--text-primary)]">{activeRole === 'RECLUTADOR' ? 'Especialista de RyS' : 'Formador Titular'}</strong></span>
+                      {individualData.dni && (
+                        <>
+                          <span>•</span>
+                          <span>DNI: <strong className="font-mono text-cyan-400">{individualData.dni}</strong></span>
+                        </>
+                      )}
                       <span>•</span>
-                      <span>DNI: <strong className="font-mono text-cyan-400">{individualData.dni}</strong></span>
+                      <span>Segmento: <strong className="text-indigo-400">{individualData.segmento || 'General'}</strong></span>
                     </>
                   )}
-                  <span>•</span>
-                  <span>Segmento: <strong className="text-indigo-400">{individualData.segmento || 'General'}</strong></span>
                 </div>
               </div>
             </div>
 
-            {/* Badges de Score y Ranking */}
-            <div className="flex items-center gap-3">
-              <div className="px-4 py-2 rounded-xl bg-slate-900/70 border border-slate-800 text-center">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Ranking Empresa</span>
-                <span className="text-lg font-black font-mono text-white">
-                  #{individualData.rank} <span className="text-xs text-slate-400 font-normal">de {individualData.totalRank}</span>
+            {/* Badges de Métricas Operativas (Sin rankings ni categorías forzadas) */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="px-3.5 py-2 rounded-xl bg-slate-900/70 border border-slate-800 text-center min-w-[95px]">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                  {activeRole === 'RECLUTADOR' ? 'Grupos / Cohortes' : 'Aulas Asignadas'}
+                </span>
+                <span className="text-base font-black font-mono text-white">
+                  {activeRole === 'RECLUTADOR' 
+                    ? (individualData.gruposAsignadosCount || individualData.gruposBreakdown?.length || 0)
+                    : (individualData.gruposCount || individualData.gruposBreakdown?.length || 0)}
                 </span>
               </div>
 
-              <div className="px-4 py-2 rounded-xl bg-slate-900/70 border border-slate-800 text-center">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Posición Segmento</span>
-                <span className="text-lg font-black font-mono text-indigo-400">
-                  #{individualData.segmentRank} <span className="text-xs text-slate-400 font-normal">de {individualData.totalInSegment}</span>
+              <div className="px-3.5 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-center min-w-[95px]">
+                <span className="text-[9px] font-bold text-cyan-300 uppercase tracking-wider block">
+                  {activeRole === 'RECLUTADOR' ? 'Efect. Día 1' : '% Asistencia'}
+                </span>
+                <span className="text-base font-black font-mono text-cyan-400">
+                  {activeRole === 'RECLUTADOR' ? `${individualData.pctQDia1}%` : `${individualData.pctAsistencia}%`}
                 </span>
               </div>
 
-              <div 
-                className="px-4 py-2 rounded-xl border text-center font-mono"
-                style={{
-                  backgroundColor: `${individualData.quartileColor}15`,
-                  borderColor: `${individualData.quartileColor}40`,
-                  color: individualData.quartileColor
-                }}
-              >
-                <span className="text-[9px] font-bold uppercase tracking-wider block">Score & Cuartil</span>
-                <span className="text-lg font-black">
-                  {individualData.score} pts • {individualData.quartile}
+              <div className="px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-center min-w-[95px]">
+                <span className="text-[9px] font-bold text-emerald-300 uppercase tracking-wider block">
+                  {activeRole === 'RECLUTADOR' ? 'Conv. a OP' : 'Pases a OP'}
+                </span>
+                <span className="text-base font-black font-mono text-emerald-400">
+                  {activeRole === 'RECLUTADOR' ? `${individualData.pctConversionOP}%` : `${individualData.pctRetencionOP}%`}
+                </span>
+              </div>
+
+              <div className="px-3.5 py-2 rounded-xl bg-rose-500/10 border border-rose-500/25 text-center min-w-[95px]">
+                <span className="text-[9px] font-bold text-rose-300 uppercase tracking-wider block">
+                  {activeRole === 'RECLUTADOR' ? 'Tasa Bajas' : 'Ausentismo'}
+                </span>
+                <span className="text-base font-black font-mono text-rose-400">
+                  {activeRole === 'RECLUTADOR' 
+                    ? `${individualData.pctBajas ?? (individualData.totalPostulantes > 0 ? Math.round((individualData.bajas / individualData.totalPostulantes) * 100) : 0)}%` 
+                    : `${individualData.pctAusentismo}%`}
                 </span>
               </div>
             </div>

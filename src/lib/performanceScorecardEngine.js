@@ -2,7 +2,7 @@
  * performanceScorecardEngine.js
  * Motor analítico de Ficha de Desempeño 360° (GEA Dashboard)
  * Especializado para Reclutadores (RyS) y Formadores (Capacitación).
- * Calibración de Datos Reales, Funnel Operativo, Evolución Semanal y Trazabilidad Nominal.
+ * Calibración estricta de Nómina, Día 1, Ingresos a Operación y Consolidado Operativo.
  */
 
 // ── Normalización de Cadenas Uniforme ───────────────────────────────────────
@@ -16,24 +16,31 @@ export const norm = (val) => String(val || '')
 export const cleanAlphaNum = (val) => String(val || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
 
 export const matchPerson = (fieldVal, target, catalogObj = null) => {
-  if (!target || target === 'ALL') return true
+  if (!target || target === 'ALL' || target === 'TODOS') return true
   const f = norm(fieldVal)
   const t = norm(target)
   if (!f || !t) return false
   if (f === t) return true
-  if (f.includes(t) || t.includes(f)) return true
 
   // Verificación cruzada con DNI, Usuario o Alias si existe objeto de catálogo
   if (catalogObj) {
     const cDoc = norm(catalogObj.documento || catalogObj.dni || catalogObj.doc)
     const cUser = norm(catalogObj.usuario || catalogObj.alias || catalogObj.email)
-    if (cDoc && (cDoc === t || t.includes(cDoc))) return true
-    if (cUser && (cUser === t || t.includes(cUser))) return true
+    if (cDoc && (cDoc === t || t === cDoc)) return true
+    if (cUser && (cUser === t || t === cUser)) return true
   }
 
-  const fWords = f.split(/\s+/).filter(w => w.length >= 3)
-  const tWords = t.split(/\s+/).filter(w => w.length >= 3)
-  return fWords.some(w => tWords.includes(w))
+  // Coincidencia por subcadena solo si es suficientemente larga y específica
+  if ((f.length >= 8 && t.length >= 8) && (f.startsWith(t) || t.startsWith(f))) return true
+
+  // Coincidencia por palabras: requiere que coincidan al menos 2 palabras significativas (evita colisiones en apellidos comunes)
+  const fWords = f.split(/\s+/).filter(w => w.length >= 3 && !['DEL', 'LOS', 'LAS', 'SAN', 'DE', 'LA'].includes(w))
+  const tWords = t.split(/\s+/).filter(w => w.length >= 3 && !['DEL', 'LOS', 'LAS', 'SAN', 'DE', 'LA'].includes(w))
+  if (fWords.length >= 2 && tWords.length >= 2) {
+    const common = fWords.filter(w => tWords.includes(w))
+    return common.length >= 2
+  }
+  return false
 }
 
 export const parseDateStr = (raw) => {
@@ -70,6 +77,69 @@ export const extractSemanaNum = (raw) => {
   return m ? parseInt(m[1], 10) : 0
 }
 
+// ── Calibración Estricta de Estados Operativos ─────────────────────────────
+export function isCandidateDia1Baja(p) {
+  const m = norm(p.motivo_baja)
+  const e = norm(p.estado)
+  const t = norm(p.tipo_baja || p.tipo_reclutado)
+  const stD1 = norm(p.status_dia_1)
+  const d1 = norm(p.dia_1)
+
+  if (d1 === 'NO ASISTIO' || d1 === 'NO ASISTIÓ' || d1 === 'FALTA' || d1 === 'FALTO') return true
+  if (t === 'CESE' || t.includes('CESE') || stD1.includes('CESE')) return true
+  if (m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('BAJA D1') || m.includes('CESE DIA 1') || m.includes('CESE DÍA 1')) return true
+  if (e.includes('BAJA DIA 1') || e.includes('BAJA DÍA 1') || e.includes('CESE DIA 1')) return true
+  return false
+}
+
+export function isCandidateIngresoOP(p, opDocs = null) {
+  const doc = norm(p.documento)
+  if (doc && opDocs && opDocs.has(doc)) return true
+  const e = norm(p.estado)
+  return e === 'INGRESO_OP' || e === 'EN_OPERACIONES' || e === 'OPERACIONES' || e.includes('INGRESO_OP')
+}
+
+export function isCandidateDia1Asistio(p, opDocs = null, d1Docs = null) {
+  if (isCandidateDia1Baja(p)) return false
+
+  const doc = norm(p.documento)
+  const isOP = isCandidateIngresoOP(p, opDocs)
+  if (isOP) return true
+
+  if (doc && d1Docs && d1Docs.has(doc)) return true
+
+  const d1 = norm(p.dia_1)
+  const stD1 = norm(p.status_dia_1)
+  const e = norm(p.estado)
+
+  if (d1 === 'ASISTIO' || d1 === 'ASISTIÓ' || d1 === 'A' || d1 === 'SI' || d1.includes('ASIST')) return true
+  if (stD1 === 'RECUPERADO' || stD1 === 'AGREGADO') return true
+  if (e === 'CAPACITACION' || e === 'EN_CAPACITACION' || e === 'CAPACITACIÓN' || e === 'EN_CAPACITACIÓN') return true
+
+  return false
+}
+
+export function isCandidateBaja(p, bajasDocs = null) {
+  const doc = norm(p.documento)
+  if (doc && bajasDocs && bajasDocs.has(doc)) return true
+  const e = norm(p.estado)
+  if (e === 'BAJA' || e === 'CESADO' || e.includes('BAJA')) return true
+  if (p.motivo_baja && String(p.motivo_baja).trim().length > 0 && norm(p.motivo_baja) !== 'NULL') return true
+  return false
+}
+
+export function isCandidateImputable(p) {
+  if (!isCandidateBaja(p)) return false
+  const m = norm(p.motivo_baja)
+  const t = norm(p.tipo_baja)
+  return p.baja_imputable === true || 
+    t === 'IMPUTABLE' || 
+    m.includes('PERFIL') || 
+    m.includes('SELECCION') || 
+    m.includes('DOCUMENTACION') || 
+    m.includes('NO CUMPLE')
+}
+
 // ── Asignación de Estrellas (1 a 5) ─────────────────────────────────────────
 export function computeStars(pct) {
   if (pct >= 100) return 5
@@ -79,18 +149,17 @@ export function computeStars(pct) {
   return 1
 }
 
-// ── Cálculo de Cuartiles (Q1 a Q4) ──────────────────────────────────────────
+// ── Ordenamiento Operativo por Volumen y Conversión ─────────────────────────
 export function assignQuartiles(list = [], scoreKey = 'score') {
   if (!list.length) return []
+  // Ordenamiento primario por Volumen (Postulantes/Alumnos) y luego por Ingresos a OP
   const sorted = [...list].sort((a, b) => {
-    const diff = (b[scoreKey] || 0) - (a[scoreKey] || 0)
-    if (diff !== 0) return diff
+    const diffVol = (b.totalPostulantes || b.totalAlumnos || 0) - (a.totalPostulantes || a.totalAlumnos || 0)
+    if (diffVol !== 0) return diffVol
     const diffOP = (b.ingresantesOP || 0) - (a.ingresantesOP || 0)
     if (diffOP !== 0) return diffOP
     const diffD1 = (b.qDia1 || b.asistenciasEfectivas || 0) - (a.qDia1 || a.asistenciasEfectivas || 0)
     if (diffD1 !== 0) return diffD1
-    const diffVol = (b.totalPostulantes || b.totalAlumnos || 0) - (a.totalPostulantes || a.totalAlumnos || 0)
-    if (diffVol !== 0) return diffVol
     return (a.nombre || '').localeCompare(b.nombre || '')
   })
   const n = sorted.length
@@ -142,25 +211,33 @@ export function computeAllRecruitersPerformance(
   const recruiterMap = new Map()
 
   // Sets de postulantes con asistencia
-  const opDocs = attendanceIndexes?.opDocsSet || new Set()
-  const bajasDocs = attendanceIndexes?.bajasDocsSet || new Set()
+  const opDocs = new Set(attendanceIndexes?.opDocsSet || [])
+  const bajasDocs = new Set(attendanceIndexes?.bajasDocsSet || [])
   const d1Docs = new Set()
 
   asistencias.forEach(a => {
-    const doc = a.postulante_documento || a.documento
+    const doc = norm(a.postulante_documento || a.documento)
     if (!doc) return
-    const sigla = a.sigla_asistencia || a.sigla
+    const sigla = norm(a.sigla_asistencia || a.sigla)
+    const motivo = norm(a.motivo_baja)
+    const estado = norm(a.estado)
+
+    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1'
+
     if (sigla === 'I-OP') {
       opDocs.add(doc)
       d1Docs.add(doc)
-    } else if (sigla === 'B') {
+    } else if (sigla === 'B' || isB1 || motivo) {
       bajasDocs.add(doc)
-    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'T') {
+      if (!isB1) {
+        d1Docs.add(doc)
+      }
+    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       d1Docs.add(doc)
     }
   })
 
-  // Catálogo de formadores para exclusión
+  // Catálogo de formadores para exclusión de RyS
   const formadorNamesSet = new Set()
   ;(formadoresCatalog || []).forEach(f => {
     const n = typeof f === 'string' ? f : (f?.nombre_completo || f?.nombre || '')
@@ -183,20 +260,22 @@ export function computeAllRecruitersPerformance(
     }
   })
 
-  // Agrupar postulantes por reclutador
+  // Agrupar postulantes por reclutador de forma estricta
   postulantes.forEach(p => {
-    const recName = (p.reclutador || 'SIN RECLUTADOR').trim()
-    if (!recName || norm(recName) === 'SIN RECLUTADOR') return
+    const recNameRaw = (p.reclutador || '').trim()
+    if (!recNameRaw) return
+    const recNameNorm = norm(recNameRaw)
+    if (!recNameNorm || recNameNorm === 'SIN RECLUTADOR' || recNameNorm === 'NULL') return
 
-    const isExplicitRec = catMap.has(norm(recName))
-    if (!isExplicitRec && (formadorNamesSet.has(norm(recName)) || (p.reclutador_dni && formadorNamesSet.has(norm(p.reclutador_dni))))) {
+    const isExplicitRec = catMap.has(recNameNorm)
+    if (!isExplicitRec && (formadorNamesSet.has(recNameNorm) || (p.reclutador_dni && formadorNamesSet.has(norm(p.reclutador_dni))))) {
       return
     }
 
-    if (!recruiterMap.has(recName)) {
-      const catInfo = catMap.get(norm(recName)) || {}
-      recruiterMap.set(recName, {
-        nombre: recName,
+    if (!recruiterMap.has(recNameNorm)) {
+      const catInfo = catMap.get(recNameNorm) || {}
+      recruiterMap.set(recNameNorm, {
+        nombre: recNameRaw.toUpperCase(),
         dni: catInfo.dni || p.reclutador_dni || '',
         usuario: catInfo.usuario || p.reclutador_usuario || '',
         email: catInfo.email || '',
@@ -206,7 +285,7 @@ export function computeAllRecruitersPerformance(
         grupos: new Set()
       })
     }
-    const recObj = recruiterMap.get(recName)
+    const recObj = recruiterMap.get(recNameNorm)
     recObj.postulantes.push(p)
     if (p.campana) recObj.campanas.add(p.campana)
     if (p.grupo_codigo) recObj.grupos.add(p.grupo_codigo)
@@ -214,9 +293,7 @@ export function computeAllRecruitersPerformance(
 
   const recruiterScores = []
 
-  recruiterMap.forEach((recObj, recName) => {
-    if (recName === 'SIN RECLUTADOR' || norm(recName) === 'SIN RECLUTADOR' || !recName) return
-
+  recruiterMap.forEach((recObj) => {
     const total = recObj.postulantes.length
     if (total === 0) return
 
@@ -227,27 +304,10 @@ export function computeAllRecruitersPerformance(
     let enCapacitacion = 0
 
     recObj.postulantes.forEach(p => {
-      const doc = p.documento
-      const isOP = opDocs.has(doc) || norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
-      const isBaja = bajasDocs.has(doc) || norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
-      const isImputable = isBaja && (
-        p.baja_imputable === true || 
-        norm(p.tipo_baja) === 'IMPUTABLE' || 
-        norm(p.motivo_baja).includes('PERFIL') || 
-        norm(p.motivo_baja).includes('SELECCION')
-      )
-      
-      const d1Field = norm(p.dia_1)
-      const statusD1 = norm(p.status_dia_1)
-      const hasD1 = d1Docs.has(doc) || 
-        d1Field === 'ASISTIO' || 
-        d1Field === 'A' || 
-        d1Field.includes('ASIST') ||
-        statusD1 === 'RECUPERADO' ||
-        statusD1 === 'AGREGADO' ||
-        norm(p.estado) === 'CAPACITACION' ||
-        norm(p.estado) === 'EN_CAPACITACION' ||
-        isOP
+      const isOP = isCandidateIngresoOP(p, opDocs)
+      const isBaja = isCandidateBaja(p, bajasDocs)
+      const isImputable = isCandidateImputable(p)
+      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
 
       if (hasD1) qDia1++
 
@@ -268,7 +328,7 @@ export function computeAllRecruitersPerformance(
 
     ;(campanasMetas || []).forEach(g => {
       const recMetaItem = (g.reclutadores_metas || []).find(rm => 
-        matchPerson(rm.nombre_completo, recName) ||
+        matchPerson(rm.nombre_completo, recObj.nombre) ||
         (rm.documento && (rm.documento === recObj.dni || String(recObj.dni).includes(rm.documento))) ||
         (rm.alias && (norm(rm.alias) === norm(recObj.usuario)))
       )
@@ -290,6 +350,7 @@ export function computeAllRecruitersPerformance(
     const pctCumplimientoVolumen = hasExplicitMeta ? Math.min(200, Math.round((total / metaVolumen) * 100)) : 100
     const pctConversionOP = total > 0 ? Math.round((ingresantesOP / total) * 100) : 0
     const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
+    const pctBajas = total > 0 ? Math.round((bajas / total) * 100) : 0
     const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
 
     // Score Ponderado: 45% Pases a OP + 35% Día 1 + 20% Volumen
@@ -301,7 +362,7 @@ export function computeAllRecruitersPerformance(
     ))
 
     recruiterScores.push({
-      nombre: recName,
+      nombre: recObj.nombre,
       dni: recObj.dni,
       usuario: recObj.usuario,
       email: recObj.email,
@@ -322,6 +383,7 @@ export function computeAllRecruitersPerformance(
       pctCumplimientoVolumen,
       pctConversionOP,
       pctQDia1,
+      pctBajas,
       pctBajasImputables,
       score,
       postulantes: recObj.postulantes
@@ -337,49 +399,130 @@ export function getRecruiterIndividualDetails(
   postulantes = [],
   asistencias = [],
   allRankedRecruiters = [],
-  campanasMetas = []
+  campanasMetas = [],
+  attendanceIndexes = null
 ) {
-  if (!allRankedRecruiters.length) return null
+  // Index de asistencias para coherencia
+  const opDocs = new Set(attendanceIndexes?.opDocsSet || [])
+  const bajasDocs = new Set(attendanceIndexes?.bajasDocsSet || [])
+  const d1Docs = new Set()
 
-  const target = norm(targetIdentifier)
-  let rankedItem = allRankedRecruiters.find(r => norm(r.nombre) === target)
-  if (!rankedItem && target) {
-    rankedItem = allRankedRecruiters.find(r => (r.dni && norm(r.dni) === target) || (r.usuario && norm(r.usuario) === target))
+  asistencias.forEach(a => {
+    const doc = norm(a.postulante_documento || a.documento)
+    if (!doc) return
+    const sigla = norm(a.sigla_asistencia || a.sigla)
+    const motivo = norm(a.motivo_baja)
+    const estado = norm(a.estado)
+    const isB1 = motivo.includes('BAJA DIA 1') || motivo.includes('BAJA D1') || estado.includes('BAJA DIA 1') || sigla === 'BD1'
+
+    if (sigla === 'I-OP') {
+      opDocs.add(doc)
+      d1Docs.add(doc)
+    } else if (sigla === 'B' || isB1 || motivo) {
+      bajasDocs.add(doc)
+      if (!isB1) d1Docs.add(doc)
+    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
+      d1Docs.add(doc)
+    }
+  })
+
+  const isConsolidated = !targetIdentifier || targetIdentifier === 'TODOS' || targetIdentifier === 'ALL'
+
+  let myPostulantes = []
+  let baseDetails = null
+
+  if (isConsolidated) {
+    // ── VISTA CONSOLIDADA: TODOS LOS RECLUTADORES DEL FILTRO ACTIVO ─────────
+    myPostulantes = postulantes || []
+    const total = myPostulantes.length
+
+    let qDia1 = 0
+    let ingresantesOP = 0
+    let bajas = 0
+    let bajasImputables = 0
+    let enCapacitacion = 0
+
+    myPostulantes.forEach(p => {
+      const isOP = isCandidateIngresoOP(p, opDocs)
+      const isBaja = isCandidateBaja(p, bajasDocs)
+      const isImputable = isCandidateImputable(p)
+      const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
+
+      if (hasD1) qDia1++
+      if (isOP) {
+        ingresantesOP++
+      } else if (isBaja) {
+        bajas++
+        if (isImputable) bajasImputables++
+      } else if (hasD1) {
+        enCapacitacion++
+      }
+    })
+
+    const pctQDia1 = total > 0 ? Math.round((qDia1 / total) * 100) : 0
+    const pctConversionOP = total > 0 ? Math.round((ingresantesOP / total) * 100) : 0
+    const pctBajas = total > 0 ? Math.round((bajas / total) * 100) : 0
+    const pctBajasImputables = total > 0 ? Math.round((bajasImputables / total) * 100) : 0
+
+    baseDetails = {
+      nombre: 'TODOS LOS RECLUTADORES (CONSOLIDADO)',
+      dni: '',
+      usuario: 'CONSOLIDADO',
+      email: '',
+      segmento: 'OPERACIÓN CONSOLIDADA',
+      totalPostulantes: total,
+      qDia1,
+      ingresantesOP,
+      bajas,
+      bajasImputables,
+      enCapacitacion,
+      gruposAsignadosCount: campanasMetas.length,
+      pctQDia1,
+      pctConversionOP,
+      pctBajas,
+      pctBajasImputables,
+      score: 100,
+      rank: 1,
+      totalRank: 1,
+      segmentRank: 1,
+      totalInSegment: 1,
+      isConsolidated: true
+    }
+  } else {
+    // ── VISTA INDIVIDUAL DE UN RECLUTADOR ESPECÍFICO ────────────────────────
+    const target = norm(targetIdentifier)
+    let rankedItem = allRankedRecruiters.find(r => norm(r.nombre) === target)
+    if (!rankedItem && target) {
+      rankedItem = allRankedRecruiters.find(r => (r.dni && norm(r.dni) === target) || (r.usuario && norm(r.usuario) === target))
+    }
+    if (!rankedItem && target) {
+      rankedItem = allRankedRecruiters.find(r => matchPerson(r.nombre, targetIdentifier))
+    }
+    if (!rankedItem && allRankedRecruiters.length > 0) {
+      rankedItem = allRankedRecruiters[0]
+    }
+
+    if (!rankedItem) return null
+
+    baseDetails = { ...rankedItem, isConsolidated: false }
+    // Fuente Única de la Verdad: los postulantes asignados a este reclutador
+    myPostulantes = rankedItem.postulantes || []
   }
-  if (!rankedItem && target) {
-    rankedItem = allRankedRecruiters.find(r => matchPerson(r.nombre, targetIdentifier))
-  }
-  if (!rankedItem) {
-    rankedItem = allRankedRecruiters[0]
-  }
-
-  if (!rankedItem) return null
-
-  const myPostulantes = postulantes.filter(p => matchPerson(p.reclutador, rankedItem.nombre))
-
-  // Posición en segmento
-  const mySeg = norm(rankedItem.segmento || 'GENERAL')
-  const segRecruiters = allRankedRecruiters
-    .filter(r => norm(r.segmento || 'GENERAL') === mySeg)
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-
-  const segmentRank = Math.max(1, segRecruiters.findIndex(r => norm(r.nombre) === norm(rankedItem.nombre)) + 1)
-  const totalInSegment = Math.max(1, segRecruiters.length)
 
   // ── 1. FUNNEL DE CONVERSIÓN REAL (EMBUDO OPERATIVO) ───────────────────────
-  const totalPosts = rankedItem.totalPostulantes
-  const qDia1 = rankedItem.qDia1
-  const enCap = rankedItem.enCapacitacion
-  const op = rankedItem.ingresantesOP
-  const bajas = rankedItem.bajas
+  const totalPosts = baseDetails.totalPostulantes
+  const qDia1 = baseDetails.qDia1
+  const enCap = baseDetails.enCapacitacion
+  const op = baseDetails.ingresantesOP
+  const bajas = baseDetails.bajas
 
   const funnel = [
     {
-      stage: 'Citados / Enviados',
+      stage: 'Citados / Nómina',
       label: 'Postulantes',
       count: totalPosts,
       pct: 100,
-      subtext: `${totalPosts} citaciones confirmadas`,
+      subtext: `${totalPosts} citaciones registradas`,
       color: '#6366f1' // Indigo
     },
     {
@@ -388,7 +531,7 @@ export function getRecruiterIndividualDetails(
       count: qDia1,
       pct: totalPosts > 0 ? Math.round((qDia1 / totalPosts) * 100) : 0,
       subtext: `${qDia1} asistieron al primer día`,
-      dropCount: totalPosts - qDia1,
+      dropCount: Math.max(0, totalPosts - qDia1),
       dropPct: totalPosts > 0 ? Math.round(((totalPosts - qDia1) / totalPosts) * 100) : 0,
       color: '#06b6d4' // Cyan
     },
@@ -398,7 +541,7 @@ export function getRecruiterIndividualDetails(
       count: enCap + op,
       pct: totalPosts > 0 ? Math.round(((enCap + op) / totalPosts) * 100) : 0,
       subtext: `${enCap} activos en capacitación`,
-      dropCount: qDia1 - (enCap + op),
+      dropCount: Math.max(0, qDia1 - (enCap + op)),
       dropPct: qDia1 > 0 ? Math.round(((qDia1 - (enCap + op)) / qDia1) * 100) : 0,
       color: '#8b5cf6' // Violet
     },
@@ -407,12 +550,12 @@ export function getRecruiterIndividualDetails(
       label: 'Conversión Final',
       count: op,
       pct: totalPosts > 0 ? Math.round((op / totalPosts) * 100) : 0,
-      subtext: `${op} pasaron a operaciones`,
+      subtext: `${op} ingresaron a operaciones`,
       color: '#10b981' // Emerald
     }
   ]
 
-  // ── 2. EVOLUCIÓN POR SEMANAS OPERATIVAS REALES ────────────────────────────
+  // ── 2. EVOLUCIÓN POR SEMANAS OPERATIVAS (COHORTES REALES) ─────────────────
   const weekMap = new Map()
 
   myPostulantes.forEach(p => {
@@ -420,11 +563,14 @@ export function getRecruiterIndividualDetails(
     if (semLabel === 'Semana ?') {
       const gCode = p.grupo_codigo
       if (gCode) {
-        const meta = campanasMetas.find(g => (g.grupo_codigo || g.codigo) === gCode)
+        const meta = campanasMetas.find(g => norm(g.grupo_codigo || g.codigo) === norm(gCode))
         if (meta && (meta.semana || meta.semana_trabajo || meta.semana_label)) {
           semLabel = formatSemanaLabel(meta.semana || meta.semana_trabajo || meta.semana_label)
         }
       }
+    }
+    if (!semLabel || semLabel === 'Semana ?') {
+      semLabel = 'General'
     }
 
     if (!weekMap.has(semLabel)) {
@@ -441,11 +587,9 @@ export function getRecruiterIndividualDetails(
     const w = weekMap.get(semLabel)
     w.postulantes++
 
-    const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
-    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
-    const d1Field = norm(p.dia_1)
-    const statusD1 = norm(p.status_dia_1)
-    const hasD1 = d1Field === 'ASISTIO' || d1Field === 'A' || d1Field.includes('ASIST') || statusD1 === 'RECUPERADO' || statusD1 === 'AGREGADO' || norm(p.estado) === 'CAPACITACION' || isOP
+    const isOP = isCandidateIngresoOP(p, opDocs)
+    const isBaja = isCandidateBaja(p, bajasDocs)
+    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
 
     if (hasD1) w.qDia1++
     if (isOP) w.ingresantesOP++
@@ -465,8 +609,7 @@ export function getRecruiterIndividualDetails(
   let totalBajasContadas = 0
 
   myPostulantes.forEach(p => {
-    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
-    if (isBaja) {
+    if (isCandidateBaja(p, bajasDocs)) {
       totalBajasContadas++
       const mRaw = norm(p.motivo_baja || 'DESCONOCIDO / SIN MOTIVO')
       motivosMap.set(mRaw, (motivosMap.get(mRaw) || 0) + 1)
@@ -488,18 +631,21 @@ export function getRecruiterIndividualDetails(
   ;(campanasMetas || []).forEach(g => {
     const gCode = g.grupo_codigo || g.codigo
     const gCodeNorm = norm(gCode)
-    const recMeta = (g.reclutadores_metas || []).find(rm => 
-      matchPerson(rm.nombre_completo, rankedItem.nombre) ||
-      (rm.documento && (rm.documento === rankedItem.dni || String(rankedItem.dni).includes(rm.documento))) ||
-      (rm.alias && norm(rm.alias) === norm(rankedItem.usuario))
-    )
 
-    if (recMeta || groupCodesSet.has(gCodeNorm)) {
+    if (baseDetails.isConsolidated || groupCodesSet.has(gCodeNorm)) {
       const postsInGroup = myPostulantes.filter(p => norm(p.grupo_codigo) === gCodeNorm)
       const tPosts = postsInGroup.length
-      const qD1 = postsInGroup.filter(p => norm(p.dia_1) === 'ASISTIO' || norm(p.dia_1) === 'A' || norm(p.estado) === 'CAPACITACION' || norm(p.estado) === 'INGRESO_OP').length
-      const ingresantes = postsInGroup.filter(p => norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES').length
-      const bajasG = postsInGroup.filter(p => norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)).length
+      if (tPosts === 0 && !baseDetails.isConsolidated) return
+
+      const qD1 = postsInGroup.filter(p => isCandidateDia1Asistio(p, opDocs, d1Docs)).length
+      const ingresantes = postsInGroup.filter(p => isCandidateIngresoOP(p, opDocs)).length
+      const bajasG = postsInGroup.filter(p => isCandidateBaja(p, bajasDocs)).length
+
+      const recMeta = (g.reclutadores_metas || []).find(rm => 
+        matchPerson(rm.nombre_completo, baseDetails.nombre) ||
+        (rm.documento && (rm.documento === baseDetails.dni || String(baseDetails.dni).includes(rm.documento))) ||
+        (rm.alias && norm(rm.alias) === norm(baseDetails.usuario))
+      )
 
       const metaRqInd = Number(recMeta?.meta_rq_individual) || 0
       const metaDia1Ind = Number(recMeta?.meta_dia_1_individual) || 0
@@ -525,16 +671,16 @@ export function getRecruiterIndividualDetails(
 
   // ── 5. TABLA DE TRAZABILIDAD NOMINAL (POSTULANTES) ────────────────────────
   const postulantesNominal = myPostulantes.map(p => {
-    const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
-    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
-    const d1Field = norm(p.dia_1)
-    const hasD1 = d1Field === 'ASISTIO' || d1Field === 'A' || d1Field.includes('ASIST') || norm(p.estado) === 'CAPACITACION' || isOP
+    const isOP = isCandidateIngresoOP(p, opDocs)
+    const isBaja = isCandidateBaja(p, bajasDocs)
+    const hasD1 = isCandidateDia1Asistio(p, opDocs, d1Docs)
 
     return {
       documento: p.documento || '-',
       nombre_completo: p.nombre_completo || `${p.apellido_paterno || ''} ${p.apellido_materno || ''} ${p.nombres || ''}`.trim() || 'Sin Nombre',
       campana: p.campana || 'Sin Campaña',
       grupo_codigo: p.grupo_codigo || '-',
+      reclutador: p.reclutador || 'Sin Asignar',
       semana: formatSemanaLabel(p.semana_trabajo || p.semana || p.semana_label),
       fecha_registro: parseDateStr(p.fecha_ingreso || p.fecha_registro || p.created_at) || '-',
       dia_1: hasD1 ? 'Asistió' : (p.dia_1 ? String(p.dia_1) : 'No Asistió'),
@@ -547,9 +693,7 @@ export function getRecruiterIndividualDetails(
   })
 
   return {
-    ...rankedItem,
-    segmentRank,
-    totalInSegment,
+    ...baseDetails,
     funnel,
     weeklyEvolution,
     motivosBajaBreakdown,
@@ -654,22 +798,22 @@ export function computeAllTrainersPerformance(
     }
 
     const tObj = trainerMap.get(key)
-    const doc = a.postulante_documento || a.documento
+    const doc = norm(a.postulante_documento || a.documento)
     if (doc) tObj.alumnosSet.add(doc)
     if (gCode) tObj.gruposSet.add(gCode)
     tObj.asistenciasList.push(a)
 
-    const sigla = a.sigla_asistencia || a.sigla
+    const sigla = norm(a.sigla_asistencia || a.sigla)
     tObj.totalAsistenciasPosibles++
 
     if (sigla === 'I-OP') {
       if (doc) tObj.ingresantesOPSet.add(doc)
       tObj.asistenciasEfectivas++
-    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'T') {
+    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       tObj.asistenciasEfectivas++
     } else if (sigla === 'B') {
       if (doc) tObj.bajasSet.add(doc)
-    } else if (sigla === 'F') {
+    } else if (sigla === 'F' || sigla === 'FI') {
       tObj.faltasSinBaja++
     }
   })
@@ -682,13 +826,14 @@ export function computeAllTrainersPerformance(
       const key = gInfo.name ? norm(gInfo.name) : norm(gInfo.doc)
       if (key && trainerMap.has(key)) {
         const tObj = trainerMap.get(key)
-        if (p.documento) tObj.alumnosSet.add(p.documento)
+        const doc = norm(p.documento)
+        if (doc) tObj.alumnosSet.add(doc)
         tObj.gruposSet.add(gCode)
         if (norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES') {
-          if (p.documento) tObj.ingresantesOPSet.add(p.documento)
+          if (doc) tObj.ingresantesOPSet.add(doc)
         }
         if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
-          if (p.documento) tObj.bajasSet.add(p.documento)
+          if (doc) tObj.bajasSet.add(doc)
         }
       }
     }
@@ -715,7 +860,6 @@ export function computeAllTrainersPerformance(
 
     const pctRetencionOP = totalAlumnos > 0 ? Math.round((ingresantesOP / totalAlumnos) * 100) : 0
 
-    // Score Ponderado del Formador: 50% Retención OP + 35% Asistencia - 15% Ausentismo
     const score = Math.max(0, Math.round(
       (pctRetencionOP * 0.50) +
       (pctAsistencia * 0.35) +
@@ -755,41 +899,114 @@ export function getTrainerIndividualDetails(
   grupos = [],
   postulantes = []
 ) {
-  if (!allRankedTrainers.length) return null
+  const isConsolidated = !targetIdentifier || targetIdentifier === 'TODOS' || targetIdentifier === 'ALL'
 
-  const target = norm(targetIdentifier)
-  let rankedItem = allRankedTrainers.find(t => norm(t.nombre) === target)
-  if (!rankedItem && target) {
-    rankedItem = allRankedTrainers.find(t => (t.dni && norm(t.dni) === target) || (t.usuario && norm(t.usuario) === target))
+  let baseDetails = null
+  let myAsistencias = []
+  let myAlumnosSet = new Set()
+
+  if (isConsolidated) {
+    myAsistencias = asistencias || []
+    postulantes.forEach(p => {
+      const d = norm(p.documento)
+      if (d) myAlumnosSet.add(d)
+    })
+    myAsistencias.forEach(a => {
+      const d = norm(a.postulante_documento || a.documento)
+      if (d) myAlumnosSet.add(d)
+    })
+
+    const totalAlumnos = myAlumnosSet.size
+    let totalAsistenciasPosibles = 0
+    let asistenciasEfectivas = 0
+    let faltasSinBaja = 0
+    const opSet = new Set()
+    const bajasSet = new Set()
+
+    myAsistencias.forEach(a => {
+      totalAsistenciasPosibles++
+      const sigla = norm(a.sigla_asistencia || a.sigla)
+      const doc = norm(a.postulante_documento || a.documento)
+      if (sigla === 'I-OP') {
+        if (doc) opSet.add(doc)
+        asistenciasEfectivas++
+      } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
+        asistenciasEfectivas++
+      } else if (sigla === 'B') {
+        if (doc) bajasSet.add(doc)
+      } else if (sigla === 'F' || sigla === 'FI') {
+        faltasSinBaja++
+      }
+    })
+
+    postulantes.forEach(p => {
+      const doc = norm(p.documento)
+      if (norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES') {
+        if (doc) opSet.add(doc)
+      }
+      if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
+        if (doc) bajasSet.add(doc)
+      }
+    })
+
+    const ingresantesOP = opSet.size
+    const bajas = bajasSet.size
+    const activosEnAula = Math.max(0, totalAlumnos - bajas - ingresantesOP)
+    const pctAsistencia = totalAsistenciasPosibles > 0 ? Math.round((asistenciasEfectivas / totalAsistenciasPosibles) * 100) : 0
+    const pctRetencionOP = totalAlumnos > 0 ? Math.round((ingresantesOP / totalAlumnos) * 100) : 0
+    const pctAusentismo = totalAsistenciasPosibles > 0 ? Math.round((faltasSinBaja / totalAsistenciasPosibles) * 100) : 0
+
+    baseDetails = {
+      nombre: 'TODOS LOS FORMADORES (CONSOLIDADO)',
+      dni: '',
+      usuario: 'CONSOLIDADO',
+      email: '',
+      segmento: 'CAPACITACIÓN CONSOLIDADA',
+      totalAlumnos,
+      activosEnAula,
+      ingresantesOP,
+      bajas,
+      ausentismoCount: faltasSinBaja,
+      pctAusentismo,
+      pctAsistencia,
+      pctRetencionOP,
+      gruposCount: grupos.length,
+      asistenciasEfectivas,
+      rank: 1,
+      totalRank: 1,
+      segmentRank: 1,
+      totalInSegment: 1,
+      isConsolidated: true
+    }
+  } else {
+    const target = norm(targetIdentifier)
+    let rankedItem = allRankedTrainers.find(t => norm(t.nombre) === target)
+    if (!rankedItem && target) {
+      rankedItem = allRankedTrainers.find(t => (t.dni && norm(t.dni) === target) || (t.usuario && norm(t.usuario) === target))
+    }
+    if (!rankedItem && target) {
+      rankedItem = allRankedTrainers.find(t => matchPerson(t.nombre, targetIdentifier))
+    }
+    if (!rankedItem && allRankedTrainers.length > 0) {
+      rankedItem = allRankedTrainers[0]
+    }
+
+    if (!rankedItem) return null
+
+    baseDetails = { ...rankedItem, isConsolidated: false }
+    myAsistencias = rankedItem.asistencias || []
+    myAlumnosSet = rankedItem.alumnosSet || new Set()
   }
-  if (!rankedItem && target) {
-    rankedItem = allRankedTrainers.find(t => matchPerson(t.nombre, targetIdentifier))
-  }
-  if (!rankedItem) {
-    rankedItem = allRankedTrainers[0]
-  }
-
-  if (!rankedItem) return null
-
-  // Posición en segmento
-  const mySeg = norm(rankedItem.segmento || 'CAPACITACIÓN')
-  const segTrainers = allRankedTrainers
-    .filter(t => norm(t.segmento || 'CAPACITACIÓN') === mySeg)
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-
-  const segmentRank = Math.max(1, segTrainers.findIndex(t => norm(t.nombre) === norm(rankedItem.nombre)) + 1)
-  const totalInSegment = Math.max(1, segTrainers.length)
 
   // ── 1. FUNNEL DE RETENCIÓN DE AULA (FORMADOR) ─────────────────────────────
-  const totalAlumnos = rankedItem.totalAlumnos
-  const pctAsist = rankedItem.pctAsistencia
-  const activos = rankedItem.activosEnAula
-  const op = rankedItem.ingresantesOP
-  const bajas = rankedItem.bajas
+  const totalAlumnos = baseDetails.totalAlumnos
+  const pctAsist = baseDetails.pctAsistencia
+  const activos = baseDetails.activosEnAula
+  const op = baseDetails.ingresantesOP
 
   const funnel = [
     {
-      stage: 'Nómina Inicial en Aula',
+      stage: 'Nómina en Aula',
       label: 'Alumnos Recibidos',
       count: totalAlumnos,
       pct: 100,
@@ -830,7 +1047,7 @@ export function getTrainerIndividualDetails(
     if (c) grupoInfoMap.set(c, g)
   })
 
-  ;(rankedItem.asistencias || []).forEach(a => {
+  myAsistencias.forEach(a => {
     const gCode = norm(a.codigo_grupo || a.grupo || a.grupo_codigo)
     const gObj = grupoInfoMap.get(gCode)
     const semLabel = formatSemanaLabel(gObj?.semana || gObj?.semana_trabajo || gObj?.semana_label || a.semana)
@@ -849,16 +1066,16 @@ export function getTrainerIndividualDetails(
 
     const w = weekMap.get(semLabel)
     w.totalMarcaciones++
-    const sigla = a.sigla_asistencia || a.sigla
+    const sigla = norm(a.sigla_asistencia || a.sigla)
 
     if (sigla === 'I-OP') {
       w.ingresantesOP++
       w.asistenciasEfectivas++
-    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'T') {
+    } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       w.asistenciasEfectivas++
     } else if (sigla === 'B') {
       w.bajas++
-    } else if (sigla === 'F') {
+    } else if (sigla === 'F' || sigla === 'FI') {
       w.faltas++
     }
   })
@@ -874,8 +1091,8 @@ export function getTrainerIndividualDetails(
   const motivosMap = new Map()
   let totalBajasContadas = 0
 
-  ;(rankedItem.asistencias || []).forEach(a => {
-    const sigla = a.sigla_asistencia || a.sigla
+  myAsistencias.forEach(a => {
+    const sigla = norm(a.sigla_asistencia || a.sigla)
     if (sigla === 'B' || a.motivo_baja) {
       totalBajasContadas++
       const mRaw = norm(a.motivo_baja || 'DESERCIÓN EN AULA')
@@ -893,10 +1110,11 @@ export function getTrainerIndividualDetails(
 
   // ── 4. DESGLOSE DE GRUPOS / AULAS GESTIONADAS ─────────────────────────────
   const myGrupos = (grupos || []).filter(g => {
+    if (baseDetails.isConsolidated) return true
     const gCode = norm(g.codigo || g.grupo_codigo)
     const tDoc = g.formador_documento || g.documento_formador
     const tName = g.formador_nombre || g.formador || g.responsable
-    return matchPerson(tName, rankedItem.nombre) || (tDoc && tDoc === rankedItem.dni) || (rankedItem.gruposSet && rankedItem.gruposSet.has(gCode))
+    return matchPerson(tName, baseDetails.nombre) || (tDoc && tDoc === baseDetails.dni) || (baseDetails.gruposSet && baseDetails.gruposSet.has(gCode))
   })
 
   const gruposBreakdown = myGrupos.map(g => {
@@ -919,12 +1137,12 @@ export function getTrainerIndividualDetails(
   })
 
   // ── 5. TRAZABILIDAD NOMINAL (ALUMNOS ASIGNADOS) ───────────────────────────
-  const alumnosDocsSet = rankedItem.alumnosSet || new Set()
   const alumnosNominal = (postulantes || [])
-    .filter(p => alumnosDocsSet.has(p.documento))
+    .filter(p => myAlumnosSet.has(norm(p.documento)))
     .map(p => {
       const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES'
       const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+      const hasD1 = isCandidateDia1Asistio(p)
 
       return {
         documento: p.documento || '-',
@@ -932,17 +1150,17 @@ export function getTrainerIndividualDetails(
         campana: p.campana || 'Sin Campaña',
         grupo_codigo: p.grupo_codigo || '-',
         semana: formatSemanaLabel(p.semana_trabajo || p.semana || p.semana_label),
+        dia_1: hasD1 ? 'Asistió' : (p.dia_1 ? String(p.dia_1) : 'No Asistió'),
         estado: isOP ? 'GRADUADO OP' : (isBaja ? 'BAJA EN AULA' : (p.estado || 'EN CURSO')),
         motivo_baja: p.motivo_baja || '-',
         isOP,
-        isBaja
+        isBaja,
+        hasD1
       }
     })
 
   return {
-    ...rankedItem,
-    segmentRank,
-    totalInSegment,
+    ...baseDetails,
     funnel,
     weeklyEvolution,
     motivosBajaBreakdown,
