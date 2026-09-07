@@ -988,11 +988,14 @@ export function computeAllTrainersPerformance(
     }
   })
 
-  // 1. Identificar estrictamente a los postulantes con Baja Día 1 (imputan a RyS, NO al Formador)
+  // 1. Identificar estrictamente a los postulantes con Baja Día 1 y Descuentos Autorizados (NO imputan al Formador)
   const bajasDia1Docs = new Set()
+  const descuentosDocs = new Set()
+
   asistencias.forEach(a => {
     const doc = norm(a.postulante_documento || a.documento)
     if (!doc) return
+    if (a.isDescuento) descuentosDocs.add(doc)
     const sigla = norm(a.sigla_asistencia || a.sigla)
     const motivo = norm(a.motivo_baja)
     const estado = norm(a.estado)
@@ -1002,8 +1005,11 @@ export function computeAllTrainersPerformance(
   })
   postulantes.forEach(p => {
     const doc = norm(p.documento)
-    if (doc && isCandidateDia1Baja(p)) {
-      bajasDia1Docs.add(doc)
+    if (doc) {
+      if (p.isDescuento) descuentosDocs.add(doc)
+      if (isCandidateDia1Baja(p)) {
+        bajasDia1Docs.add(doc)
+      }
     }
   })
 
@@ -1059,8 +1065,8 @@ export function computeAllTrainersPerformance(
     } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
       tObj.asistenciasEfectivas++
     } else if (sigla === 'B') {
-      // Regla Contact Center: Baja Día 1 imputa al reclutador, NO al formador
-      if (doc && !bajasDia1Docs.has(doc)) tObj.bajasSet.add(doc)
+      // Regla Contact Center: Baja Día 1 y Descuentos aprobados NO imputan al formador
+      if (doc && !bajasDia1Docs.has(doc) && !descuentosDocs.has(doc)) tObj.bajasSet.add(doc)
     } else if (sigla === 'F' || sigla === 'FI') {
       tObj.faltasSinBaja++
     }
@@ -1081,8 +1087,8 @@ export function computeAllTrainersPerformance(
           if (doc) tObj.ingresantesOPSet.add(doc)
         }
         if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
-          // Excluir bajas día 1
-          if (doc && !bajasDia1Docs.has(doc)) tObj.bajasSet.add(doc)
+          // Excluir bajas día 1 y descuentos aprobados
+          if (doc && !bajasDia1Docs.has(doc) && !descuentosDocs.has(doc)) tObj.bajasSet.add(doc)
         }
       }
     }
@@ -1150,11 +1156,14 @@ export function getTrainerIndividualDetails(
 ) {
   const isConsolidated = !targetIdentifier || targetIdentifier === 'TODOS' || targetIdentifier === 'ALL'
 
-  // Identificar postulantes con Baja Día 1 para excluirlos de las métricas del formador
+  // Identificar postulantes con Baja Día 1 y Descuentos Autorizados para excluirlos de las métricas del formador
   const bajasDia1Docs = new Set()
+  const descuentosDocs = new Set()
+
   asistencias.forEach(a => {
     const doc = norm(a.postulante_documento || a.documento)
     if (!doc) return
+    if (a.isDescuento) descuentosDocs.add(doc)
     const sigla = norm(a.sigla_asistencia || a.sigla)
     const motivo = norm(a.motivo_baja)
     const estado = norm(a.estado)
@@ -1164,8 +1173,11 @@ export function getTrainerIndividualDetails(
   })
   postulantes.forEach(p => {
     const doc = norm(p.documento)
-    if (doc && isCandidateDia1Baja(p)) {
-      bajasDia1Docs.add(doc)
+    if (doc) {
+      if (p.isDescuento) descuentosDocs.add(doc)
+      if (isCandidateDia1Baja(p)) {
+        bajasDia1Docs.add(doc)
+      }
     }
   })
 
@@ -1201,7 +1213,7 @@ export function getTrainerIndividualDetails(
       } else if (sigla === 'A' || sigla === 'FJ' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'T') {
         asistenciasEfectivas++
       } else if (sigla === 'B') {
-        if (doc && !bajasDia1Docs.has(doc)) bajasSet.add(doc)
+        if (doc && !bajasDia1Docs.has(doc) && !descuentosDocs.has(doc)) bajasSet.add(doc)
       } else if (sigla === 'F' || sigla === 'FI') {
         faltasSinBaja++
       }
@@ -1213,7 +1225,7 @@ export function getTrainerIndividualDetails(
         if (doc) opSet.add(doc)
       }
       if (norm(p.estado) === 'BAJA' || p.motivo_baja) {
-        if (doc && !bajasDia1Docs.has(doc)) bajasSet.add(doc)
+        if (doc && !bajasDia1Docs.has(doc) && !descuentosDocs.has(doc)) bajasSet.add(doc)
       }
     })
 

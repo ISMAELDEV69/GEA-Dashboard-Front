@@ -620,12 +620,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         const sigla = String(r.sigla || r.sigla_asistencia || '').trim().toUpperCase();
         const motivo = String(r.motivo_baja || '').trim().toUpperCase();
         const estado = String(r.estado || '').trim().toUpperCase();
-        const isBajaDia1 = motivo.includes('BAJA DIA 1') || estado.includes('BAJA DIA 1');
+        const isBajaDia1 = motivo.includes('BAJA DIA 1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1';
+        const hasDescuento = Boolean(r.isDescuento);
         const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado.includes('BAJA') || estado === 'CESADO' || estado === 'INACTIVO';
 
         if (!isBajaDia1) {
           entry.docs.add(doc);
-          if (isBaja) entry.bajas.add(doc);
+          if (isBaja && !hasDescuento) entry.bajas.add(doc);
         }
       });
     });

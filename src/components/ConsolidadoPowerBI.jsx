@@ -785,14 +785,20 @@ export default function ConsolidadoPowerBI() {
     });
   }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe]);
 
-  // ── Mapa de último estado por documento aislado estrictamente al Periodo/Semana/Campaña/GPE consultado ──
-  const lastStateMap = useMemo(() => {
+  // ── Mapa de último estado y Set de Descuentos autorizados por documento ──
+  const { lastStateMap, descuentosDocSet } = useMemo(() => {
     const latestDocMap = new Map();
+    const descSet = new Set();
+
     for (let i = 0; i < kpiFilteredData.length; i++) {
       const row = kpiFilteredData[i];
       const doc = normalizeText(row.documento);
       if (!doc) continue;
       
+      if (row.isDescuento) {
+        descSet.add(doc);
+      }
+
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
       
@@ -802,20 +808,20 @@ export default function ConsolidadoPowerBI() {
       }
     }
 
-    const result = new Map();
+    const stateMap = new Map();
     for (const [doc, { row }] of latestDocMap.entries()) {
       const motivo = row?.motivo_baja || row?.motivo;
       const sigla = normalizeSigla(row?.sigla);
       if (isBajaDia1(motivo, sigla, row)) {
-        result.set(doc, 'BAJA DIA 1');
+        stateMap.set(doc, 'BAJA DIA 1');
       } else if (isBajaCapacitacion(row) || sigla === 'B') {
-        result.set(doc, 'CESADO');
+        stateMap.set(doc, 'CESADO');
       } else {
-        result.set(doc, 'ACTIVO');
+        stateMap.set(doc, 'ACTIVO');
       }
     }
 
-    return result;
+    return { lastStateMap: stateMap, descuentosDocSet: descSet };
   }, [kpiFilteredData]);
 
   // ── Datos filtrados para la Tabla ──
@@ -886,11 +892,13 @@ export default function ConsolidadoPowerBI() {
       const gpe = lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
+      const hasDescuento = descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
 
       result.push({
         documento: doc,
         nombre_completo: `${normalizeText(lastRow.apellido_paterno)} ${normalizeText(lastRow.apellido_materno)} ${normalizeText(lastRow.nombres)}`.trim(),
         ult_estado: docState,
+        isDescuento: hasDescuento,
         fecha_inicio_ojt: cap?.fecha_inicio_ojt || '—',
         gpe: gpe || '—',
         condicion_laboral: normalizeText(lastRow.condicion_laboral, '—'),
@@ -906,7 +914,7 @@ export default function ConsolidadoPowerBI() {
       );
     }
     return result;
-  }, [filteredData, getCapInfo, lastStateMap, search]);
+  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, search]);
 
   const totalPages = pageSize === 'Todas' ? 1 : Math.max(1, Math.ceil(pivotRows.length / Number(pageSize)));
   const currentPage = Math.min(page, totalPages);
@@ -942,21 +950,36 @@ export default function ConsolidadoPowerBI() {
     });
 
     let activos = 0;
-    let desertores = 0;
+    let desertoresFormacion = 0;
+    let bajasDia1 = 0;
+    let descuentosAprobados = 0;
     let qDia1 = 0;
 
     docMap.forEach((rows, doc) => {
       const docState = lastStateMap.get(doc) || 'SIN ESTADO';
+      const hasDescuento = descuentosDocSet.has(doc);
+      if (hasDescuento) descuentosAprobados += 1;
+
       const isActivo = docState === 'ACTIVO';
-      const isDesertor = docState === 'CESADO' || docState === 'BAJA DIA 1';
+      const isB1 = docState === 'BAJA DIA 1';
+      const isCesado = docState === 'CESADO';
+
       const attendedAny = rows.some((r) => {
         const s = normalizeSigla(r.sigla);
         return s === 'A' || s === 'I-OP';
       });
 
       if (isActivo) activos += 1;
-      if (isDesertor) desertores += 1;
-      if (attendedAny || isActivo) qDia1 += 1;
+      if (isB1) bajasDia1 += 1;
+      if (isCesado) {
+        // Regla: Los descuentos autorizados y bajas día 1 NO suman a la deserción de Formación
+        if (!hasDescuento) {
+          desertoresFormacion += 1;
+        }
+      }
+
+      // Q Día 1: Asistentes efectivos a Día 1 (excluye quien tuvo Baja Día 1)
+      if ((attendedAny || isActivo) && !isB1) qDia1 += 1;
     });
 
     let sumMetaDia1 = 0;
@@ -996,31 +1019,40 @@ export default function ConsolidadoPowerBI() {
       });
     }
 
+    const baseFormacion = qDia1 > 0 ? qDia1 : Math.max(0, docMap.size - bajasDia1);
+
     return {
       activos,
       qDia1,
-      desertores,
+      desertoresFormacion,
+      bajasDia1,
+      descuentosAprobados,
+      baseFormacion,
       cantAusencia,
       cantAsistencia,
       cantProg: docMap.size,
       sumMetaDia1,
       sumRqSolicitado,
     };
-  }, [kpiFilteredData, getCapInfo, lastStateMap, allCapacidadItems, filters]);
+  }, [kpiFilteredData, getCapInfo, lastStateMap, descuentosDocSet, allCapacidadItems, filters]);
 
   const percentages = useMemo(() => {
+    // 1. Cumplimiento Día 1: Métrica de Selección / RyS
     const cumpDia1 = kpis.sumMetaDia1 > 0 
       ? Math.round((kpis.qDia1 / kpis.sumMetaDia1) * 100) 
       : (kpis.cantProg > 0 ? Math.round((kpis.qDia1 / kpis.cantProg) * 100) : 100);
 
-    const desercion = kpis.cantProg > 0 
-      ? Math.round((kpis.desertores / kpis.cantProg) * 100) 
+    // 2. Deserción Formación: Métrica de Capacitación (Bajas en aula sin descuento sobre base de inicio en aula)
+    const desercion = kpis.baseFormacion > 0 
+      ? Math.round((kpis.desertoresFormacion / kpis.baseFormacion) * 100) 
       : 0;
 
+    // 3. Dotación: Activos actuales sobre RQ solicitado
     const dotacion = kpis.sumRqSolicitado > 0 
       ? Math.round((kpis.activos / kpis.sumRqSolicitado) * 100) 
       : (kpis.cantProg > 0 ? Math.round((kpis.activos / kpis.cantProg) * 100) : 100);
 
+    // 4. Absentismo
     const totalAsisFalt = kpis.cantAsistencia + kpis.cantAusencia;
     const absentismo = totalAsisFalt > 0 
       ? Math.round((kpis.cantAusencia / totalAsisFalt) * 100) 
@@ -1174,12 +1206,12 @@ export default function ConsolidadoPowerBI() {
           />
           <HeroIndicatorCard 
             art={KpiArt.Attrition}
-            label="% Deserción" 
+            label="% Deserción Formación" 
             value={percentages.desercion} 
             color={percentages.desercion >= 40 ? '#F43F5E' : percentages.desercion >= 35 ? '#F59E0B' : '#10B981'} 
             statusText={percentages.desercion >= 40 ? 'Crítico' : percentages.desercion >= 35 ? 'Atención' : 'Óptimo'} 
-            sublabel={`Desertores: ${kpis.desertores} postulantes`}
-            detail={`${kpis.desertores} bajas sobre ${kpis.cantProg} convocados`}
+            sublabel={`Bajas Formación: ${kpis.desertoresFormacion} postulantes`}
+            detail={`${kpis.desertoresFormacion} bajas en aula sobre ${kpis.baseFormacion} que iniciaron (Excluye ${kpis.bajasDia1} D1)`}
           />
           <HeroIndicatorCard 
             art={KpiArt.Capacity}
@@ -1202,7 +1234,7 @@ export default function ConsolidadoPowerBI() {
         </div>
 
         {/* ROW 2: OPERATIONAL VOLUMES (Smaller, Refined, Balanced with Contextual Minimalist Drawing) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <CompactVolumeCard 
             art={KpiArt.ActiveUsers}
             label="Cantidad de Activos" 
@@ -1217,23 +1249,31 @@ export default function ConsolidadoPowerBI() {
             value={kpis.qDia1} 
             color="#10B981" 
             trend={[5, 12, 18, 22, kpis.qDia1]} 
-            subcopy="asistieron"
+            subcopy="asistieron" 
           />
           <CompactVolumeCard 
             art={KpiArt.Dropouts}
-            label="Desertores" 
-            value={kpis.desertores} 
+            label="Bajas Formación" 
+            value={kpis.desertoresFormacion} 
             color="#F43F5E" 
-            trend={[2, 4, 8, 14, kpis.desertores]} 
-            subcopy="bajas totales"
+            trend={[2, 4, 8, 14, kpis.desertoresFormacion]} 
+            subcopy="en aula (sin D1)" 
+          />
+          <CompactVolumeCard 
+            art={KpiArt.Attrition}
+            label="Bajas Día 1" 
+            value={kpis.bajasDia1} 
+            color="#F59E0B" 
+            trend={[1, 2, 3, 2, kpis.bajasDia1]} 
+            subcopy="RyS / No Show" 
           />
           <CompactVolumeCard 
             art={KpiArt.Faults}
             label="Cant. Ausencia" 
             value={kpis.cantAusencia} 
-            color="#F59E0B" 
+            color="#EAB308" 
             trend={[4, 8, 6, 12, kpis.cantAusencia]} 
-            subcopy="FI + FJ"
+            subcopy="FI + FJ" 
           />
           <CompactVolumeCard 
             art={KpiArt.Scheduled}
@@ -1241,7 +1281,7 @@ export default function ConsolidadoPowerBI() {
             value={kpis.cantProg} 
             color="#8B5CF6" 
             trend={[10, 20, 30, 40, kpis.cantProg]} 
-            subcopy="nómina total"
+            subcopy={kpis.descuentosAprobados > 0 ? `${kpis.descuentosAprobados} desc. autoriz.` : "nómina total"} 
           />
         </div>
 
@@ -1316,9 +1356,16 @@ export default function ConsolidadoPowerBI() {
                     {row.nombre_completo}
                   </td>
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
-                    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : row.ult_estado === 'BAJA DIA 1' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
-                      {row.ult_estado}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : row.ult_estado === 'BAJA DIA 1' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
+                        {row.ult_estado}
+                      </span>
+                      {row.isDescuento && (
+                        <span className="inline-flex rounded px-1 py-0.5 text-[8px] font-black uppercase tracking-tight bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30" title="Descuento autorizado por RyS/Capacitación (No penaliza)">
+                          DESC
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
                     {row.fecha_inicio_ojt}
