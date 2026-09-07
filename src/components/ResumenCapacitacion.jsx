@@ -89,12 +89,14 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const [rankingTab, setRankingTab] = useState('DOTACION_SEG'); // 'DOTACION_SEG' | 'DESERCION_SEG' | 'DOTACION_FOR' | 'DESERCION_FOR'
   const [rankingFormadorFilter, setRankingFormadorFilter] = useState('Todas');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showRiskModal, setShowRiskModal] = useState(false);
 
   const [filters, setFilters] = useState({
     periodo: 'Todos',
     segmento: 'Todos',
     campana: 'Todas',
-    grupo: 'Todos'
+    grupo: 'Todos',
+    estado: 'Todos'
   });
 
   // Helpers de normalización robusta
@@ -153,6 +155,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       filters.segmento !== 'Todos' ||
       filters.campana !== 'Todas' ||
       filters.grupo !== 'Todos' ||
+      filters.estado !== 'Todos' ||
       Boolean(searchQuery);
   }, [filters, searchQuery]);
 
@@ -161,7 +164,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       periodo: 'Todos',
       segmento: 'Todos',
       campana: 'Todas',
-      grupo: 'Todos'
+      grupo: 'Todos',
+      estado: 'Todos'
     });
     setSearchQuery('');
   };
@@ -189,14 +193,49 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     const subCampanas = subPeriodo.filter(g => filters.segmento === 'Todos' || normalizeSegmento(g.segmento, g.campana) === filters.segmento);
     const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
     
-    // 4. Grupos (filtrados por campaña activa)
-    const subGrupos = subCampanas.filter(g => filters.campana === 'Todas' || norm(g.campana) === norm(filters.campana));
+    // 4. Estados del Grupo (extraídos directamente de capacidad / dataset)
+    const estadosSet = new Set();
+    dataset.forEach(g => {
+      const rawEst = g.estado;
+      if (rawEst) {
+        const clean = norm(rawEst);
+        if (clean) estadosSet.add(clean);
+      }
+    });
+    // Garantizar que EN CURSO y CERRADO siempre estén como opciones base
+    estadosSet.add('EN CURSO');
+    estadosSet.add('CERRADO');
+    const orderMap = { 'EN CURSO': 1, 'CERRADO': 2, 'FINALIZADO': 3, 'PLANIFICADO': 4, 'CANCELADO': 5 };
+    const estados = Array.from(estadosSet).sort((a, b) => {
+      const oA = orderMap[a] || 99;
+      const oB = orderMap[b] || 99;
+      if (oA !== oB) return oA - oB;
+      return a.localeCompare(b);
+    });
+
+    // 5. Grupos (filtrados por campaña activa y estado)
+    const subGrupos = subCampanas.filter(g => {
+      if (filters.campana !== 'Todas' && norm(g.campana) !== norm(filters.campana)) return false;
+      if (filters.estado !== 'Todos') {
+        const estNorm = norm(g.estado);
+        const filNorm = norm(filters.estado);
+        if (filNorm === 'CERRADO') {
+          return g.is_cerrado || estNorm.includes('CERR') || estNorm.includes('FIN') || estNorm.includes('CULM');
+        } else if (filNorm === 'EN CURSO') {
+          return !g.is_cerrado && (estNorm.includes('CURSO') || estNorm.includes('ACT') || (!estNorm.includes('CERR') && !estNorm.includes('FIN')));
+        } else {
+          return estNorm === filNorm;
+        }
+      }
+      return true;
+    });
     const gruposSet = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
 
     return {
       periodos: Array.from(periodos).sort().reverse(),
       segmentos: Array.from(segmentos).sort(),
       campanas: Array.from(campanas).sort(),
+      estados,
       grupos: Array.from(gruposSet).sort()
     };
   }, [data, capacidadRys, filters]);
@@ -218,6 +257,20 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       if (filters.campana !== 'Todas' && norm(d.campana) !== norm(filters.campana)) {
         return false;
       }
+      // Filtro Estado del Grupo (EN CURSO vs CERRADO de capacidad)
+      if (filters.estado !== 'Todos') {
+        const estNorm = norm(d.estado);
+        const filNorm = norm(filters.estado);
+        if (filNorm === 'CERRADO') {
+          const isClosed = d.is_cerrado || estNorm.includes('CERR') || estNorm.includes('FIN') || estNorm.includes('CULM');
+          if (!isClosed) return false;
+        } else if (filNorm === 'EN CURSO') {
+          const isEnCurso = !d.is_cerrado && (estNorm.includes('CURSO') || estNorm.includes('ACT') || (!estNorm.includes('CERR') && !estNorm.includes('FIN')));
+          if (!isEnCurso) return false;
+        } else {
+          if (estNorm !== filNorm) return false;
+        }
+      }
       // Filtro Grupo / GPE
       if (filters.grupo !== 'Todos' && norm(d.grupo_codigo) !== norm(filters.grupo)) {
         return false;
@@ -237,8 +290,30 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   }, [data, filters, searchQuery]);
 
   // Totales Scorecard
+  // Totales Scorecard
   const kpis = useMemo(() => {
-    return filteredData.reduce((acc, curr) => {
+    // Consolidar documentos únicos con I-OP a través de todos los grupos filtrados
+    const uniqueIopMap = new Map();
+    filteredData.forEach(curr => {
+      (curr.docs_iop_detalle || []).forEach(item => {
+        const doc = String(item.documento || '').trim().toUpperCase();
+        if (!doc) return;
+        if (!uniqueIopMap.has(doc)) {
+          uniqueIopMap.set(doc, item);
+        } else {
+          const prev = uniqueIopMap.get(doc);
+          if (item.fecha_iop && (!prev.fecha_iop || item.fecha_iop > prev.fecha_iop)) {
+            uniqueIopMap.set(doc, item);
+          }
+        }
+      });
+    });
+
+    const hasDetailedIop = uniqueIopMap.size > 0;
+    const uniqueIopCount = uniqueIopMap.size;
+    const uniqueIopFtes = Array.from(uniqueIopMap.values()).reduce((sum, item) => sum + (Number(item.fte) || 1.0), 0);
+
+    const totals = filteredData.reduce((acc, curr) => {
       // Regla de Negocio Interna: Solo los grupos de RECLUTAMIENTO y RECUPERADO representan el requerimiento solicitado (RQ)
       const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
@@ -251,8 +326,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       acc.activos_ojt += (curr.activos_ojt || 0);
       acc.desertores_ct += (curr.desertores_ct || 0);
       acc.desertores_ojt += (curr.desertores_ojt || 0);
-      acc.ingresos_iop += (curr.ingresos_iop || 0);
-      acc.ingresos_iop_ftes += (curr.ingresos_iop_ftes !== undefined ? Number(curr.ingresos_iop_ftes) : Number(curr.ingresos_iop || 0));
+      acc.raw_ingresos_iop += (curr.ingresos_iop || 0);
+      acc.raw_ingresos_iop_ftes += (curr.ingresos_iop_ftes !== undefined ? Number(curr.ingresos_iop_ftes) : Number(curr.ingresos_iop || 0));
       acc.activos_actuales += (curr.activos_actuales || 0);
       return acc;
     }, {
@@ -262,25 +337,32 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       activos_ojt: 0,
       desertores_ct: 0,
       desertores_ojt: 0,
-      ingresos_iop: 0,
-      ingresos_iop_ftes: 0,
+      raw_ingresos_iop: 0,
+      raw_ingresos_iop_ftes: 0,
       activos_actuales: 0
     });
+
+    return {
+      ...totals,
+      ingresos_iop: hasDetailedIop ? uniqueIopCount : totals.raw_ingresos_iop,
+      ingresos_iop_ftes: hasDetailedIop ? uniqueIopFtes : totals.raw_ingresos_iop_ftes,
+      uniqueIopMap
+    };
   }, [filteredData]);
 
   // Desglose por Segmento (Tabla y Gráficos)
   const segmentData = useMemo(() => {
     const segMap = {
-      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
-      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
-      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
-      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 },
-      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 }
+      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
+      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
+      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
+      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
+      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() }
     };
 
     filteredData.forEach(d => {
       const segKey = normalizeSegmento(d.segmento, d.campana);
-      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0 });
+      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() });
 
       const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
@@ -291,12 +373,27 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       target.reclutados += (d.total_nomina || 0);
       target.d1 += (d.asistio_dia1 || 0);
       target.ojt += (d.activos_ojt || 0);
-      target.iop += (d.ingresos_iop || 0);
-      target.iopFtes += (d.ingresos_iop_ftes !== undefined ? Number(d.ingresos_iop_ftes) : Number(d.ingresos_iop || 0));
       target.grupos += 1;
+
+      // Registrar docs únicos por segmento
+      if (d.docs_iop_detalle && d.docs_iop_detalle.length > 0) {
+        d.docs_iop_detalle.forEach(item => {
+          const doc = String(item.documento || '').trim().toUpperCase();
+          if (doc && !target.iopDocs.has(doc)) {
+            target.iopDocs.set(doc, item);
+          }
+        });
+      } else {
+        target.iop += (d.ingresos_iop || 0);
+        target.iopFtes += (d.ingresos_iop_ftes !== undefined ? Number(d.ingresos_iop_ftes) : Number(d.ingresos_iop || 0));
+      }
     });
 
     return Object.values(segMap).map(s => {
+      if (s.iopDocs.size > 0) {
+        s.iop = s.iopDocs.size;
+        s.iopFtes = Array.from(s.iopDocs.values()).reduce((sum, it) => sum + (Number(it.fte) || 1.0), 0);
+      }
       const convD1 = s.reclutados > 0 ? ((s.d1 / s.reclutados) * 100) : 0;
       const retOjt = s.d1 > 0 ? ((s.ojt / s.d1) * 100) : 0;
       const convIop = s.d1 > 0 ? ((s.iop / s.d1) * 100) : 0;
@@ -397,19 +494,124 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     };
   }, [filteredData, segmentData]);
 
-  // ── 3. KPI SUPERIOR: ALERTAS ACTIVAS (SEGMENTOS + FORMADORES) ──
+  // ── 4. KPI SUPERIOR: PROYECCIÓN DE CIERRE DE MES (RUN-RATE CALIBRADO POR DOCS ÚNICOS) ──
+  const kpiProyeccion = useMemo(() => {
+    const today = new Date();
+    const currentDay = today.getDate(); // 1 a 31
+    const currentMonth = today.getMonth(); // 0 a 11
+    const currentYear = today.getFullYear();
+
+    const rqTotal = kpis.rq_solicitado || 0;
+
+    // Detectar si el periodo seleccionado es un mes pasado/cerrado
+    const pStr = String(filters.periodo || '').trim();
+    const pMatch = pStr.match(/(\d{4})[-_/\s]?(\d{2})/);
+    const filterYear = pMatch ? parseInt(pMatch[1], 10) : null;
+    const filterMonth = pMatch ? parseInt(pMatch[2], 10) - 1 : null; // 0-indexed
+
+    let totalDaysInMonth = 30;
+    let diasTranscurridos = 30;
+    let isPeriodoCerrado = false;
+
+    if (filterYear !== null && filterMonth !== null) {
+      totalDaysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
+      if (filterYear < currentYear || (filterYear === currentYear && filterMonth < currentMonth)) {
+        isPeriodoCerrado = true;
+        diasTranscurridos = totalDaysInMonth;
+      } else if (filterYear === currentYear && filterMonth === currentMonth) {
+        diasTranscurridos = Math.max(1, Math.min(totalDaysInMonth, currentDay));
+      } else {
+        diasTranscurridos = 1;
+      }
+    } else {
+      totalDaysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      diasTranscurridos = Math.max(1, Math.min(totalDaysInMonth, currentDay));
+    }
+
+    // Extraer documentos únicos de I-OP
+    const uniqueDocsList = kpis.uniqueIopMap ? Array.from(kpis.uniqueIopMap.values()) : [];
+    
+    // Mes actual en formato YYYY-MM y YYYYMM
+    const currentYearMonthPrefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    const currentPeriodoDigits = `${currentYear}${String(currentMonth + 1).padStart(2, '0')}`;
+
+    // Si el filtro de periodo es 'Todos', filtramos los I-OP con sigla cuya fecha o periodo corresponda al mes en curso
+    // para evitar que el ritmo diario divida el acumulado de todo el año histórico entre los días del mes actual
+    let docsMesActual = [];
+    if (filters.periodo === 'Todos') {
+      docsMesActual = uniqueDocsList.filter(item => {
+        if (item.fecha_iop) {
+          return item.fecha_iop.startsWith(currentYearMonthPrefix);
+        }
+        const pDigits = String(item.periodo || '').replace(/\D/g, '');
+        return pDigits === currentPeriodoDigits;
+      });
+      // Fallback si no hay fechas explícitas de este mes en los registros: usar los documentos únicos disponibles
+      if (docsMesActual.length === 0) {
+        docsMesActual = uniqueDocsList;
+      }
+    } else {
+      docsMesActual = uniqueDocsList;
+    }
+
+    // Cantidad real de documentos únicos ingresados a operación en el periodo
+    const iopActual = docsMesActual.length > 0 ? docsMesActual.length : (kpis.ingresos_iop || 0);
+    const iopActualFtes = docsMesActual.length > 0 
+      ? docsMesActual.reduce((sum, it) => sum + (Number(it.fte) || 1.0), 0)
+      : (kpis.ingresos_iop_ftes || iopActual);
+
+    // Proyección en FTEs (Full Time Equivalent) tal como solicitó el usuario
+    let iopProyectadoFtes = 0;
+    let iopProyectado = 0; // personas físicas
+    if (isPeriodoCerrado || diasTranscurridos >= totalDaysInMonth) {
+      iopProyectadoFtes = iopActualFtes;
+      iopProyectado = iopActual;
+    } else {
+      const ritmoDiarioFtes = iopActualFtes / diasTranscurridos;
+      iopProyectadoFtes = Number((ritmoDiarioFtes * totalDaysInMonth).toFixed(1));
+      
+      const ritmoDiario = iopActual / diasTranscurridos;
+      iopProyectado = Math.round(ritmoDiario * totalDaysInMonth);
+    }
+
+    // Porcentaje de cobertura frente al RQ solicitado (FTEs vs FTEs)
+    const pctProyeccion = rqTotal > 0 ? ((iopProyectadoFtes / rqTotal) * 100).toFixed(1) : (iopActualFtes > 0 ? '100.0' : '0.0');
+    const brechaFtes = Math.max(0, rqTotal - iopProyectadoFtes);
+
+    return {
+      iopActual,
+      iopActualFtes,
+      iopProyectado,
+      iopProyectadoFtes,
+      pctProyeccion,
+      diasTranscurridos,
+      totalDaysInMonth,
+      brechaFtes,
+      isCloseToTarget: parseFloat(pctProyeccion) >= 80
+    };
+  }, [kpis, filters.periodo]);
+
+  // ── 3. KPI SUPERIOR: RIESGO DE COBERTURA (BRECHA FTE & FUGA FORMATIVA) ──
   const kpiAlertas = useMemo(() => {
-    // Segmentos bajo meta (< 50% de cumplimiento RQ)
-    const segBajoMeta = segmentData.filter(s => s.rq > 0 && s.cumplRq < 50);
+    const metaRq = kpis.rq_solicitado || 0;
+    const iopProyectadoFtes = kpiProyeccion?.iopProyectadoFtes ?? (kpis.ingresos_iop_ftes || 0);
+    
+    // Brecha de FTEs en Riesgo frente a la Meta solicitada (FTEs vs FTEs)
+    const brechaFtes = Math.max(0, Number((metaRq - iopProyectadoFtes).toFixed(1)));
+    const superavitFtes = Math.max(0, Number((iopProyectadoFtes - metaRq).toFixed(1)));
+    const hasBrecha = brechaFtes > 0.05;
+
+    // Segmentos bajo meta (< 70% de cumplimiento RQ)
+    const segBajoMeta = segmentData.filter(s => s.rq > 0 && s.cumplRq < 70);
     const countSegBajoMeta = segBajoMeta.length;
 
-    // Formadores en zona crítica (> 25% deserción y >= 3 postulantes evaluados)
+    // Formadores en fuga crítica (> 35% deserción con muestra representativa >= 6 alumnos)
     const formMap = new Map();
     filteredData.forEach(g => {
       const records = g.asistencias_raw || [];
       const formador = g.formador || 'SIN FORMADOR';
       if (!formMap.has(formador)) {
-        formMap.set(formador, { docs: new Set(), bajas: new Set() });
+        formMap.set(formador, { formador, campana: g.campana, docs: new Set(), bajas: new Set() });
       }
       const entry = formMap.get(formador);
       records.forEach(r => {
@@ -428,60 +630,39 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       });
     });
 
-    let countFormadoresCriticos = 0;
+    const formadoresCriticosList = [];
     formMap.forEach((entry, fName) => {
-      if (fName !== 'SIN FORMADOR' && entry.docs.size >= 3) {
+      if (fName !== 'SIN FORMADOR' && entry.docs.size >= 6) {
         const pct = (entry.bajas.size / entry.docs.size) * 100;
-        if (pct > 25) {
-          countFormadoresCriticos++;
+        if (pct > 35) {
+          formadoresCriticosList.push({
+            formador: fName,
+            campana: entry.campana || 'Sin Campaña',
+            totalAlumnos: entry.docs.size,
+            bajas: entry.bajas.size,
+            pctDesercion: parseFloat(pct.toFixed(1))
+          });
         }
       }
     });
 
-    const totalAlertas = countSegBajoMeta + countFormadoresCriticos;
+    formadoresCriticosList.sort((a, b) => b.pctDesercion - a.pctDesercion);
+    const countFormadoresCriticos = formadoresCriticosList.length;
+
+    const isCritico = hasBrecha || countFormadoresCriticos >= 5;
+    const isObservado = countFormadoresCriticos > 0 || countSegBajoMeta > 0;
 
     return {
-      totalAlertas,
+      brechaFtes,
+      superavitFtes,
+      hasBrecha,
       countSegBajoMeta,
       countFormadoresCriticos,
-      hasCritical: totalAlertas > 0
+      formadoresCriticosList,
+      estadoSemaforo: isCritico ? 'CRÍTICO' : (isObservado ? 'PRECAUCIÓN' : 'CUBIERTO'),
+      isHealthy: !hasBrecha && countFormadoresCriticos === 0
     };
-  }, [segmentData, filteredData]);
-
-  // ── 4. KPI SUPERIOR: PROYECCIÓN DE CIERRE DE MES (RUN-RATE) ──
-  const kpiProyeccion = useMemo(() => {
-    const today = new Date();
-    const currentDay = today.getDate(); // 1 a 31
-    const currentMonth = today.getMonth(); // 0 a 11
-    const currentYear = today.getFullYear();
-    const totalDaysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-
-    const diasTranscurridos = Math.max(1, Math.min(totalDaysInMonth, currentDay));
-    const iopActual = kpis.ingresos_iop || 0;
-    const rqTotal = kpis.rq_solicitado || 0;
-
-    const isPeriodoPasado = filters.periodo !== 'Todos' && !filters.periodo.startsWith(String(currentYear));
-    
-    let iopProyectado = 0;
-    if (isPeriodoPasado || diasTranscurridos >= totalDaysInMonth) {
-      iopProyectado = iopActual;
-    } else {
-      const ritmoDiario = iopActual / diasTranscurridos;
-      iopProyectado = Math.round(ritmoDiario * totalDaysInMonth);
-    }
-
-    const pctProyeccion = rqTotal > 0 ? ((iopProyectado / rqTotal) * 100).toFixed(1) : (iopActual > 0 ? '100.0' : '0.0');
-    const brecha = Math.max(0, rqTotal - iopProyectado);
-
-    return {
-      iopProyectado,
-      pctProyeccion,
-      diasTranscurridos,
-      totalDaysInMonth,
-      brecha,
-      isCloseToTarget: parseFloat(pctProyeccion) >= 80
-    };
-  }, [kpis, filters.periodo]);
+  }, [segmentData, filteredData, kpis, kpiProyeccion]);
 
   // Datos para Embudo Lineal Calibrado
   const funnelData = useMemo(() => {
@@ -729,6 +910,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       return {
         'Periodo': d.periodo,
         'Semana': d.semana,
+        'Estado': d.estado || (d.is_cerrado ? 'CERRADO' : 'EN CURSO'),
         'Formador': d.formador || 'Sin Asignar',
         'Último Registro': d.ultima_fecha_asistencia || '-',
         'Segmento': normalizeSegmento(d.segmento, d.campana),
@@ -862,6 +1044,23 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
           </select>
         </div>
 
+        {/* Estado del Grupo (Capacidad R&S) */}
+        <div className="flex-1 min-w-[140px]">
+          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Estado</label>
+          <select
+            value={filters.estado}
+            onChange={(e) => setFilters(f => ({ ...f, estado: e.target.value, grupo: 'Todos' }))}
+            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
+          >
+            <option value="Todos">Todos los Estados</option>
+            {filterOptions.estados.map(e => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Búsqueda rápida */}
         <div className="flex-1 min-w-[180px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Buscar Cohorte</label>
@@ -967,48 +1166,63 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
               </div>
             </div>
 
-            {/* KPI 3: ALERTAS ACTIVAS (SEGMENTOS + FORMADORES) */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-rose-950/20 p-5 rounded-2xl border border-rose-500/25 shadow-lg group hover:border-rose-500/50 transition-all">
-              <div className="absolute top-0 right-0 w-28 h-28 bg-rose-500/10 rounded-full blur-2xl group-hover:bg-rose-500/20 transition-all pointer-events-none" />
+            {/* KPI 3: RIESGO DE COBERTURA & BRECHA OPERATIVA */}
+            <div className={`relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] ${
+              kpiAlertas.hasBrecha ? 'to-rose-950/20 border-rose-500/25 hover:border-rose-500/50' : 'to-emerald-950/20 border-emerald-500/25 hover:border-emerald-500/50'
+            } p-5 rounded-2xl border shadow-lg group transition-all`}>
+              <div className={`absolute top-0 right-0 w-28 h-28 ${
+                kpiAlertas.hasBrecha ? 'bg-rose-500/10 group-hover:bg-rose-500/20' : 'bg-emerald-500/10 group-hover:bg-emerald-500/20'
+              } rounded-full blur-2xl transition-all pointer-events-none`} />
               <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-black text-rose-400 tracking-wider uppercase px-2.5 py-0.5 bg-rose-500/10 rounded-md border border-rose-500/20 flex items-center gap-1.5">
+                <span className={`text-[10px] font-black ${
+                  kpiAlertas.hasBrecha ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                } tracking-wider uppercase px-2.5 py-0.5 rounded-md border flex items-center gap-1.5`}>
                   <ShieldAlert className="w-3 h-3" />
-                  3 · Radar de Riesgo
+                  3 · Riesgo de Cobertura
                 </span>
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  kpiAlertas.totalAlertas > 0 ? 'bg-rose-500/10 text-rose-400 animate-pulse' : 'bg-emerald-500/10 text-emerald-400'
+                  kpiAlertas.hasBrecha ? 'bg-rose-500/10 text-rose-400 animate-pulse' : 'bg-emerald-500/10 text-emerald-400'
                 }`}>
                   <AlertTriangle className="w-4 h-4" />
                 </div>
               </div>
               <div className="flex items-baseline gap-2">
                 <span className={`text-3xl font-black tracking-tight ${
-                  kpiAlertas.totalAlertas > 0 ? 'text-rose-400' : 'text-emerald-400'
+                  kpiAlertas.hasBrecha ? 'text-rose-400' : 'text-emerald-400'
                 }`}>
-                  {kpiAlertas.totalAlertas}
+                  {kpiAlertas.hasBrecha 
+                    ? `-${kpiAlertas.brechaFtes % 1 === 0 ? kpiAlertas.brechaFtes : kpiAlertas.brechaFtes.toFixed(1).replace('.', ',')} FTEs` 
+                    : (kpiAlertas.superavitFtes > 0 ? `+${kpiAlertas.superavitFtes % 1 === 0 ? kpiAlertas.superavitFtes : kpiAlertas.superavitFtes.toFixed(1).replace('.', ',')} FTEs` : '0 FTEs')}
                 </span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  kpiAlertas.totalAlertas > 0 
+                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
                     ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
+                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                     : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                 }`}>
-                  {kpiAlertas.totalAlertas === 0 ? 'Controlado' : 'Atención'}
+                  {kpiAlertas.estadoSemaforo}
                 </span>
               </div>
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Desviaciones en Metas &amp; Deserción
+                {kpiAlertas.hasBrecha ? 'Brecha Proyectada frente a Meta' : 'Meta Cubierta (Sin Brecha)'}
               </p>
               <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
                 <span className="text-[var(--text-muted)]">
-                  {kpiAlertas.countSegBajoMeta} segm. &lt;50%
+                  {kpiAlertas.countSegBajoMeta} segm. &lt;70%
                 </span>
-                <span className="font-bold text-amber-400">
-                  {kpiAlertas.countFormadoresCriticos} form. &gt;25% deserc.
-                </span>
+                <button 
+                  type="button"
+                  onClick={() => setShowRiskModal(true)}
+                  className="font-bold text-amber-400 hover:text-amber-300 transition-colors underline underline-offset-2 cursor-pointer flex items-center gap-1"
+                  title="Clic para ver detalle de formadores en fuga crítica"
+                >
+                  {kpiAlertas.countFormadoresCriticos} form. &gt;35% fuga
+                </button>
               </div>
             </div>
 
-            {/* KPI 4: PROYECCIÓN DE CIERRE DE MES (RUN-RATE) */}
+            {/* KPI 4: PROYECCIÓN DE CIERRE DE MES (RUN-RATE EN FTES) */}
             <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-amber-950/20 p-5 rounded-2xl border border-amber-500/25 shadow-lg group hover:border-amber-500/50 transition-all">
               <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl group-hover:bg-amber-500/20 transition-all pointer-events-none" />
               <div className="flex items-center justify-between mb-3">
@@ -1022,7 +1236,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
               </div>
               <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight">
-                  {kpiProyeccion.iopProyectado.toLocaleString()}
+                  {kpiProyeccion.iopProyectadoFtes % 1 === 0 
+                    ? kpiProyeccion.iopProyectadoFtes.toLocaleString('es-PE') 
+                    : kpiProyeccion.iopProyectadoFtes.toFixed(1).replace('.', ',')}
+                  <span className="text-lg font-bold text-amber-400 ml-1.5">FTEs</span>
                 </span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                   kpiProyeccion.isCloseToTarget 
@@ -1033,14 +1250,14 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 </span>
               </div>
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Pases I-OP Estimados al Cierre
+                Pases I-OP Estimados al Cierre (FTEs)
               </p>
               <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)]">
-                  Día {kpiProyeccion.diasTranscurridos} de {kpiProyeccion.totalDaysInMonth}
+                <span className="text-[var(--text-muted)]" title={`${kpiProyeccion.iopActual} documentos únicos registrados (${kpiProyeccion.iopActualFtes} FTEs)`}>
+                  Día {kpiProyeccion.diasTranscurridos} de {kpiProyeccion.totalDaysInMonth} · <strong className="text-amber-400 font-mono">{kpiProyeccion.iopActual} personas</strong>
                 </span>
                 <span className="font-bold text-[var(--text-primary)] font-mono">
-                  Meta: {kpis.rq_solicitado.toLocaleString()} FTEs
+                  Meta: {kpis.rq_solicitado.toLocaleString('es-PE')} FTEs
                 </span>
               </div>
             </div>
@@ -1447,7 +1664,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                   <th className="py-3 px-2 text-right">I-OP</th>
                 </tr>
               </thead>
-              <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
+              <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${filters.estado}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
                   const areaNorm = String(d.area_traslado || 'RECLUTAMIENTO').trim().toUpperCase();
                   const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
@@ -1521,6 +1738,106 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DIAGNÓSTICO DE FORMADORES EN FUGA CRÍTICA (>35%) */}
+      {showRiskModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl bg-[var(--surface-elevated)] border border-[var(--border-strong)] rounded-2xl shadow-2xl p-6 overflow-hidden">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[var(--text-primary)]">
+                    Diagnóstico de Formadores con Fuga Crítica
+                  </h3>
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    Formadores con tasa de deserción &gt; 35% y muestra representativa (≥ 6 alumnos evaluados).
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRiskModal(false)}
+                className="w-8 h-8 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[60vh] overflow-y-auto pr-1">
+              {kpiAlertas.formadoresCriticosList.length === 0 ? (
+                <div className="py-12 text-center text-[var(--text-muted)]">
+                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-400 opacity-60" />
+                  <p className="font-bold text-sm text-[var(--text-primary)]">Sin formadores en fuga crítica</p>
+                  <p className="text-xs text-[var(--text-secondary)] mt-1">
+                    Ningún formador supera el 35% de deserción con el volumen mínimo evaluado.
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[var(--border-subtle)] text-[var(--text-muted)] font-black uppercase text-[10px] tracking-wider">
+                      <th className="pb-2.5">Formador</th>
+                      <th className="pb-2.5">Campaña Principal</th>
+                      <th className="pb-2.5 text-center">Evaluados</th>
+                      <th className="pb-2.5 text-center">Bajas</th>
+                      <th className="pb-2.5 text-right">% Fuga</th>
+                      <th className="pb-2.5 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {kpiAlertas.formadoresCriticosList.map((f, idx) => (
+                      <tr key={idx} className="hover:bg-[var(--surface-hover)] transition-colors">
+                        <td className="py-2.5 font-bold text-[var(--text-primary)]">
+                          {f.formador}
+                        </td>
+                        <td className="py-2.5 text-[var(--text-secondary)]">
+                          {f.campana}
+                        </td>
+                        <td className="py-2.5 text-center font-mono text-[var(--text-primary)]">
+                          {f.totalAlumnos}
+                        </td>
+                        <td className="py-2.5 text-center font-mono text-rose-400 font-bold">
+                          {f.bajas}
+                        </td>
+                        <td className="py-2.5 text-right font-mono font-black text-rose-400">
+                          {f.pctDesercion}%
+                        </td>
+                        <td className="py-2.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSearchQuery(f.formador);
+                              setShowRiskModal(false);
+                            }}
+                            className="px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold transition-colors cursor-pointer"
+                            title="Filtrar grupos de este formador en la vista"
+                          >
+                            Filtrar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]">
+              <span>Total identificados: <strong className="text-[var(--text-primary)]">{kpiAlertas.formadoresCriticosList.length}</strong></span>
+              <button
+                type="button"
+                onClick={() => setShowRiskModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-bold transition-all cursor-pointer text-xs"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

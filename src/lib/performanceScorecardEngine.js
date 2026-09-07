@@ -1418,3 +1418,95 @@ export function getTrainerIndividualDetails(
     alumnosNominal
   }
 }
+
+// ── 7. Trazabilidad de Aportación de Reclutadores por Grupo / Campaña ───────
+export function getRecruitersContributionByGroup(
+  postulantes = [],
+  asistencias = [],
+  reclutadoresCatalog = [],
+  formadoresCatalog = []
+) {
+  if (!postulantes || postulantes.length === 0) return []
+
+  const formadorNamesSet = new Set()
+  ;(formadoresCatalog || []).forEach(f => {
+    const n = typeof f === 'string' ? f : (f?.nombre_completo || f?.nombre || '')
+    if (n) formadorNamesSet.add(norm(n))
+    if (f?.alix) formadorNamesSet.add(norm(f.alix))
+    if (f?.documento || f?.dni) formadorNamesSet.add(norm(f.documento || f.dni))
+  })
+
+  // Index de asistencias para OP y Día 1
+  const opDocs = new Set()
+  const asistD1Docs = new Set()
+  ;(asistencias || []).forEach(a => {
+    const doc = norm(a.postulante_documento || a.documento)
+    const sigla = norm(a.sigla_asistencia || a.sigla)
+    if (!doc) return
+    if (sigla === 'I-OP') opDocs.add(doc)
+    if (sigla === 'A' || sigla === 'T' || sigla === 'CAPACITACION' || sigla === 'OJT' || sigla === 'D1') {
+      asistD1Docs.add(doc)
+    }
+  })
+
+  const groupRecMap = new Map()
+
+  postulantes.forEach(p => {
+    const recRaw = (p.reclutador || '').trim()
+    if (!recRaw) return
+    const recNorm = norm(recRaw)
+    if (!recNorm || recNorm === 'SIN RECLUTADOR' || recNorm === 'NULL' || recNorm === 'UNDEFINED') return
+    if (formadorNamesSet.has(recNorm)) return
+
+    if (!groupRecMap.has(recNorm)) {
+      groupRecMap.set(recNorm, {
+        reclutador: recRaw.toUpperCase(),
+        totalCitados: 0,
+        qDia1: 0,
+        ingresantesOP: 0,
+        bajas: 0,
+        campanas: new Set(),
+        grupos: new Set()
+      })
+    }
+
+    const r = groupRecMap.get(recNorm)
+    r.totalCitados++
+    const doc = norm(p.documento)
+    if (p.campana) r.campanas.add(p.campana)
+    if (p.grupo_codigo) r.grupos.add(p.grupo_codigo)
+
+    const hasD1 = isCandidateDia1Asistio(p) || (doc && asistD1Docs.has(doc))
+    if (hasD1) r.qDia1++
+
+    const isOP = norm(p.estado) === 'INGRESO_OP' || norm(p.estado) === 'EN_OPERACIONES' || (doc && opDocs.has(doc))
+    if (isOP) r.ingresantesOP++
+
+    const isBaja = norm(p.estado) === 'BAJA' || Boolean(p.motivo_baja)
+    if (isBaja) r.bajas++
+  })
+
+  return Array.from(groupRecMap.values())
+    .map(r => {
+      const pctDia1 = r.totalCitados > 0 ? Math.round((r.qDia1 / r.totalCitados) * 100) : 0
+      const pctConversionOP = r.qDia1 > 0 ? Math.round((r.ingresantesOP / r.qDia1) * 100) : 0
+      const pctBajas = r.totalCitados > 0 ? Math.round((r.bajas / r.totalCitados) * 100) : 0
+
+      // Semáforo de efectividad BPO
+      let semaforo = 'ROJO'
+      if (pctConversionOP >= 70 && pctDia1 >= 75) semaforo = 'VERDE'
+      else if (pctConversionOP >= 50 || pctDia1 >= 60) semaforo = 'AMBAR'
+
+      return {
+        ...r,
+        pctDia1,
+        pctConversionOP,
+        pctBajas,
+        semaforo,
+        campanasStr: Array.from(r.campanas).join(', '),
+        gruposStr: Array.from(r.grupos).join(', ')
+      }
+    })
+    .sort((a, b) => b.totalCitados - a.totalCitados || b.ingresantesOP - a.ingresantesOP)
+}
+

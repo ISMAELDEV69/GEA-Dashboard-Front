@@ -19,6 +19,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
 
 const BREADCRUMB_MAP = {
+  scorecard_individual: { section: 'Analítica & BI', label: 'KPIS - Reclutador / Formador' },
   resumen_capacitacion: { section: 'Analítica & BI', label: 'Resumen Capacitación' },
   consolidado: { section: 'Analítica & BI', label: 'Control de Asistencia' },
   descuentos_bi: { section: 'Analítica & BI', label: 'Descuentos BI' },
@@ -69,7 +70,8 @@ export default function AppHeader({
   isOnline = true,
   realRole = 'admin',
   currentRole = 'admin',
-  onSelectViewRole
+  onSelectViewRole,
+  onGoToPortal
 }) {
   const breadcrumb = BREADCRUMB_MAP[activeView] || { section: 'GEA DataCenter', label: 'Plataforma' }
 
@@ -80,6 +82,19 @@ export default function AppHeader({
           1. BREADCRUMBS DINÁMICOS
           ───────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 text-xs">
+        {onGoToPortal && (
+          <>
+            <button
+              type="button"
+              onClick={onGoToPortal}
+              className="text-[var(--text-muted)] hover:text-cyan-400 font-medium transition-colors cursor-pointer flex items-center gap-1"
+              title="Ir al Portal de Módulos (Inicio)"
+            >
+              Inicio
+            </button>
+            <ChevronRight className="h-3.5 w-3.5 text-[var(--text-muted)] opacity-60" />
+          </>
+        )}
         <span className="text-[var(--text-muted)] font-medium">
           {breadcrumb.section}
         </span>

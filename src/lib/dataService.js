@@ -214,6 +214,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.nombre = full;
           profile.documento = recByAlix.documento;
           profile.dni = recByAlix.documento;
+          profile.nombres = recByAlix.nombres_completos;
+          profile.nombres_completos = recByAlix.nombres_completos;
+          profile.apellido_paterno = recByAlix.apellido_paterno;
+          profile.apellido_materno = recByAlix.apellido_materno;
+          profile.primer_nombre = String(recByAlix.nombres_completos || '').trim().split(' ')[0] || '';
           return profile;
         }
       }
@@ -231,6 +236,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.nombre = full;
           profile.documento = recData.documento;
           profile.dni = recData.documento;
+          profile.nombres = recData.nombres_completos;
+          profile.nombres_completos = recData.nombres_completos;
+          profile.apellido_paterno = recData.apellido_paterno;
+          profile.apellido_materno = recData.apellido_materno;
+          profile.primer_nombre = String(recData.nombres_completos || '').trim().split(' ')[0] || '';
           return profile;
         }
       }
@@ -249,6 +259,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.nombre = full;
           profile.documento = formByAlix.documento;
           profile.formador_documento = formByAlix.documento;
+          profile.nombres = formByAlix.nombres_completos;
+          profile.nombres_completos = formByAlix.nombres_completos;
+          profile.apellido_paterno = formByAlix.apellido_paterno;
+          profile.apellido_materno = formByAlix.apellido_materno;
+          profile.primer_nombre = String(formByAlix.nombres_completos || '').trim().split(' ')[0] || '';
           return profile;
         }
       }
@@ -266,6 +281,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.nombre = full;
           profile.documento = formData.documento;
           profile.formador_documento = formData.documento;
+          profile.nombres = formData.nombres_completos;
+          profile.nombres_completos = formData.nombres_completos;
+          profile.apellido_paterno = formData.apellido_paterno;
+          profile.apellido_materno = formData.apellido_materno;
+          profile.primer_nombre = String(formData.nombres_completos || '').trim().split(' ')[0] || '';
           return profile;
         }
       }
@@ -5060,6 +5080,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     let desertores_ojt = 0;
     let ingresos_iop = 0;
     let ingresos_iop_ftes = 0;
+    const docs_iop_detalle = [];
 
     const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
     const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
@@ -5075,15 +5096,61 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       const isPartTime = String(rawCond || '').toUpperCase().includes('PART');
       const fteWeight = isPartTime ? 0.5 : 1.0;
 
-      // Tiene I-OP o pase formal a operación?
-      const tieneIngreso = records.some(r => {
+      // Tiene I-OP o pase formal a operación con fecha del registro
+      const iopRecord = records.find(r => {
         const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+        return s === 'I-OP';
+      }) || records.find(r => {
         const st = String(r.estado || '').toUpperCase().trim();
-        return s === 'I-OP' || st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
+        return st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
       });
+
+      const tieneIngreso = Boolean(iopRecord);
+
       if (tieneIngreso) {
         ingresos_iop++;
         ingresos_iop_ftes += fteWeight;
+
+        // Extraer fecha exacta del registro de asistencia con sigla I-OP
+        let fechaIop = null;
+        const rawDate = iopRecord.fecha_registro_asistencia || iopRecord.fecha_asistencia || iopRecord.fecha;
+        if (rawDate) {
+          const str = String(rawDate).trim();
+          if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+            fechaIop = str.slice(0, 10);
+          } else {
+            const parts = str.split(/[\/\-]/);
+            if (parts.length === 3 && parts[2].length === 4) {
+              fechaIop = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            } else {
+              const dt = new Date(str);
+              if (!isNaN(dt.getTime())) fechaIop = dt.toISOString().slice(0, 10);
+            }
+          }
+        }
+
+        // Fallback a fecha_ingreso_op del grupo si el registro individual no tuviera fecha
+        if (!fechaIop && grupoInfo.fecha_ingreso_op) {
+          const str = String(grupoInfo.fecha_ingreso_op).trim();
+          if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+            fechaIop = str.slice(0, 10);
+          } else {
+            const parts = str.split(/[\/\-]/);
+            if (parts.length === 3 && parts[2].length === 4) {
+              fechaIop = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+          }
+        }
+
+        docs_iop_detalle.push({
+          documento: doc,
+          fte: fteWeight,
+          condicion: isPartTime ? 'PART TIME' : 'FULL TIME',
+          fecha_iop: fechaIop,
+          grupo_codigo,
+          campana,
+          periodo: grupoInfo.periodo_ingreso_op || grupoInfo.periodo || ''
+        });
       }
 
       // Día 0
@@ -5300,6 +5367,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       desertores_ojt,
       ingresos_iop,
       ingresos_iop_ftes,
+      docs_iop_detalle,
       asistencias_raw: groupFormAsisRaw || []
     });
   }

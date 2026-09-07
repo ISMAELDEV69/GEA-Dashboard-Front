@@ -14,6 +14,7 @@ import {
   getRecruiterIndividualDetails,
   computeAllTrainersPerformance,
   getTrainerIndividualDetails,
+  getRecruitersContributionByGroup,
   norm,
   matchPerson,
   formatSemanaLabel
@@ -102,10 +103,10 @@ function PerformanceScorecardIndividual({
     const s = String(seg || '').trim().toUpperCase()
     if (s && s !== 'GENERAL' && s !== 'NULL' && s !== 'UNDEFINED') return s
     const c = String(camp || '').trim().toUpperCase()
-    if (c.includes('LIPIGAS')) return 'LIPIGAS'
-    if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR')) return 'CLARO CHILE'
-    if (c.includes('RETENCION') || c.includes('RETENCIONES') || c.includes('CONTENCI') || c.includes('DESCUENTO')) return 'CLARO PERU RETENCIONES'
-    if (c.includes('OUT') || c.includes('UPGRADE') || c.includes('PREVENTIVA') || c.includes('PORTA') || c.includes('RENOVACION')) return 'CLARO PERU OUT'
+    if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) return 'LIPIGAS'
+    if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR') || c.includes('BO TÉCNICO')) return 'CLARO CHILE'
+    if (c.includes('RETENCION') || c.includes('CONTENCI') || c.includes('DESCUENTO') || c.includes('CONTACTADOS') || c.includes('BABYSTING')) return 'CLARO PERU RETENCIONES'
+    if (c.includes('OUT') || c.includes('UPGRADE') || c.includes('PREVENTIVA') || c.includes('PORTA') || c.includes('RENOVACION') || c.includes('MIGRA') || c.includes('OLAS')) return 'CLARO PERU OUT'
     return 'CLARO PERU'
   }, [])
 
@@ -125,27 +126,46 @@ function PerformanceScorecardIndividual({
     return ''
   }, [])
 
-  // Mapa de resolución de grupos con Período de Ingreso y Segmento oficial
-  const grupoInfoMap = useMemo(() => {
-    const map = new Map()
-    const addG = (code, periodo, segmento, campana, gObj) => {
+  // Mapa de resolución relacional de grupos con clave compuesta (código + campaña)
+  const { grupoCompositeMap, grupoCodeMap } = useMemo(() => {
+    const compMap = new Map()
+    const codeMap = new Map()
+
+    const registerGroup = (code, periodo, segmento, campana, gObj) => {
       const c = norm(code)
       if (!c) return
       const camp = (campana || '').trim().toUpperCase()
       const seg = resolveSegmento(segmento, camp)
       const per = getGPeriodo(gObj) || normalizePeriodo(periodo)
-      map.set(c, {
-        periodo: per,
-        segmento: seg,
-        campana: camp
-      })
+
+      const entry = { periodo: per, segmento: seg, campana: camp, codigo: c }
+
+      if (camp) {
+        compMap.set(`${c}|${norm(camp)}`, entry)
+      }
+      if (!codeMap.has(c)) {
+        codeMap.set(c, entry)
+      }
     }
-    ;(grupos || []).forEach(g => addG(g.codigo || g.grupo_codigo, g.periodo, g.segmento, g.campana, g))
-    ;(campanasMetas || []).forEach(g => addG(g.codigo || g.grupo_codigo || g.codigo_grupo, g.periodo, g.segmento, g.campana_nombre || g.campana, g))
-    return map
+
+    ;(grupos || []).forEach(g => registerGroup(g.codigo || g.grupo_codigo, g.periodo, g.segmento, g.campana, g))
+    ;(campanasMetas || []).forEach(g => registerGroup(g.codigo || g.grupo_codigo || g.codigo_grupo, g.periodo, g.segmento, g.campana_nombre || g.campana, g))
+
+    return { grupoCompositeMap: compMap, grupoCodeMap: codeMap }
   }, [grupos, campanasMetas, resolveSegmento, getGPeriodo])
 
   const getPPeriodo = useCallback((p) => {
+    const gCode = norm(p.grupo_codigo)
+    const camp = norm(p.campana)
+    if (gCode && camp) {
+      const g = grupoCompositeMap.get(`${gCode}|${camp}`)
+      if (g && g.periodo) return g.periodo
+    }
+    if (gCode) {
+      const g = grupoCodeMap.get(gCode)
+      if (g && g.periodo) return g.periodo
+    }
+
     const directIngreso = normalizePeriodo(p.periodo_ingreso_op || p.periodo_ingreso)
     if (directIngreso && directIngreso.length === 6) return directIngreso
 
@@ -154,147 +174,199 @@ function PerformanceScorecardIndividual({
       if (fromFechaOP && fromFechaOP.length === 6) return fromFechaOP
     }
 
-    if (p.grupo_codigo) {
-      const g = grupoInfoMap.get(norm(p.grupo_codigo))
-      if (g && g.periodo) return g.periodo
-    }
-
     const direct = normalizePeriodo(p.periodo_reclutado || p.periodo || p.periodo_rys)
     if (direct && direct.length === 6) return direct
 
     const fromDate = normalizePeriodo(p.fecha_ingreso || p.fecha_registro || p.marca_temporal || p.created_at)
     if (fromDate && fromDate.length === 6) return fromDate
     return ''
-  }, [grupoInfoMap])
+  }, [grupoCompositeMap, grupoCodeMap])
 
   const getPSegmento = useCallback((p) => {
-    if (p.grupo_codigo) {
-      const g = grupoInfoMap.get(norm(p.grupo_codigo))
+    const gCode = norm(p.grupo_codigo)
+    const camp = norm(p.campana)
+    if (gCode && camp) {
+      const g = grupoCompositeMap.get(`${gCode}|${camp}`)
+      if (g && g.segmento) return g.segmento
+    }
+    if (gCode) {
+      const g = grupoCodeMap.get(gCode)
       if (g && g.segmento) return g.segmento
     }
     return resolveSegmento(p.segmento, p.campana)
-  }, [grupoInfoMap, resolveSegmento])
+  }, [grupoCompositeMap, grupoCodeMap, resolveSegmento])
 
   const getPCampana = useCallback((p) => {
     if (p.campana && p.campana.trim()) return p.campana.trim().toUpperCase()
-    if (p.grupo_codigo) {
-      const g = grupoInfoMap.get(norm(p.grupo_codigo))
+    const gCode = norm(p.grupo_codigo)
+    if (gCode) {
+      const g = grupoCodeMap.get(gCode)
       if (g && g.campana) return g.campana
     }
     return 'GENERAL'
-  }, [grupoInfoMap])
+  }, [grupoCodeMap])
 
-  // ── Opciones de Filtros en Cascada ─────────────────────────────────────
-  // Períodos: limitados estrictamente al año en curso (2026)
+  // ── Opciones de Filtros en Cascada Estricta ──────────────────────────────
+  // 1. Períodos: limitados estrictamente al año en curso (2026)
   const periodosOptions = useMemo(() => {
     const set = new Set()
+    grupos.forEach(g => {
+      const per = getGPeriodo(g)
+      if (per && per.startsWith('2026')) set.add(per)
+    })
+    campanasMetas.forEach(g => {
+      const per = getGPeriodo(g)
+      if (per && per.startsWith('2026')) set.add(per)
+    })
     postulantes.forEach(p => {
       const per = getPPeriodo(p)
       if (per && per.startsWith('2026')) set.add(per)
     })
-    campanasMetas.forEach(g => {
-      const per = getGPeriodo(g)
-      if (per && per.startsWith('2026')) set.add(per)
-    })
-    grupos.forEach(g => {
-      const per = getGPeriodo(g)
-      if (per && per.startsWith('2026')) set.add(per)
-    })
     return ['Todos', ...Array.from(set).sort((a, b) => b.localeCompare(a))]
-  }, [postulantes, campanasMetas, grupos, getPPeriodo, getGPeriodo])
+  }, [grupos, campanasMetas, postulantes, getGPeriodo, getPPeriodo])
 
-  // Segmentos disponibles según período
+  // 2. Segmentos disponibles: depende ESTRICTAMENTE de filterPeriodo
   const segmentosOptions = useMemo(() => {
     const set = new Set()
-    postulantes.forEach(p => {
-      if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return
-      const seg = getPSegmento(p)
-      if (seg && seg !== 'GENERAL') set.add(seg)
-    })
-    campanasMetas.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
-      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
-      const seg = resolveSegmento(g.segmento, camp)
-      if (seg && seg !== 'GENERAL') set.add(seg)
-    })
+    const matchPer = (per) => filterPeriodo === 'Todos' || per === filterPeriodo
+
     grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
       const camp = (g.campana || '').trim().toUpperCase()
       const seg = resolveSegmento(g.segmento, camp)
       if (seg && seg !== 'GENERAL') set.add(seg)
     })
-    return ['Todos Segmentos', ...Array.from(set).sort()]
-  }, [postulantes, campanasMetas, grupos, filterPeriodo, getPPeriodo, getPSegmento, getGPeriodo, resolveSegmento])
+    campanasMetas.forEach(g => {
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (seg && seg !== 'GENERAL') set.add(seg)
+    })
+    postulantes.forEach(p => {
+      const per = getPPeriodo(p)
+      if (!matchPer(per)) return
+      const seg = getPSegmento(p)
+      if (seg && seg !== 'GENERAL') set.add(seg)
+    })
 
-  // Campañas disponibles: estrictamente filtradas por el segmento seleccionado
+    return ['Todos Segmentos', ...Array.from(set).sort()]
+  }, [grupos, campanasMetas, postulantes, filterPeriodo, getGPeriodo, getPPeriodo, resolveSegmento, getPSegmento])
+
+  // 3. Campañas disponibles: depende de filterPeriodo Y filterSegmento
   const campanasOptions = useMemo(() => {
     const set = new Set()
+    const matchPer = (per) => filterPeriodo === 'Todos' || per === filterPeriodo
+    const matchSeg = (seg) => filterSegmento === 'Todos Segmentos' || seg === filterSegmento
+
+    grupos.forEach(g => {
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
+      const camp = (g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (!matchSeg(seg)) return
+      if (camp && camp !== 'GENERAL') set.add(camp)
+    })
+    campanasMetas.forEach(g => {
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (!matchSeg(seg)) return
+      if (camp && camp !== 'GENERAL') set.add(camp)
+    })
     postulantes.forEach(p => {
-      if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return
+      const per = getPPeriodo(p)
+      if (!matchPer(per)) return
       const seg = getPSegmento(p)
-      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
+      if (!matchSeg(seg)) return
       const camp = getPCampana(p)
       if (camp && camp !== 'GENERAL') set.add(camp)
     })
-    campanasMetas.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
-      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
-      const seg = resolveSegmento(g.segmento, camp)
-      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
-      if (camp && camp !== 'GENERAL') set.add(camp)
-    })
-    grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
-      const camp = (g.campana || '').trim().toUpperCase()
-      const seg = resolveSegmento(g.segmento, camp)
-      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
-      if (camp && camp !== 'GENERAL') set.add(camp)
-    })
-    return ['Todas Campañas', ...Array.from(set).sort()]
-  }, [postulantes, campanasMetas, grupos, filterPeriodo, filterSegmento, getPPeriodo, getPSegmento, getPCampana, getGPeriodo, resolveSegmento])
 
-  // Grupos disponibles: estrictamente filtrados por período, segmento y campaña
+    return ['Todas Campañas', ...Array.from(set).sort()]
+  }, [grupos, campanasMetas, postulantes, filterPeriodo, filterSegmento, getGPeriodo, getPPeriodo, resolveSegmento, getPSegmento, getPCampana])
+
+  // 4. Grupos disponibles: depende de filterPeriodo, filterSegmento Y filterCampana
   const gruposOptions = useMemo(() => {
     const set = new Set()
-    postulantes.forEach(p => {
-      if (filterPeriodo !== 'Todos' && getPPeriodo(p) !== filterPeriodo) return
-      if (filterSegmento !== 'Todos Segmentos' && getPSegmento(p) !== filterSegmento) return
-      if (filterCampana !== 'Todas Campañas' && getPCampana(p) !== filterCampana) return
-      if (p.grupo_codigo && p.grupo_codigo.trim()) set.add(p.grupo_codigo.trim().toUpperCase())
-    })
-    campanasMetas.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
-      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
-      const seg = resolveSegmento(g.segmento, camp)
-      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
-      if (filterCampana !== 'Todas Campañas' && camp !== filterCampana) return
-      const code = (g.grupo_codigo || g.codigo || g.codigo_grupo || '').trim().toUpperCase()
-      if (code) set.add(code)
-    })
+    const matchPer = (per) => filterPeriodo === 'Todos' || per === filterPeriodo
+    const matchSeg = (seg) => filterSegmento === 'Todos Segmentos' || seg === filterSegmento
+    const matchCamp = (camp) => filterCampana === 'Todas Campañas' || camp === filterCampana
+
     grupos.forEach(g => {
-      if (filterPeriodo !== 'Todos' && getGPeriodo(g) !== filterPeriodo) return
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
       const camp = (g.campana || '').trim().toUpperCase()
       const seg = resolveSegmento(g.segmento, camp)
-      if (filterSegmento !== 'Todos Segmentos' && seg !== filterSegmento) return
-      if (filterCampana !== 'Todas Campañas' && camp !== filterCampana) return
+      if (!matchSeg(seg)) return
+      if (!matchCamp(camp)) return
       const code = (g.codigo || g.grupo_codigo || '').trim().toUpperCase()
       if (code) set.add(code)
     })
+    campanasMetas.forEach(g => {
+      const per = getGPeriodo(g)
+      if (!matchPer(per)) return
+      const camp = (g.campana_nombre || g.campana || '').trim().toUpperCase()
+      const seg = resolveSegmento(g.segmento, camp)
+      if (!matchSeg(seg)) return
+      if (!matchCamp(camp)) return
+      const code = (g.grupo_codigo || g.codigo || g.codigo_grupo || '').trim().toUpperCase()
+      if (code) set.add(code)
+    })
+    postulantes.forEach(p => {
+      const per = getPPeriodo(p)
+      if (!matchPer(per)) return
+      const seg = getPSegmento(p)
+      if (!matchSeg(seg)) return
+      const camp = getPCampana(p)
+      if (!matchCamp(camp)) return
+      if (p.grupo_codigo && p.grupo_codigo.trim()) set.add(p.grupo_codigo.trim().toUpperCase())
+    })
+
     return ['Todos los Grupos', ...Array.from(set).sort()]
-  }, [postulantes, campanasMetas, grupos, filterPeriodo, filterSegmento, filterCampana, getPPeriodo, getPSegmento, getPCampana, getGPeriodo, resolveSegmento])
+  }, [grupos, campanasMetas, postulantes, filterPeriodo, filterSegmento, filterCampana, getGPeriodo, getPPeriodo, resolveSegmento, getPSegmento, getPCampana])
 
-  // Auto-reset dependiente en cascada para evitar filtros cruzados
+  // Auto-resets dependientes en cascada
+  const prevPeriodoRef = useRef(filterPeriodo)
   useEffect(() => {
-    if (filterCampana !== 'Todas Campañas' && !campanasOptions.includes(filterCampana)) {
-      setFilterCampana('Todas Campañas')
+    if (prevPeriodoRef.current !== filterPeriodo) {
+      prevPeriodoRef.current = filterPeriodo
+      if (filterSegmento !== 'Todos Segmentos' && !segmentosOptions.includes(filterSegmento)) {
+        setFilterSegmento('Todos Segmentos')
+      }
+      if (filterCampana !== 'Todas Campañas' && !campanasOptions.includes(filterCampana)) {
+        setFilterCampana('Todas Campañas')
+      }
+      if (filterGrupo !== 'Todos los Grupos' && !gruposOptions.includes(filterGrupo)) {
+        setFilterGrupo('Todos los Grupos')
+      }
     }
-  }, [filterSegmento, campanasOptions, filterCampana])
+  }, [filterPeriodo, filterSegmento, filterCampana, filterGrupo, segmentosOptions, campanasOptions, gruposOptions])
 
+  const prevSegmentoRef = useRef(filterSegmento)
   useEffect(() => {
-    if (filterGrupo !== 'Todos los Grupos' && !gruposOptions.includes(filterGrupo)) {
-      setFilterGrupo('Todos los Grupos')
+    if (prevSegmentoRef.current !== filterSegmento) {
+      prevSegmentoRef.current = filterSegmento
+      if (filterCampana !== 'Todas Campañas' && !campanasOptions.includes(filterCampana)) {
+        setFilterCampana('Todas Campañas')
+      }
+      if (filterGrupo !== 'Todos los Grupos' && !gruposOptions.includes(filterGrupo)) {
+        setFilterGrupo('Todos los Grupos')
+      }
     }
-  }, [filterSegmento, filterCampana, gruposOptions, filterGrupo])
+  }, [filterSegmento, filterCampana, filterGrupo, campanasOptions, gruposOptions])
+
+  const prevCampanaRef = useRef(filterCampana)
+  useEffect(() => {
+    if (prevCampanaRef.current !== filterCampana) {
+      prevCampanaRef.current = filterCampana
+      if (filterGrupo !== 'Todos los Grupos' && !gruposOptions.includes(filterGrupo)) {
+        setFilterGrupo('Todos los Grupos')
+      }
+    }
+  }, [filterCampana, filterGrupo, gruposOptions])
 
   // Helpers de validación de filtros activos
   const isPeriodoAll = useCallback((p) => !p || p === 'Todos' || p === 'Todos los Períodos', [])
@@ -460,6 +532,17 @@ function PerformanceScorecardIndividual({
       )
     }
   }, [activeRole, currentTargetIdentifier, filteredPostulantes, filteredAsistencias, rankedRecruiters, rankedTrainers, filteredCampanasMetas, filteredGrupos, attendanceIndexes])
+
+  // Trazabilidad y aportación de reclutadores al grupo/campaña activa
+  const recruitersContribution = useMemo(() => {
+    if (activeRole !== 'RECLUTADOR') return []
+    return getRecruitersContributionByGroup(
+      filteredPostulantes,
+      filteredAsistencias,
+      reclutadores,
+      formadores
+    )
+  }, [activeRole, filteredPostulantes, filteredAsistencias, reclutadores, formadores])
 
   // Buscador de colaboradores
   const searchResults = useMemo(() => {
@@ -1017,6 +1100,125 @@ function PerformanceScorecardIndividual({
               </div>
             </div>
           </div>
+
+          {/* ── 4.5. APORTACIÓN Y COMPARATIVA DE RECLUTADORES EN EL GRUPO/COHORTE (EXCLUSIVO RECLUTAMIENTO) ── */}
+          {activeRole === 'RECLUTADOR' && recruitersContribution.length > 0 && (
+            <div className="bg-[var(--surface)] p-5 rounded-2xl border border-[var(--border-subtle)] shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
+                <div className="flex items-center gap-2">
+                  <Users size={18} className="text-cyan-400" />
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
+                      Aportación de Reclutadores en {filterGrupo !== 'Todos los Grupos' ? `el Grupo ${filterGrupo}` : (filterCampana !== 'Todas Campañas' ? `la Campaña ${filterCampana}` : 'el Período Seleccionado')}
+                    </h3>
+                    <p className="text-[10px] text-slate-400">
+                      Trazabilidad de nóminas enviadas, asistencia al Día 1 y graduación a producción por cada reclutador
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] font-mono">
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-cyan-300 font-bold">
+                    {recruitersContribution.length} {recruitersContribution.length === 1 ? 'reclutador aportante' : 'reclutadores aportantes'}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-emerald-300 font-bold">
+                    {recruitersContribution.reduce((acc, r) => acc + r.totalCitados, 0)} postulantes enviados
+                  </span>
+                </div>
+              </div>
+
+              {/* Gráfica de Alto Impacto: Citados vs Día 1 vs OP */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-300 font-bold">
+                  <span>Comparativa Visual de Rendimiento (Top 10 Reclutadores)</span>
+                  <span className="text-[10px] text-slate-400 font-mono">Barras por volumen y conversión</span>
+                </div>
+                <div className="h-[250px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={recruitersContribution.slice(0, 10)} 
+                      margin={{ top: 10, right: 10, left: -20, bottom: 25 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(51, 65, 85, 0.3)" vertical={false} />
+                      <XAxis 
+                        dataKey="reclutador" 
+                        stroke="#94a3b8" 
+                        fontSize={10} 
+                        tickLine={false} 
+                        interval={0}
+                        angle={-20}
+                        textAnchor="end"
+                      />
+                      <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                      <Tooltip content={<ExecutiveChartTooltip unit="postulantes" />} />
+                      <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '15px' }} />
+                      <Bar dataKey="totalCitados" name="Citados (Nómina)" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                      <Bar dataKey="qDia1" name="Asistieron Día 1" fill="#06b6d4" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                      <Bar dataKey="ingresantesOP" name="Graduados a OP" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Tabla Detallada de Trazabilidad */}
+              <div className="overflow-x-auto rounded-xl border border-slate-800 custom-scrollbar">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-900 sticky top-0 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Reclutador</th>
+                      <th className="py-2.5 px-2 text-center">Citados</th>
+                      <th className="py-2.5 px-2 text-center">Asistieron D1</th>
+                      <th className="py-2.5 px-2 text-center">% Asist. D1</th>
+                      <th className="py-2.5 px-2 text-center">Pase a OP</th>
+                      <th className="py-2.5 px-2 text-center">% Conv. OP</th>
+                      <th className="py-2.5 px-2 text-center">Bajas</th>
+                      <th className="py-2.5 px-3 text-center">Efectividad BPO</th>
+                      <th className="py-2.5 px-3 text-center">Ficha 360°</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 font-mono">
+                    {recruitersContribution.map((r, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-2 px-3 text-slate-500 font-bold">{idx + 1}</td>
+                        <td className="py-2 px-3 font-sans font-bold text-slate-200">
+                          <span className="truncate max-w-[200px] block" title={r.reclutador}>{r.reclutador}</span>
+                        </td>
+                        <td className="py-2 px-2 text-center font-bold text-indigo-400">{r.totalCitados}</td>
+                        <td className="py-2 px-2 text-center font-bold text-cyan-400">{r.qDia1}</td>
+                        <td className="py-2 px-2 text-center text-slate-300">{r.pctDia1}%</td>
+                        <td className="py-2 px-2 text-center font-bold text-emerald-400">{r.ingresantesOP}</td>
+                        <td className="py-2 px-2 text-center text-emerald-300 font-bold">{r.pctConversionOP}%</td>
+                        <td className="py-2 px-2 text-center text-rose-400">{r.bajas}</td>
+                        <td className="py-2 px-3 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            r.semaforo === 'VERDE'
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                              : r.semaforo === 'AMBAR'
+                              ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                          }`}>
+                            {r.semaforo === 'VERDE' ? 'ALTO IMPACTO' : r.semaforo === 'AMBAR' ? 'REGULAR' : 'CRÍTICO'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedIdentifier(r.reclutador)
+                              setSearchQuery('')
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 text-[10px] font-bold transition-colors cursor-pointer"
+                          >
+                            Ver Análisis
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* ── 5. DESGLOSE DE MOTIVOS DE BAJA REALES ── */}
           {individualData.motivosBajaBreakdown && individualData.motivosBajaBreakdown.length > 0 && (

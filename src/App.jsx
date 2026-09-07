@@ -75,6 +75,7 @@ const DashboardsAdmin = lazyWithRetry(() => import('./components/DashboardsAdmin
 const RolePermissionsAdmin = lazyWithRetry(() => import('./components/RolePermissionsAdmin'))
 const PostulantesTable = lazyWithRetry(() => import('./components/PostulantesTable'))
 const PerformanceScorecardIndividual = lazyWithRetry(() => import('./components/dashboard/PerformanceScorecardIndividual'))
+const HomeSelector = lazyWithRetry(() => import('./components/HomeSelector'))
 
 // ── RBAC: Navegación de Vistas por Rol ──────────────────────────────────────────
 export const ALL_NAV = [
@@ -201,7 +202,7 @@ export default function App() {
   }, [navPermissions, currentRole])
 
   // ── Estado de Vista & Transiciones Ultrarrápidas ────────────────────────────
-  const [activeView, setActiveView] = useState('resumen_capacitacion')
+  const [activeView, setActiveView] = useState('portal')
   const [, startTransition] = useTransition()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -213,7 +214,7 @@ export default function App() {
     })
   }, [startTransition])
 
-  const SPECIAL_VIEWS = ['perfil']
+  const SPECIAL_VIEWS = ['perfil', 'portal']
 
   // Global Shortcut: Ctrl+K / Cmd+K for Command Palette
   useEffect(() => {
@@ -540,6 +541,16 @@ export default function App() {
       <ToastProvider>
         <BackgroundTasksProvider onSyncComplete={loadAllData}>
           <TooltipProvider delayDuration={150}>
+            {activeView === 'portal' ? (
+              <Suspense fallback={<ViewLoadingSkeleton />}>
+                <HomeSelector
+                  userProfile={effectiveProfile}
+                  csatUrl="https://encuesta-de-satisfaccion-eight.vercel.app/"
+                  onSelectWorkforce={(targetView) => handleNavigate(targetView || 'scorecard_individual')}
+                  onNavigateNav={(targetView) => handleNavigate(targetView)}
+                />
+              </Suspense>
+            ) : (
             <div
               className="h-screen w-full flex overflow-hidden transition-colors duration-300 bg-[var(--bg-base)] text-[var(--text-primary)]"
             >
@@ -569,6 +580,7 @@ export default function App() {
                   currentRole={currentRole}
                   viewAsRole={viewAsRole}
                   onSelectViewRole={setViewAsRole}
+                  onGoToPortal={() => handleNavigate('portal')}
                 />
 
                 {/* Banner de Advertencia en Modo Local / Offline */}
@@ -867,6 +879,7 @@ export default function App() {
                 setTheme={setTheme}
               />
             </div>
+            )}
           </TooltipProvider>
         </BackgroundTasksProvider>
       </ToastProvider>

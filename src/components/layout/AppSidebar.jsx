@@ -124,7 +124,13 @@ export default function AppSidebar({
           1. HEADER FIJO: LOGO GEA + TOGGLE BUTTON (h-14 = 56px exactos)
           ───────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between h-14 px-3.5 border-b border-[var(--border-subtle)] shrink-0">
-        <GeaLogo collapsed={collapsed} />
+        <div 
+          className="cursor-pointer transition-transform hover:scale-105" 
+          onClick={() => setActiveView && setActiveView('portal')}
+          title="Volver al Selector de Módulos (Inicio)"
+        >
+          <GeaLogo collapsed={collapsed} />
+        </div>
 
         {/* Toggle Collapse Button */}
         <button
