@@ -24,7 +24,7 @@ import {
   ChevronsRight
 } from 'lucide-react';
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
-import { MIN_PERIODO_CORTE, isCampanaProyectada } from '../lib/dashboardAnalytics';
+import { MIN_PERIODO_CORTE, isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
 
 const STATUS_META = {
