@@ -13,6 +13,8 @@ export function inferSegmento(campana) {
   const c = (campana || '').toUpperCase()
   if (c.includes('LIPIGAS')) return 'LIPIGAS'
   if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR')) return 'CLARO CHILE'
+  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) return 'CLARO PERU'
+  if (c.includes('CLARO POSTPAGO')) return 'CLARO PERU'
   if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
   if (c.includes('OUT') || c.includes('UPGRADE')) return 'CLARO PERU OUT'
   return 'CLARO PERU'

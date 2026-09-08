@@ -105,6 +105,8 @@ function PerformanceScorecardIndividual({
     const c = String(camp || '').trim().toUpperCase()
     if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) return 'LIPIGAS'
     if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR') || c.includes('BO TÉCNICO')) return 'CLARO CHILE'
+    if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) return 'CLARO PERU'
+    if (c.includes('CLARO POSTPAGO')) return 'CLARO PERU'
     if (c.includes('RETENCION') || c.includes('CONTENCI') || c.includes('DESCUENTO') || c.includes('CONTACTADOS') || c.includes('BABYSTING')) return 'CLARO PERU RETENCIONES'
     if (c.includes('OUT') || c.includes('UPGRADE') || c.includes('PREVENTIVA') || c.includes('PORTA') || c.includes('RENOVACION') || c.includes('MIGRA') || c.includes('OLAS')) return 'CLARO PERU OUT'
     return 'CLARO PERU'

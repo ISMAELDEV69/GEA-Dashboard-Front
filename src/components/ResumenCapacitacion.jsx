@@ -66,6 +66,25 @@ const normalizeSegmento = (rawSeg, campana) => {
   let s = String(rawSeg || '').trim().toUpperCase();
   const c = String(campana || '').toUpperCase();
 
+  // 1. EXCEPCIÓN CLAVE: "RETENCIONES FIJA INBOUND" y "RETENCIONES FIJA" pertenecen estrictamente a "CLARO PERU"
+  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
+    return 'CLARO PERU';
+  }
+
+  // 2. EXCEPCIÓN CLAVE: Campañas de Claro Postpago (incluido CLARO POSTPAGO - CROSS) pertenecen a "CLARO PERU"
+  if (c.includes('CLARO POSTPAGO')) {
+    return 'CLARO PERU';
+  }
+
+  // 3. Si en la base de datos ya viene explícito CLARO PERU y no es de Chile o Lipigas, respetarlo
+  if (s === 'CLARO PERU' && !c.includes('CHILE') && !c.includes('LIPIGAS') && !c.includes('OUT') && !c.includes('CONTACTADOS') && !c.includes('CONSULTA PREVIA')) {
+    return 'CLARO PERU';
+  }
+  if (s === 'CLARO PERU RETENCIONES') return 'CLARO PERU RETENCIONES';
+  if (s === 'CLARO PERU OUT') return 'CLARO PERU OUT';
+  if (s === 'CLARO CHILE' || s.includes('CHILE')) return 'CLARO CHILE';
+  if (s === 'LIPIGAS' || s.includes('LIPIGAS')) return 'LIPIGAS';
+
   if (s.includes('CHILE') || c.includes('CHILE')) return 'CLARO CHILE';
   if (
     s.includes('RETENCION') || 

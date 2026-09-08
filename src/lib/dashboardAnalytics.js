@@ -1011,8 +1011,14 @@ export function buildResumenMensualCapacitacion(
 
   const norm5Seg = (rawSeg, campana) => {
     let s = String(rawSeg || '').trim().toUpperCase()
+    const c = String(campana || '').toUpperCase()
+    if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
+      return 'CLARO PERU'
+    }
+    if (c.includes('CLARO POSTPAGO')) {
+      return 'CLARO PERU'
+    }
     if (!s || s === 'NULL' || s === 'SIN SEGMENTO' || s === '-') {
-      const c = String(campana || '').toUpperCase()
       if (c.includes('CHILE')) return 'CLARO CHILE'
       if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
       if (c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA OUT') || c.includes('RENO OUT') || c.includes('VENTAS OUT') || c.includes('CROSS') || c.includes('MIGRACIONES')) return 'CLARO PERU OUT'
@@ -1020,7 +1026,7 @@ export function buildResumenMensualCapacitacion(
       return 'CLARO PERU'
     }
     if (s.includes('CHILE')) return 'CLARO CHILE'
-    if (s.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
+    if (s.includes('RETENCION') && !c.includes('RETENCIONES FIJA')) return 'CLARO PERU RETENCIONES'
     if (s.includes('OUT')) return 'CLARO PERU OUT'
     if (s.includes('LIPIGAS')) return 'LIPIGAS'
     return 'CLARO PERU'
