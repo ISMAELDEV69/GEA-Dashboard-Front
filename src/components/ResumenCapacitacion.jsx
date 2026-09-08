@@ -132,7 +132,7 @@ export default function ResumenCapacitacion({
   const maxAutoPeriodo = useMemo(() => getMaxAutoPeriodo(), []);
 
   const [filters, setFilters] = useState({
-    periodo: 'Todos',
+    periodo: '202608',
     semana: 'Todas',
     segmento: 'Todos',
     campana: 'Todas',
@@ -213,7 +213,7 @@ export default function ResumenCapacitacion({
 
   const handleResetFilters = () => {
     setFilters({
-      periodo: 'Todos',
+      periodo: '202608',
       semana: 'Todas',
       segmento: 'Todos',
       campana: 'Todas',
