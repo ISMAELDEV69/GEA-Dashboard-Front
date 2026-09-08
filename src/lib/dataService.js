@@ -1997,7 +1997,7 @@ export function fetchGruposConMetas() {
       const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
         supabase
           .from('capacidad_rys')
-          .select('codigo, periodo, periodo_ingreso_op, semana_label, semana_trabajo, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, area_traslado, campana, segmento, modalidad, sede, rango_horario, fecha_inicio, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
+          .select('codigo, periodo, periodo_ingreso_op, semana_label, semana_trabajo, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, area_traslado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
           .order('codigo'),
         supabase
           .from('grupo_reclutadores')
