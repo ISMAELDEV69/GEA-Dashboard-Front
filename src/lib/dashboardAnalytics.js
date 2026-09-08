@@ -287,6 +287,7 @@ export function buildCampanaEtapaHeatmap(postulantes = [], asistencias = [], cam
       if (!campanaMetasSum.has(cName)) {
         campanaMetasSum.set(cName, { metaDia1: 0, metaOp: 0, metaDia0: 0, countGrupos: 0 })
       }
+      const cm = campanaMetasSum.get(cName)
       const isRqEligible = String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO'
       cm.metaDia1 += Number(g.meta_dia_1) || 0
       cm.metaOp += isRqEligible ? (Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0) : 0
