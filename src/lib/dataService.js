@@ -2104,7 +2104,7 @@ export function fetchGruposConMetas() {
         segmento: g.segmento || '',
         supervisor: '',
         estado: g.estado || '',
-        area_traslado: g.area_traslado || 'RECLUTAMIENTO',
+        area_traslado: g.area_traslado || '',
         condicion: g.condicion || '',
         semana: g.semana_label || '',
         semana_label: g.semana_label || '',
@@ -2119,8 +2119,8 @@ export function fetchGruposConMetas() {
         meta_dia_1: g.meta_dia_1 || 0,
         meta_dia_0_grupal: g.meta_dia_0 || 0,
         meta_dia_1_grupal: g.meta_dia_1 || 0,
-        rq_solicitado: g.rq_solicitado || 0,
-        rq_ftes_solicitado: g.rq_ftes_solicitado || 0,
+        rq_solicitado: (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_solicitado || 0) : 0,
+        rq_ftes_solicitado: (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_ftes_solicitado || 0) : 0,
         reclutadores_metas: reclutadoresConStats,
         sede,
         lista_actual: listaActual,
@@ -5561,8 +5561,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       formador: formador || 'Sin Asignar',
       periodo: (grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '') || (grupoInfo.periodo ? String(grupoInfo.periodo).trim() : ''),
       periodo_ingreso_op: grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '',
-      periodo_inicio: grupoInfo.periodo ? String(grupoInfo.periodo).trim() : '',
-      area_traslado: (area_traslado && String(area_traslado).trim() !== '') ? String(area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO',
+      area_traslado: (area_traslado && String(area_traslado).trim() !== '') ? String(area_traslado).trim().toUpperCase() : (grupoInfo.area_traslado ? String(grupoInfo.area_traslado).trim().toUpperCase() : ''),
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',
       sede: sede || 'LIMA',
@@ -5570,15 +5569,21 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
-      requerimiento: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
-        ? Number(grupoInfo.rq_ftes_solicitado)
-        : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0),
-      rq_solicitado: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
-        ? Number(grupoInfo.rq_ftes_solicitado)
-        : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0),
-      rq_ftes_solicitado: grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
-        ? Number(grupoInfo.rq_ftes_solicitado)
-        : Number(grupoInfo.rq_solicitado || 0),
+      requerimiento: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
+        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+          ? Number(grupoInfo.rq_ftes_solicitado)
+          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0))
+        : 0,
+      rq_solicitado: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
+        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+          ? Number(grupoInfo.rq_ftes_solicitado)
+          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0))
+        : 0,
+      rq_ftes_solicitado: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
+        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+          ? Number(grupoInfo.rq_ftes_solicitado)
+          : Number(grupoInfo.rq_solicitado || 0))
+        : 0,
       total_nomina,
       asistio_dia0,
       asistio_dia1,

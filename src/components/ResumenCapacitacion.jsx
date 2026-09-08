@@ -407,7 +407,7 @@ export default function ResumenCapacitacion({
 
     const totals = filteredData.reduce((acc, curr) => {
       // Regla de Negocio: Solo los grupos de RECLUTAMIENTO representan el requerimiento solicitado (RQ)
-      const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : '';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const rqVal = isRqEligible ? (curr.rq_ftes_solicitado !== undefined && curr.rq_ftes_solicitado !== null
         ? Number(curr.rq_ftes_solicitado)
@@ -456,7 +456,7 @@ export default function ResumenCapacitacion({
       const segKey = normalizeSegmento(d.segmento, d.campana);
       const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() });
 
-      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : '';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const rqVal = isRqEligible ? (d.rq_ftes_solicitado !== undefined && d.rq_ftes_solicitado !== null
         ? Number(d.rq_ftes_solicitado)
@@ -914,7 +914,7 @@ export default function ResumenCapacitacion({
         });
       }
       const item = map.get(fName);
-      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : '';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       if (isRqEligible) {
         item.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
@@ -950,7 +950,7 @@ export default function ResumenCapacitacion({
     filteredData.forEach(g => {
       const mod = String(g.modalidad || '').toUpperCase().includes('REM') ? 'REMOTO' : 'PRESENCIAL';
       const target = map[mod];
-      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : '';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       if (isRqEligible) {
         target.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
@@ -1029,7 +1029,7 @@ export default function ResumenCapacitacion({
   const handleExport = () => {
     if (filteredData.length === 0) return;
     const ws = XLSX.utils.json_to_sheet(filteredData.map(d => {
-      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : '';
       const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const desertores = Math.max(0, (d.asistio_dia1 || 0) - (d.activos_actuales || 0) - (d.ingresos_iop || 0));
       const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
@@ -1825,7 +1825,7 @@ export default function ResumenCapacitacion({
               </thead>
               <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${filters.estado}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
-                  const areaNorm = String(d.area_traslado || 'RECLUTAMIENTO').trim().toUpperCase();
+                  const areaNorm = String(d.area_traslado || '').trim().toUpperCase();
                   const isRqEligible = areaNorm === 'RECLUTAMIENTO';
                   const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
                   const estadoStr = String(d.estado || 'CERRADO').toUpperCase().trim();
@@ -1843,13 +1843,13 @@ export default function ResumenCapacitacion({
                       <td className="py-2.5 px-3 text-[var(--text-secondary)] truncate max-w-[150px]" title={d.campana}>{d.campana}</td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
                         <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                          (d.area_traslado || 'RECLUTAMIENTO') === 'RECLUTAMIENTO'
+                          areaNorm === 'RECLUTAMIENTO'
                             ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                            : (d.area_traslado || '') === 'RECUPERADO'
+                            : areaNorm === 'RECUPERADO'
                             ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                             : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                         }`}>
-                          {d.area_traslado || 'RECLUTAMIENTO'}
+                          {d.area_traslado || 'S/A'}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-center whitespace-nowrap">
