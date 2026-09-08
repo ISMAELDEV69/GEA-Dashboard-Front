@@ -76,16 +76,24 @@ const normalizeSegmento = (rawSeg, campana) => {
     return 'CLARO PERU';
   }
 
-  // 3. Si en la base de datos ya viene explícito CLARO PERU y no es de Chile o Lipigas, respetarlo
-  if (s === 'CLARO PERU' && !c.includes('CHILE') && !c.includes('LIPIGAS') && !c.includes('OUT') && !c.includes('CONTACTADOS') && !c.includes('CONSULTA PREVIA')) {
-    return 'CLARO PERU';
+  // 3. Campañas exclusivas de CLARO CHILE
+  if (c.includes('TUVES') || c.includes('CHILE')) {
+    return 'CLARO CHILE';
   }
+
+  // 4. Campañas exclusivas de LIPIGAS
+  if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) {
+    return 'LIPIGAS';
+  }
+
+  // 5. Si en la base de datos ya viene explícito uno de los 5 segmentos oficiales, respetarlo
+  if (s === 'CLARO PERU') return 'CLARO PERU';
   if (s === 'CLARO PERU RETENCIONES') return 'CLARO PERU RETENCIONES';
   if (s === 'CLARO PERU OUT') return 'CLARO PERU OUT';
   if (s === 'CLARO CHILE' || s.includes('CHILE')) return 'CLARO CHILE';
   if (s === 'LIPIGAS' || s.includes('LIPIGAS')) return 'LIPIGAS';
 
-  if (s.includes('CHILE') || c.includes('CHILE')) return 'CLARO CHILE';
+  // 6. Fallbacks por palabras clave si s viene nulo, vacío o genérico:
   if (
     s.includes('RETENCION') || 
     c.includes('RETENCION') || 
@@ -109,11 +117,11 @@ const normalizeSegmento = (rawSeg, campana) => {
     c.includes('RENO OUT') || 
     c.includes('VENTAS OUT') || 
     c.includes('CROSS') ||
-    c.includes('MIGRACIONES')
+    c.includes('MIGRACIONES') ||
+    c.includes('UPGRADE')
   ) {
     return 'CLARO PERU OUT';
   }
-  if (s.includes('LIPIGAS') || c.includes('LIPIGAS')) return 'LIPIGAS';
   return 'CLARO PERU';
 };
 
@@ -331,6 +339,23 @@ export default function ResumenCapacitacion({
       grupos: Array.from(gruposSet).sort()
     };
   }, [data, capacidadRys, campanasMetas, grupos, filters, showAllPeriodos, maxAutoPeriodo]);
+
+  // Sincronización reactiva de filtros en cascada
+  useEffect(() => {
+    if (filters.campana !== 'Todas' && filters.campana !== 'Todos') {
+      if (filterOptions.campanas && !filterOptions.campanas.includes(filters.campana)) {
+        setFilters(f => ({ ...f, campana: 'Todas', grupo: 'Todos' }));
+      }
+    }
+  }, [filterOptions.campanas, filters.campana]);
+
+  useEffect(() => {
+    if (filters.grupo !== 'Todos') {
+      if (filterOptions.grupos && !filterOptions.grupos.includes(filters.grupo)) {
+        setFilters(f => ({ ...f, grupo: 'Todos' }));
+      }
+    }
+  }, [filterOptions.grupos, filters.grupo]);
 
   // Datos filtrados en caliente con normalización exacta
   const filteredData = useMemo(() => {
@@ -731,48 +756,44 @@ export default function ResumenCapacitacion({
     // Brecha de FTEs en Riesgo frente a la Meta solicitada (FTEs vs FTEs)
     const brechaFtes = Math.max(0, Number((metaRq - iopProyectadoFtes).toFixed(1)));
     const superavitFtes = Math.max(0, Number((iopProyectadoFtes - metaRq).toFixed(1)));
+    const pctCumplimiento = metaRq > 0 ? (iopProyectadoFtes / metaRq) * 100 : 100;
     const hasBrecha = brechaFtes > 0.05;
 
     // Segmentos bajo meta (< 70% de cumplimiento RQ)
     const segBajoMeta = segmentData.filter(s => s.rq > 0 && s.cumplRq < 70);
     const countSegBajoMeta = segBajoMeta.length;
 
-    // Formadores en fuga crítica (> 35% deserción con muestra representativa >= 6 alumnos)
+    // Formadores en fuga crítica (> 35% deserción real sobre alumnos que iniciaron D1 con muestra representativa >= 6)
+    // Se calcula usando las métricas reales y validadas por cohorte protegiendo a quienes graduaron a I-OP o siguen activos
     const formMap = new Map();
     filteredData.forEach(g => {
-      const records = g.asistencias_raw || [];
-      const formador = g.formador || 'SIN FORMADOR';
+      const formador = String(g.formador || 'SIN FORMADOR').trim().toUpperCase();
+      if (!formador || formador === 'SIN FORMADOR' || formador === 'SIN ASIGNAR') return;
       if (!formMap.has(formador)) {
-        formMap.set(formador, { formador, campana: g.campana, docs: new Set(), bajas: new Set() });
+        formMap.set(formador, { formador, campana: g.campana, d1: 0, desertores: 0 });
       }
       const entry = formMap.get(formador);
-      records.forEach(r => {
-        const doc = r.documento || r.postulante_documento;
-        if (!doc) return;
-        const sigla = String(r.sigla || r.sigla_asistencia || '').trim().toUpperCase();
-        const motivo = String(r.motivo_baja || '').trim().toUpperCase();
-        const estado = String(r.estado || '').trim().toUpperCase();
-        const isBajaDia1 = motivo.includes('BAJA DIA 1') || estado.includes('BAJA DIA 1') || sigla === 'BD1' || sigla === 'D1';
-        const hasDescuento = Boolean(r.isDescuento);
-        const isBaja = sigla === 'B' || motivo.includes('BAJA') || estado.includes('BAJA') || estado === 'CESADO' || estado === 'INACTIVO';
+      const d1 = Number(g.asistio_dia1) || 0;
+      const iop = Number(g.ingresos_iop) || 0;
+      const totalActivos = (Number(g.activos_actuales) || 0) + (Number(g.activos_ojt) || 0);
+      const desertoresReg = (Number(g.desertores_ct) || 0) + (Number(g.desertores_ojt) || 0);
+      const desertores = Math.max(desertoresReg, Math.max(0, d1 - totalActivos - iop));
 
-        if (!isBajaDia1) {
-          entry.docs.add(doc);
-          if (isBaja && !hasDescuento) entry.bajas.add(doc);
-        }
-      });
+      entry.d1 += d1;
+      entry.desertores += desertores;
+      if (!entry.campana && g.campana) entry.campana = g.campana;
     });
 
     const formadoresCriticosList = [];
     formMap.forEach((entry, fName) => {
-      if (fName !== 'SIN FORMADOR' && entry.docs.size >= 6) {
-        const pct = (entry.bajas.size / entry.docs.size) * 100;
+      if (entry.d1 >= 6) {
+        const pct = (entry.desertores / entry.d1) * 100;
         if (pct > 35) {
           formadoresCriticosList.push({
             formador: fName,
             campana: entry.campana || 'Sin Campaña',
-            totalAlumnos: entry.docs.size,
-            bajas: entry.bajas.size,
+            totalAlumnos: entry.d1,
+            bajas: entry.desertores,
             pctDesercion: parseFloat(pct.toFixed(1))
           });
         }
@@ -782,8 +803,12 @@ export default function ResumenCapacitacion({
     formadoresCriticosList.sort((a, b) => b.pctDesercion - a.pctDesercion);
     const countFormadoresCriticos = formadoresCriticosList.length;
 
-    const isCritico = hasBrecha || countFormadoresCriticos >= 5;
-    const isObservado = countFormadoresCriticos > 0 || countSegBajoMeta > 0;
+    // Clasificación ejecutiva calibrada:
+    // CRÍTICO: Cobertura < 80% o Brecha severa (> 25 FTEs con < 90% cobertura)
+    // PRECAUCIÓN: Cobertura entre 80% y 94.9% con brecha perceptible (> 5 FTEs) o segmentos críticos
+    // CUBIERTO: Cobertura >= 95% o brecha mínima (<= 5 FTEs)
+    const isCritico = pctCumplimiento < 80 || (brechaFtes > 25 && pctCumplimiento < 90) || countSegBajoMeta >= 2;
+    const isObservado = !isCritico && (pctCumplimiento < 95 && brechaFtes > 5 || countSegBajoMeta > 0);
 
     return {
       brechaFtes,
@@ -793,7 +818,7 @@ export default function ResumenCapacitacion({
       countFormadoresCriticos,
       formadoresCriticosList,
       estadoSemaforo: isCritico ? 'CRÍTICO' : (isObservado ? 'PRECAUCIÓN' : 'CUBIERTO'),
-      isHealthy: !hasBrecha && countFormadoresCriticos === 0
+      isHealthy: !isCritico && !isObservado
     };
   }, [segmentData, filteredData, kpis, kpiProyeccion]);
 
@@ -902,7 +927,7 @@ export default function ResumenCapacitacion({
         value: parseFloat(pctDotacion.toFixed(2)),
         target: 80.00,
         subMetrics: [
-          { label: "RQ FTE's", value: formatNum(rq) },
+          { label: "RQ FTE's", value: formatFte(rq) },
           { label: "Dotación FTE's", value: formatFte(iopFtes) }
         ]
       },
@@ -910,8 +935,8 @@ export default function ResumenCapacitacion({
         value: parseFloat(pctDesercionOJT.toFixed(2)),
         target: 20.00,
         subMetrics: [
-          { label: 'Q Inicia OJT', value: formatNum(qIniciaOjt) },
-          { label: 'DESERTORES_OJT', value: formatNum(desertoresOjt) }
+          { label: 'Q Inicia OJT', value: Number(qIniciaOjt || 0).toLocaleString('es-PE') },
+          { label: 'Desertores OJT', value: Number(desertoresOjt || 0).toLocaleString('es-PE') }
         ]
       }
     };
@@ -1098,7 +1123,7 @@ export default function ResumenCapacitacion({
                 </span>
               </h1>
               <p className="text-xs text-[var(--text-secondary)] font-medium">
-                Auditoría ejecutiva de conversión, retención y cumplimiento de metas operativas (882 cohortes)
+                Auditoría ejecutiva de conversión, retención y cumplimiento de metas operativas ({filteredData.length} {filteredData.length === 1 ? 'cohorte' : 'cohortes'})
               </p>
             </div>
           </div>
@@ -1325,7 +1350,7 @@ export default function ResumenCapacitacion({
                   {kpiAging.avgDays} <span className="text-lg font-bold text-cyan-400">días</span>
                 </span>
                 <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20">
-                  {kpiAging.totalTransito} en aula
+                  {kpiAging.totalTransito} en OJT
                 </span>
               </div>
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
@@ -1345,27 +1370,47 @@ export default function ResumenCapacitacion({
 
             {/* KPI 3: RIESGO DE COBERTURA & BRECHA OPERATIVA */}
             <div className={`relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] ${
-              kpiAlertas.hasBrecha ? 'to-rose-950/20 border-rose-500/25 hover:border-rose-500/50' : 'to-emerald-950/20 border-emerald-500/25 hover:border-emerald-500/50'
+              kpiAlertas.estadoSemaforo === 'CRÍTICO' 
+                ? 'to-rose-950/20 border-rose-500/25 hover:border-rose-500/50' 
+                : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                ? 'to-amber-950/20 border-amber-500/25 hover:border-amber-500/50'
+                : 'to-emerald-950/20 border-emerald-500/25 hover:border-emerald-500/50'
             } p-5 rounded-2xl border shadow-lg group transition-all`}>
               <div className={`absolute top-0 right-0 w-28 h-28 ${
-                kpiAlertas.hasBrecha ? 'bg-rose-500/10 group-hover:bg-rose-500/20' : 'bg-emerald-500/10 group-hover:bg-emerald-500/20'
+                kpiAlertas.estadoSemaforo === 'CRÍTICO' 
+                  ? 'bg-rose-500/10 group-hover:bg-rose-500/20' 
+                  : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                  ? 'bg-amber-500/10 group-hover:bg-amber-500/20'
+                  : 'bg-emerald-500/10 group-hover:bg-emerald-500/20'
               } rounded-full blur-2xl transition-all pointer-events-none`} />
               <div className="flex items-center justify-between mb-3">
                 <span className={`text-[10px] font-black ${
-                  kpiAlertas.hasBrecha ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
+                    ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' 
+                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                    ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
                 } tracking-wider uppercase px-2.5 py-0.5 rounded-md border flex items-center gap-1.5`}>
                   <ShieldAlert className="w-3 h-3" />
                   3 · Riesgo de Cobertura
                 </span>
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  kpiAlertas.hasBrecha ? 'bg-rose-500/10 text-rose-400 animate-pulse' : 'bg-emerald-500/10 text-emerald-400'
+                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
+                    ? 'bg-rose-500/10 text-rose-400 animate-pulse' 
+                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                    ? 'bg-amber-500/10 text-amber-400'
+                    : 'bg-emerald-500/10 text-emerald-400'
                 }`}>
                   <AlertTriangle className="w-4 h-4" />
                 </div>
               </div>
               <div className="flex items-baseline gap-2">
                 <span className={`text-3xl font-black tracking-tight ${
-                  kpiAlertas.hasBrecha ? 'text-rose-400' : 'text-emerald-400'
+                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
+                    ? 'text-rose-400' 
+                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
                 }`}>
                   {kpiAlertas.hasBrecha 
                     ? `-${kpiAlertas.brechaFtes % 1 === 0 ? kpiAlertas.brechaFtes : kpiAlertas.brechaFtes.toFixed(1).replace('.', ',')} FTEs` 
