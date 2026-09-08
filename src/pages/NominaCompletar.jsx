@@ -139,14 +139,13 @@ export default function NominaCompletar({
     if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
     if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
-    // Remove duplicates keeping distinct campaigns/groups
+    // Remove duplicates keeping distinct groups
     const unique = []
     const seen = new Set()
     for (const g of filtered) {
       const cod = String(g.codigo || g.grupo_codigo || '').trim()
-      const key = getGroupItemKey(g)
-      if (cod && !seen.has(key)) {
-        seen.add(key)
+      if (cod && !seen.has(cod)) {
+        seen.add(cod)
         unique.push(g)
       }
     }
@@ -483,14 +482,14 @@ export default function NominaCompletar({
             )}
           </div>
           <select
-            value={bulkGrupo ? (bulkCampana ? `${bulkGrupo}|${bulkCampana}` : bulkGrupo) : ''}
+            value={bulkGrupo || ''}
             onChange={e => {
               const val = e.target.value;
               if (!val) {
                 setBulkGrupo('');
                 return;
               }
-              const match = bulkGruposList.find(g => getGroupItemKey(g) === val || `${g.codigo}|${g.campana}` === val || g.codigo === val);
+              const match = bulkGruposList.find(g => (g.codigo || g.grupo_codigo) === val);
               if (match) {
                 handleSelectGrupoDirect(match);
               } else {
@@ -501,11 +500,11 @@ export default function NominaCompletar({
           >
             <option value="">Seleccione Grupo ({bulkGruposList.length} disponibles)</option>
             {bulkGruposList.map(g => {
-              const key = getGroupItemKey(g)
+              const cod = String(g.codigo || g.grupo_codigo || '').trim()
               const areaBadge = g.area_traslado && g.area_traslado !== 'RECLUTAMIENTO' ? ` [${g.area_traslado}]` : ''
               return (
-                <option key={key} value={key}>
-                  {String(g.codigo || g.grupo_codigo).startsWith('PROY-') ? '—' : String(g.codigo || g.grupo_codigo).replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}{areaBadge}
+                <option key={cod} value={cod}>
+                  {cod.startsWith('PROY-') ? '—' : cod.replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}{areaBadge}
                 </option>
               )
             })}
