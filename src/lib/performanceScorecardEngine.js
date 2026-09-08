@@ -126,6 +126,7 @@ export function normalizarMotivo(motivoCrudo) {
   if (m.includes('PC') || m.includes('EQUIPO')) return 'MANEJO DE PC / EQUIPO'
   if (m.includes('OTRO CALL') || m.includes('USUARIO ACTIVO')) return 'USUARIO ACTIVO OTRO CALL'
   if (m.includes('PERFIL')) return 'PERFIL DEL POSTULANTE'
+  if (m.includes('SOBREDOTAC') || m.includes('SOBREDOTACIÓN')) return 'SOBREDOTACIÓN'
   if (m.includes('BAJA DIA 1') || m.includes('BAJA D1')) return 'BAJA DÍA 1'
   return m
 }

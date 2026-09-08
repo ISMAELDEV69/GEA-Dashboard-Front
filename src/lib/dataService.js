@@ -1997,7 +1997,7 @@ export function fetchGruposConMetas() {
       const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
         supabase
           .from('capacidad_rys')
-          .select('codigo, periodo, semana_label, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
+          .select('codigo, periodo, periodo_ingreso_op, semana_label, semana_trabajo, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, area_traslado, campana, segmento, modalidad, sede, rango_horario, fecha_inicio, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
           .order('codigo'),
         supabase
           .from('grupo_reclutadores')
@@ -2096,17 +2096,27 @@ export function fetchGruposConMetas() {
 
       return {
         grupo_codigo: gCodigo,
+        codigo: gCodigo,
         periodo: g.periodo || '',
+        periodo_ingreso_op: g.periodo_ingreso_op || '',
         campana_nombre: gCampana || 'Sin Campaña',
+        campana: gCampana || 'Sin Campaña',
         segmento: g.segmento || '',
         supervisor: '',
         estado: g.estado || '',
+        area_traslado: g.area_traslado || 'RECLUTAMIENTO',
+        condicion: g.condicion || '',
         semana: g.semana_label || '',
+        semana_label: g.semana_label || '',
+        semana_trabajo: g.semana_trabajo || null,
         modalidad: g.modalidad || '',
         horario: g.rango_horario || '',
-        fecha_inicio: g.fecha_registro || '',
+        fecha_inicio: g.fecha_inicio || g.fecha_registro || '',
+        fecha_registro: g.fecha_registro || '',
         fecha_inicio_ojt: g.fecha_inicio_ojt || '',
         fecha_ingreso_op: g.fecha_ingreso_op || '',
+        meta_dia_0: g.meta_dia_0 || 0,
+        meta_dia_1: g.meta_dia_1 || 0,
         meta_dia_0_grupal: g.meta_dia_0 || 0,
         meta_dia_1_grupal: g.meta_dia_1 || 0,
         rq_solicitado: g.rq_solicitado || 0,
@@ -2314,7 +2324,11 @@ export function fetchMotivosBaja() {
     if (DB_MODE === 'supabase') {
       const { data, error } = await supabase.from('motivos_baja').select('motivo')
       if (error) throw error
-      return data || []
+      const list = data || []
+      if (!list.some(m => String(m.motivo || '').toUpperCase() === 'SOBREDOTACIÓN')) {
+        list.push({ motivo: 'SOBREDOTACIÓN' })
+      }
+      return list
     }
     initLocalStorageDb()
     return getFromStorage('motivos_baja') || []
@@ -2423,7 +2437,7 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, periodo_ingreso_op, segmento, semana_label, semana_trabajo, estado'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap')
     ])
     if (capRes.error) throw capRes.error
@@ -2438,23 +2452,89 @@ export async function fetchDashboardData() {
   return { consolidado: [], capacidades: [], descuentos: [] }
 }
 
-export async function fetchMotivosBajasData() {
-  if (DB_MODE !== 'supabase') return { consolidado: [], capacidades: [], nominas: [] };
+export async function fetchMotivosBajasData(options = {}) {
+  if (DB_MODE !== 'supabase') return { consolidado: [], capacidades: [], nominas: [], postulantes: [] };
 
-  return withCache('all_motivos_bajas', 180000, async () => {
-    const [consData, capRes, nominasRes] = await Promise.all([
-      fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, segmento, semana_label, semana_trabajo'),
-      supabase.from('nominas').select('documento, campana, grupo_codigo, fecha_inicio_capacitacion, estado, activo')
+  return withCache('all_motivos_bajas_v2', 180000, async () => {
+    // 1. Helper para traer nóminas completas con paginación
+    const fetchAllNominasPaginado = async () => {
+      let all = [];
+      let from = 0;
+      const step = 2000;
+      let hasMore = true;
+      while (hasMore) {
+        let { data, error } = await supabase
+          .from('nominas')
+          .select('documento, campana, grupo_codigo, fecha_inicio_capacitacion, estado, activo, celular, celular_referencia, nombres, apellido_paterno, apellido_materno, modalidad')
+          .range(from, from + step - 1);
+
+        if (error) {
+          console.warn('Error fetching nominas con campos completos en fetchMotivosBajasData, intentando select base:', error);
+          const fallback = await supabase
+            .from('nominas')
+            .select('documento, campana, grupo_codigo, fecha_inicio_capacitacion, estado, activo')
+            .range(from, from + step - 1);
+          if (fallback.data) all = all.concat(fallback.data);
+          break;
+        }
+
+        if (data && data.length > 0) {
+          all = all.concat(data);
+          if (data.length < step) hasMore = false;
+          else from += step;
+        } else {
+          hasMore = false;
+        }
+      }
+      return all;
+    };
+
+    // 2. Helper para traer postulantes (directorio maestro de contactos y teléfonos)
+    const fetchAllPostulantesPaginado = async () => {
+      let all = [];
+      try {
+        let from = 0;
+        const step = 2000;
+        let hasMore = true;
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from('postulantes')
+            .select('documento, celular, celular_referencia, nombres, apellido_paterno, apellido_materno')
+            .range(from, from + step - 1);
+
+          if (error) {
+            console.warn('Error fetching postulantes en fetchMotivosBajasData:', error);
+            break;
+          }
+
+          if (data && data.length > 0) {
+            all = all.concat(data);
+            if (data.length < step) hasMore = false;
+            else from += step;
+          } else {
+            hasMore = false;
+          }
+        }
+      } catch (err) {
+        console.warn('Error en fetchAllPostulantesPaginado:', err);
+      }
+      return all;
+    };
+
+    const [consData, capRes, nominasData, postulantesData] = await Promise.all([
+      fetchAllConsolidado(options),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, periodo_ingreso_op, segmento, semana_label, semana_trabajo, estado, modalidad'),
+      fetchAllNominasPaginado(),
+      fetchAllPostulantesPaginado()
     ]);
 
     if (capRes.error) console.warn('Error fetching capacidad_rys in fetchMotivosBajasData:', capRes.error);
-    if (nominasRes.error) console.warn('Error fetching nominas in fetchMotivosBajasData:', nominasRes.error);
 
     return {
       consolidado: consData || [],
       capacidades: capRes.data || [],
-      nominas: nominasRes.data || []
+      nominas: nominasData || [],
+      postulantes: postulantesData || []
     };
   });
 }
@@ -4975,69 +5055,142 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   }
 
   const norm = (val) => String(val || '').trim().toUpperCase();
-  const getBaseCode = (str) => norm(str).replace(/\s*\((SEM|S|SEMANA)\s*\d+.*?\)/i, '').replace(/-(SEM|S)\d+$/i, '').trim();
   const descSet = await getDescuentosSetGlobal();
 
-  const nominasGrouped = new Map();
+  // Helper normalizadores para las 5 Llaves Compuestas
+  const normSem = (val) => {
+    if (!val) return '';
+    const s = String(val).trim().toUpperCase();
+    if (['ALL', 'TODAS', 'TODOS', '-', 'NULL', 'UNDEFINED'].includes(s)) return '';
+    const num = s.replace(/\D/g, '');
+    return num ? `SEM ${parseInt(num, 10)}` : s;
+  };
+
+  const normPer = (val) => {
+    if (!val) return '';
+    const num = String(val).replace(/\D/g, '');
+    return num.length >= 6 ? num.slice(0, 6) : num;
+  };
+
+  const normSeg = (rawSeg, campana) => {
+    let s = String(rawSeg || '').trim().toUpperCase();
+    if (!s || s === 'NULL' || s === 'SIN SEGMENTO' || s === '-') {
+      const c = String(campana || '').toUpperCase();
+      if (c.includes('CHILE')) return 'CLARO CHILE';
+      if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES';
+      if (c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA OUT') || c.includes('RENO OUT') || c.includes('VENTAS OUT') || c.includes('CROSS') || c.includes('MIGRACIONES')) return 'CLARO PERU OUT';
+      if (c.includes('LIPIGAS')) return 'LIPIGAS';
+      return 'CLARO PERU';
+    }
+    if (s.includes('CHILE')) return 'CLARO CHILE';
+    if (s.includes('RETENCION')) return 'CLARO PERU RETENCIONES';
+    if (s.includes('OUT')) return 'CLARO PERU OUT';
+    if (s.includes('LIPIGAS')) return 'LIPIGAS';
+    return 'CLARO PERU';
+  };
+
+  const build5K = (periodo, semana, segmento, campana, grupo) => {
+    const p = normPer(periodo);
+    const s = normSem(semana);
+    const seg = normSeg(segmento, campana);
+    const c = norm(campana);
+    const g = norm(grupo);
+    return `${p}|${s}|${seg}|${c}|${g}`;
+  };
+
+  // Indexación Multi-Nivel (5-Llaves Exactas como Nivel 1)
+  const nominas5K = new Map();
+  const nominasCampCode = new Map();
+  const nominasCode = new Map();
+
   (effPostulantes || []).forEach(n => {
     const code = norm(n.grupo_codigo);
-    const baseCode = getBaseCode(n.grupo_codigo);
     const camp = norm(n.campana);
-    
-    if (camp && code) {
-      const key = `${camp}|${code}`;
-      if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
-      nominasGrouped.get(key).push(n);
-    }
-    if (camp && baseCode && baseCode !== code) {
-      const baseKey = `${camp}|${baseCode}`;
-      if (!nominasGrouped.has(baseKey)) nominasGrouped.set(baseKey, []);
-      nominasGrouped.get(baseKey).push(n);
+    const per = normPer(n.periodo_reclutado || n.periodo);
+    const sem = normSem(n.semana_trabajo || n.semana);
+    const seg = normSeg(n.segmento, n.campana);
+
+    if (code) {
+      if (!nominasCode.has(code)) nominasCode.set(code, []);
+      nominasCode.get(code).push(n);
+
+      if (camp) {
+        const campKey = `${camp}|${code}`;
+        if (!nominasCampCode.has(campKey)) nominasCampCode.set(campKey, []);
+        nominasCampCode.get(campKey).push(n);
+      }
+
+      if (per && sem && camp) {
+        const k5 = build5K(per, sem, seg, camp, code);
+        if (!nominas5K.has(k5)) nominas5K.set(k5, []);
+        nominas5K.get(k5).push(n);
+      }
     }
   });
 
-  const formAsisGrouped = new Map();
+  const formAsis5K = new Map();
+  const formAsisCampCode = new Map();
+  const formAsisCode = new Map();
+
   (effAsistencias || []).forEach(f => {
     const code = norm(f.grupo_codigo || f.codigo_grupo);
-    const baseCode = getBaseCode(f.grupo_codigo || f.codigo_grupo);
     const camp = norm(f.campana);
-    
-    if (camp && code) {
-      const key = `${camp}|${code}`;
-      if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
-      formAsisGrouped.get(key).push(f);
-    }
-    if (camp && baseCode && baseCode !== code) {
-      const baseKey = `${camp}|${baseCode}`;
-      if (!formAsisGrouped.has(baseKey)) formAsisGrouped.set(baseKey, []);
-      formAsisGrouped.get(baseKey).push(f);
+    const per = normPer(f.periodo_ingreso_op || f.periodo);
+    const sem = normSem(f.semana_trabajo || f.semana_label || f.semana);
+    const seg = normSeg(f.segmento, f.campana);
+
+    if (code) {
+      if (!formAsisCode.has(code)) formAsisCode.set(code, []);
+      formAsisCode.get(code).push(f);
+
+      if (camp) {
+        const campKey = `${camp}|${code}`;
+        if (!formAsisCampCode.has(campKey)) formAsisCampCode.set(campKey, []);
+        formAsisCampCode.get(campKey).push(f);
+      }
+
+      if (per && sem && camp) {
+        const k5 = build5K(per, sem, seg, camp, code);
+        if (!formAsis5K.has(k5)) formAsis5K.set(k5, []);
+        formAsis5K.get(k5).push(f);
+      }
     }
   });
 
   const results = [];
+  const processedGroups = new Set();
   for (const grupoInfo of gruposInfo) {
     const { codigo: grupo_codigo, campana, fecha_inicio_ojt, area_traslado } = grupoInfo;
     const cleanCode = norm(grupo_codigo);
-    const baseCode = getBaseCode(grupo_codigo);
     const normCamp = norm(campana);
-    const groupKey = `${normCamp}|${cleanCode}`;
-    const baseGroupKey = `${normCamp}|${baseCode}`;
+    const perVal = normPer(grupoInfo.periodo_ingreso_op || grupoInfo.periodo);
+    const semVal = normSem(grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana);
+    const segVal = normSeg(grupoInfo.segmento, campana);
+
+    const groupDedupKey = `${cleanCode}|${normCamp}|${perVal}|${semVal}`;
+    if (processedGroups.has(groupDedupKey)) continue;
+    processedGroups.add(groupDedupKey);
+
+    const k5 = build5K(perVal, semVal, segVal, normCamp, cleanCode);
+    const campKey = `${normCamp}|${cleanCode}`;
     
-    // Regla de Día 1: Solo los grupos de RECLUTAMIENTO y RECUPERADO suman a Día 1 y Deserción.
-    // Grupos de CAPACITACIÓN y TRASLADOS NO se consideran para la suma de Día 1 (son recapacitaciones/traslados).
-    const areaNorm = norm(area_traslado || 'RECLUTAMIENTO');
-    const isDia1Eligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
-    
-    // Obtener nóminas aislando estrictamente por campaña
-    const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(baseGroupKey)) : null) || 
-                       nominasGrouped.get(groupKey) || [];
+    // Obtener nóminas aislando estrictamente por la jerarquía de 5 llaves compuestas
+    const rawNominas = (perVal && semVal && normCamp && nominas5K.has(k5))
+      ? nominas5K.get(k5)
+      : (normCamp && nominasCampCode.has(campKey))
+      ? nominasCampCode.get(campKey)
+      : (nominasCode.get(cleanCode) || []);
+
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
-    // Obtener asistencias aislando estrictamente por campaña
-    const groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(baseGroupKey)) : null) || 
-                             formAsisGrouped.get(groupKey) || [];
+    // Obtener asistencias aislando estrictamente por la jerarquía de 5 llaves compuestas
+    const groupFormAsisRaw = (perVal && semVal && normCamp && formAsis5K.has(k5))
+      ? formAsis5K.get(k5)
+      : (normCamp && formAsisCampCode.has(campKey))
+      ? formAsisCampCode.get(campKey)
+      : (formAsisCode.get(cleanCode) || []);
 
     const asisByDoc = new Map();
     for (const r of groupFormAsisRaw) {
@@ -5048,16 +5201,21 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Fallback y unificación de postulantes: nóminas válidas + alumnos registrados directamente por el Formador
-    let effectiveCandidates = [...validNominas];
+    // Unificación y deduplicación estricta por documento (DNI) para evitar duplicación de postulantes:
+    const candidateMap = new Map();
+    for (const n of validNominas) {
+      const doc = norm(n.documento);
+      if (doc && !candidateMap.has(doc)) {
+        candidateMap.set(doc, n);
+      }
+    }
+
+    // Incorporar alumnos registrados directamente por el Formador en asistencia que no estén en nómina previa
     if (groupFormAsisRaw.length > 0) {
-      const candidateDocs = new Set(effectiveCandidates.map(c => norm(c.documento)));
-      const seenRawDocs = new Set();
       groupFormAsisRaw.forEach(r => {
         const doc = norm(r.documento || r.postulante_documento);
-        if (doc && !candidateDocs.has(doc) && !seenRawDocs.has(doc)) {
-          seenRawDocs.add(doc);
-          effectiveCandidates.push({
+        if (doc && !candidateMap.has(doc)) {
+          candidateMap.set(doc, {
             documento: doc,
             nombres: r.nombres || '',
             apellido_paterno: r.apellido_paterno || '',
@@ -5070,6 +5228,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       });
     }
 
+    const effectiveCandidates = Array.from(candidateMap.values());
     const total_nomina = effectiveCandidates.length;
 
     let asistio_dia0 = 0;
@@ -5081,6 +5240,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     let ingresos_iop = 0;
     let ingresos_iop_ftes = 0;
     const docs_iop_detalle = [];
+    const asesores_ojt_detalle = [];
 
     const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
     const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
@@ -5102,7 +5262,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         return s === 'I-OP';
       }) || records.find(r => {
         const st = String(r.estado || '').toUpperCase().trim();
-        return st.includes('INGRESO') || st.includes('OP') || st.includes('APROBADO');
+        return st === 'INGRESO A OPERACION' || st === 'I-OP' || st === 'INGRESO';
       });
 
       const tieneIngreso = Boolean(iopRecord);
@@ -5184,16 +5344,16 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         }
       }
 
-      // Día 1 oficial para Capacitación:
-      // Según la regla oficial: SOLO SUMAN los grupos de RECLUTAMIENTO y RECUPERADO.
-      // Los grupos de CAPACITACIÓN y TRASLADOS NO se consideran para la suma al Día 1.
+      // Día 1 oficial: Evalúa asistencia real de los alumnos en aula
       let dia1Asistio = false;
-      if (isDia1Eligible && groupFormAsisRaw.length > 0 && records.length > 0) {
+      if (groupFormAsisRaw.length > 0 && records.length > 0) {
         const hasAttendanceInClass = records.some(r => {
           const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
           return s === 'A' || s === 'FJ' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT' || (s === 'B' && !isBajaDia1);
         });
         dia1Asistio = (hasAttendanceInClass || tieneIngreso) && !isBajaDia1;
+      } else if (n.dia_1 === 'ASISTIO' || n.dia_1 === 'SI' || n.dia_1 === 'OK' || tieneIngreso) {
+        dia1Asistio = !isBajaDia1;
       }
 
       if (dia1Asistio) {
@@ -5204,10 +5364,11 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       let isOjtActive = false;
       let isOjtDesertor = false;
       let isCtDesertor = false;
+      let attendedInOjt = false;
 
-      if (dia1Asistio) {
+      if (dia1Asistio || tieneIngreso) {
         // ¿Llegó a pisar la fase de OJT?
-        const attendedInOjt = records.some(r => {
+        attendedInOjt = records.some(r => {
           const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
           const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
           const rDate = rawDate ? parseFechaAsistencia(rawDate) : null;
@@ -5249,6 +5410,66 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       // Activo Actual en Aula (sigue en aula de teoría, no ha pasado a OJT ni es baja, y grupo sigue abierto)
       if (!isGrupoCerrado && dia1Asistio && !isBajaGeneral && !tieneIngreso && !isOjtActive) {
         activos_actuales++;
+      }
+
+      // Registro de métrica individual por asesor en OJT / Tránsito
+      if (attendedInOjt) {
+        const attendedDates = records
+          .map(r => parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha))
+          .filter(f => /^\d{4}-\d{2}-\d{2}$/.test(f))
+          .sort();
+
+        const ojtDates = records
+          .filter(r => {
+            const sig = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
+            const f = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha);
+            const isDateInOjt = Boolean(fechaOjtTarget && f && f >= fechaOjtTarget);
+            return sig === 'OJT' || sig === 'I-OP' || isDateInOjt;
+          })
+          .map(r => parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha))
+          .filter(f => /^\d{4}-\d{2}-\d{2}$/.test(f))
+          .sort();
+
+        const fechaInicioAsesorOjt = ojtDates[0] || (fechaOjtTarget ? parseFechaAsistencia(fecha_inicio_ojt) : null) || attendedDates[0] || '';
+        let fechaFinAsesorOjt = '';
+
+        if (tieneIngreso) {
+          fechaFinAsesorOjt = (docs_iop_detalle[docs_iop_detalle.length - 1]?.fecha_iop) || ojtDates[ojtDates.length - 1] || attendedDates[attendedDates.length - 1] || '';
+        } else if (isBajaGeneral) {
+          fechaFinAsesorOjt = fechaUltimaBaja || ojtDates[ojtDates.length - 1] || attendedDates[attendedDates.length - 1] || '';
+        } else if (isGrupoCerrado) {
+          fechaFinAsesorOjt = ojtDates[ojtDates.length - 1] || attendedDates[attendedDates.length - 1] || parseFechaAsistencia(grupoInfo.fecha_ingreso_op) || parseFechaAsistencia(grupoInfo.fecha_fin) || '';
+        } else {
+          // Asesor actualmente activo en OJT
+          fechaFinAsesorOjt = new Date().toISOString().slice(0, 10);
+        }
+
+        let dias_ojt = null;
+        if (fechaInicioAsesorOjt && fechaFinAsesorOjt) {
+          const tStart = new Date(fechaInicioAsesorOjt).getTime();
+          const tEnd = new Date(fechaFinAsesorOjt).getTime();
+          if (!isNaN(tStart) && !isNaN(tEnd) && tEnd >= tStart) {
+            dias_ojt = Math.max(1, Math.round((tEnd - tStart) / (1000 * 60 * 60 * 24)));
+          }
+        }
+
+        if (!dias_ojt || dias_ojt <= 0) {
+          const uniqueDays = new Set(ojtDates.length > 0 ? ojtDates : attendedDates).size;
+          dias_ojt = Math.max(1, uniqueDays);
+        }
+
+        asesores_ojt_detalle.push({
+          documento: doc,
+          nombres: `${n.nombres || ''} ${n.apellido_paterno || ''}`.trim(),
+          grupo_codigo,
+          campana,
+          estado_proceso: tieneIngreso ? 'I-OP' : isOjtActive ? 'EN_OJT' : isOjtDesertor ? 'DESERTOR_OJT' : 'EN_AULA',
+          fecha_inicio_ojt: fechaInicioAsesorOjt,
+          fecha_fin_ojt: fechaFinAsesorOjt,
+          dias_ojt,
+          tiene_iop: tieneIngreso,
+          is_activo_ojt: isOjtActive && !tieneIngreso
+        });
       }
     }
 
@@ -5368,6 +5589,9 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       ingresos_iop,
       ingresos_iop_ftes,
       docs_iop_detalle,
+      asesores_ojt_detalle,
+      fecha_inicio_ojt: grupoInfo.fecha_inicio_ojt || '',
+      fecha_ingreso_op: grupoInfo.fecha_ingreso_op || '',
       asistencias_raw: groupFormAsisRaw || []
     });
   }

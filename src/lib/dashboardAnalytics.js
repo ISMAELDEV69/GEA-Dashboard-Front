@@ -117,13 +117,24 @@ export function buildAttendanceIndexes(asistencias = [], postulantes = [], campa
   const bajasDocsSet = new Set()
   const docAttendanceByDate = new Map() // doc -> Map<isoDate, sigla>
 
+  const groupDocOpSet = new Set()
+
   for (let i = 0; i < asistencias.length; i++) {
     const a = asistencias[i]
     const doc = a.postulante_documento || a.documento
     if (!doc) continue
-    const sigla = a.sigla_asistencia
-    if (sigla === 'I-OP') {
+    const sigla = a.sigla_asistencia || a.sigla
+    const estado = a.estado
+    const gRaw = a.grupo_codigo || a.grupo || a.codigo_grupo
+
+    if (sigla === 'I-OP' || estado === 'INGRESO A OPERACION' || estado === 'I-OP') {
       opDocsSet.add(doc)
+      if (gRaw) {
+        const gCode = normalizeGroupCodeExact(gRaw)
+        groupDocOpSet.add(`${gCode}__${doc}`)
+        const base = gCode.replace(/_\d+$/, '')
+        groupDocOpSet.add(`${base}__${doc}`)
+      }
     } else if (sigla === 'B') {
       bajasDocsSet.add(doc)
     }
@@ -170,8 +181,10 @@ export function buildAttendanceIndexes(asistencias = [], postulantes = [], campa
       groupDocsMap.get(baseGroup).add(doc)
     }
 
-    // Si el postulante tiene I-OP confirmado en asistencias o estado EN_OPERACION
-    const isOp = Boolean(opDocsSet.has(doc) || p.estado === 'EN_OPERACION')
+    // Si el postulante tiene I-OP confirmado en la asistencia de este grupo específico
+    const gNorm = normalizeGroupCodeExact(rawGroup)
+    const baseNorm = normalizeGroupCodeExact(baseGroup)
+    const isOp = groupDocOpSet.has(`${gNorm}__${doc}`) || (baseNorm && groupDocOpSet.has(`${baseNorm}__${doc}`))
     if (isOp) {
       // 1. Conteo con colapso de sufijos para Formadores / General
       if (!groupOpsCountMap.has(rawGroup)) groupOpsCountMap.set(rawGroup, new Set())
@@ -858,6 +871,9 @@ export function normalize2026Period(val) {
   const s = String(val).trim()
   if (!s || s === '-' || s === 'NULL' || s === 'undefined') return null
 
+  // Códigos de grupo (ej. GPE-2026047) son identificadores secuenciales, NO periodos mensuales
+  if (s.toUpperCase().startsWith('GPE-') || s.toUpperCase().startsWith('GPE')) return null
+
   let res = null
   // 1. Coincidencia directa con 2026 seguido de 1 o 2 dígitos de mes (ej. 202607, 2026-07, 2026/7, 2026_08)
   const m = s.match(/2026[-_/]?(\d{1,2})/)
@@ -900,9 +916,85 @@ export function normalize2026Period(val) {
   return null
 }
 
+export function getGrupoPeriodo(g) {
+  if (!g) return null
+  // 1. Prioridad: periodo_ingreso_op
+  let per = normalize2026Period(g.periodo_ingreso_op)
+  if (per) return per
+  // 2. Prioridad: fechas operativas (ingreso OP, inicio OJT)
+  const opDate = g.fecha_ingreso_op || g.fecha_inicio_ojt
+  if (opDate) {
+    per = normalize2026Period(opDate)
+    if (per) return per
+  }
+  // 3. Prioridad: semana calendario de trabajo
+  const semStr = g.semana_trabajo || g.semana_label || g.semana
+  if (semStr) {
+    const semNum = parseInt(String(semStr).replace(/\D/g, ''), 10)
+    if (semNum >= 31 && semNum <= 35) return '202608'
+    if (semNum >= 36 && semNum <= 39) return '202609'
+    if (semNum >= 27 && semNum <= 30) return '202607'
+    if (semNum >= 40 && semNum <= 44) return '202610'
+  }
+  // 4. Prioridad: periodo declarado
+  per = normalize2026Period(g.periodo)
+  if (per) return per
+  // 5. Prioridad: fecha inicio o registro
+  const dRaw = g.fecha_inicio || g.fecha_registro
+  if (dRaw) {
+    per = normalize2026Period(dRaw)
+    if (per) return per
+  }
+  return null
+}
+
+export const MIN_PERIODO_CORTE = '202608'
+
+export function isCampanaProyectada(g) {
+  if (!g) return false
+  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
+  return st === 'PROYECTADA' || st === 'PROYECTADO' || st === 'PLANIFICADA' || st === 'PLANIFICADO' ||
+         st === 'PENDIENTE' || st === 'POR_INICIAR' || st.includes('PROYECT') || st.includes('PLANIF')
+}
+
+export function isCampanaOperativa(g) {
+  if (!g) return false
+  if (isCampanaProyectada(g)) return false
+  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
+  return st === 'EN_CURSO' || st === 'ACTIVO' || st === 'ABIERTO' || st === 'CERRADO' || st === 'CERRADA' ||
+         st === 'FINALIZADO' || st === 'FINALIZADA' || st === 'CULMINADO' || st === 'HISTORICO' ||
+         st.includes('CURSO') || st.includes('ACTIVO') || st.includes('CERR') || st.includes('FINAL') || st.includes('CULMIN') ||
+         !st
+}
+
+export function isGrupoActivo(g) {
+  if (!g) return false
+  if (g.is_cerrado) return false
+  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim()
+  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYECT') || st.includes('PLANIF')) return false
+  return st.includes('CURSO') || st.includes('ACT') || (!st.includes('CERR') && !st.includes('FIN') && !st.includes('CULM'))
+}
+
+export function isGrupoCerrado(g) {
+  if (!g) return false
+  if (g.is_cerrado) return true
+  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim()
+  return st.includes('CERR') || st.includes('FIN') || st.includes('CULM')
+}
+
+export function getMaxAutoPeriodo() {
+  const now = new Date()
+  const curYear = now.getFullYear()
+  const curMonth = now.getMonth() + 1
+  return `${curYear}${String(curMonth).padStart(2, '0')}`
+}
+
+
 /**
  * Genera la matriz "Resumen mensual de capacitación en relación a grupo"
- * Limitado estrictamente al año 2026 y deduplicado por DNI/Documento único.
+ * agrupando por cohorte/periodo de ingreso (>= 202608).
+ * Utiliza aislamiento estricto por 5 Llaves Compuestas (Periodo|Semana|Segmento|Campaña|Grupo)
+ * idéntico a ResumenCapacitacion.jsx para garantizar coincidencia exacta al 100%.
  */
 export function buildResumenMensualCapacitacion(
   postulantes = [],
@@ -910,50 +1002,121 @@ export function buildResumenMensualCapacitacion(
   campanasMetas = [],
   indexes = null
 ) {
-  // Indexación estricta de I-OP por grupo y por documento
-  const groupDocOpSet = new Set()
-  const docOpSet = new Set()
+  const norm5Str = (val) => String(val || '').trim().toUpperCase()
 
-  for (let i = 0; i < asistencias.length; i++) {
-    const a = asistencias[i]
-    const doc = a.postulante_documento || a.documento
-    if (!doc) continue
-    const cleanDoc = String(doc).trim().toUpperCase()
-    const sigla = String(a.sigla_asistencia || a.sigla || '').trim().toUpperCase()
+  const norm5Sem = (val) => {
+    if (!val) return ''
+    const s = String(val).trim().toUpperCase()
+    if (['ALL', 'TODAS', 'TODOS', '-', 'NULL', 'UNDEFINED'].includes(s)) return ''
+    const num = s.replace(/\D/g, '')
+    return num ? `SEM ${parseInt(num, 10)}` : s
+  }
 
-    if (sigla === 'I-OP') {
-      docOpSet.add(cleanDoc)
-      if (a.grupo_codigo || a.grupo) {
-        const gCode = normalizeGroupCodeExact(a.grupo_codigo || a.grupo)
-        groupDocOpSet.add(`${gCode}__${cleanDoc}`)
-        const base = gCode.replace(/_\d+$/, '')
-        groupDocOpSet.add(`${base}__${cleanDoc}`)
+  const norm5Per = (val) => {
+    if (!val) return ''
+    const num = String(val).replace(/\D/g, '')
+    return num.length >= 6 ? num.slice(0, 6) : num
+  }
+
+  const norm5Seg = (rawSeg, campana) => {
+    let s = String(rawSeg || '').trim().toUpperCase()
+    if (!s || s === 'NULL' || s === 'SIN SEGMENTO' || s === '-') {
+      const c = String(campana || '').toUpperCase()
+      if (c.includes('CHILE')) return 'CLARO CHILE'
+      if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
+      if (c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA OUT') || c.includes('RENO OUT') || c.includes('VENTAS OUT') || c.includes('CROSS') || c.includes('MIGRACIONES')) return 'CLARO PERU OUT'
+      if (c.includes('LIPIGAS')) return 'LIPIGAS'
+      return 'CLARO PERU'
+    }
+    if (s.includes('CHILE')) return 'CLARO CHILE'
+    if (s.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
+    if (s.includes('OUT')) return 'CLARO PERU OUT'
+    if (s.includes('LIPIGAS')) return 'LIPIGAS'
+    return 'CLARO PERU'
+  }
+
+  const build5K = (periodo, semana, segmento, campana, grupo) => {
+    const p = norm5Per(periodo)
+    const s = norm5Sem(semana)
+    const seg = norm5Seg(segmento, campana)
+    const c = norm5Str(campana)
+    const g = norm5Str(grupo)
+    return `${p}|${s}|${seg}|${c}|${g}`
+  }
+
+  // 0. Conjunto global de I-OP
+  const docOpSet = indexes?.opDocsSet || new Set(
+    (asistencias || []).filter(a => {
+      const s = String(a.sigla || a.sigla_asistencia || '').toUpperCase().trim()
+      const st = String(a.estado || '').toUpperCase().trim()
+      return s === 'I-OP' || st === 'INGRESO A OPERACION' || st === 'I-OP'
+    }).map(a => norm5Str(a.postulante_documento || a.documento))
+  )
+
+  // 1. Indexación Multi-Nivel de Nóminas (5-Llaves Exactas y por Código)
+  const nominas5K = new Map()
+  const nominasCampCode = new Map()
+  const nominasCode = new Map()
+
+  for (let i = 0; i < (postulantes || []).length; i++) {
+    const n = postulantes[i]
+    const code = norm5Str(n.grupo_codigo)
+    const camp = norm5Str(n.campana)
+    const per = norm5Per(n.periodo_reclutado || n.periodo)
+    const sem = norm5Sem(n.semana_trabajo || n.semana)
+    const seg = norm5Seg(n.segmento, n.campana)
+
+    if (code) {
+      if (!nominasCode.has(code)) nominasCode.set(code, [])
+      nominasCode.get(code).push(n)
+
+      if (camp) {
+        const campKey = `${camp}|${code}`
+        if (!nominasCampCode.has(campKey)) nominasCampCode.set(campKey, [])
+        nominasCampCode.get(campKey).push(n)
+      }
+
+      if (per && sem && camp) {
+        const k5 = build5K(per, sem, seg, camp, code)
+        if (!nominas5K.has(k5)) nominas5K.set(k5, [])
+        nominas5K.get(k5).push(n)
       }
     }
   }
 
-  const docAttendanceByDate = indexes?.docAttendanceByDate || new Map()
+  // 2. Indexación Multi-Nivel de Asistencias (5-Llaves Exactas y por Código)
+  const formAsis5K = new Map()
+  const formAsisCampCode = new Map()
+  const formAsisCode = new Map()
 
-  // 1. Mapeo de grupos a periodos 2026
-  const groupPeriodMap = new Map()
-  for (const g of campanasMetas) {
-    const code = g.grupo_codigo || g.codigo
-    const per = normalize2026Period(g.periodo || g.codigo || g.grupo_codigo)
-    if (code && per) {
-      groupPeriodMap.set(code, per)
-      groupPeriodMap.set(normalizeGroupCodeExact(code), per)
-      const base = String(code).replace(/_\d+$/, '')
-      if (!groupPeriodMap.has(base)) groupPeriodMap.set(base, per)
+  for (let i = 0; i < (asistencias || []).length; i++) {
+    const f = asistencias[i]
+    const code = norm5Str(f.grupo_codigo || f.codigo_grupo)
+    const camp = norm5Str(f.campana)
+    const per = norm5Per(f.periodo_ingreso_op || f.periodo)
+    const sem = norm5Sem(f.semana_trabajo || f.semana_label || f.semana)
+    const seg = norm5Seg(f.segmento, f.campana)
+
+    if (code) {
+      if (!formAsisCode.has(code)) formAsisCode.set(code, [])
+      formAsisCode.get(code).push(f)
+
+      if (camp) {
+        const campKey = `${camp}|${code}`
+        if (!formAsisCampCode.has(campKey)) formAsisCampCode.set(campKey, [])
+        formAsisCampCode.get(campKey).push(f)
+      }
+
+      if (per && sem && camp) {
+        const k5 = build5K(per, sem, seg, camp, code)
+        if (!formAsis5K.has(k5)) formAsis5K.set(k5, [])
+        formAsis5K.get(k5).push(f)
+      }
     }
   }
 
-  // 2. Acumuladores por Periodo con Sets de Documentos Únicos
+  // 3. Acumuladores por Periodo
   const periodMap = new Map()
-  const totalNominaDocs = new Set()
-  const totalDia0Docs = new Set()
-  const totalDia1Docs = new Set()
-  const totalIngresosDocs = new Set()
-
   const getOrCreatePeriod = (per) => {
     if (!periodMap.has(per)) {
       periodMap.set(per, {
@@ -962,6 +1125,9 @@ export function buildResumenMensualCapacitacion(
         dia0Docs: new Set(),
         dia1Docs: new Set(),
         ingresosDocs: new Set(),
+        ingresosFtesMap: new Map(),
+        desertoresDocs: new Set(),
+        activosDocs: new Set(),
         metaRqDia1: 0,
         metaRqOp: 0,
       })
@@ -969,104 +1135,195 @@ export function buildResumenMensualCapacitacion(
     return periodMap.get(per)
   }
 
-  // A. Sumar Metas RQ desde campanasMetas (solo 2026)
-  for (const g of campanasMetas) {
-    const rawPer = normalize2026Period(g.periodo || g.codigo || g.grupo_codigo)
-    if (!rawPer || !rawPer.startsWith('2026')) continue
-    const row = getOrCreatePeriod(rawPer)
-    const rq = Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0
-    const cupos = Number(g.cupos || g.meta_apertura) || rq
-    row.metaRqOp += rq
-    row.metaRqDia1 += (cupos > 0 ? cupos : rq)
+  // 4. Iterar sobre todos los grupos operativos con deduplicación exacta
+  const operativeCampanasMetas = (campanasMetas || []).filter(g => !isCampanaProyectada(g))
+  const processedGroups = new Set()
+
+  for (const grupoInfo of operativeCampanasMetas) {
+    const cleanCode = norm5Str(grupoInfo.codigo || grupoInfo.grupo_codigo)
+    const normCamp = norm5Str(grupoInfo.campana)
+    const perVal = norm5Per(grupoInfo.periodo_ingreso_op || grupoInfo.periodo || getGrupoPeriodo(grupoInfo))
+    const semVal = norm5Sem(grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana)
+    const segVal = norm5Seg(grupoInfo.segmento, grupoInfo.campana)
+
+    if (!perVal || perVal < MIN_PERIODO_CORTE) continue
+
+    const groupDedupKey = `${cleanCode}|${normCamp}|${perVal}|${semVal}`
+    if (processedGroups.has(groupDedupKey)) continue
+    processedGroups.add(groupDedupKey)
+
+    const row = getOrCreatePeriod(perVal)
+
+    // Meta Operativa (RQ) en FTEs: SOLO de RECLUTAMIENTO
+    const areaNorm = grupoInfo.area_traslado ? String(grupoInfo.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO'
+    const isRqEligible = areaNorm === 'RECLUTAMIENTO'
+    const rqVal = isRqEligible ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && String(grupoInfo.rq_ftes_solicitado).trim() !== ''
+      ? Number(grupoInfo.rq_ftes_solicitado)
+      : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && String(grupoInfo.rq_solicitado).trim() !== ''
+        ? Number(grupoInfo.rq_solicitado)
+        : Number(grupoInfo.requerimiento || 0))) : 0
+    const cupos = Number(grupoInfo.cupos || grupoInfo.meta_apertura || grupoInfo.meta_dia_1) || (rqVal > 0 ? rqVal : 0)
+
+    row.metaRqOp += rqVal
+    row.metaRqDia1 += (cupos > 0 ? cupos : rqVal)
+
+    // Obtener nóminas y asistencias con coincidencia exacta o por campaña
+    const k5 = build5K(perVal, semVal, segVal, normCamp, cleanCode)
+    const campKey = `${normCamp}|${cleanCode}`
+
+    let rawNominas = (perVal && semVal && normCamp && nominas5K.has(k5)) ? nominas5K.get(k5) : null
+    if (!rawNominas && normCamp && nominasCampCode.has(campKey)) {
+      rawNominas = nominasCampCode.get(campKey)
+    }
+    if (!rawNominas && nominasCode.has(cleanCode)) {
+      const byCode = nominasCode.get(cleanCode) || []
+      const matched = byCode.filter(n => {
+        const nCamp = norm5Str(n.campana)
+        return !nCamp || !normCamp || nameMatches(nCamp, normCamp) || nCamp.includes(normCamp) || normCamp.includes(nCamp)
+      })
+      rawNominas = matched.length > 0 ? matched : byCode
+    }
+    rawNominas = rawNominas || []
+
+    let groupFormAsisRaw = (perVal && semVal && normCamp && formAsis5K.has(k5)) ? formAsis5K.get(k5) : null
+    if (!groupFormAsisRaw && normCamp && formAsisCampCode.has(campKey)) {
+      groupFormAsisRaw = formAsisCampCode.get(campKey)
+    }
+    if (!groupFormAsisRaw && formAsisCode.has(cleanCode)) {
+      const byCode = formAsisCode.get(cleanCode) || []
+      const matched = byCode.filter(f => {
+        const fCamp = norm5Str(f.campana)
+        return !fCamp || !normCamp || nameMatches(fCamp, normCamp) || fCamp.includes(normCamp) || normCamp.includes(fCamp)
+      })
+      groupFormAsisRaw = matched.length > 0 ? matched : byCode
+    }
+    groupFormAsisRaw = groupFormAsisRaw || []
+
+    const asisByDoc = new Map()
+    for (const r of groupFormAsisRaw) {
+      const doc = r.documento || r.postulante_documento
+      if (doc) {
+        const cleanD = norm5Str(doc)
+        if (!asisByDoc.has(cleanD)) asisByDoc.set(cleanD, [])
+        asisByDoc.get(cleanD).push(r)
+      }
+    }
+
+    // Unificación de postulantes por DNI dentro de la cohorte
+    const candidateMap = new Map()
+    for (const n of rawNominas) {
+      const doc = norm5Str(n.documento)
+      if (doc && !candidateMap.has(doc)) {
+        candidateMap.set(doc, n)
+      }
+    }
+
+    // Incorporar alumnos registrados directamente por el Formador en asistencia
+    if (groupFormAsisRaw.length > 0) {
+      groupFormAsisRaw.forEach(r => {
+        const doc = norm5Str(r.documento || r.postulante_documento)
+        if (doc && !candidateMap.has(doc)) {
+          candidateMap.set(doc, {
+            documento: doc,
+            nombres: r.nombres || '',
+            condicion: r.condicion_laboral || r.condicion || grupoInfo.condicion || 'FULL TIME',
+            dia_0: 'ASISTIO',
+            dia_1: 'ASISTIO'
+          })
+        }
+      })
+    }
+
+    // Procesar cada candidato deduplicado del grupo
+    candidateMap.forEach((n, doc) => {
+      row.nominaDocs.add(doc)
+      const records = asisByDoc.get(doc) || []
+
+      // Condición laboral para FTE: FULL TIME = 1.0, PART TIME = 0.5
+      const rawCond = records[0]?.condicion_laboral || records[0]?.condicion || n.condicion || n.condicion_laboral || grupoInfo.condicion || 'FULL TIME'
+      const isPartTime = String(rawCond || '').toUpperCase().includes('PART')
+      const fteWeight = isPartTime ? 0.5 : 1.0
+
+      // Ingreso a Operación: registro formal I-OP o INGRESO A OPERACION en asistencias del grupo
+      const iopRecord = records.find(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+        return s === 'I-OP'
+      }) || records.find(r => {
+        const st = String(r.estado || '').toUpperCase().trim()
+        return st === 'INGRESO A OPERACION' || st === 'I-OP' || st === 'INGRESO'
+      })
+
+      // Asistencia Día 0
+      const d0 = String(n.dia_0 || '').toUpperCase().trim()
+      const hasD0Attendance = records.some(r => {
+        const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
+      })
+
+      // Asistencia Día 1
+      let isBajaDia1Val = false
+      if (records.length > 0) {
+        const lastRecord = records[records.length - 1]
+        const txtMotivo = String(lastRecord.motivo_baja || '').toUpperCase()
+        const txtEstado = String(lastRecord.estado || '').toUpperCase()
+        isBajaDia1Val = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1')
+      }
+
+      const tieneIngreso = Boolean(iopRecord && !isBajaDia1Val)
+
+      if (d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || hasD0Attendance || tieneIngreso) {
+        row.dia0Docs.add(doc)
+      }
+
+      let dia1Asistio = false
+      if (records.length > 0) {
+        const hasAttendanceInClass = records.some(r => {
+          const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+          return s === 'A' || s === 'FJ' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
+        })
+        dia1Asistio = (hasAttendanceInClass || tieneIngreso) && !isBajaDia1Val
+      } else if (n.dia_1 === 'ASISTIO' || n.dia_1 === 'SI' || n.dia_1 === 'OK' || tieneIngreso) {
+        dia1Asistio = !isBajaDia1Val
+      }
+
+      if (dia1Asistio) {
+        row.dia1Docs.add(doc)
+      }
+
+      if (tieneIngreso) {
+        row.ingresosDocs.add(doc)
+        row.ingresosFtesMap.set(doc, fteWeight)
+      } else if (isBajaDia1Val) {
+        row.desertoresDocs.add(doc)
+      } else {
+        row.activosDocs.add(doc)
+      }
+    })
   }
 
-  // B. Procesar Postulantes deduplicando estrictamente por documento único en periodo 2026
-  for (let i = 0; i < postulantes.length; i++) {
-    const p = postulantes[i]
-    const rawDoc = p.documento || p.numero_documento || p.postulante_documento || p.id
-    if (!rawDoc) continue
-    const doc = String(rawDoc).trim().toUpperCase()
-
-    let rawPer = normalize2026Period(p.periodo_reclutado || p.periodo)
-    if (!rawPer && p.grupo_codigo) {
-      rawPer = groupPeriodMap.get(p.grupo_codigo) || groupPeriodMap.get(normalizeGroupCodeExact(p.grupo_codigo)) || normalize2026Period(p.grupo_codigo)
-    }
-    if (!rawPer) {
-      const dRaw = p.fecha_registro || p.marca_temporal || p.created_at
-      if (dRaw) rawPer = normalize2026Period(dRaw)
-    }
-
-    // Filtrar estrictamente solo año 2026
-    if (!rawPer || !rawPer.startsWith('2026')) continue
-
-    const row = getOrCreatePeriod(rawPer)
-    
-    // 1. Nómina Única
-    row.nominaDocs.add(doc)
-    totalNominaDocs.add(doc)
-
-    const docDates = docAttendanceByDate.get(doc)
-
-    // 2. Día 0 Único (asistencia o evaluación aprobada)
-    const isDia0 = 
-      p.dia_0 === 'ASISTIO' || 
-      p.dia_0 === 'SI' || 
-      p.dia_0 === 'OK' || 
-      p.evaluacion_dia_0 === 'APROBADO' || 
-      isDone(p.dia_0_obs) ||
-      (p.dia_0 && !String(p.dia_0).toUpperCase().includes('FALTA') && !String(p.dia_0).toUpperCase().includes('NO'))
-
-    if (isDia0) {
-      row.dia0Docs.add(doc)
-      totalDia0Docs.add(doc)
-    }
-
-    // 3. Día 1 Único (asistencia a día 1 de capacitación formal)
-    const isDia1 = 
-      p.dia_1 === 'ASISTIO' || 
-      p.dia_1 === 'SI' || 
-      p.dia_1 === 'OK' || 
-      (docDates && docDates.size > 0) ||
-      (p.dia_1 && !String(p.dia_1).toUpperCase().includes('FALTA') && !String(p.dia_1).toUpperCase().includes('NO'))
-
-    if (isDia1) {
-      row.dia1Docs.add(doc)
-      totalDia1Docs.add(doc)
-    }
-
-    // 4. Ingresos Únicos (Pase a Operación Canónico)
-    // Requiere haber iniciado Día 1, no ser baja D1, y tener I-OP confirmado en asistencias del grupo
-    const gCode = normalizeGroupCodeExact(p.grupo_codigo)
-    const baseG = gCode.replace(/_\d+$/, '')
-    const hasGroupIop = groupDocOpSet.has(`${gCode}__${doc}`) || (baseG && groupDocOpSet.has(`${baseG}__${doc}`))
-    const hasDirectIop = String(p.sigla || p.sigla_asistencia || '').trim().toUpperCase() === 'I-OP'
-    const isBajaD1 = isBajaDia1(p.dia_1_obs || p.motivo_baja, p.sigla || p.status_dia_1, p)
-    const isBajaCap = isBajaCapacitacion(p)
-
-    const isOp = isDia1 && !isBajaD1 && (hasGroupIop || hasDirectIop || (docOpSet.has(doc) && !isBajaCap))
-
-    if (isOp) {
-      row.ingresosDocs.add(doc)
-      totalIngresosDocs.add(doc)
-    }
-  }
-
-  // 3. Formatear y calcular indicadores para cada periodo con conteos únicos (solo periodos 2026 con actividad real)
+  // 3. Formatear y calcular indicadores para cada periodo activo (solo periodos válidos >= 202608 y <= 202609)
+  const MAX_PERIODO_ACTIVO = '202609'
   const periodEntries = Array.from(periodMap.values())
-    .map(p => ({
-      periodo: p.periodo,
-      nomina: p.nominaDocs.size,
-      dia0: p.dia0Docs.size,
-      dia1: p.dia1Docs.size,
-      ingresos: p.ingresosDocs.size,
-      metaRqDia1: p.metaRqDia1,
-      metaRqOp: p.metaRqOp,
-    }))
-    .filter(p => p.periodo.startsWith('2026') && (p.nomina > 0 || p.dia1 > 0 || p.ingresos > 0))
+    .map(p => {
+      const ingresosFtes = Array.from(p.ingresosFtesMap.values()).reduce((sum, v) => sum + v, 0)
+      return {
+        periodo: p.periodo,
+        nomina: p.nominaDocs.size,
+        dia0: p.dia0Docs.size,
+        dia1: p.dia1Docs.size,
+        ingresos: p.ingresosDocs.size,
+        ingresosFtes,
+        desertores: p.desertoresDocs.size,
+        activos: p.activosDocs.size,
+        metaRqDia1: p.metaRqDia1,
+        metaRqOp: p.metaRqOp,
+      }
+    })
+    .filter(p => p.periodo >= MIN_PERIODO_CORTE && p.periodo <= MAX_PERIODO_ACTIVO && (p.nomina > 0 || p.dia1 > 0 || p.ingresos > 0 || p.metaRqOp > 0))
     .sort((a, b) => a.periodo.localeCompare(b.periodo))
 
   const calculateIndicators = (data) => {
-    const { nomina, dia0, dia1, ingresos, metaRqDia1, metaRqOp } = data
+    const { nomina, dia0, dia1, ingresos, ingresosFtes, desertores, activos, metaRqDia1, metaRqOp } = data
     
     // Indicador 1: % Deserción Nómina = (Nomina - Dia0) / Nomina
     const pctDesercionNomina = nomina > 0 
@@ -1078,7 +1335,7 @@ export function buildResumenMensualCapacitacion(
       ? Math.max(0, Math.min(100, Math.round(((dia0 - dia1) / dia0) * 10000) / 100))
       : 0
 
-    // Indicador 3: % Deserción Global (Ingresos vs Nomina) = (Nomina - Ingresos) / Nomina
+    // Indicador 3: % Deserción Global (Nómina a OP) = (Nomina - Ingresos) / Nomina
     const pctDesercionGlobal = nomina > 0 
       ? Math.max(0, Math.min(100, Math.round(((nomina - ingresos) / nomina) * 10000) / 100))
       : 0
@@ -1094,11 +1351,12 @@ export function buildResumenMensualCapacitacion(
       ? Math.round((dia1 / targetRqDia1) * 10000) / 100
       : 0
 
-    // Indicador 6: % Dotación = Ingresos / Meta RQ Op
-    const targetRqOp = metaRqOp > 0 ? metaRqOp : (dia1 > 0 ? dia1 : nomina)
+    // Indicador 6: % Dotación = Ingresos (en FTEs de todas las áreas) / Meta RQ Op (en FTEs solo de Reclutamiento)
+    const targetRqOp = metaRqOp > 0 ? metaRqOp : 0
+    const totalIngresosFtes = (ingresosFtes !== undefined && ingresosFtes !== null) ? ingresosFtes : ingresos
     const pctDotacion = targetRqOp > 0 
-      ? Math.round((ingresos / targetRqOp) * 10000) / 100
-      : 0
+      ? Math.round((totalIngresosFtes / targetRqOp) * 10000) / 100
+      : (totalIngresosFtes > 0 ? 100 : 0)
 
     return {
       pctDesercionNomina,
@@ -1115,13 +1373,37 @@ export function buildResumenMensualCapacitacion(
     indicators: calculateIndicators(p)
   }))
 
-  // 4. Columna de Total Consolidado Único
+  // 4. Columna de Total Consolidado Único a partir de las columnas mostradas
+  const displayedNominaDocs = new Set()
+  const displayedDia0Docs = new Set()
+  const displayedDia1Docs = new Set()
+  const displayedIngresosDocs = new Set()
+  const displayedIngresosFtesMap = new Map()
+  const displayedDesertoresDocs = new Set()
+  const displayedActivosDocs = new Set()
+
+  for (const p of periodEntries) {
+    const entry = periodMap.get(p.periodo)
+    if (entry) {
+      entry.nominaDocs.forEach(d => displayedNominaDocs.add(d))
+      entry.dia0Docs.forEach(d => displayedDia0Docs.add(d))
+      entry.dia1Docs.forEach(d => displayedDia1Docs.add(d))
+      entry.ingresosDocs.forEach(d => displayedIngresosDocs.add(d))
+      entry.ingresosFtesMap.forEach((v, k) => displayedIngresosFtesMap.set(k, v))
+      entry.desertoresDocs.forEach(d => displayedDesertoresDocs.add(d))
+      entry.activosDocs.forEach(d => displayedActivosDocs.add(d))
+    }
+  }
+
   const totalSummary = {
     periodo: 'Total',
-    nomina: totalNominaDocs.size,
-    dia0: totalDia0Docs.size,
-    dia1: totalDia1Docs.size,
-    ingresos: totalIngresosDocs.size,
+    nomina: displayedNominaDocs.size,
+    dia0: displayedDia0Docs.size,
+    dia1: displayedDia1Docs.size,
+    ingresos: displayedIngresosDocs.size,
+    ingresosFtes: Array.from(displayedIngresosFtesMap.values()).reduce((sum, v) => sum + v, 0),
+    desertores: displayedDesertoresDocs.size,
+    activos: displayedActivosDocs.size,
     metaRqDia1: periodEntries.reduce((acc, p) => acc + p.metaRqDia1, 0),
     metaRqOp: periodEntries.reduce((acc, p) => acc + p.metaRqOp, 0),
   }
@@ -1711,9 +1993,8 @@ export function buildGraficoPersonalizadoData(
       const gCode = normalizeGroupCodeExact(p.grupo_codigo)
       const baseG = gCode.replace(/_\d+$/, '')
       const hasGroupIop = groupDocOpSet.has(`${gCode}__${doc}`) || (baseG && groupDocOpSet.has(`${baseG}__${doc}`))
-      const hasDirectIop = String(p.sigla || p.sigla_asistencia || '').trim().toUpperCase() === 'I-OP'
 
-      const isOp = isDia1 && !isBajaD1 && (hasGroupIop || hasDirectIop || (docOpSet.has(doc) && !isBajaCap))
+      const isOp = isDia1 && !isBajaD1 && !isBajaCap && hasGroupIop
 
       if (isOp) {
         row.ingresosDocs.add(doc)

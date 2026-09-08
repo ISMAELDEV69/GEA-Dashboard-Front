@@ -24,6 +24,7 @@ import {
   ChevronsRight
 } from 'lucide-react';
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
+import { MIN_PERIODO_CORTE, isCampanaProyectada } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
 
 const STATUS_META = {
@@ -522,9 +523,14 @@ export default function ConsolidadoPowerBI() {
 
     for (let i = 0; i < capacidades.length; i++) {
       const item = capacidades[i];
+      if (isCampanaProyectada(item)) continue;
+
       const campana = normalizeCampana(item.campana);
       const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
       const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
+      const rawPeriodo = normalizeText(item.periodo);
+
+      if (rawPeriodo && rawPeriodo < MIN_PERIODO_CORTE) continue;
 
       const capInfo = {
         codigo: gpe,
@@ -533,9 +539,10 @@ export default function ConsolidadoPowerBI() {
         rq_solicitado: Number(item.rq_ftes_solicitado ?? item.rq_solicitado) || 0,
         rq_ftes_solicitado: Number(item.rq_ftes_solicitado) || 0,
         fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
-        periodo: normalizeText(item.periodo),
+        periodo: rawPeriodo,
         semana: semanaStr,
         segmento: normalizeSegmento(item.segmento),
+        estado: normalizeText(item.estado),
       };
 
       if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
@@ -546,26 +553,55 @@ export default function ConsolidadoPowerBI() {
     return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
   }, [capacidades]);
 
-  // Helper robusto para obtener capacidad
+  // Helper robusto para obtener capacidad (estricto por campaña + grupo para evitar cruces indebidos)
   const getCapInfo = useCallback((campana, gpe) => {
     const normCampana = normalizeCampana(campana);
     const normGpe = normalizeGpe(gpe);
-    return capacidadByKeyMap.get(`${normCampana}|${normGpe}`) || capacidadByCodigoMap.get(normGpe) || null;
+    if (normCampana && normCampana !== 'SIN CAMPAÑA' && normGpe) {
+      const exact = capacidadByKeyMap.get(`${normCampana}|${normGpe}`);
+      if (exact) return exact;
+    }
+    // Solo permitir fallback por código de grupo si el registro original no tiene campaña asignada
+    if ((!normCampana || normCampana === 'SIN CAMPAÑA') && normGpe) {
+      return capacidadByCodigoMap.get(normGpe) || null;
+    }
+    return null;
   }, [capacidadByKeyMap, capacidadByCodigoMap]);
 
   // Pre-computar campos normalizados en validData una sola vez (evita cientos de miles de llamadas redundantes)
   const validData = useMemo(() => {
-    const result = new Array(data.length);
+    const result = [];
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const campana = normalizeCampana(row.campana);
       const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
       const cap = getCapInfo(campana, gpe);
 
-      const rowPeriodo = cap?.periodo || normalizeText(row.periodo);
-      const rowSemana = cap?.semana || normalizeSemana(row.semana_label, row.semana_trabajo || row.semana, row.archivo_origen);
+      // 1. Priorizar la semana real del archivo de origen o registro (evita pisar SEM 29 con SEM 36)
+      const originSemana = normalizeSemana(row.archivo_origen, row.semana_label, row.semana_trabajo || row.semana);
+      const rowSemana = originSemana || cap?.semana || '';
+
+      // 2. Respetar la campaña real de asistencia (evita pisar CONTACTADOS con POSTPAGO)
+      const rowCampana = (campana && campana !== 'SIN CAMPAÑA') ? campana : (cap?.campana || campana);
+
+      // 3. Determinar periodo según fecha real de asistencia o metadata de grupo
+      let rowPeriodo = normalizeText(row.periodo);
+      if (!rowPeriodo && row.fecha_registro_asistencia) {
+        const d = parseLocalDate(row.fecha_registro_asistencia);
+        if (d) {
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          rowPeriodo = `${yyyy}${mm}`;
+        }
+      }
+      if (!rowPeriodo) {
+        rowPeriodo = cap?.periodo || '';
+      }
+
+      // Descartar registros con periodos anteriores a 202608
+      if (rowPeriodo && rowPeriodo < MIN_PERIODO_CORTE) continue;
+
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
-      const rowCampana = cap?.campana || campana;
 
       const txtEstado = String(row.estado || '').toUpperCase();
       const txtMotivo = String(row.motivo_baja || '').toUpperCase();
@@ -573,7 +609,7 @@ export default function ConsolidadoPowerBI() {
       
       const isBajaDia1Val = isBajaDia1(txtMotivo, row.sigla, row) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
       
-      result[i] = {
+      result.push({
         ...row,
         _campana: rowCampana,
         _rawCampana: campana,
@@ -583,7 +619,7 @@ export default function ConsolidadoPowerBI() {
         _segmento: rowSegmento,
         isBajaDia1: isBajaDia1Val,
         isDescuento: Boolean(row.isDescuento)
-      };
+      });
     }
     return result;
   }, [data, getCapInfo]);
@@ -603,7 +639,7 @@ export default function ConsolidadoPowerBI() {
 
     for (let i = 0; i < allCapacidadItems.length; i++) {
       const c = allCapacidadItems[i];
-      if (c.periodo) periodos.add(c.periodo);
+      if (c.periodo && c.periodo >= MIN_PERIODO_CORTE) periodos.add(c.periodo);
       if (matchPeriodo(c.periodo)) {
         if (c.semana) semanas.add(c.semana);
         if (matchSemana(c.semana)) {
@@ -618,7 +654,7 @@ export default function ConsolidadoPowerBI() {
 
     for (let i = 0; i < validData.length; i++) {
       const r = validData[i];
-      if (r._periodo) periodos.add(r._periodo);
+      if (r._periodo && r._periodo >= MIN_PERIODO_CORTE) periodos.add(r._periodo);
       if (matchPeriodo(r._periodo)) {
         if (r._semana) semanas.add(r._semana);
         if (matchSemana(r._semana)) {
@@ -640,7 +676,7 @@ export default function ConsolidadoPowerBI() {
     });
 
     return {
-      periodo: ['Todas', ...Array.from(periodos).sort().reverse()],
+      periodo: ['Todas', ...Array.from(periodos).filter(p => p >= MIN_PERIODO_CORTE).sort().reverse()],
       semana: ['Todas', ...sortedSemanas],
       segmento: sortOptions(segmentos),
       campana: sortOptions(campanas),

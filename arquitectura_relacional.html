@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GEA DataCenter — Arquitectura Relacional y Flujo de Negocio</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #0a0f1d;
+      --bg-card: #111827;
+      --border: #1f293d;
+      --accent: #6366f1;
+      --accent-cyan: #06b6d4;
+      --accent-emerald: #10b981;
+      --text-primary: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      padding: 2.5rem 1.5rem;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #818cf8;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 900;
+      letter-spacing: -0.025em;
+      background: linear-gradient(135deg, #fff 30%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+    .section-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+      box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .diagram-container {
+      background: #0d1322;
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 2rem 1rem;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+    .pill-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    .pill-card {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      padding: 1rem 1.25rem;
+      border-radius: 0.85rem;
+    }
+    .pill-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 0.25rem;
+    }
+    .pill-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge">GEA DATACENTER • ARQUITECTURA DE DATOS</div>
+      <h1>Modelo Relacional y Flujo de Negocio</h1>
+      <p class="subtitle">Visualización interactiva: Capacidad (Proyección) ➔ Reclutamiento (Bolsa) ➔ Formación (Asistencias)</p>
+    </header>
+
+    <!-- SECCIÓN 1: MODELO ENTIDAD RELACIÓN -->
+    <div class="section-card">
+      <div class="section-header">
+        <span style="font-size: 1.5rem;">🗄️</span>
+        <div>
+          <h2 class="section-title">1. Diagrama Entidad-Relación (DER Físico)</h2>
+          <p class="pill-desc">Estructura normalizada en Supabase / PostgreSQL con llaves primarias, foráneas y restricciones de unicidad.</p>
+        </div>
+      </div>
+      <div class="diagram-container">
+        <pre class="mermaid">
+erDiagram
+    SEDES {
+        bigint id PK
+        varchar nombre UK "COMAS, ATE, SAN ISIDRO"
+    }
+
+    CAMPANAS {
+        bigint id PK
+        varchar nombre UK "CLARO PERU, PORTABILIDAD"
+        varchar segmento "SIU, RETENCIONES, MOVIL"
+        varchar supervisor
+    }
+
+    RECLUTADORES {
+        bigint id PK
+        varchar nombre_completo UK
+        boolean activo
+    }
+
+    FORMADORES {
+        varchar documento PK "DNI Formador"
+        varchar nombre_completo
+        varchar sede
+        varchar estado "Activo / Cese"
+    }
+
+    MOTIVOS_BAJA {
+        varchar motivo PK "BAJA DIA 1, SALUD, ESTUDIOS"
+        varchar siglas
+        varchar categoria
+    }
+
+    GRUPOS_CAPACITACION {
+        varchar codigo PK "GPE-202609-S36-CLAROPERU"
+        varchar campana
+        varchar segmento
+        varchar sede
+        varchar periodo "202609"
+        integer semana_trabajo "36"
+        varchar semana_label "SEM 36"
+        varchar formador_documento FK
+        integer rq_solicitado "FTEs requeridos"
+        integer meta_dia_0 "Meta Induccion"
+        integer meta_dia_1 "Meta Aula"
+        varchar estado "PLANIFICADO, ACTIVO, CERRADO"
+        date fecha_inicio_teoria
+        date fecha_ingreso_op
+    }
+
+    GRUPOS_DIA1 {
+        varchar grupo_codigo PK,FK
+        varchar campana PK
+        date fecha_dia1
+        varchar estado_calibracion "CALIBRADO / PENDIENTE"
+    }
+
+    POSTULANTES {
+        varchar documento PK "DNI / CE unico"
+        varchar tipo_documento "DNI, CE, PASAPORTE"
+        varchar nombres
+        varchar apellido_paterno
+        varchar apellido_materno
+        varchar celular
+        varchar celular_referencia
+        varchar correo
+        date fecha_nacimiento
+        varchar genero
+        varchar distrito_residencia
+    }
+
+    NOMINAS {
+        uuid id PK
+        varchar documento FK "DNI Postulante"
+        varchar grupo_codigo FK "Codigo GPE"
+        varchar campana
+        bigint reclutador_id FK
+        varchar periodo_reclutado "202609"
+        integer semana_trabajo "36"
+        varchar dia_0 "ASISTIO / FALTA"
+        varchar dia_1 "ASISTIO / FALTA"
+        varchar status_dia_1 "APTO, AGREGADO, RECUPERADO, CESE"
+        varchar estado "ACTIVO / CESADO / EN OPERACIONES"
+        varchar doc_cv "OK / PENDIENTE"
+        varchar doc_dni_adjunto "OK / PENDIENTE"
+        varchar doc_certijoven "OK / PENDIENTE"
+        varchar status_final "COMPLETO / PENDIENTE"
+        numeric remuneracion "Sueldo base"
+        boolean activo "Soft-delete"
+    }
+
+    CONSOLIDADO_ASISTENCIAS {
+        uuid id PK
+        varchar documento FK "DNI Alumno"
+        varchar codigo_grupo FK "Codigo GPE"
+        date fecha_registro_asistencia "YYYY-MM-DD"
+        varchar sigla "A, FI, FJ, B, I-OP"
+        varchar motivo_baja FK "FK a Motivos Baja"
+        varchar tipo_reclutado "APTO, AGREGADO, RECUPERADO"
+        varchar documento_formador FK
+        timestamptz created_at
+    }
+
+    CAMPANAS ||--o{ GRUPOS_CAPACITACION : "define"
+    SEDES ||--o{ GRUPOS_CAPACITACION : "ubica"
+    FORMADORES ||--o{ GRUPOS_CAPACITACION : "asignado_a"
+    GRUPOS_CAPACITACION ||--o| GRUPOS_DIA1 : "calibra"
+
+    POSTULANTES ||--o{ NOMINAS : "participa_en"
+    GRUPOS_CAPACITACION ||--o{ NOMINAS : "contiene_alumnos"
+    RECLUTADORES ||--o{ NOMINAS : "captado_por"
+
+    NOMINAS ||--o{ CONSOLIDADO_ASISTENCIAS : "genera_asistencias"
+    MOTIVOS_BAJA ||--o{ CONSOLIDADO_ASISTENCIAS : "clasifica_baja"
+    FORMADORES ||--o{ CONSOLIDADO_ASISTENCIAS : "registrado_por"
+        </pre>
+      </div>
+
+      <div class="pill-list">
+        <div class="pill-card">
+          <div class="pill-title">🔒 Unicidad en Nómina</div>
+          <div class="pill-desc"><code>UNIQUE(documento, grupo_codigo)</code> impide duplicar postulantes dentro del mismo grupo.</div>
+        </div>
+        <div class="pill-card">
+          <div class="pill-title">⏱️ Idempotencia en Asistencia</div>
+          <div class="pill-desc"><code>UNIQUE(documento, codigo_grupo, fecha)</code> previene doble marcación por fallas de internet.</div>
+        </div>
+        <div class="pill-card">
+          <div class="pill-title">👤 Historial de Reingresos</div>
+          <div class="pill-desc">Un postulante puede reingresar 6 meses después sin alterar su registro previo en la cohorte anterior.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECCIÓN 2: FLUJO DE ESTAFETA (HANDSHAKE) -->
+    <div class="section-card">
+      <div class="section-header">
+        <span style="font-size: 1.5rem;">🔄</span>
+        <div>
+          <h2 class="section-title">2. Flujo Operativo y Pase de Estafeta (Handshake)</h2>
+          <p class="pill-desc">Cómo viajan los datos desde la solicitud de FTEs hasta la graduación a operaciones (I-OP).</p>
+        </div>
+      </div>
+      <div class="diagram-container">
+        <pre class="mermaid">
+flowchart TD
+    subgraph E1 ["1. ETAPA DE PLANIFICACION (Capacidad RYS)"]
+        A["Operaciones solicita FTEs"] --> B["Crear Grupo en grupos_capacitacion<br><b>GPE-202609-S36-CLAROPERU</b>"]
+        B --> C["Asignar Formador, Sede y Metas D0/D1"]
+    end
+
+    subgraph E2 ["2. ETAPA DE RECLUTAMIENTO (Atraccion)"]
+        D["Postulante llena Formulario"] --> E["Registrar en tabla 'postulantes'<br><i>(DNI, Datos personales)</i>"]
+        E --> F["Crear proceso en tabla 'nominas'<br><i>(Asignar al Grupo GPE + Legajo)</i>"]
+        F --> G["Reclutador valida y marca:<br><b>dia_0</b> y <b>dia_1</b>"]
+    end
+
+    subgraph Handshake ["FILTRO DE PASE AL AULA"]
+        G --> H{"dia_1 = 'ASISTIO'<br>o dia_0 = 'ASISTIO'?"}
+    end
+
+    H -- "NO (Falta / Desercion)" --> I["❌ NO ingresa a aula<br><i>Se queda solo en Reclutamiento</i>"]
+    H -- "SI (Presente en Induccion/D1)" --> J["✅ APARECE EN LA LISTA DEL FORMADOR<br><i>(v_alumnos_aula)</i>"]
+
+    subgraph E3 ["3. ETAPA DE FORMACION (Marcacion Diaria)"]
+        J --> K["Formador pasa lista diaria en<br><b>consolidado_asistencias</b>"]
+        K --> L{"Que sigla marco?"}
+        L -- "A / FJ" --> M["Alumno Activo en Formacion"]
+        L -- "FI (Falta Injustificada)" --> N["⚠️ Semaforo Rojo: Alerta de Rescate"]
+        L -- "B (Baja en Aula)" --> O["🔴 Obliga a elegir 'motivo_baja'<br><i>Trigger actualiza nominas a CESADO</i>"]
+        L -- "I-OP" --> P["🎓 Graduado: Ingreso formal a Operacion"]
+    end
+        </pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#0d1322',
+        primaryColor: '#1e1b4b',
+        primaryBorderColor: '#6366f1',
+        primaryTextColor: '#f3f4f6',
+        lineColor: '#818cf8',
+        secondaryColor: '#064e3b',
+        tertiaryColor: '#111827'
+      }
+    });
+  </script>
+</body>
+</html>

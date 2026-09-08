@@ -6,6 +6,13 @@ import {
   invalidateCache 
 } from '../lib/dataService';
 import { 
+  MIN_PERIODO_CORTE, 
+  isCampanaProyectada, 
+  isGrupoActivo, 
+  isGrupoCerrado, 
+  getMaxAutoPeriodo 
+} from '../lib/dashboardAnalytics';
+import { 
   BarChart3, 
   Users, 
   CheckCircle2, 
@@ -55,18 +62,37 @@ import ViewLoadingSkeleton from './ui/ViewLoadingSkeleton';
 // Normalizador seguro de segmentos
 const normalizeSegmento = (rawSeg, campana) => {
   let s = String(rawSeg || '').trim().toUpperCase();
-  if (!s || s === 'NULL' || s === 'SIN SEGMENTO') {
-    const c = String(campana || '').toUpperCase();
-    if (c.includes('CHILE')) return 'CLARO CHILE';
-    if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES';
-    if (c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA OUT') || c.includes('RENO OUT') || c.includes('VENTAS OUT') || c.includes('CROSS')) return 'CLARO PERU OUT';
-    if (c.includes('LIPIGAS')) return 'LIPIGAS';
-    return 'CLARO PERU';
+  const c = String(campana || '').toUpperCase();
+
+  if (s.includes('CHILE') || c.includes('CHILE')) return 'CLARO CHILE';
+  if (
+    s.includes('RETENCION') || 
+    c.includes('RETENCION') || 
+    c.includes('CONTACTADOS') || 
+    c.includes('CONTENCI') || 
+    c.includes('DESCUENTO') || 
+    c.includes('BABYSTING') || 
+    c.includes('CONSULTA PREVIA') || 
+    c.includes('MI CLARO') || 
+    c.includes('ENCUESTAS IZO') ||
+    c.includes('CANAL DIGITAL') ||
+    c.includes('WSP INBOUND')
+  ) {
+    return 'CLARO PERU RETENCIONES';
   }
-  if (s.includes('CHILE')) return 'CLARO CHILE';
-  if (s.includes('RETENCION')) return 'CLARO PERU RETENCIONES';
-  if (s.includes('OUT')) return 'CLARO PERU OUT';
-  if (s.includes('LIPIGAS')) return 'LIPIGAS';
+  if (
+    s.includes('OUT') || 
+    c.includes('OUT') || 
+    c.includes('PREVENTIVA') || 
+    c.includes('PORTA OUT') || 
+    c.includes('RENO OUT') || 
+    c.includes('VENTAS OUT') || 
+    c.includes('CROSS') ||
+    c.includes('MIGRACIONES')
+  ) {
+    return 'CLARO PERU OUT';
+  }
+  if (s.includes('LIPIGAS') || c.includes('LIPIGAS')) return 'LIPIGAS';
   return 'CLARO PERU';
 };
 
@@ -90,9 +116,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const [rankingFormadorFilter, setRankingFormadorFilter] = useState('Todas');
   const [searchQuery, setSearchQuery] = useState('');
   const [showRiskModal, setShowRiskModal] = useState(false);
+  const [showAllPeriodos, setShowAllPeriodos] = useState(false);
+
+  const maxAutoPeriodo = useMemo(() => getMaxAutoPeriodo(), []);
 
   const [filters, setFilters] = useState({
     periodo: 'Todos',
+    semana: 'Todas',
     segmento: 'Todos',
     campana: 'Todas',
     grupo: 'Todos',
@@ -149,9 +179,18 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     return () => window.removeEventListener('gea-global-refresh', handleRefresh);
   }, [loadData]);
 
+  const normSem = (val) => {
+    if (!val) return '';
+    const s = String(val).trim().toUpperCase();
+    if (['ALL', 'TODAS', 'TODOS', '-', 'NULL', 'UNDEFINED'].includes(s)) return '';
+    const num = s.replace(/\D/g, '');
+    return num ? `SEM ${parseInt(num, 10)}` : s;
+  };
+
   // Filtros activos
   const hasActiveFilters = useMemo(() => {
     return filters.periodo !== 'Todos' ||
+      filters.semana !== 'Todas' ||
       filters.segmento !== 'Todos' ||
       filters.campana !== 'Todas' ||
       filters.grupo !== 'Todos' ||
@@ -162,114 +201,148 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const handleResetFilters = () => {
     setFilters({
       periodo: 'Todos',
+      semana: 'Todas',
       segmento: 'Todos',
       campana: 'Todas',
       grupo: 'Todos',
       estado: 'Todos'
     });
     setSearchQuery('');
+    setShowAllPeriodos(false);
   };
 
   // Opciones de filtros cruzados reactivos sobre el conjunto de datos calculado
   const filterOptions = useMemo(() => {
-    const dataset = data.length > 0 ? data : capacidadRys;
+    const dataset = (data.length > 0 ? data : capacidadRys).filter(g => !isCampanaProyectada(g));
     
-    // 1. Periodos (Periodo de Ingreso a Operación)
-    const periodos = new Set(dataset.map(g => {
+    // 1. Periodos (Periodo de Ingreso a Operación >= MIN_PERIODO_CORTE)
+    // Desbloqueo dinámico: estrictamente desde 202608 hasta el periodo actual del sistema (202609)
+    const periodos = new Set();
+    dataset.forEach(g => {
       const pVal = g.periodo_ingreso_op || g.periodo;
-      return pVal ? String(pVal).trim() : null;
-    }).filter(Boolean));
+      const cleanP = pVal ? String(pVal).trim() : null;
+      if (!cleanP || cleanP < MIN_PERIODO_CORTE) return;
+
+      if (showAllPeriodos || cleanP <= maxAutoPeriodo) {
+        periodos.add(cleanP);
+      }
+    });
     
     // Subfiltro por periodo activo
     const subPeriodo = dataset.filter(g => {
       const pVal = g.periodo_ingreso_op || g.periodo;
-      return filters.periodo === 'Todos' || String(pVal || '').trim() === String(filters.periodo || '').trim();
+      const cleanP = pVal ? String(pVal).trim() : null;
+      if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
+      if (!showAllPeriodos && cleanP && cleanP > maxAutoPeriodo) return false;
+      return filters.periodo === 'Todos' || cleanP === String(filters.periodo || '').trim();
     });
 
-    // 2. Segmentos Oficiales (filtrados por periodo activo)
-    const segmentos = new Set(subPeriodo.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
+    // 2. Semanas (filtradas por periodo activo)
+    const semanasSet = new Set();
+    subPeriodo.forEach(g => {
+      const sem = normSem(g.semana || g.semana_label || g.semana_trabajo);
+      if (sem) semanasSet.add(sem);
+    });
+    const semanas = Array.from(semanasSet).sort((a, b) => {
+      const numA = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
+      const numB = parseInt(String(b).replace(/\D/g, ''), 10) || 0;
+      return numA - numB;
+    });
+
+    // Subfiltro por semana activa
+    const subSemana = subPeriodo.filter(g => {
+      if (filters.semana === 'Todas') return true;
+      return normSem(g.semana || g.semana_label || g.semana_trabajo) === normSem(filters.semana);
+    });
+
+    // 3. Segmentos Oficiales (filtrados por periodo y semana activos)
+    const segmentos = new Set(subSemana.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
     
-    // 3. Campañas (filtradas por periodo y segmento activos)
-    const subCampanas = subPeriodo.filter(g => filters.segmento === 'Todos' || normalizeSegmento(g.segmento, g.campana) === filters.segmento);
+    // 4. Campañas (filtradas por periodo, semana, segmento y reactivas al filtro de estado EN CURSO vs CERRADO)
+    const subCampanas = subSemana.filter(g => {
+      if (filters.segmento !== 'Todos' && normalizeSegmento(g.segmento, g.campana) !== filters.segmento) return false;
+
+      const filEstadoNorm = norm(filters.estado);
+      if (filEstadoNorm === 'EN CURSO' || filEstadoNorm === 'ACTIVO') {
+        return isGrupoActivo(g);
+      } else if (filEstadoNorm === 'CERRADO') {
+        return isGrupoCerrado(g);
+      } else if (filEstadoNorm !== 'Todos') {
+        return norm(g.estado) === filEstadoNorm;
+      }
+      // 'Todos': mostrar solo campañas/grupos operativos válidos (activos o cerrados, excluye cancelados/inactivos)
+      return isGrupoActivo(g) || isGrupoCerrado(g);
+    });
     const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
     
-    // 4. Estados del Grupo (extraídos directamente de capacidad / dataset)
-    const estadosSet = new Set();
-    dataset.forEach(g => {
-      const rawEst = g.estado;
-      if (rawEst) {
-        const clean = norm(rawEst);
-        if (clean) estadosSet.add(clean);
-      }
-    });
-    // Garantizar que EN CURSO y CERRADO siempre estén como opciones base
-    estadosSet.add('EN CURSO');
-    estadosSet.add('CERRADO');
-    const orderMap = { 'EN CURSO': 1, 'CERRADO': 2, 'FINALIZADO': 3, 'PLANIFICADO': 4, 'CANCELADO': 5 };
-    const estados = Array.from(estadosSet).sort((a, b) => {
-      const oA = orderMap[a] || 99;
-      const oB = orderMap[b] || 99;
-      if (oA !== oB) return oA - oB;
-      return a.localeCompare(b);
-    });
+    // 5. Estados del Grupo: opciones principales requeridas
+    const estados = ['EN CURSO', 'CERRADO'];
 
-    // 5. Grupos (filtrados por campaña activa y estado)
+    // 6. Grupos (filtrados por campaña activa y estado)
     const subGrupos = subCampanas.filter(g => {
       if (filters.campana !== 'Todas' && norm(g.campana) !== norm(filters.campana)) return false;
-      if (filters.estado !== 'Todos') {
-        const estNorm = norm(g.estado);
-        const filNorm = norm(filters.estado);
-        if (filNorm === 'CERRADO') {
-          return g.is_cerrado || estNorm.includes('CERR') || estNorm.includes('FIN') || estNorm.includes('CULM');
-        } else if (filNorm === 'EN CURSO') {
-          return !g.is_cerrado && (estNorm.includes('CURSO') || estNorm.includes('ACT') || (!estNorm.includes('CERR') && !estNorm.includes('FIN')));
-        } else {
-          return estNorm === filNorm;
-        }
-      }
       return true;
     });
     const gruposSet = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
 
     return {
       periodos: Array.from(periodos).sort().reverse(),
+      semanas,
       segmentos: Array.from(segmentos).sort(),
       campanas: Array.from(campanas).sort(),
       estados,
       grupos: Array.from(gruposSet).sort()
     };
-  }, [data, capacidadRys, filters]);
+  }, [data, capacidadRys, filters, showAllPeriodos, maxAutoPeriodo]);
 
   // Datos filtrados en caliente con normalización exacta
   const filteredData = useMemo(() => {
     return data.filter(d => {
+      // Excluir grupos proyectados fuera de operación
+      if (isCampanaProyectada(d)) return false;
+
       // Filtro Periodo (Periodo de Ingreso a Operación)
       const pVal = d.periodo_ingreso_op || d.periodo;
-      if (filters.periodo !== 'Todos' && String(pVal || '').trim() !== String(filters.periodo || '').trim()) {
+      const cleanP = pVal ? String(pVal).trim() : null;
+      if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
+
+      // Desbloqueo dinámico: solo hasta maxAutoPeriodo cuando showAllPeriodos es false
+      if (!showAllPeriodos && cleanP && cleanP > maxAutoPeriodo) {
         return false;
+      }
+
+      if (filters.periodo !== 'Todos' && cleanP !== String(filters.periodo || '').trim()) {
+        return false;
+      }
+      // Filtro Semana (Normalización estricta numérica / SEM XX)
+      if (filters.semana !== 'Todas') {
+        const semNorm = normSem(d.semana);
+        if (semNorm !== normSem(filters.semana)) {
+          return false;
+        }
       }
       // Filtro Segmento (Normalizado robusto)
       const segNorm = normalizeSegmento(d.segmento, d.campana);
       if (filters.segmento !== 'Todos' && norm(segNorm) !== norm(filters.segmento)) {
         return false;
       }
+      // Filtro Estado del Grupo (EN CURSO vs CERRADO reactivo)
+      if (filters.estado !== 'Todos') {
+        const filNorm = norm(filters.estado);
+        if (filNorm === 'CERRADO') {
+          if (!isGrupoCerrado(d)) return false;
+        } else if (filNorm === 'EN CURSO' || filNorm === 'ACTIVO') {
+          if (!isGrupoActivo(d)) return false;
+        } else {
+          if (norm(d.estado) !== filNorm) return false;
+        }
+      } else {
+        // En 'Todos', asegurar que no se incluyan grupos cancelados o inactivos fantasma
+        if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
+      }
       // Filtro Campaña
       if (filters.campana !== 'Todas' && norm(d.campana) !== norm(filters.campana)) {
         return false;
-      }
-      // Filtro Estado del Grupo (EN CURSO vs CERRADO de capacidad)
-      if (filters.estado !== 'Todos') {
-        const estNorm = norm(d.estado);
-        const filNorm = norm(filters.estado);
-        if (filNorm === 'CERRADO') {
-          const isClosed = d.is_cerrado || estNorm.includes('CERR') || estNorm.includes('FIN') || estNorm.includes('CULM');
-          if (!isClosed) return false;
-        } else if (filNorm === 'EN CURSO') {
-          const isEnCurso = !d.is_cerrado && (estNorm.includes('CURSO') || estNorm.includes('ACT') || (!estNorm.includes('CERR') && !estNorm.includes('FIN')));
-          if (!isEnCurso) return false;
-        } else {
-          if (estNorm !== filNorm) return false;
-        }
       }
       // Filtro Grupo / GPE
       if (filters.grupo !== 'Todos' && norm(d.grupo_codigo) !== norm(filters.grupo)) {
@@ -287,7 +360,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       }
       return true;
     });
-  }, [data, filters, searchQuery]);
+  }, [data, filters, searchQuery, showAllPeriodos, maxAutoPeriodo]);
 
   // Totales Scorecard
   // Totales Scorecard
@@ -314,9 +387,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     const uniqueIopFtes = Array.from(uniqueIopMap.values()).reduce((sum, item) => sum + (Number(item.fte) || 1.0), 0);
 
     const totals = filteredData.reduce((acc, curr) => {
-      // Regla de Negocio Interna: Solo los grupos de RECLUTAMIENTO y RECUPERADO representan el requerimiento solicitado (RQ)
+      // Regla de Negocio: Solo los grupos de RECLUTAMIENTO representan el requerimiento solicitado (RQ)
       const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const rqVal = isRqEligible ? (curr.rq_ftes_solicitado !== undefined && curr.rq_ftes_solicitado !== null
         ? Number(curr.rq_ftes_solicitado)
         : (curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0))) : 0;
@@ -353,19 +426,19 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   // Desglose por Segmento (Tabla y Gráficos)
   const segmentData = useMemo(() => {
     const segMap = {
-      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
-      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
-      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
-      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() },
-      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() }
+      'CLARO PERU': { segmento: 'CLARO PERU', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() },
+      'CLARO PERU RETENCIONES': { segmento: 'CLARO PERU RETENCIONES', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() },
+      'CLARO PERU OUT': { segmento: 'CLARO PERU OUT', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() },
+      'CLARO CHILE': { segmento: 'CLARO CHILE', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() },
+      'LIPIGAS': { segmento: 'LIPIGAS', rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() }
     };
 
     filteredData.forEach(d => {
       const segKey = normalizeSegmento(d.segmento, d.campana);
-      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, iopDocs: new Map() });
+      const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() });
 
       const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const rqVal = isRqEligible ? (d.rq_ftes_solicitado !== undefined && d.rq_ftes_solicitado !== null
         ? Number(d.rq_ftes_solicitado)
         : (d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0))) : 0;
@@ -373,6 +446,9 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       target.reclutados += (d.total_nomina || 0);
       target.d1 += (d.asistio_dia1 || 0);
       target.ojt += (d.activos_ojt || 0);
+      target.desertores_ct += (d.desertores_ct || 0);
+      target.desertores_ojt += (d.desertores_ojt || 0);
+      target.activos_actuales += (d.activos_actuales || 0);
       target.grupos += 1;
 
       // Registrar docs únicos por segmento
@@ -398,7 +474,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       const retOjt = s.d1 > 0 ? ((s.ojt / s.d1) * 100) : 0;
       const convIop = s.d1 > 0 ? ((s.iop / s.d1) * 100) : 0;
       const cumplRq = s.rq > 0 ? ((s.iopFtes / s.rq) * 100) : 0;
-      const desertores = Math.max(0, s.d1 - (s.ojt || 0) - (s.iop || 0));
+      
+      const totalActivos = (s.activos_actuales || 0) + (s.ojt || 0);
+      const desertoresRegistrados = (s.desertores_ct || 0) + (s.desertores_ojt || 0);
+      const desertores = Math.max(desertoresRegistrados, Math.max(0, s.d1 - totalActivos - (s.iop || 0)));
       const pctDesercion = s.d1 > 0 ? ((desertores / s.d1) * 100) : 0;
       const enTransito = Math.max(0, s.ojt - s.iop);
 
@@ -408,7 +487,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         retOjt: parseFloat(retOjt.toFixed(1)),
         convIop: parseFloat(convIop.toFixed(1)),
         cumplRq: parseFloat(cumplRq.toFixed(1)),
-        pctDesercion: parseFloat(pctDesercion.toFixed(1)),
+        pctDesercion: parseFloat(pctDesercion.toFixed(2)),
         desertores,
         enTransito,
         fill: SEGMENTO_COLORS[s.segmento] || '#00E5FF'
@@ -456,39 +535,54 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   // ── 2. KPI SUPERIOR: AGING / ANTIGÜEDAD EN TRÁNSITO ──
   const kpiAging = useMemo(() => {
-    const today = new Date();
     let sumDays = 0;
-    let countTotal = 0;
+    let countAsesores = 0;
     let countEstancados = 0; // > 15 días en OJT sin graduar
 
     filteredData.forEach(d => {
-      const transitoEnGrupo = Math.max(0, (d.activos_ojt || 0) - (d.ingresos_iop || 0));
-      if (transitoEnGrupo > 0) {
-        let diffDays = 7; // tiempo medio estándar por defecto
-        if (d.fecha_inicio_ojt && d.fecha_inicio_ojt !== 'No definida') {
-          const f = new Date(d.fecha_inicio_ojt);
-          if (!isNaN(f.getTime())) {
-            diffDays = Math.max(0, Math.floor((today.getTime() - f.getTime()) / (1000 * 60 * 60 * 24)));
+      // 1. Cálculo a nivel individual de cada asesor en OJT / Tránsito
+      if (d.asesores_ojt_detalle && d.asesores_ojt_detalle.length > 0) {
+        d.asesores_ojt_detalle.forEach(asesor => {
+          const days = Number(asesor.dias_ojt);
+          if (!isNaN(days) && days > 0) {
+            sumDays += days;
+            countAsesores++;
+            // Caso estancado: más de 15 días en OJT sin graduar a I-OP
+            if (days > 15 && asesor.is_activo_ojt) {
+              countEstancados++;
+            }
           }
-        }
-        
-        // Truncar si es periodo histórico cerrado (>60 días)
-        if (diffDays > 60) diffDays = 12;
-
-        sumDays += diffDays * transitoEnGrupo;
-        countTotal += transitoEnGrupo;
-        if (diffDays > 15) {
-          countEstancados += transitoEnGrupo;
+        });
+      } else {
+        // Fallback en caso no haya detalle individual en memoria para este grupo
+        const transitoEnGrupo = Math.max(0, (d.activos_ojt || 0) - (d.ingresos_iop || 0));
+        if (transitoEnGrupo > 0) {
+          let diffDays = 0;
+          if (d.fecha_inicio_ojt && d.fecha_inicio_ojt !== 'No definida') {
+            const f = new Date(d.fecha_inicio_ojt);
+            if (!isNaN(f.getTime())) {
+              diffDays = Math.max(1, Math.floor((Date.now() - f.getTime()) / (1000 * 60 * 60 * 24)));
+            }
+          } else if (d.ultima_fecha_asistencia && d.ultima_fecha_asistencia !== '-') {
+            diffDays = 5;
+          }
+          if (diffDays > 0) {
+            sumDays += diffDays * transitoEnGrupo;
+            countAsesores += transitoEnGrupo;
+            if (diffDays > 15 && !d.is_cerrado) {
+              countEstancados += transitoEnGrupo;
+            }
+          }
         }
       }
     });
 
-    const avgDays = countTotal > 0 ? (sumDays / countTotal).toFixed(1) : '0.0';
+    const avgDays = countAsesores > 0 ? (sumDays / countAsesores).toFixed(1) : '0.0';
     const totalTransito = segmentData.reduce((acc, s) => acc + s.enTransito, 0);
 
     return {
       avgDays,
-      totalTransito,
+      totalTransito: countAsesores > 0 ? countAsesores : totalTransito,
       countEstancados,
       hasAlert: countEstancados > 0
     };
@@ -801,13 +895,19 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         });
       }
       const item = map.get(fName);
-      item.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
+      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      if (isRqEligible) {
+        item.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
+      }
       item.d1 += Number(g.asistio_dia1) || 0;
       item.iop += Number(g.ingresos_iop) || 0;
       item.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
       item.activosOjt += Number(g.activos_ojt) || 0;
       
-      const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
+      const desertoresReg = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
+      const totalActivos = (g.activos_actuales || 0) + (g.activos_ojt || 0);
+      const desert = Math.max(desertoresReg, Math.max(0, (g.asistio_dia1 || 0) - totalActivos - (g.ingresos_iop || 0)));
       item.desertores += desert;
     });
 
@@ -831,11 +931,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     filteredData.forEach(g => {
       const mod = String(g.modalidad || '').toUpperCase().includes('REM') ? 'REMOTO' : 'PRESENCIAL';
       const target = map[mod];
-      target.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
+      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      if (isRqEligible) {
+        target.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
+      }
       target.d1 += Number(g.asistio_dia1) || 0;
       target.iop += Number(g.ingresos_iop) || 0;
       target.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
-      const desert = Math.max(0, (g.asistio_dia1 || 0) - (g.activos_actuales || 0) - (g.ingresos_iop || 0));
+      const desertoresReg = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
+      const totalActivos = (g.activos_actuales || 0) + (g.activos_ojt || 0);
+      const desert = Math.max(desertoresReg, Math.max(0, (g.asistio_dia1 || 0) - totalActivos - (g.ingresos_iop || 0)));
       target.desertores += desert;
     });
 
@@ -904,8 +1010,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
   const handleExport = () => {
     if (filteredData.length === 0) return;
     const ws = XLSX.utils.json_to_sheet(filteredData.map(d => {
+      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : 'RECLUTAMIENTO';
+      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
       const desertores = Math.max(0, (d.asistio_dia1 || 0) - (d.activos_actuales || 0) - (d.ingresos_iop || 0));
-      const req = d.requerimiento || d.rq_solicitado || 0;
+      const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
       const pctCumpl = req > 0 ? `${Math.round(((d.ingresos_iop || 0) / req) * 100)}%` : '0%';
 
       return {
@@ -923,7 +1031,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         'Total Nómina': d.total_nomina,
         'Asistió Día 1 (Efectivo)': d.asistio_dia1,
         'Activos en OJT': d.activos_ojt,
-        'Pases I-OP (Operación)': d.ingresos_iop,
+        'Pases I-OP (Personas)': d.ingresos_iop,
+        'Pases I-OP (FTEs)': d.ingresos_iop_ftes !== undefined ? d.ingresos_iop_ftes : d.ingresos_iop,
         'Activos en Tránsito': Math.max(0, (d.activos_ojt || 0) - (d.ingresos_iop || 0)),
         'Desertores Formación': desertores,
         '% Cumplimiento RQ': pctCumpl
@@ -1007,15 +1116,42 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       {/* ── BARRA DE FILTROS CRUZADOS ── */}
       <div className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
         {/* Periodo */}
-        <div className="flex-1 min-w-[130px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Periodo</label>
+        <div className="flex-1 min-w-[140px]">
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase">Periodo</label>
+            <button
+              type="button"
+              onClick={() => setShowAllPeriodos(v => !v)}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
+                showAllPeriodos 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' 
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-elevated)]'
+              }`}
+              title={showAllPeriodos ? 'Ocultar periodos proyectados lejanos' : 'Desbloquear periodos proyectados lejanos'}
+            >
+              {showAllPeriodos ? '★ Todos' : '+ Proyectados'}
+            </button>
+          </div>
           <select
             value={filters.periodo}
-            onChange={(e) => setFilters(f => ({ ...f, periodo: e.target.value, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
+            onChange={(e) => setFilters(f => ({ ...f, periodo: e.target.value, semana: 'Todas', segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
             className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
           >
             <option value="Todos">Todos los Periodos</option>
             {filterOptions.periodos.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        {/* Semana */}
+        <div className="flex-1 min-w-[120px]">
+          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Semana</label>
+          <select
+            value={filters.semana}
+            onChange={(e) => setFilters(f => ({ ...f, semana: e.target.value, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
+            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
+          >
+            <option value="Todas">Todas las Semanas</option>
+            {filterOptions.semanas.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 
@@ -1034,29 +1170,31 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
         {/* Campaña */}
         <div className="flex-1 min-w-[160px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Campaña</label>
+          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">
+            Campaña {filters.estado === 'EN CURSO' ? '(Activas)' : filters.estado === 'CERRADO' ? '(Cerradas)' : ''}
+          </label>
           <select
             value={filters.campana}
             onChange={(e) => setFilters(f => ({ ...f, campana: e.target.value, grupo: 'Todos' }))}
             className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
           >
-            <option value="Todas">Todas</option>
+            <option value="Todas">Todas las Campañas</option>
             {filterOptions.campanas.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
 
-        {/* Estado del Grupo (Capacidad R&S) */}
+        {/* Estado del Grupo (EN CURSO vs CERRADO) */}
         <div className="flex-1 min-w-[140px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Estado</label>
           <select
             value={filters.estado}
-            onChange={(e) => setFilters(f => ({ ...f, estado: e.target.value, grupo: 'Todos' }))}
+            onChange={(e) => setFilters(f => ({ ...f, estado: e.target.value, campana: 'Todas', grupo: 'Todos' }))}
             className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
           >
-            <option value="Todos">Todos los Estados</option>
+            <option value="Todos">Todos (Activos y Cerrados)</option>
             {filterOptions.estados.map(e => (
               <option key={e} value={e}>
-                {e}
+                {e === 'EN CURSO' ? '🟢 EN CURSO (Activos)' : e === 'CERRADO' ? '⚪ CERRADO' : e}
               </option>
             ))}
           </select>
@@ -1663,12 +1801,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                   <th className="py-3 px-2 text-right">Día 1</th>
                   <th className="py-3 px-2 text-right">OJT</th>
                   <th className="py-3 px-2 text-right">I-OP</th>
+                  <th className="py-3 px-2 text-right text-emerald-400">I-OP (FTE)</th>
                 </tr>
               </thead>
               <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${filters.estado}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
                   const areaNorm = String(d.area_traslado || 'RECLUTAMIENTO').trim().toUpperCase();
-                  const isRqEligible = areaNorm === 'RECLUTAMIENTO' || areaNorm === 'RECUPERADO';
+                  const isRqEligible = areaNorm === 'RECLUTAMIENTO';
                   const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
                   const estadoStr = String(d.estado || 'CERRADO').toUpperCase().trim();
 
@@ -1696,13 +1835,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                       </td>
                       <td className="py-2.5 px-3 text-center whitespace-nowrap">
                         <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                          estadoStr.includes('CURSO')
+                          isGrupoActivo(d)
                             ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                             : estadoStr.includes('PROYEC')
                             ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
                             : 'bg-slate-500/15 text-slate-300 border border-slate-500/30'
                         }`}>
-                          {estadoStr}
+                          {isGrupoActivo(d) ? '🟢 EN CURSO' : isGrupoCerrado(d) ? '⚪ CERRADO' : estadoStr}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-[var(--text-muted)] whitespace-nowrap">{normalizeSegmento(d.segmento, d.campana)}</td>
@@ -1726,12 +1865,17 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
                       <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold">{d.asistio_dia1}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-teal-400 font-bold">{d.activos_ojt}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-amber-400 font-black">{d.ingresos_iop}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-emerald-400 font-black">
+                        {d.ingresos_iop_ftes !== undefined && d.ingresos_iop_ftes !== null
+                          ? (Number.isInteger(d.ingresos_iop_ftes) ? `${d.ingresos_iop_ftes}.0` : d.ingresos_iop_ftes.toFixed(1))
+                          : (d.ingresos_iop ? `${d.ingresos_iop}.0` : '0.0')}
+                      </td>
                     </tr>
                   );
                 })}
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center text-[var(--text-muted)]">
+                    <td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-cyan-400" />
                       <p className="font-bold text-xs">No hay cohortes que coincidan con los filtros seleccionados.</p>
                     </td>

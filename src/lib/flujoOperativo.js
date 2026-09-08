@@ -42,6 +42,7 @@ export const MOTIVOS_BAJA_OPERATIVOS = [
   { motivo: 'DESAPROBADO EN OJT', atribucion: 'CAPACITADOR' },
   { motivo: 'HABILIDAD COMERCIAL', atribucion: 'RECLUTADOR' },
   { motivo: 'HABILIDAD ATC', atribucion: 'RECLUTADOR' },
+  { motivo: 'SOBREDOTACIÓN', atribucion: 'CAPACITADOR' },
 ]
 
 export function atribuirBaja(motivo) {

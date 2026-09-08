@@ -150,6 +150,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
                 <>
                   {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
                   <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
+                  {!motivosBaja.some(m => m.motivo === 'SOBREDOTACIÓN') && (
+                    <option value="SOBREDOTACIÓN" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">SOBREDOTACIÓN</option>
+                  )}
                   {motivosBaja.filter(m => m.motivo !== 'BAJA DIA 1' && m.motivo !== 'OBSERVADO').map(m => (
                     <option key={m.id || m.motivo} value={m.motivo} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
                       {m.motivo}
@@ -442,7 +445,7 @@ export default function AsistenciaForm({
   }, [effectiveGrupoObj, selectedSegmento])
 
   const { isReadOnly, readOnlyReason } = useMemo(() => {
-    if (isSuperAdmin) {
+    if (isSuperAdmin || isFormador) {
       return { isReadOnly: false, readOnlyReason: null }
     }
     if (isReclutador) {
@@ -451,18 +454,8 @@ export default function AsistenciaForm({
         readOnlyReason: 'VISTA_INFORMATIVA_RECLUTAMIENTO'
       }
     }
-    if (isFormador) {
-      // Si ambos segmentos existen y son distintos -> bloqueo por segmento
-      if (userSegmento && grupoSegmento && userSegmento !== grupoSegmento) {
-        return {
-          isReadOnly: true,
-          readOnlyReason: 'SEGMENTO_BLOQUEADO'
-        }
-      }
-      return { isReadOnly: false, readOnlyReason: null }
-    }
     return { isReadOnly: false, readOnlyReason: null }
-  }, [isSuperAdmin, isReclutador, isFormador, userSegmento, grupoSegmento])
+  }, [isSuperAdmin, isReclutador, isFormador])
 
   // Explicit user-driven cascading filter handlers (avoid wiping localStorage restored values on mount)
   const handlePeriodoChange = (val) => {

@@ -175,7 +175,7 @@ export default function ResumenMensualCapacitacion({
           <CardTitle className="text-[11px] font-black tracking-tight flex items-center gap-1.5 text-slate-100 truncate">
             <span>Resumen Mensual de Capacitación en Relación a Grupo</span>
             <Badge variant="outline" className="text-[8px] font-mono py-0 px-1.5 bg-indigo-500/10 text-indigo-300 border-indigo-500/30 shrink-0">
-              {columns.length} {columns.length === 1 ? 'Periodo' : 'Periodos'}
+              {columns.length} {columns.length === 1 ? 'Periodo' : 'Periodos'} (≥ 202608)
             </Badge>
           </CardTitle>
         </div>
@@ -200,7 +200,7 @@ export default function ResumenMensualCapacitacion({
 
       {/* Banner Desplegable de Fórmulas Cyberpunk */}
       {showFormulaTooltip && (
-        <div className="px-3 py-1 bg-slate-950/90 border-b border-indigo-500/20 grid grid-cols-2 md:grid-cols-3 gap-1 text-[9px] font-mono shrink-0 animate-in fade-in duration-150">
+        <div className="px-3 py-1.5 bg-slate-950/90 border-b border-indigo-500/20 grid grid-cols-2 md:grid-cols-3 gap-1.5 text-[9px] font-mono shrink-0 animate-in fade-in duration-150">
           <div className="p-1 rounded bg-slate-900/80 border border-slate-800">
             <span className="text-indigo-400 font-bold">% Deserción Nómina:</span>{' '}
             <span className="text-slate-300">(Nómina - Día 0) / Nómina</span>
@@ -211,19 +211,19 @@ export default function ResumenMensualCapacitacion({
           </div>
           <div className="p-1 rounded bg-slate-900/80 border border-slate-800">
             <span className="text-rose-400 font-bold">% Deserción Global:</span>{' '}
-            <span className="text-slate-300">(Nómina - Ingresos) / Nómina</span>
+            <span className="text-slate-300">(Nómina - Ingresos OP) / Nómina</span>
           </div>
           <div className="p-1 rounded bg-slate-900/80 border border-slate-800">
             <span className="text-purple-400 font-bold">% Deserción D1 vs Ingresos:</span>{' '}
-            <span className="text-slate-300">(Día 1 - Ingresos) / Día 1</span>
+            <span className="text-slate-300">(Día 1 - Ingresos OP) / Día 1</span>
           </div>
           <div className="p-1 rounded bg-slate-900/80 border border-slate-800">
             <span className="text-cyan-400 font-bold">% Cumplimiento Día 1:</span>{' '}
-            <span className="text-slate-300">Día 1 Real / Meta RQ Día 1</span>
+            <span className="text-slate-300">Día 1 Real / Meta RQ Día 1 (Cupos)</span>
           </div>
           <div className="p-1 rounded bg-slate-900/80 border border-slate-800">
-            <span className="text-emerald-400 font-bold">% Dotación:</span>{' '}
-            <span className="text-slate-300">Ingresos Reales / Meta RQ OP</span>
+            <span className="text-emerald-400 font-bold">% Dotación (FTEs):</span>{' '}
+            <span className="text-slate-300">Ingresos Reales (FTEs) / Meta RQ OP (FTEs)</span>
           </div>
         </div>
       )}
@@ -237,8 +237,8 @@ export default function ResumenMensualCapacitacion({
               <tr className="bg-slate-950/80 border-b border-slate-800 text-[9.5px] font-extrabold text-slate-300 uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md">
                 <th className="py-1 px-2.5 sticky left-0 z-30 bg-slate-950/95 backdrop-blur-md border-r border-slate-800 min-w-[195px] text-slate-100">
                   <div className="flex items-center justify-between">
-                    <span>Periodo Ingreso</span>
-                    <span className="text-[8px] font-normal text-slate-500 lowercase font-mono">cohorte</span>
+                    <span>Periodo / Cohorte</span>
+                    <span className="text-[8px] font-normal text-slate-500 lowercase font-mono">≥ 202608</span>
                   </div>
                 </th>
                 {columns.map((col) => (
@@ -547,9 +547,12 @@ export default function ResumenMensualCapacitacion({
                   {/* 6. % Dotación */}
                   <tr className="hover:bg-slate-800/40 transition-colors bg-emerald-500/[0.03] border-b border-indigo-500/20">
                     <td className="py-0.5 px-2.5 font-black text-[10.5px] text-emerald-300 sticky left-0 bg-slate-900/95 backdrop-blur-md border-r border-slate-800">
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 size={10} className="text-emerald-400" />
-                        <span>% Dotación</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 size={10} className="text-emerald-400" />
+                          <span>% Dotación</span>
+                        </div>
+                        <span className="text-[8px] font-mono px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">FTE</span>
                       </div>
                     </td>
                     {columns.map((col, idx) => (

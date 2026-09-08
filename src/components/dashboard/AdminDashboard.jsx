@@ -5,7 +5,8 @@ import {
   Filter, RotateCcw, Layers, Clock, Calendar, Briefcase, Building2, UserCheck, CheckCircle2
 } from 'lucide-react'
 import {
-  computeGlobalMetrics, buildConsolidadoFunnel, nameMatches, buildAttendanceIndexes, buildCampanaEtapaHeatmap, buildResumenMensualCapacitacion, getExactGrupoMetasOps, computePeriodVariance
+  computeGlobalMetrics, buildConsolidadoFunnel, nameMatches, buildAttendanceIndexes, buildCampanaEtapaHeatmap, buildResumenMensualCapacitacion, getExactGrupoMetasOps, computePeriodVariance,
+  MIN_PERIODO_CORTE, isCampanaOperativa, isCampanaProyectada, getGrupoPeriodo, normalize2026Period
 } from '../../lib/dashboardAnalytics'
 import ResumenMensualCapacitacion from './ResumenMensualCapacitacion'
 import GraficoPersonalizadoBI from './GraficoPersonalizadoBI'
@@ -28,14 +29,16 @@ export function normalizeEstado(val) {
   return String(val).toUpperCase().trim().replace(/[\s_-]+/g, '_')
 }
 
-export function isGrupoVigente(g) {
-  const st = normalizeEstado(g?.estado)
-  return st === 'ACTIVO' || st === 'EN_CURSO' || st === 'ABIERTO' || st.includes('ACTIVO') || st.includes('CURSO')
+function isGrupoVigente(g) {
+  if (!g) return false
+  if (g.is_cerrado) return false
+  const st = normalizeEstado(g.estado || g.estado_grupo)
+  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYECT') || st.includes('PLANIF')) return false
+  return st.includes('CURSO') || st.includes('ACT') || (!st.includes('CERR') && !st.includes('FIN') && !st.includes('CULM'))
 }
 
 export function isGrupoPlanificado(g) {
-  const st = normalizeEstado(g?.estado)
-  return st === 'PLANIFICADO' || st.includes('PLANIF')
+  return isCampanaProyectada(g)
 }
 
 const normStr = (s) => String(s || '').trim().toUpperCase()
@@ -126,8 +129,7 @@ function getHeatmapColor(pct) {
   return { bg, text, subText }
 }
 
-// ── Componente KPI de Alto Impacto Visual Ultra-Compacto con Varianza ──
-function ModernKpiCard({ 
+const ModernKpiCard = memo(function ModernKpiCard({ 
   label, 
   value, 
   sub, 
@@ -135,18 +137,18 @@ function ModernKpiCard({
   badge, 
   badgeColor, 
   accentColor = '#6366f1',
-  gradientFrom = 'rgba(99, 102, 241, 0.16)',
-  delta = null
+  gradientFrom = 'rgba(99, 102, 241, 0.15)',
+  delta = null 
 }) {
   return (
     <div 
-      className="group relative overflow-hidden rounded-xl border border-slate-800/90 bg-slate-900/80 px-2.5 py-1.5 transition-all duration-200 hover:border-slate-700 hover:shadow-lg hover:shadow-cyan-950/20 flex flex-col justify-between backdrop-blur-md"
+      className="relative overflow-hidden rounded-xl border border-slate-800/80 bg-slate-900/90 p-2 sm:p-2.5 transition-all duration-200 hover:border-slate-700/80 hover:shadow-md group backdrop-blur-md"
       style={{
-        background: `radial-gradient(circle at top right, ${gradientFrom}, transparent 75%), rgba(15, 23, 42, 0.85)`
+        background: `linear-gradient(135deg, ${gradientFrom} 0%, rgba(15, 23, 42, 0.8) 100%)`
       }}
     >
       <div 
-        className="absolute top-0 left-0 right-0 h-[2px] opacity-75 transition-opacity duration-200 group-hover:opacity-100"
+        className="absolute top-0 left-0 right-0 h-[2px] opacity-70 group-hover:opacity-100 transition-opacity"
         style={{
           background: `linear-gradient(90deg, transparent, ${accentColor}, transparent)`
         }}
@@ -169,7 +171,7 @@ function ModernKpiCard({
           </span>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {delta && !delta.isNeutral && (
             <span 
               className={`inline-flex items-center gap-0.5 px-1 py-0 text-[7.5px] font-black border rounded-sm tracking-tight ${
@@ -213,7 +215,7 @@ function ModernKpiCard({
       </div>
     </div>
   )
-}
+})
 
 const HeatmapCell = memo(function HeatmapCell({ 
   pct, 
@@ -261,25 +263,71 @@ function AdminDashboard({
   userProfile = null,
   reclutadores = []
 }) {
+  // ── Fusión Unificada de Metadatos de Grupos (capacidad_rys + metas_rys) ──
+  const allGroups = useMemo(() => {
+    const map = new Map()
+    // 1. Registrar todos los grupos de capacidad_rys (campanasMetas) con clave compuesta única
+    for (const g of (campanasMetas || [])) {
+      const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase()
+      const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
+      const per = String(g.periodo || g.periodo_ingreso_op || '').trim()
+      const sem = String(g.semana_trabajo || g.semana_label || g.semana || '').trim()
+      const key = g.id || `${camp}|${per}|${sem}|${code}`
+      map.set(key, g)
+    }
+    // 2. Enriquecer con propiedades de grupos (grupos_dia1 / enriched)
+    for (const g of (grupos || [])) {
+      const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase()
+      const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
+      const per = String(g.periodo || g.periodo_ingreso_op || '').trim()
+      const sem = String(g.semana_trabajo || g.semana_label || g.semana || '').trim()
+      const key = g.id || `${camp}|${per}|${sem}|${code}`
+
+      if (map.has(key)) {
+        map.set(key, { ...g, ...map.get(key) })
+      } else {
+        let found = false
+        for (const [k, existing] of map.entries()) {
+          const exCode = String(existing.codigo || existing.grupo_codigo || '').trim().toUpperCase()
+          const exCamp = String(existing.campana || existing.campana_nombre || '').trim().toUpperCase()
+          if (exCode === code && (exCamp === camp || !camp || !exCamp)) {
+            map.set(k, { ...g, ...existing })
+            found = true
+            break
+          }
+        }
+        if (!found) {
+          map.set(key, g)
+        }
+      }
+    }
+    return Array.from(map.values())
+  }, [campanasMetas, grupos])
+
   // ── Mapeo de Metadata de Grupos (Hash Map O(1)) ──
   const groupMetaMap = useMemo(() => {
     const map = new Map()
-    for (const g of (campanasMetas || [])) {
-      const code = g.grupo_codigo || g.codigo
+    for (const g of allGroups) {
+      const code = String(g.grupo_codigo || g.codigo || '').trim().toUpperCase()
+      const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
       if (code) {
-        map.set(code, g)
-        const base = String(code).replace(/_\d+$/, '')
-        if (!map.has(base)) map.set(base, g)
+        if (camp) {
+          map.set(`${camp}|${code}`, g)
+        }
+        if (!map.has(code)) {
+          map.set(code, g)
+        }
+        const base = code.replace(/_\d+$/, '')
+        if (base && !map.has(base)) map.set(base, g)
       }
     }
     return map
-  }, [campanasMetas])
+  }, [allGroups])
 
   // ── Estados de Filtros (Llave Maestra Multidireccional) ──
   const [selectedSegmento, setSelectedSegmento] = useState('ALL')
   const [selectedCampana, setSelectedCampana] = useState('ALL')
   const [selectedGrupo, setSelectedGrupo] = useState('ALL')
-  const [selectedPeriodo, setSelectedPeriodo] = useState('ALL')
   const [selectedSemana, setSelectedSemana] = useState('ALL')
   const [selectedReclutador, setSelectedReclutador] = useState('ALL')
 
@@ -287,17 +335,21 @@ function AdminDashboard({
     segmento: selectedSegmento,
     campana: selectedCampana,
     grupo: selectedGrupo,
-    periodo: selectedPeriodo,
     semana: selectedSemana,
     reclutador: selectedReclutador
-  }), [selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, selectedReclutador])
+  }), [selectedSegmento, selectedCampana, selectedGrupo, selectedSemana, selectedReclutador])
 
   // ── Motor Cross-Filtering Multidireccional (Power BI / Excel) ──
   const filterExcluding = (excludeKey = null) => {
-    const { segmento, campana, grupo, periodo, semana, reclutador } = selectedFilters
+    const { segmento, campana, grupo, semana, reclutador } = selectedFilters
 
     const filteredP = postulantes.filter(p => {
       const g = groupMetaMap.get(p.grupo_codigo)
+
+      // 1. Excluir si pertenece a una campaña/grupo proyectado o con periodo previo a 202608
+      if (g && isCampanaProyectada(g)) return false
+      const perVal = normalize2026Period(p.periodo_reclutado) || (g ? getGrupoPeriodo(g) : null) || normalize2026Period(p.periodo)
+      if (perVal && perVal < MIN_PERIODO_CORTE) return false
 
       if (excludeKey !== 'segmento' && segmento !== 'ALL') {
         const seg = p.segmento || g?.segmento
@@ -313,11 +365,6 @@ function AdminDashboard({
         if (!matchGrp(p.grupo_codigo, grupo)) return false
       }
 
-      if (excludeKey !== 'periodo' && periodo !== 'ALL') {
-        const per = p.periodo_reclutado || g?.periodo
-        if (!matchStr(per, periodo)) return false
-      }
-
       if (excludeKey !== 'semana' && semana !== 'ALL') {
         const sem = p.semana_trabajo || g?.semana_label || g?.semana
         if (!matchSemana(sem, semana)) return false
@@ -330,7 +377,12 @@ function AdminDashboard({
       return true
     })
 
-    const filteredC = campanasMetas.filter(g => {
+    const filteredC = allGroups.filter(g => {
+      // 1. Excluir campañas proyectadas y periodos anteriores a 202608
+      if (isCampanaProyectada(g)) return false
+      const grpPer = getGrupoPeriodo(g) || normalize2026Period(g.periodo)
+      if (grpPer && grpPer < MIN_PERIODO_CORTE) return false
+
       if (excludeKey !== 'segmento' && segmento !== 'ALL') {
         if (!matchStr(g.segmento, segmento)) return false
       }
@@ -341,15 +393,6 @@ function AdminDashboard({
 
       if (excludeKey !== 'grupo' && grupo !== 'ALL') {
         if (!matchGrp(g.grupo_codigo || g.codigo, grupo)) return false
-      }
-
-      if (excludeKey !== 'periodo' && periodo !== 'ALL') {
-        if (!matchStr(g.periodo, periodo)) return false
-      }
-
-      if (excludeKey !== 'semana' && semana !== 'ALL') {
-        const sem = g.semana_label || g.semana || g.semana_trabajo
-        if (!matchSemana(sem, semana)) return false
       }
 
       if (excludeKey !== 'reclutador' && reclutador !== 'ALL') {
@@ -372,7 +415,7 @@ function AdminDashboard({
   // 1. Datasets para Opciones de Segmentos (excluyendo segmento)
   const { filteredP: pForSeg, filteredC: cForSeg } = useMemo(() => 
     filterExcluding('segmento'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+    [postulantes, allGroups, groupMetaMap, selectedFilters]
   )
   const segmentosList = useMemo(() => {
     const set = new Set()
@@ -390,7 +433,7 @@ function AdminDashboard({
   // 2. Datasets para Opciones de Campañas (excluyendo campana)
   const { filteredP: pForCamp, filteredC: cForCamp } = useMemo(() => 
     filterExcluding('campana'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+    [postulantes, allGroups, groupMetaMap, selectedFilters]
   )
   const campanasList = useMemo(() => {
     const set = new Set()
@@ -409,7 +452,7 @@ function AdminDashboard({
   // 3. Datasets para Opciones de Grupos GPE (excluyendo grupo)
   const { filteredP: pForGrp, filteredC: cForGrp } = useMemo(() => 
     filterExcluding('grupo'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+    [postulantes, allGroups, groupMetaMap, selectedFilters]
   )
   const gruposList = useMemo(() => {
     const set = new Set()
@@ -427,28 +470,10 @@ function AdminDashboard({
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [pForGrp, cForGrp])
 
-  // 4. Datasets para Opciones de Periodos (excluyendo periodo)
-  const { filteredP: pForPer, filteredC: cForPer } = useMemo(() => 
-    filterExcluding('periodo'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
-  )
-  const periodosList = useMemo(() => {
-    const set = new Set()
-    for (const p of pForPer) {
-      const g = groupMetaMap.get(p.grupo_codigo)
-      const per = p.periodo_reclutado || g?.periodo
-      if (per && normStr(per) !== '-' && normStr(per) !== 'NULL') set.add(String(per).trim())
-    }
-    for (const g of cForPer) {
-      if (g.periodo && normStr(g.periodo) !== '-' && normStr(g.periodo) !== 'NULL') set.add(String(g.periodo).trim())
-    }
-    return Array.from(set).sort((a, b) => b.localeCompare(a))
-  }, [pForPer, cForPer, groupMetaMap])
-
   // 5. Datasets para Opciones de Semanas (excluyendo semana)
   const { filteredP: pForSem, filteredC: cForSem } = useMemo(() => 
     filterExcluding('semana'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+    [postulantes, allGroups, groupMetaMap, selectedFilters]
   )
   const semanasList = useMemo(() => {
     const set = new Set()
@@ -471,7 +496,7 @@ function AdminDashboard({
   // 6. Datasets para Opciones de Reclutadores (excluyendo reclutador)
   const { filteredP: pForRec, filteredC: cForRec } = useMemo(() => 
     filterExcluding('reclutador'),
-    [postulantes, campanasMetas, groupMetaMap, selectedFilters]
+    [postulantes, allGroups, groupMetaMap, selectedFilters]
   )
   const reclutadoresList = useMemo(() => {
     const set = new Set()
@@ -493,11 +518,11 @@ function AdminDashboard({
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [pForRec, cForRec])
 
-  // ── Datasets Finales Filtrados (Aplica todos los 6 filtros activos) ──
+  // ── Datasets Finales Filtrados (Aplica todos los filtros activos) ──
   const { filteredPostulantes, filteredCampanasMetasFinal } = useMemo(() => {
     const { filteredP, filteredC } = filterExcluding(null)
     return { filteredPostulantes: filteredP, filteredCampanasMetasFinal: filteredC }
-  }, [postulantes, campanasMetas, groupMetaMap, selectedFilters])
+  }, [postulantes, allGroups, groupMetaMap, selectedFilters])
 
   // ── Auto-Reset de selecciones incompatibles con cross-filter ──
   useEffect(() => {
@@ -519,12 +544,6 @@ function AdminDashboard({
   }, [selectedGrupo, gruposList])
 
   useEffect(() => {
-    if (selectedPeriodo !== 'ALL' && !periodosList.includes(selectedPeriodo)) {
-      setSelectedPeriodo('ALL')
-    }
-  }, [selectedPeriodo, periodosList])
-
-  useEffect(() => {
     if (selectedSemana !== 'ALL' && !semanasList.includes(selectedSemana)) {
       setSelectedSemana('ALL')
     }
@@ -540,7 +559,6 @@ function AdminDashboard({
   const handleSegmentoChange = (val) => setSelectedSegmento(val)
   const handleCampanaChange = (val) => setSelectedCampana(val)
   const handleGrupoChange = (val) => setSelectedGrupo(val)
-  const handlePeriodoChange = (val) => setSelectedPeriodo(val)
   const handleSemanaChange = (val) => setSelectedSemana(val)
   const handleReclutadorChange = (val) => setSelectedReclutador(val)
 
@@ -548,7 +566,6 @@ function AdminDashboard({
     setSelectedSegmento('ALL')
     setSelectedCampana('ALL')
     setSelectedGrupo('ALL')
-    setSelectedPeriodo('ALL')
     setSelectedSemana('ALL')
     setSelectedReclutador('ALL')
   }
@@ -558,11 +575,10 @@ function AdminDashboard({
       selectedSegmento !== 'ALL',
       selectedCampana !== 'ALL',
       selectedGrupo !== 'ALL',
-      selectedPeriodo !== 'ALL',
       selectedSemana !== 'ALL',
       selectedReclutador !== 'ALL'
     ].filter(Boolean).length
-  }, [selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, selectedReclutador])
+  }, [selectedSegmento, selectedCampana, selectedGrupo, selectedSemana, selectedReclutador])
 
   // Índice Hash O(1) Compartido único por render
   const attendanceIndexes = useMemo(() => {
@@ -656,7 +672,7 @@ function AdminDashboard({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5">
           {/* 1. Segmento / Cliente */}
           <div className="space-y-0.5">
             <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
@@ -732,33 +748,7 @@ function AdminDashboard({
             </select>
           </div>
 
-          {/* 4. Periodo (Cross-Filtered) */}
-          <div className="space-y-0.5">
-            <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
-              <Calendar size={9} className="text-emerald-400" />
-              <span>Periodo</span>
-            </label>
-            <select
-              value={selectedPeriodo}
-              onChange={(e) => handlePeriodoChange(e.target.value)}
-              className="w-full h-7 bg-slate-950/80 text-slate-200 border border-slate-700/70 hover:border-emerald-500/50 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-500/40 px-1.5 py-0 rounded-lg text-[10.5px] font-mono outline-none cursor-pointer truncate transition-colors shadow-xs"
-            >
-              <option value="ALL" className="font-sans">Todos ({periodosList.length})</option>
-              {periodosList.map((per) => {
-                const count = pForPer.filter(p => {
-                  const g = groupMetaMap.get(p.grupo_codigo)
-                  return matchStr(p.periodo_reclutado || g?.periodo, per)
-                }).length
-                return (
-                  <option key={per} value={per}>
-                    {per} ({count})
-                  </option>
-                )
-              })}
-            </select>
-          </div>
-
-          {/* 5. Semana (Cross-Filtered) */}
+          {/* 4. Semana (Cross-Filtered) */}
           <div className="space-y-0.5">
             <label className="text-[8.5px] font-bold uppercase text-slate-400 flex items-center gap-1">
               <Calendar size={9} className="text-cyan-400" />

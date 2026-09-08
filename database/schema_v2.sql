@@ -81,7 +81,8 @@ INSERT INTO motivos_baja (motivo, siglas, descripcion) VALUES
   ('VIAJE', 'VIA', 'Viaje'),
   ('OFERTA LABORAL', 'OFE', 'Otra oferta laboral'),
   ('DICCION', 'DIC', 'Dicción'),
-  ('RETIRO APROBADO POR JEFATURA', 'RET', 'Retiro aprobado')
+  ('RETIRO APROBADO POR JEFATURA', 'RET', 'Retiro aprobado'),
+  ('SOBREDOTACIÓN', 'SOB', 'Baja por sobredotación del grupo')
 ON CONFLICT (motivo) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS grupos_capacitacion (

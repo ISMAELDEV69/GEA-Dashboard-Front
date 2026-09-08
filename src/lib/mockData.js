@@ -13,6 +13,7 @@ export const EMPTY_CATALOG = {
   motivos_baja: [
     { motivo: 'BAJA DIA 1', siglas: 'B1', descripcion: 'Deserción el primer día de capacitación' },
     { motivo: 'NO CONTACTO', siglas: 'NC', descripcion: 'No se pudo contactar al postulante' },
+    { motivo: 'SOBREDOTACIÓN', siglas: 'SOB', descripcion: 'Baja por sobrecupo o sobredotación del grupo' },
   ],
 }
 
