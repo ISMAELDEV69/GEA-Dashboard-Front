@@ -918,16 +918,25 @@ export function normalize2026Period(val) {
 
 export function getGrupoPeriodo(g) {
   if (!g) return null
-  // 1. Prioridad: periodo_ingreso_op
+  // 1. Prioridad: periodo_ingreso_op explícito
   let per = normalize2026Period(g.periodo_ingreso_op)
   if (per) return per
-  // 2. Prioridad: fechas operativas (ingreso OP, inicio OJT)
+  // 2. Prioridad: periodo declarado (periodo de cohorte / RyS)
+  per = normalize2026Period(g.periodo)
+  if (per) return per
+  // 3. Prioridad: fechas operativas (ingreso OP, inicio OJT)
   const opDate = g.fecha_ingreso_op || g.fecha_inicio_ojt
   if (opDate) {
     per = normalize2026Period(opDate)
     if (per) return per
   }
-  // 3. Prioridad: semana calendario de trabajo
+  // 4. Prioridad: fecha inicio o registro
+  const dRaw = g.fecha_inicio || g.fecha_registro
+  if (dRaw) {
+    per = normalize2026Period(dRaw)
+    if (per) return per
+  }
+  // 5. Fallback por semana de trabajo
   const semStr = g.semana_trabajo || g.semana_label || g.semana
   if (semStr) {
     const semNum = parseInt(String(semStr).replace(/\D/g, ''), 10)
@@ -935,15 +944,6 @@ export function getGrupoPeriodo(g) {
     if (semNum >= 36 && semNum <= 39) return '202609'
     if (semNum >= 27 && semNum <= 30) return '202607'
     if (semNum >= 40 && semNum <= 44) return '202610'
-  }
-  // 4. Prioridad: periodo declarado
-  per = normalize2026Period(g.periodo)
-  if (per) return per
-  // 5. Prioridad: fecha inicio o registro
-  const dRaw = g.fecha_inicio || g.fecha_registro
-  if (dRaw) {
-    per = normalize2026Period(dRaw)
-    if (per) return per
   }
   return null
 }
