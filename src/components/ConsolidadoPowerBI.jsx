@@ -50,6 +50,16 @@ function normalizeGpe(value) {
   return text.replace(/_\d+$/, '');
 }
 
+function cleanCodeKey(val) {
+  if (!val) return '';
+  return String(val)
+    .trim()
+    .toUpperCase()
+    .replace(/^GP[E]?[-_]?/, '')
+    .replace(/^20(\d{2})/, '$1')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 function normalizeEstado(value) {
   const text = normalizeText(value, '').toUpperCase();
   if (text.includes('ACTIVO')) return 'ACTIVO';
@@ -528,16 +538,18 @@ export default function ConsolidadoPowerBI() {
       const campana = normalizeCampana(item.campana);
       const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
       const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
-      const rawPeriodo = normalizeText(item.periodo);
+      const rawPeriodo = normalize2026Period(item.periodo) || normalizeText(item.periodo);
 
       if (rawPeriodo && rawPeriodo < MIN_PERIODO_CORTE) continue;
 
+      const isAreaReclutamiento = String(item.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO';
       const capInfo = {
         codigo: gpe,
+        rawCodigo: item.codigo || item.grupo_codigo,
         campana: campana,
         meta_dia_1: Number(item.meta_dia_1) || 0,
-        rq_solicitado: Number(item.rq_ftes_solicitado ?? item.rq_solicitado) || 0,
-        rq_ftes_solicitado: Number(item.rq_ftes_solicitado) || 0,
+        rq_solicitado: isAreaReclutamiento ? (Number(item.rq_ftes_solicitado ?? item.rq_solicitado) || 0) : 0,
+        rq_ftes_solicitado: isAreaReclutamiento ? (Number(item.rq_ftes_solicitado) || 0) : 0,
         fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
         periodo: rawPeriodo,
         semana: semanaStr,
@@ -545,8 +557,11 @@ export default function ConsolidadoPowerBI() {
         estado: normalizeText(item.estado),
       };
 
+      const cKey = cleanCodeKey(gpe);
       if (campana && gpe) byKey.set(`${campana}|${gpe}`, capInfo);
-      if (gpe) byCode.set(gpe, capInfo);
+      if (campana && cKey) byKey.set(`${campana}|${cKey}`, capInfo);
+      if (gpe && !byCode.has(gpe)) byCode.set(gpe, capInfo);
+      if (cKey && !byCode.has(cKey)) byCode.set(cKey, capInfo);
       allItems.push(capInfo);
     }
 
@@ -557,13 +572,21 @@ export default function ConsolidadoPowerBI() {
   const getCapInfo = useCallback((campana, gpe) => {
     const normCampana = normalizeCampana(campana);
     const normGpe = normalizeGpe(gpe);
-    if (normCampana && normCampana !== 'SIN CAMPAÑA' && normGpe) {
-      const exact = capacidadByKeyMap.get(`${normCampana}|${normGpe}`);
-      if (exact) return exact;
+    const cKey = cleanCodeKey(normGpe);
+    if (normCampana && normCampana !== 'SIN CAMPAÑA') {
+      if (normGpe && capacidadByKeyMap.has(`${normCampana}|${normGpe}`)) {
+        return capacidadByKeyMap.get(`${normCampana}|${normGpe}`);
+      }
+      if (cKey && capacidadByKeyMap.has(`${normCampana}|${cKey}`)) {
+        return capacidadByKeyMap.get(`${normCampana}|${cKey}`);
+      }
     }
-    // Solo permitir fallback por código de grupo si el registro original no tiene campaña asignada
-    if ((!normCampana || normCampana === 'SIN CAMPAÑA') && normGpe) {
-      return capacidadByCodigoMap.get(normGpe) || null;
+    // Solo permitir fallback por código de grupo si el registro original no tiene campaña asignada o no hubo match con campaña
+    if (normGpe && capacidadByCodigoMap.has(normGpe)) {
+      return capacidadByCodigoMap.get(normGpe);
+    }
+    if (cKey && capacidadByCodigoMap.has(cKey)) {
+      return capacidadByCodigoMap.get(cKey);
     }
     return null;
   }, [capacidadByKeyMap, capacidadByCodigoMap]);
@@ -577,25 +600,28 @@ export default function ConsolidadoPowerBI() {
       const gpe = normalizeGpe(row.grupo || row.codigo_grupo);
       const cap = getCapInfo(campana, gpe);
 
-      // 1. Priorizar la semana real del archivo de origen o registro (evita pisar SEM 29 con SEM 36)
+      // 1. Priorizar la semana real de Capacidad (Periodo de Inicio) o archivo de origen
       const originSemana = normalizeSemana(row.archivo_origen, row.semana_label, row.semana_trabajo || row.semana);
-      const rowSemana = originSemana || cap?.semana || '';
+      const rowSemana = cap?.semana || originSemana || '';
 
-      // 2. Respetar la campaña real de asistencia (evita pisar CONTACTADOS con POSTPAGO)
+      // 2. Respetar la campaña real de asistencia
       const rowCampana = (campana && campana !== 'SIN CAMPAÑA') ? campana : (cap?.campana || campana);
 
-      // 3. Determinar periodo según fecha real de asistencia o metadata de grupo
-      let rowPeriodo = normalizeText(row.periodo);
-      if (!rowPeriodo && row.fecha_registro_asistencia) {
+      // 3. Determinar periodo según el PERIODO DE INICIO (Capacidad RYS)
+      let rowPeriodo = '';
+      if (cap?.periodo) {
+        rowPeriodo = normalize2026Period(cap.periodo) || normalizeText(cap.periodo);
+      } else if (row.periodo) {
+        rowPeriodo = normalize2026Period(row.periodo) || normalizeText(row.periodo);
+      } else if (row.archivo_origen && normalize2026Period(row.archivo_origen)) {
+        rowPeriodo = normalize2026Period(row.archivo_origen);
+      } else if (row.fecha_registro_asistencia) {
         const d = parseLocalDate(row.fecha_registro_asistencia);
         if (d) {
           const yyyy = d.getFullYear();
           const mm = String(d.getMonth() + 1).padStart(2, '0');
           rowPeriodo = `${yyyy}${mm}`;
         }
-      }
-      if (!rowPeriodo) {
-        rowPeriodo = cap?.periodo || '';
       }
 
       // Descartar registros con periodos anteriores a 202608
@@ -637,6 +663,7 @@ export default function ConsolidadoPowerBI() {
     const campanas = new Set();
     const gpes = new Set();
 
+    // 1. Maestro de Periodos y Semanas por Periodo de Inicio (Capacidad RYS)
     for (let i = 0; i < allCapacidadItems.length; i++) {
       const c = allCapacidadItems[i];
       if (c.periodo && c.periodo >= MIN_PERIODO_CORTE) periodos.add(c.periodo);
@@ -652,11 +679,14 @@ export default function ConsolidadoPowerBI() {
       }
     }
 
+    // 2. Asistencias válidas asociadas a este Periodo de Inicio
     for (let i = 0; i < validData.length; i++) {
       const r = validData[i];
       if (r._periodo && r._periodo >= MIN_PERIODO_CORTE) periodos.add(r._periodo);
       if (matchPeriodo(r._periodo)) {
-        if (r._semana) semanas.add(r._semana);
+        if (filters.periodo === 'Todas' && r._semana) {
+          semanas.add(r._semana);
+        }
         if (matchSemana(r._semana)) {
           if (r._segmento && r._segmento !== 'SIN SEGMENTO') segmentos.add(r._segmento);
           if (matchSegmento(r._segmento)) {
