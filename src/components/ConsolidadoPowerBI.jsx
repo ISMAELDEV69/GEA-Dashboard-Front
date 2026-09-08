@@ -24,8 +24,17 @@ import {
   ChevronsRight
 } from 'lucide-react';
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
-import { MIN_PERIODO_CORTE, isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
+import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
+
+const MIN_PERIODO_2026 = '202601';
+const MAX_PERIODO_ACTUAL_2026 = '202608'; // Periodo actual operativo (no proyectados futuros)
+
+function isPeriodoOperativoValido(p) {
+  if (!p) return false;
+  const clean = String(p).trim();
+  return clean >= MIN_PERIODO_2026 && clean <= MAX_PERIODO_ACTUAL_2026;
+}
 
 const STATUS_META = {
   A: { label: 'Asistió', bg: 'var(--status-a-bg)', text: 'var(--status-a-text)' },
@@ -540,7 +549,7 @@ export default function ConsolidadoPowerBI() {
       const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
       const rawPeriodo = normalize2026Period(item.periodo) || normalizeText(item.periodo);
 
-      if (rawPeriodo && rawPeriodo < MIN_PERIODO_CORTE) continue;
+      if (rawPeriodo && !isPeriodoOperativoValido(rawPeriodo)) continue;
 
       const isAreaReclutamiento = String(item.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO';
       const capInfo = {
@@ -624,8 +633,8 @@ export default function ConsolidadoPowerBI() {
         }
       }
 
-      // Descartar registros con periodos anteriores a 202608
-      if (rowPeriodo && rowPeriodo < MIN_PERIODO_CORTE) continue;
+      // Descartar registros con periodos fuera del rango histórico 2026 operativo
+      if (rowPeriodo && !isPeriodoOperativoValido(rowPeriodo)) continue;
 
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
 
@@ -666,7 +675,7 @@ export default function ConsolidadoPowerBI() {
     // 1. Maestro de Periodos y Semanas por Periodo de Inicio (Capacidad RYS)
     for (let i = 0; i < allCapacidadItems.length; i++) {
       const c = allCapacidadItems[i];
-      if (c.periodo && c.periodo >= MIN_PERIODO_CORTE) periodos.add(c.periodo);
+      if (isPeriodoOperativoValido(c.periodo)) periodos.add(c.periodo);
       if (matchPeriodo(c.periodo)) {
         if (c.semana) semanas.add(c.semana);
         if (matchSemana(c.semana)) {
@@ -682,7 +691,7 @@ export default function ConsolidadoPowerBI() {
     // 2. Asistencias válidas asociadas a este Periodo de Inicio
     for (let i = 0; i < validData.length; i++) {
       const r = validData[i];
-      if (r._periodo && r._periodo >= MIN_PERIODO_CORTE) periodos.add(r._periodo);
+      if (isPeriodoOperativoValido(r._periodo)) periodos.add(r._periodo);
       if (matchPeriodo(r._periodo)) {
         if (filters.periodo === 'Todas' && r._semana) {
           semanas.add(r._semana);
@@ -706,7 +715,7 @@ export default function ConsolidadoPowerBI() {
     });
 
     return {
-      periodo: ['Todas', ...Array.from(periodos).filter(p => p >= MIN_PERIODO_CORTE).sort().reverse()],
+      periodo: ['Todas', ...Array.from(periodos).filter(isPeriodoOperativoValido).sort().reverse()],
       semana: ['Todas', ...sortedSemanas],
       segmento: sortOptions(segmentos),
       campana: sortOptions(campanas),
