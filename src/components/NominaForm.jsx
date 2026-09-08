@@ -343,17 +343,27 @@ export default function NominaForm({
     if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
     if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
-    // Remove duplicates
+    // Remove duplicates keeping distinct campaigns/groups
     const unique = []
     const seen = new Set()
     for (const g of filtered) {
       const cod = String(g.codigo || g.grupo_codigo || '').trim()
-      if (cod && !seen.has(cod)) {
-        seen.add(cod)
+      const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
+      const per = String(g.periodo || '').trim()
+      const sem = String(g.semana || g.semana_trabajo || g.semana_label || '').trim()
+      const area = String(g.area_traslado || '').trim().toUpperCase()
+      const key = g.id ? String(g.id) : `${cod}|${camp}|${per}|${sem}|${area}`
+      if (cod && !seen.has(key)) {
+        seen.add(key)
         unique.push(g)
       }
     }
-    return unique.sort((a, b) => String(a.codigo || a.grupo_codigo || '').localeCompare(String(b.codigo || b.grupo_codigo || '')))
+    return unique.sort((a, b) => {
+      const codA = String(a.codigo || a.grupo_codigo || '')
+      const codB = String(b.codigo || b.grupo_codigo || '')
+      if (codA !== codB) return codA.localeCompare(codB)
+      return String(a.campana || '').localeCompare(String(b.campana || ''))
+    })
   }, [grupos, bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana, getPeriodoVal, getSemanaVal, getSegmentoVal, getCampanaVal])
 
   const {

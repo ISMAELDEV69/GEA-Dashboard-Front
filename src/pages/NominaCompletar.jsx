@@ -122,6 +122,16 @@ export default function NominaCompletar({
     return [...new Set(filtered.map(g => getCampanaVal(g)).filter(Boolean))].sort()
   }, [effectiveGrupos, bulkPeriodo, bulkSemana, bulkSegmento])
 
+  const getGroupItemKey = (g) => {
+    if (!g) return ''
+    const cod = String(g.codigo || g.grupo_codigo || '').trim()
+    const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
+    const per = String(g.periodo || '').trim()
+    const sem = String(g.semana || g.semana_trabajo || g.semana_label || '').trim()
+    const area = String(g.area_traslado || '').trim().toUpperCase()
+    return g.id ? String(g.id) : `${cod}|${camp}|${per}|${sem}|${area}`
+  }
+
   const bulkGruposList = useMemo(() => {
     let filtered = effectiveGrupos
     if (bulkPeriodo) filtered = filtered.filter(g => getPeriodoVal(g) === String(bulkPeriodo).trim())
@@ -129,17 +139,23 @@ export default function NominaCompletar({
     if (bulkSegmento) filtered = filtered.filter(g => getSegmentoVal(g) === String(bulkSegmento).trim().toUpperCase())
     if (bulkCampana) filtered = filtered.filter(g => getCampanaVal(g) === String(bulkCampana).trim().toUpperCase())
     
-    // Remove duplicates
+    // Remove duplicates keeping distinct campaigns/groups
     const unique = []
     const seen = new Set()
     for (const g of filtered) {
       const cod = String(g.codigo || g.grupo_codigo || '').trim()
-      if (cod && !seen.has(cod)) {
-        seen.add(cod)
+      const key = getGroupItemKey(g)
+      if (cod && !seen.has(key)) {
+        seen.add(key)
         unique.push(g)
       }
     }
-    return unique.sort((a, b) => String(a.codigo || a.grupo_codigo || '').localeCompare(String(b.codigo || b.grupo_codigo || '')))
+    return unique.sort((a, b) => {
+      const codA = String(a.codigo || a.grupo_codigo || '')
+      const codB = String(b.codigo || b.grupo_codigo || '')
+      if (codA !== codB) return codA.localeCompare(codB)
+      return String(a.campana || '').localeCompare(String(b.campana || ''))
+    })
   }, [effectiveGrupos, bulkPeriodo, bulkSemana, bulkSegmento, bulkCampana])
 
   // Clear group card stats cache when parent hierarchy changes
@@ -150,20 +166,24 @@ export default function NominaCompletar({
 
   // ── Batch-fetch completeness for visible group cards ──────────
   useEffect(() => {
-    const visibleCodes = bulkGruposList.slice(0, 16).map(g => g.codigo)
-    const newCodes = visibleCodes.filter(c => !fetchedCodesRef.current.has(c))
-    if (!newCodes.length) return
+    const visibleGroups = bulkGruposList.slice(0, 50)
+    const newGroups = visibleGroups.filter(g => !fetchedCodesRef.current.has(getGroupItemKey(g)))
+    if (!newGroups.length) return
 
     // Optimistic: mark loading
     setStatsMap(prev => {
       const upd = {}
-      newCodes.forEach(c => { upd[c] = { total: 0, complete: 0, pct: 0, loading: true } })
+      newGroups.forEach(g => { 
+        const key = getGroupItemKey(g)
+        upd[key] = { total: 0, complete: 0, pct: 0, loading: true } 
+      })
       return { ...prev, ...upd }
     })
-    newCodes.forEach(c => fetchedCodesRef.current.add(c))
+    newGroups.forEach(g => fetchedCodesRef.current.add(getGroupItemKey(g)))
 
-    const batchFetch = async (codes) => {
+    const batchFetch = async (groupsBatch) => {
       try {
+        const codes = [...new Set(groupsBatch.map(g => g.codigo || g.grupo_codigo).filter(Boolean))]
         let query = supabase
           .from('nominas')
           .select(`grupo_codigo, campana, periodo_reclutado, semana_trabajo, ${DOC_COLS.join(', ')}`)
@@ -181,36 +201,49 @@ export default function NominaCompletar({
         }
         const { data, error } = await query
         if (error) throw error
-        const grouped = {}
-        for (const row of (data || [])) {
-          if (!grouped[row.grupo_codigo]) grouped[row.grupo_codigo] = []
-          grouped[row.grupo_codigo].push(row)
-        }
+        
+        const rows = data || []
         setStatsMap(prev => {
           const upd = {}
-          codes.forEach(c => { upd[c] = { ...calcCompleteness(grouped[c] || []), loading: false } })
+          groupsBatch.forEach(g => {
+            const key = getGroupItemKey(g)
+            const cod = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase()
+            const camp = String(g.campana || g.campana_nombre || '').trim().toUpperCase()
+            
+            // Match rows for this specific group (code + campaign if present)
+            const matchedRows = rows.filter(r => {
+              const rCod = String(r.grupo_codigo || '').trim().toUpperCase()
+              const rCamp = String(r.campana || '').trim().toUpperCase()
+              if (rCod !== cod) return false
+              if (camp && rCamp && !rCamp.includes(camp) && !camp.includes(rCamp)) return false
+              return true
+            })
+            upd[key] = { ...calcCompleteness(matchedRows), loading: false }
+          })
           return { ...prev, ...upd }
         })
       } catch (err) {
         console.error('Completeness fetch error:', err)
         setStatsMap(prev => {
           const upd = {}
-          codes.forEach(c => { upd[c] = { total: 0, complete: 0, pct: 0, loading: false } })
+          groupsBatch.forEach(g => {
+            upd[getGroupItemKey(g)] = { total: 0, complete: 0, pct: 0, loading: false }
+          })
           return { ...prev, ...upd }
         })
       }
     }
-    // Split into batches of 8 to avoid overly large IN clauses
-    for (let i = 0; i < newCodes.length; i += 8) batchFetch(newCodes.slice(i, i + 8))
+    // Split into batches of 12 to avoid overly large IN clauses
+    for (let i = 0; i < newGroups.length; i += 12) batchFetch(newGroups.slice(i, i + 12))
   }, [bulkGruposList, bulkPeriodo, bulkSemana, bulkCampana])
 
   // Refresh a single group's stat (called after save in editor)
-  const refreshGroupStat = async (codigo) => {
+  const refreshGroupStat = async (codigo, campana = '') => {
     if (!codigo) return
     try {
       let query = supabase
         .from('nominas')
-        .select(`grupo_codigo, ${DOC_COLS.join(', ')}`)
+        .select(`grupo_codigo, campana, ${DOC_COLS.join(', ')}`)
         .eq('grupo_codigo', codigo)
       if (bulkPeriodo) {
         const rawP = String(bulkPeriodo).replace(/\D/g, '')
@@ -220,15 +253,21 @@ export default function NominaCompletar({
         const semanaNum = parseInt(String(bulkSemana).replace(/\D/g, ''), 10)
         if (!isNaN(semanaNum)) query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
       }
-      if (bulkCampana) {
-        query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)
+      if (campana || bulkCampana) {
+        query = query.ilike('campana', `%${String(campana || bulkCampana).trim()}%`)
       }
       const { data, error } = await query
       if (error) throw error
-      setStatsMap(prev => ({
-        ...prev,
-        [codigo]: { ...calcCompleteness(data || []), loading: false }
-      }))
+      
+      const stats = calcCompleteness(data || [])
+      setStatsMap(prev => {
+        const upd = { ...prev }
+        upd[codigo] = { ...stats, loading: false }
+        bulkGruposList.filter(g => String(g.codigo || g.grupo_codigo).trim().toUpperCase() === String(codigo).trim().toUpperCase()).forEach(g => {
+          upd[getGroupItemKey(g)] = { ...stats, loading: false }
+        })
+        return upd
+      })
     } catch (err) {
       console.error('Single stat refresh error:', err)
     }
@@ -444,28 +483,32 @@ export default function NominaCompletar({
             )}
           </div>
           <select
-            value={bulkGrupo}
+            value={bulkGrupo ? (bulkCampana ? `${bulkGrupo}|${bulkCampana}` : bulkGrupo) : ''}
             onChange={e => {
-              const cod = e.target.value;
-              setBulkGrupo(cod);
-              if (cod) {
-                const match = bulkGruposList.find(g => String(g.codigo || g.grupo_codigo || '').trim().toUpperCase() === String(cod || '').trim().toUpperCase());
-                if (match) {
-                  if (!bulkPeriodo && match.periodo) setBulkPeriodo(getPeriodoVal(match));
-                  if (!bulkSemana && getSemanaVal(match)) setBulkSemana(getSemanaVal(match));
-                  if (!bulkSegmento) setBulkSegmento(getSegmentoVal(match));
-                  if (!bulkCampana && match.campana) setBulkCampana(getCampanaVal(match));
-                }
+              const val = e.target.value;
+              if (!val) {
+                setBulkGrupo('');
+                return;
+              }
+              const match = bulkGruposList.find(g => getGroupItemKey(g) === val || `${g.codigo}|${g.campana}` === val || g.codigo === val);
+              if (match) {
+                handleSelectGrupoDirect(match);
+              } else {
+                setBulkGrupo(val);
               }
             }}
             className="w-full text-xs font-semibold rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--text-primary)] p-2 outline-none focus:border-emerald-400 transition-colors"
           >
             <option value="">Seleccione Grupo ({bulkGruposList.length} disponibles)</option>
-            {bulkGruposList.map(g => (
-              <option key={g.codigo || g.grupo_codigo} value={g.codigo || g.grupo_codigo}>
-                {String(g.codigo || g.grupo_codigo).startsWith('PROY-') ? '—' : String(g.codigo || g.grupo_codigo).replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}
-              </option>
-            ))}
+            {bulkGruposList.map(g => {
+              const key = getGroupItemKey(g)
+              const areaBadge = g.area_traslado && g.area_traslado !== 'RECLUTAMIENTO' ? ` [${g.area_traslado}]` : ''
+              return (
+                <option key={key} value={key}>
+                  {String(g.codigo || g.grupo_codigo).startsWith('PROY-') ? '—' : String(g.codigo || g.grupo_codigo).replace(/_\d+$/, '')} {g.campana ? `· ${g.campana}` : ''}{areaBadge}
+                </option>
+              )
+            })}
           </select>
         </div>
       </div>
@@ -484,7 +527,7 @@ export default function NominaCompletar({
             reclutadores={reclutadores}
             refreshKey={refreshKey}
             grupos={bulkGruposList}
-            onSaveComplete={() => refreshGroupStat(bulkGrupo)}
+            onSaveComplete={() => refreshGroupStat(bulkGrupo, bulkCampana)}
           />
         </div>
       ) : (
@@ -518,9 +561,10 @@ export default function NominaCompletar({
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {bulkGruposList.slice(0, 16).map(g => {
-                const cleanCode = String(g.codigo).startsWith('PROY-') ? '—' : String(g.codigo).replace(/_\d+$/, '')
-                const stat = statsMap[g.codigo]
+              {bulkGruposList.slice(0, 50).map(g => {
+                const key = getGroupItemKey(g)
+                const cleanCode = String(g.codigo || g.grupo_codigo).startsWith('PROY-') ? '—' : String(g.codigo || g.grupo_codigo).replace(/_\d+$/, '')
+                const stat = statsMap[key] || statsMap[g.codigo]
                 const pct = stat ? stat.pct : null
                 // Border color reflects completeness
                 const accentColor =
@@ -530,7 +574,7 @@ export default function NominaCompletar({
                                 'rgba(239,68,68,0.4)'
                 return (
                   <div
-                    key={g.codigo}
+                    key={key}
                     onClick={() => handleSelectGrupoDirect(g)}
                     className="group relative p-4 rounded-xl cursor-pointer transition-all duration-300 flex flex-col gap-2 hover:-translate-y-1 hover:shadow-lg bg-[var(--bg-surface)]"
                     style={{
@@ -541,7 +585,7 @@ export default function NominaCompletar({
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <span className="font-mono text-sm font-black text-cyan-600 dark:text-cyan-400 group-hover:text-cyan-500">
-                          {cleanCode}
+                          {cleanCode} {g.area_traslado && g.area_traslado !== 'RECLUTAMIENTO' ? <span className="text-[10px] font-normal text-amber-400 font-sans ml-1">({g.area_traslado})</span> : null}
                         </span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                           {g.periodo || 'Activo'}

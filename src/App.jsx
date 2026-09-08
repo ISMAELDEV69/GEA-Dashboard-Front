@@ -760,7 +760,7 @@ export default function App() {
                       <KeepAliveView viewId="nominas_completar" activeView={activeView}>
                         {navItems.some(i => i.id === 'nominas_completar') && (
                           <NominaCompletar
-                            grupos={grupos}
+                            grupos={campanasMetas.length > 0 ? campanasMetas : grupos}
                             userProfile={effectiveProfile}
                             currentRole={currentRole}
                             postulantes={postulantes}
