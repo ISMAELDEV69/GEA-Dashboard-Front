@@ -870,81 +870,70 @@ export function buildAdminNarrative(metrics, alerts) {
 export function normalize2026Period(val) {
   if (!val) return null
   const s = String(val).trim()
-  if (!s || s === '-' || s === 'NULL' || s === 'undefined') return null
+  if (!s || s === '-' || s === 'NULL' || s === 'undefined' || s === '0') return null
 
   // Códigos de grupo (ej. GPE-2026047) son identificadores secuenciales, NO periodos mensuales
   if (s.toUpperCase().startsWith('GPE-') || s.toUpperCase().startsWith('GPE')) return null
 
-  let res = null
-  // 1. Coincidencia directa con 2026 seguido de 1 o 2 dígitos de mes (ej. 202607, 2026-07, 2026/7, 2026_08)
-  const m = s.match(/2026[-_/]?(\d{1,2})/)
+  // 1. Coincidencia directa con YYYY seguido de 1 o 2 dígitos de mes (ej. 202607, 2026-07, 202508, 2026_08)
+  const m = s.match(/(202[0-9])[-_/]?(\d{1,2})/)
   if (m) {
-    const month = m[1].padStart(2, '0')
-    res = `2026${month}`
-  } else {
-    // 2. Si contiene 2026 con más dígitos (ej. 2026005, 2026012)
-    const mSeq = s.match(/2026(\d{2,4})/)
-    if (mSeq) {
-      const digits = mSeq[1]
-      const subMonth = digits.substring(0, 2)
-      res = `2026${subMonth}`
-    } else {
-      const digitsOnly = s.replace(/\D/g, '')
-      if (digitsOnly.startsWith('2026')) {
-        if (digitsOnly.length >= 6) res = digitsOnly.substring(0, 6)
-      } else if (s.includes('2026') || s.includes('/26')) {
-        if (s.includes('-')) {
-          const parts = s.split('-')
-          if (parts[0] === '2026' && parts[1]) {
-            res = `2026${parts[1].padStart(2, '0')}`
-          }
-        } else if (s.includes('/')) {
-          const parts = s.split('/')
-          if (parts.length === 3 && (parts[2].includes('2026') || parts[2].trim() === '26')) {
-            res = `2026${parts[1].padStart(2, '0')}`
-          }
-        }
+    const year = m[1]
+    const month = m[2].padStart(2, '0')
+    const mNum = parseInt(month, 10)
+    if (mNum >= 1 && mNum <= 12) {
+      return `${year}${month}`
+    }
+  }
+
+  // 2. Extraer dígitos y buscar año (2020-2030) + mes (01-12)
+  const digitsOnly = s.replace(/\D/g, '')
+  if (digitsOnly.length >= 6) {
+    const y = digitsOnly.substring(0, 4)
+    const mo = digitsOnly.substring(4, 6)
+    const yNum = parseInt(y, 10)
+    const mNum = parseInt(mo, 10)
+    if (yNum >= 2020 && yNum <= 2030 && mNum >= 1 && mNum <= 12) {
+      return `${y}${mo}`
+    }
+  }
+
+  // 3. Fechas en formato DD/MM/YYYY o DD/MM/YY
+  if (s.includes('/')) {
+    const parts = s.split('/')
+    if (parts.length === 3) {
+      let y = parts[2].split(' ')[0].trim()
+      y = y.length === 2 ? `20${y}` : y
+      const m = parts[1].padStart(2, '0')
+      const yNum = parseInt(y, 10)
+      const mNum = parseInt(m, 10)
+      if (yNum >= 2020 && yNum <= 2030 && mNum >= 1 && mNum <= 12) {
+        return `${y}${m}`
       }
     }
   }
 
-  if (res && res.startsWith('2026')) {
-    const mNum = parseInt(res.substring(4, 6), 10)
-    if (mNum >= 1 && mNum <= 12) {
-      return res
-    }
-  }
   return null
 }
 
 export function getGrupoPeriodo(g) {
   if (!g) return null
-  // 1. Prioridad: periodo_ingreso_op explícito
+  // 1. Prioridad: periodo_ingreso_op explícito (Periodo de Ingreso a Operación)
   let per = normalize2026Period(g.periodo_ingreso_op)
   if (per) return per
-  // 2. Prioridad: periodo declarado (periodo de cohorte / RyS)
+  // 2. Prioridad: fecha operativa de ingreso a operaciones
+  if (g.fecha_ingreso_op) {
+    per = normalize2026Period(g.fecha_ingreso_op)
+    if (per) return per
+  }
+  // 3. Prioridad: periodo declarado de cohorte / RyS
   per = normalize2026Period(g.periodo)
   if (per) return per
-  // 3. Prioridad: fechas operativas (ingreso OP, inicio OJT)
-  const opDate = g.fecha_ingreso_op || g.fecha_inicio_ojt
+  // 4. Prioridad: fecha de inicio de OJT o inicio de curso
+  const opDate = g.fecha_inicio_ojt || g.fecha_inicio || g.fecha_registro
   if (opDate) {
     per = normalize2026Period(opDate)
     if (per) return per
-  }
-  // 4. Prioridad: fecha inicio o registro
-  const dRaw = g.fecha_inicio || g.fecha_registro
-  if (dRaw) {
-    per = normalize2026Period(dRaw)
-    if (per) return per
-  }
-  // 5. Fallback por semana de trabajo
-  const semStr = g.semana_trabajo || g.semana_label || g.semana
-  if (semStr) {
-    const semNum = parseInt(String(semStr).replace(/\D/g, ''), 10)
-    if (semNum >= 31 && semNum <= 35) return '202608'
-    if (semNum >= 36 && semNum <= 39) return '202609'
-    if (semNum >= 27 && semNum <= 30) return '202607'
-    if (semNum >= 40 && semNum <= 44) return '202610'
   }
   return null
 }
