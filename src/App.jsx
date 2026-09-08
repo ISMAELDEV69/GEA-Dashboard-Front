@@ -641,7 +641,7 @@ export default function App() {
                       {/* 1. Resumen Capacitación (Looker Studio) */}
                       <KeepAliveView viewId="resumen_capacitacion" activeView={activeView}>
                         {navItems.some(i => i.id === 'resumen_capacitacion') && (
-                          <ResumenCapacitacion grupos={grupos} postulantes={postulantes} asistencias={asistencias} />
+                          <ResumenCapacitacion grupos={campanasMetas.length > 0 ? campanasMetas : grupos} campanasMetas={campanasMetas} postulantes={postulantes} asistencias={asistencias} />
                         )}
                       </KeepAliveView>
 

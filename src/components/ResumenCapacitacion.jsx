@@ -10,7 +10,9 @@ import {
   isCampanaProyectada, 
   isGrupoActivo, 
   isGrupoCerrado, 
-  getMaxAutoPeriodo 
+  getMaxAutoPeriodo,
+  getGrupoPeriodo,
+  normalize2026Period
 } from '../lib/dashboardAnalytics';
 import { 
   BarChart3, 
@@ -104,13 +106,22 @@ const SEGMENTO_COLORS = {
   'LIPIGAS': '#00E676'
 };
 
-export default function ResumenCapacitacion({ grupos = [], postulantes = [], asistencias = [] }) {
-  const [capacidadRys, setCapacidadRys] = useState(grupos);
+export default function ResumenCapacitacion({
+  grupos = [],
+  campanasMetas = [],
+  postulantes = [],
+  asistencias = []
+}) {
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [capacidadRys, setCapacidadRys] = useState([]);
+
+  // Estado para modal de asesor
+  const [selectedAsesor, setSelectedAsesor] = useState(null);
+
+  // Estados visuales de interfaz
   const [activeTab, setActiveTab] = useState('DASHBOARD'); // 'DASHBOARD' | 'MATRIZ_TABLA'
   const [rankingTab, setRankingTab] = useState('DOTACION_SEG'); // 'DOTACION_SEG' | 'DESERCION_SEG' | 'DOTACION_FOR' | 'DESERCION_FOR'
   const [rankingFormadorFilter, setRankingFormadorFilter] = useState('Todas');
@@ -137,9 +148,10 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   // Carga y cálculo de métricas ultrarrápido
   const loadData = useCallback(async (force = false) => {
-    if (!grupos || grupos.length === 0) return;
+    const effectiveGrupos = (campanasMetas && campanasMetas.length > 0) ? campanasMetas : grupos;
+    if (!effectiveGrupos || effectiveGrupos.length === 0) return;
     
-    const paramsKey = `${grupos.length}_${postulantes.length}_${asistencias.length}`;
+    const paramsKey = `${effectiveGrupos.length}_${postulantes.length}_${asistencias.length}`;
     if (!force && lastParamsRef.current === paramsKey && data.length > 0) return;
     if (isCalculatingRef.current) return;
 
@@ -152,8 +164,8 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       }
       setError(null);
 
-      const metricas = await calculateMetricasResumenCapacitacionFast(grupos, postulantes, asistencias);
-      setCapacidadRys(grupos);
+      const metricas = await calculateMetricasResumenCapacitacionFast(effectiveGrupos, postulantes, asistencias);
+      setCapacidadRys(effectiveGrupos);
       setData(metricas || []);
       lastParamsRef.current = paramsKey;
     } catch (err) {
@@ -164,13 +176,14 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [grupos, postulantes, asistencias, data.length]);
+  }, [grupos, campanasMetas, postulantes, asistencias, data.length]);
 
   useEffect(() => {
-    if (grupos.length > 0) {
+    const effectiveGrupos = (campanasMetas && campanasMetas.length > 0) ? campanasMetas : grupos;
+    if (effectiveGrupos.length > 0) {
       loadData(false);
     }
-  }, [grupos.length, postulantes.length, asistencias.length]);
+  }, [grupos.length, campanasMetas.length, postulantes.length, asistencias.length]);
 
   // Escuchar refresco global
   useEffect(() => {
@@ -192,7 +205,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     return filters.periodo !== 'Todos' ||
       filters.semana !== 'Todas' ||
       filters.segmento !== 'Todos' ||
-      filters.campana !== 'Todas' ||
+      (filters.campana !== 'Todas' && filters.campana !== 'Todos') ||
       filters.grupo !== 'Todos' ||
       filters.estado !== 'Todos' ||
       Boolean(searchQuery);
@@ -213,14 +226,13 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
 
   // Opciones de filtros cruzados reactivos sobre el conjunto de datos calculado
   const filterOptions = useMemo(() => {
-    const dataset = (data.length > 0 ? data : capacidadRys).filter(g => !isCampanaProyectada(g));
+    const rawDataset = data.length > 0 ? data : (campanasMetas.length > 0 ? campanasMetas : (capacidadRys.length > 0 ? capacidadRys : grupos));
+    const dataset = (rawDataset || []).filter(g => !isCampanaProyectada(g));
     
     // 1. Periodos (Periodo de Ingreso a Operación >= MIN_PERIODO_CORTE)
-    // Desbloqueo dinámico: estrictamente desde 202608 hasta el periodo actual del sistema (202609)
     const periodos = new Set();
     dataset.forEach(g => {
-      const pVal = g.periodo_ingreso_op || g.periodo;
-      const cleanP = pVal ? String(pVal).trim() : null;
+      const cleanP = getGrupoPeriodo(g) || normalize2026Period(g.periodo_ingreso_op || g.periodo || g.periodo_rys);
       if (!cleanP || cleanP < MIN_PERIODO_CORTE) return;
 
       if (showAllPeriodos || cleanP <= maxAutoPeriodo) {
@@ -230,8 +242,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     
     // Subfiltro por periodo activo
     const subPeriodo = dataset.filter(g => {
-      const pVal = g.periodo_ingreso_op || g.periodo;
-      const cleanP = pVal ? String(pVal).trim() : null;
+      const cleanP = getGrupoPeriodo(g) || normalize2026Period(g.periodo_ingreso_op || g.periodo || g.periodo_rys);
       if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
       if (!showAllPeriodos && cleanP && cleanP > maxAutoPeriodo) return false;
       return filters.periodo === 'Todos' || cleanP === String(filters.periodo || '').trim();
@@ -258,29 +269,36 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
     // 3. Segmentos Oficiales (filtrados por periodo y semana activos)
     const segmentos = new Set(subSemana.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
     
-    // 4. Campañas (filtradas por periodo, semana, segmento y reactivas al filtro de estado EN CURSO vs CERRADO)
+    // 4. Campañas (filtradas por periodo, semana, segmento y reactivas al filtro de estado)
     const subCampanas = subSemana.filter(g => {
       if (filters.segmento !== 'Todos' && normalizeSegmento(g.segmento, g.campana) !== filters.segmento) return false;
 
-      const filEstadoNorm = norm(filters.estado);
-      if (filEstadoNorm === 'EN CURSO' || filEstadoNorm === 'ACTIVO') {
-        return isGrupoActivo(g);
-      } else if (filEstadoNorm === 'CERRADO') {
-        return isGrupoCerrado(g);
-      } else if (filEstadoNorm !== 'Todos') {
-        return norm(g.estado) === filEstadoNorm;
+      if (filters.estado !== 'Todos') {
+        const filEstadoNorm = norm(filters.estado);
+        if (filEstadoNorm === 'EN CURSO' || filEstadoNorm === 'ACTIVO') {
+          return isGrupoActivo(g);
+        } else if (filEstadoNorm === 'CERRADO') {
+          return isGrupoCerrado(g);
+        } else {
+          return norm(g.estado) === filEstadoNorm;
+        }
       }
-      // 'Todos': mostrar solo campañas/grupos operativos válidos (activos o cerrados, excluye cancelados/inactivos)
-      return isGrupoActivo(g) || isGrupoCerrado(g);
+      return true;
     });
-    const campanas = new Set(subCampanas.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean));
+
+    const campanas = new Set();
+    subCampanas.forEach(g => {
+      const c = g.campana ? String(g.campana).trim() : null;
+      if (c && c !== '-' && c !== 'NULL') campanas.add(c);
+    });
     
     // 5. Estados del Grupo: opciones principales requeridas
     const estados = ['EN CURSO', 'CERRADO'];
 
     // 6. Grupos (filtrados por campaña activa y estado)
+    const isCampanaFiltered = filters.campana !== 'Todas' && filters.campana !== 'Todos' && Boolean(filters.campana);
     const subGrupos = subCampanas.filter(g => {
-      if (filters.campana !== 'Todas' && norm(g.campana) !== norm(filters.campana)) return false;
+      if (isCampanaFiltered && norm(g.campana) !== norm(filters.campana)) return false;
       return true;
     });
     const gruposSet = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
@@ -289,21 +307,22 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
       periodos: Array.from(periodos).sort().reverse(),
       semanas,
       segmentos: Array.from(segmentos).sort(),
-      campanas: Array.from(campanas).sort(),
+      campanas: Array.from(campanas).sort((a, b) => a.localeCompare(b)),
       estados,
       grupos: Array.from(gruposSet).sort()
     };
-  }, [data, capacidadRys, filters, showAllPeriodos, maxAutoPeriodo]);
+  }, [data, capacidadRys, campanasMetas, grupos, filters, showAllPeriodos, maxAutoPeriodo]);
 
   // Datos filtrados en caliente con normalización exacta
   const filteredData = useMemo(() => {
+    const isCampanaFiltered = filters.campana !== 'Todas' && filters.campana !== 'Todos' && Boolean(filters.campana);
+
     return data.filter(d => {
       // Excluir grupos proyectados fuera de operación
       if (isCampanaProyectada(d)) return false;
 
       // Filtro Periodo (Periodo de Ingreso a Operación)
-      const pVal = d.periodo_ingreso_op || d.periodo;
-      const cleanP = pVal ? String(pVal).trim() : null;
+      const cleanP = getGrupoPeriodo(d) || normalize2026Period(d.periodo_ingreso_op || d.periodo);
       if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
 
       // Desbloqueo dinámico: solo hasta maxAutoPeriodo cuando showAllPeriodos es false
@@ -341,7 +360,7 @@ export default function ResumenCapacitacion({ grupos = [], postulantes = [], asi
         if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
       }
       // Filtro Campaña
-      if (filters.campana !== 'Todas' && norm(d.campana) !== norm(filters.campana)) {
+      if (isCampanaFiltered && norm(d.campana) !== norm(filters.campana)) {
         return false;
       }
       // Filtro Grupo / GPE

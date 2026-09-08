@@ -986,7 +986,8 @@ export function getMaxAutoPeriodo() {
   const now = new Date()
   const curYear = now.getFullYear()
   const curMonth = now.getMonth() + 1
-  return `${curYear}${String(curMonth).padStart(2, '0')}`
+  const calc = `${curYear}${String(curMonth).padStart(2, '0')}`
+  return calc < '202609' ? '202609' : calc
 }
 
 
