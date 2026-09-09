@@ -728,56 +728,58 @@ export default function AsistenciaForm({
       }
     }
 
-    // Ensure all historical attendees from asistencias are present in candidate pool ONLY for legacy groups without nomina
-    const hasGroupNomina = groupPostulantesDirect.length > 0;
+    // Ensure all historical attendees from asistencias are present in candidate pool
     const candidateDocs = new Set(effectivePostulantes.map(p => p.documento));
     const mergedCandidates = [...effectivePostulantes];
 
-    if (!hasGroupNomina) {
-      for (const a of groupRecordsAll) {
-        if (!candidateDocs.has(a.postulante_documento)) {
-          candidateDocs.add(a.postulante_documento);
-          mergedCandidates.push({
-            documento: a.postulante_documento,
-            nombres: a.nombres || '',
-            apellido_paterno: a.apellido_paterno || '',
-            apellido_materno: a.apellido_materno || '',
-            celular: a.celular || '',
-            telefono: a.celular || '',
-            condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
-            campana: a.campana || targetCampana || '',
-            grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
-            semana_trabajo: targetSemanaNum || null,
-            periodo_reclutado: targetPeriodo || null,
-            dia_0: 'ASISTIO',
-            dia_1: 'ASISTIO',
-            status_dia_1: 'APTO',
-            estado: 'ACTIVO'
-          });
-        }
+    for (const a of groupRecordsAll) {
+      if (!candidateDocs.has(a.postulante_documento)) {
+        candidateDocs.add(a.postulante_documento);
+        mergedCandidates.push({
+          documento: a.postulante_documento,
+          nombres: a.nombres || '',
+          apellido_paterno: a.apellido_paterno || '',
+          apellido_materno: a.apellido_materno || '',
+          celular: a.celular || '',
+          telefono: a.celular || '',
+          condicion: a.condicion_laboral || activeGrupoObj?.condicion || 'FULL TIME',
+          campana: a.campana || targetCampana || '',
+          grupo_codigo: a.grupo_codigo || targetGrupoCodigo,
+          semana_trabajo: targetSemanaNum || null,
+          periodo_reclutado: targetPeriodo || null,
+          dia_0: 'ASISTIO',
+          dia_1: 'ASISTIO',
+          status_dia_1: 'APTO',
+          estado: a.estado || 'ACTIVO',
+          activo: true
+        });
       }
     }
 
     const invalidList = []
     const filteredPostulantes = mergedCandidates.filter(p => {
       if (!p.documento) return false
+      if (String(p.estado || '').toUpperCase() === 'DESASIGNADO') return false
 
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
-      if (!isGrupoMatch && !hasGroupNomina && mappedDocs.has(p.documento)) {
-        // Permitir histórico solo para grupos legacy sin nómina digital
-      } else if (!isGrupoMatch) {
+      const hasHistoryInGroup = mappedDocs.has(p.documento)
+
+      if (!isGrupoMatch && !hasHistoryInGroup) {
         return false
       }
 
-      // Validar coincidencia estricta de semana
+      // Si ya tiene registros de asistencia en el grupo, siempre debe aparecer en el grupo
+      if (hasHistoryInGroup) {
+        return true
+      }
+
+      // Validar coincidencia estricta de semana para nuevos postulantes sin historial previo
       if (!isNaN(targetSemanaNum) && targetSemanaNum > 0 && p.semana_trabajo) {
         const rowSemanaNum = parseInt(String(p.semana_trabajo).replace(/\D/g, ''), 10)
         if (!isNaN(rowSemanaNum) && rowSemanaNum !== targetSemanaNum) {
           return false
         }
       }
-      
-      if (p.activo === false) return false
 
       // Regla de Negocio Oficial:
       // 1. Regular: Si el reclutador marcó ASISTIO en Día 0 -> Viaja a la marcación (incluye RECUPERO CAP)
