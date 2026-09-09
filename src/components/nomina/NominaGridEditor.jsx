@@ -844,7 +844,7 @@ export default function NominaGridEditor({
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
       
       const asistioD0 = dia0Val === 'ASISTIO'
-      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+      const agregadoD1 = statusDia1Val.includes('AGREGADO') || statusDia1Val.includes('RECUPERADO') || statusDia1Val.includes('OBSERVAD')
       
       if (asistioD0 || agregadoD1) {
         const missing = []

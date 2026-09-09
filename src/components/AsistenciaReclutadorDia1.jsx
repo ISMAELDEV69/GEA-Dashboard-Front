@@ -61,12 +61,13 @@ const AsistenciaReclutadorDia1 = ({ grupos, postulantes, isReadOnly }) => {
       
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const statusDia1Val = (p.status_dia_1 || '').toString().toUpperCase().trim()
-      
       const asistioD0 = dia0Val === 'ASISTIO'
-      const agregadoD1 = statusDia1Val === 'AGREGADO' || statusDia1Val === 'RECUPERADO'
+      const agregadoD1 = statusDia1Val.includes('AGREGADO') || statusDia1Val.includes('RECUPERADO') || statusDia1Val.includes('OBSERVAD')
+      const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
+      const asistioD1 = dia1Val === 'ASISTIO' || dia1Val === 'A' || dia1Val === 'SI'
       
       if (!dia0Val && !statusDia1Val) return true
-      if (asistioD0 || agregadoD1) return true
+      if (asistioD0 || agregadoD1 || asistioD1) return true
       
       return false
     })

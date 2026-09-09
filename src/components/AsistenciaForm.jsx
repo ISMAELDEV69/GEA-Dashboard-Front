@@ -781,7 +781,7 @@ export default function AsistenciaForm({
 
       // Regla de Negocio Oficial:
       // 1. Regular: Si el reclutador marcó ASISTIO en Día 0 -> Viaja a la marcación (incluye RECUPERO CAP)
-      // 2. Agregado / Recuperado: Si tuvo FALTA en Día 0 pero es Agregado/Recuperado con ASISTIO en Día 1 -> Viaja a la marcación
+      // 2. Extemporáneo / Reenganche: Si tuvo FALTA en Día 0 pero tiene AGREGADO / RECUPERADO / OBSERVADO o ASISTIO en Día 1 -> Viaja a la marcación
       const dia0Val = String(p.dia_0 || '').toUpperCase().trim()
       const dia1Val = String(p.dia_1 || '').toUpperCase().trim()
       const statusDia1Val = String(p.status_dia_1 || '').toUpperCase().trim()
@@ -789,10 +789,19 @@ export default function AsistenciaForm({
 
       const asistioD0 = isAsistioStr(dia0Val)
       const asistioD1 = isAsistioStr(dia1Val)
-      const isAgregadoORecuperado = statusDia1Val.includes('AGREGADO') || statusDia1Val.includes('RECUPERADO') || tipoReclutadoVal.includes('AGREGADO') || tipoReclutadoVal.includes('RECUPERADO')
+      const isAgregadoORecuperado = statusDia1Val.includes('AGREGADO') || statusDia1Val.includes('RECUPERADO') || statusDia1Val.includes('OBSERVAD') || tipoReclutadoVal.includes('AGREGADO') || tipoReclutadoVal.includes('RECUPERADO') || tipoReclutadoVal.includes('OBSERVAD')
       const isRecuperoCap = tipoReclutadoVal.includes('RECUPERO') || statusDia1Val.includes('RECUPERO')
+      const isCese = statusDia1Val.includes('CESE') || tipoReclutadoVal.includes('CESE') || String(p.estado || '').toUpperCase().includes('CESE') || String(p.estado || '').toUpperCase().includes('DESER')
+
+      if (isCese && !asistioD1) {
+        return false
+      }
 
       if (asistioD0 || isRecuperoCap) {
+        return true
+      }
+
+      if (asistioD1 && !isCese) {
         return true
       }
 
@@ -852,7 +861,7 @@ export default function AsistenciaForm({
       if ((dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || !dia0Val) && dia1Val === 'ASISTIO' && rawTipo === 'APTO') {
         rawTipo = 'AGREGADO'
       }
-      if (String(p.estado || '').toUpperCase().includes('OBSERVAD') || String(p.condicion || '').toUpperCase().includes('OBSERVAD')) {
+      if (String(p.estado || '').toUpperCase().includes('OBSERVAD') || String(p.condicion || '').toUpperCase().includes('OBSERVAD') || String(p.status_dia_1 || '').toUpperCase().includes('OBSERVAD')) {
         if (rawTipo === 'APTO') rawTipo = 'OBSERVADO'
       }
       const tipoReclutado = rawTipo
