@@ -2437,7 +2437,7 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, periodo_ingreso_op, segmento, semana_label, semana_trabajo, estado'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap')
     ])
     if (capRes.error) throw capRes.error
@@ -4777,7 +4777,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     let totalNomina = 0;
     let totalDia0 = 0;
     
-    // Obtener nóminas por código exacto y campaña
+    // Obtener nóminas por código exacto y campaña (con fallback por código si la campaña difiere en nómina)
     const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(cleanGroupKey)) : null) || 
                        nominasGrouped.get(exactCode) || 
                        nominasGrouped.get(cleanCode) || [];
@@ -4803,7 +4803,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
     }
       
-    // Obtener asistencias por código exacto y campaña
+    // Obtener asistencias por código exacto y campaña (con fallback por código)
     let groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(cleanGroupKey)) : null) || 
                            formAsisGrouped.get(exactCode) || 
                            formAsisGrouped.get(cleanCode) || [];
@@ -5104,6 +5104,13 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     return `${p}|${s}|${seg}|${c}|${g}`;
   };
 
+  const normCleanCamp = (val) => String(val || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+
   // Indexación Multi-Nivel (5-Llaves Exactas como Nivel 1)
   const nominas5K = new Map();
   const nominasCampCode = new Map();
@@ -5112,6 +5119,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   (effPostulantes || []).forEach(n => {
     const code = norm(n.grupo_codigo);
     const camp = norm(n.campana);
+    const cleanCamp = normCleanCamp(n.campana);
     const per = normPer(n.periodo_reclutado || n.periodo);
     const sem = normSem(n.semana_trabajo || n.semana);
     const seg = normSeg(n.segmento, n.campana);
@@ -5124,6 +5132,11 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const campKey = `${camp}|${code}`;
         if (!nominasCampCode.has(campKey)) nominasCampCode.set(campKey, []);
         nominasCampCode.get(campKey).push(n);
+      }
+      if (cleanCamp && cleanCamp !== camp) {
+        const cleanKey = `${cleanCamp}|${code}`;
+        if (!nominasCampCode.has(cleanKey)) nominasCampCode.set(cleanKey, []);
+        nominasCampCode.get(cleanKey).push(n);
       }
 
       if (per && sem && camp) {
@@ -5141,6 +5154,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   (effAsistencias || []).forEach(f => {
     const code = norm(f.grupo_codigo || f.codigo_grupo);
     const camp = norm(f.campana);
+    const cleanCamp = normCleanCamp(f.campana);
     const per = normPer(f.periodo_ingreso_op || f.periodo);
     const sem = normSem(f.semana_trabajo || f.semana_label || f.semana);
     const seg = normSeg(f.segmento, f.campana);
@@ -5153,6 +5167,11 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const campKey = `${camp}|${code}`;
         if (!formAsisCampCode.has(campKey)) formAsisCampCode.set(campKey, []);
         formAsisCampCode.get(campKey).push(f);
+      }
+      if (cleanCamp && cleanCamp !== camp) {
+        const cleanKey = `${cleanCamp}|${code}`;
+        if (!formAsisCampCode.has(cleanKey)) formAsisCampCode.set(cleanKey, []);
+        formAsisCampCode.get(cleanKey).push(f);
       }
 
       if (per && sem && camp) {
@@ -5169,6 +5188,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const { codigo: grupo_codigo, campana, fecha_inicio_ojt, area_traslado } = grupoInfo;
     const cleanCode = norm(grupo_codigo);
     const normCamp = norm(campana);
+    const cleanCamp = normCleanCamp(campana);
     const perVal = normPer(grupoInfo.periodo_ingreso_op || grupoInfo.periodo);
     const semVal = normSem(grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana);
     const segVal = normSeg(grupoInfo.segmento, campana);
@@ -5179,24 +5199,56 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     const k5 = build5K(perVal, semVal, segVal, normCamp, cleanCode);
     const campKey = `${normCamp}|${cleanCode}`;
+    const cleanCampKey = `${cleanCamp}|${cleanCode}`;
     
-    // Obtener nóminas aislando estrictamente por la jerarquía de 5 llaves compuestas
+    // Obtener nóminas: Prioridad Llaves Compuestas -> Campaña+Código -> Fallback por Código
     const rawNominas = (perVal && semVal && normCamp && nominas5K.has(k5))
       ? nominas5K.get(k5)
-      : (normCamp && nominasCampCode.has(campKey))
-      ? nominasCampCode.get(campKey)
+      : (normCamp && (nominasCampCode.get(campKey) || nominasCampCode.get(cleanCampKey)))
+      ? (nominasCampCode.get(campKey) || nominasCampCode.get(cleanCampKey))
       : (nominasCode.get(cleanCode) || []);
 
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
-    // Obtener asistencias aislando estrictamente por la jerarquía de 5 llaves compuestas
-    const groupFormAsisRaw = (perVal && semVal && normCamp && formAsis5K.has(k5))
+    // Obtener asistencias: Prioridad Llaves Compuestas -> Campaña+Código -> Fallback por Código
+    let groupFormAsisRaw = (perVal && semVal && normCamp && formAsis5K.has(k5))
       ? formAsis5K.get(k5)
-      : (normCamp && formAsisCampCode.has(campKey))
-      ? formAsisCampCode.get(campKey)
+      : (normCamp && (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey)))
+      ? (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey))
       : (formAsisCode.get(cleanCode) || []);
+
+    // Aislamiento temporal inteligente para grupos reutilizando códigos:
+    // Descartar asistencias que ocurrieron más de 7 días antes de la fecha de apertura/inicio del grupo
+    // (ej. evita que un grupo futuro de Semana 37 absorba asistencias de Semana 32 de hace un mes)
+    const rawFechaInicio = grupoInfo.fecha_inicio_capacitacion || grupoInfo.fecha_capacitacion || grupoInfo.fecha_registro;
+    const fechaInicioIso = parseFechaAsistencia(rawFechaInicio);
+    if (fechaInicioIso && groupFormAsisRaw.length > 0) {
+      groupFormAsisRaw = groupFormAsisRaw.filter(f => {
+        const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
+        if (d && d < fechaInicioIso) {
+          const diffDays = (new Date(fechaInicioIso) - new Date(d)) / (1000 * 60 * 60 * 24);
+          if (diffDays > 7) return false;
+        }
+        return true;
+      });
+    }
+
+    // Si el grupo tiene fecha de ingreso a operación futura respecto a hoy (ej. grupos de septiembre programados a futuro),
+    // no puede tener I-OP previos generados antes de su fecha de inicio
+    if (fechaInicioIso && groupFormAsisRaw.length > 0) {
+      const fechaIngresoOp = parseFechaAsistencia(grupoInfo.fecha_ingreso_op);
+      const hoyIso = new Date().toISOString().slice(0, 10);
+      if (fechaIngresoOp && fechaIngresoOp > hoyIso) {
+        groupFormAsisRaw = groupFormAsisRaw.filter(f => {
+          const sigla = String(f.sigla || '').trim().toUpperCase();
+          const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
+          if (sigla === 'I-OP' && d && d < fechaInicioIso) return false;
+          return true;
+        });
+      }
+    }
 
     const asisByDoc = new Map();
     for (const r of groupFormAsisRaw) {

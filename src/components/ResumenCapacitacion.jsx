@@ -407,9 +407,12 @@ export default function ResumenCapacitacion({
       if (isCampanaFiltered && norm(d.campana) !== norm(filters.campana)) {
         return false;
       }
-      // Filtro Grupo / GPE
-      if (filters.grupo !== 'Todos' && norm(d.grupo_codigo) !== norm(filters.grupo)) {
-        return false;
+      // Filtro Grupo / GPE — verifica contra ambas claves posibles
+      if (filters.grupo !== 'Todos') {
+        const grupoNorm = norm(d.grupo_codigo || d.codigo);
+        if (grupoNorm !== norm(filters.grupo)) {
+          return false;
+        }
       }
       // Búsqueda en texto libre
       if (searchQuery) {
@@ -1176,9 +1179,10 @@ export default function ResumenCapacitacion({
         </div>
       </div>
 
-      {/* ── BARRA DE FILTROS CRUZADOS ── */}
+      {/* ── BARRA DE FILTROS CRUZADOS: PERIODO → SEMANA → SEGMENTO → CAMPAÑA → GRUPO ── */}
       <div className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
-        {/* Periodo */}
+
+        {/* 1. PERIODO */}
         <div className="flex-1 min-w-[140px]">
           <div className="flex items-center justify-between mb-1">
             <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase">Periodo</label>
@@ -1205,7 +1209,7 @@ export default function ResumenCapacitacion({
           </select>
         </div>
 
-        {/* Semana */}
+        {/* 2. SEMANA */}
         <div className="flex-1 min-w-[120px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Semana</label>
           <select
@@ -1218,7 +1222,7 @@ export default function ResumenCapacitacion({
           </select>
         </div>
 
-        {/* Segmento */}
+        {/* 3. SEGMENTO */}
         <div className="flex-1 min-w-[170px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Segmento</label>
           <select
@@ -1231,10 +1235,10 @@ export default function ResumenCapacitacion({
           </select>
         </div>
 
-        {/* Campaña */}
+        {/* 4. CAMPAÑA */}
         <div className="flex-1 min-w-[160px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">
-            Campaña {filters.estado === 'EN CURSO' ? '(Activas)' : filters.estado === 'CERRADO' ? '(Cerradas)' : ''}
+            Campaña
           </label>
           <select
             value={filters.campana}
@@ -1246,7 +1250,20 @@ export default function ResumenCapacitacion({
           </select>
         </div>
 
-        {/* Estado del Grupo (EN CURSO vs CERRADO) */}
+        {/* 5. GRUPO (GPE) */}
+        <div className="flex-1 min-w-[150px]">
+          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Grupo</label>
+          <select
+            value={filters.grupo}
+            onChange={(e) => setFilters(f => ({ ...f, grupo: e.target.value }))}
+            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
+          >
+            <option value="Todos">Todos los Grupos</option>
+            {filterOptions.grupos.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+
+        {/* 6. ESTADO */}
         <div className="flex-1 min-w-[140px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Estado</label>
           <select
@@ -1263,7 +1280,7 @@ export default function ResumenCapacitacion({
           </select>
         </div>
 
-        {/* Búsqueda rápida */}
+        {/* 7. BÚSQUEDA RÁPIDA */}
         <div className="flex-1 min-w-[180px]">
           <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Buscar Cohorte</label>
           <div className="relative">
@@ -1290,6 +1307,7 @@ export default function ResumenCapacitacion({
           </div>
         )}
       </div>
+
 
       {loading ? (
         <ViewLoadingSkeleton />

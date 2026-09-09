@@ -6,10 +6,10 @@ import '../styles/homeSelector.css'
 /**
  * Extrae de forma inteligente el nombre de pila real del usuario,
  * detectando y evitando tomar los apellidos paterno/materno cuando el nombre
- * viene registrado en formato peruano institucional (ej. "HOYOS DIAZ BRYAN" -> "Bryan").
+ * viene registrado en formato institucional peruano (ej. "APELLIDO_PAT APELLIDO_MAT NOMBRE" -> "Nombre").
  */
 function resolveDisplayName(profile) {
-  if (!profile) return 'Bryan'
+  if (!profile) return 'Colaborador'
 
   // 1. Si el perfil tiene explícitamente primer_nombre
   if (profile.primer_nombre) {
@@ -24,19 +24,25 @@ function resolveDisplayName(profile) {
     if (fn) return fn.charAt(0).toUpperCase() + fn.slice(1).toLowerCase()
   }
 
-  // 3. Cadena completa registrada (ej. "HOYOS DIAZ BRYAN")
+  // 3. Cadena completa registrada en el perfil
   const raw = String(profile.nombre_completo || profile.nombre || profile.name || '').trim()
-  if (!raw) return 'Bryan'
+  
+  // Si no hay nombre registrado, intentar extraer del email o rol
+  if (!raw) {
+    if (profile.email) {
+      const emailPrefix = String(profile.email).split('@')[0].split(/[._-]/)[0]
+      if (emailPrefix) {
+        return emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1).toLowerCase()
+      }
+    }
+    if (profile.rol) {
+      return profile.rol.charAt(0).toUpperCase() + profile.rol.slice(1).toLowerCase()
+    }
+    return 'Colaborador'
+  }
 
   const parts = raw.split(/\s+/).filter(Boolean)
   if (parts.length === 1) {
-    if (parts[0].toUpperCase() === 'HOYOS') {
-      const emailPrefix = String(profile.email || '').split('@')[0].split(/[._-]/)[0]
-      if (emailPrefix && emailPrefix.toUpperCase() !== 'HOYOS') {
-        return emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1).toLowerCase()
-      }
-      return 'Bryan'
-    }
     return parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase()
   }
 
@@ -47,17 +53,18 @@ function resolveDisplayName(profile) {
     return target.charAt(0).toUpperCase() + target.slice(1).toLowerCase()
   }
 
-  // Heurística estándar para formato de planillas peruano:
+  // Heurística estándar para formato de nómina/RRHH peruano:
   // [Apellido Paterno] [Apellido Materno] [Nombre 1] [Nombre 2...] (3 o más palabras)
   if (parts.length >= 3) {
     const target = parts[2]
     return target.charAt(0).toUpperCase() + target.slice(1).toLowerCase()
   }
 
-  // Si tiene 2 palabras y la primera es "HOYOS" o similar
+  // Si tiene 2 palabras:
   if (parts.length === 2) {
-    if (parts[0].toUpperCase() === 'HOYOS') {
-      return parts[1].charAt(0).toUpperCase() + parts[1].slice(1).toLowerCase()
+    // Si la 2da palabra es el apellido conocido
+    if (apPaterno && parts[1].toLowerCase() === apPaterno) {
+      return parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase()
     }
     return parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase()
   }
@@ -66,16 +73,23 @@ function resolveDisplayName(profile) {
 }
 
 function resolveInitials(profile, firstName) {
+  if (!profile) return firstName || 'GEA'
+
   const ap = profile?.apellido_paterno || ''
   if (ap) {
     return `${firstName} ${ap.charAt(0).toUpperCase()}.`
   }
   const raw = String(profile?.nombre_completo || profile?.nombre || '').trim()
   const parts = raw.split(/\s+/).filter(Boolean)
-  if (parts.length >= 2) {
+  if (parts.length >= 3) {
+    // En formato peruano (PATERNO MATERNO NOMBRES), el apellido paterno es parts[0]
     return `${firstName} ${parts[0].charAt(0).toUpperCase()}.`
   }
-  return `${firstName} H.`
+  if (parts.length === 2) {
+    // Formato Nombre Apellido
+    return `${firstName} ${parts[1].charAt(0).toUpperCase()}.`
+  }
+  return firstName
 }
 
 /**

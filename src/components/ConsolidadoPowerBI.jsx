@@ -28,12 +28,61 @@ import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalyt
 import * as XLSX from 'xlsx';
 
 const MIN_PERIODO_2026 = '202601';
-const MAX_PERIODO_ACTUAL_2026 = '202608'; // Periodo actual operativo (no proyectados futuros)
 
-function isPeriodoOperativoValido(p) {
+export function getPeriodoFromCapacidad(item) {
+  if (!item) return '';
+  // 1. Sincronizar por fecha_registro (fecha de inicio en capacidad) si existe
+  const rawDate = item.fecha_registro || item.fecha_inicio_capacitacion || item.fecha_inicio;
+  if (rawDate) {
+    const d = parseLocalDate(rawDate);
+    if (d) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return `${yyyy}${mm}`;
+    }
+  }
+  // 2. Periodo explícito de la cohorte
+  const p = normalize2026Period(item.periodo) || normalize2026Period(item.periodo_ingreso_op) || normalize2026Period(item.periodo_rys);
+  if (p) return p;
+
+  // 3. Fallback a fecha_inicio_ojt o fecha_ingreso_op
+  const altDate = item.fecha_inicio_ojt || item.fecha_ingreso_op;
+  if (altDate) {
+    const d = parseLocalDate(altDate);
+    if (d) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return `${yyyy}${mm}`;
+    }
+  }
+  return normalizeText(item.periodo);
+}
+
+export function getMaxPeriodoOperativo(capacidades = []) {
+  const now = new Date();
+  const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let maxP = currentYm < '202609' ? '202609' : currentYm;
+  
+  if (Array.isArray(capacidades) && capacidades.length > 0) {
+    for (const c of capacidades) {
+      const p = getPeriodoFromCapacidad(c) || String(c.periodo || '').replace(/\D/g, '').slice(0, 6);
+      if (p.length === 6 && p.startsWith('202')) {
+        const st = String(c.estado || '').toUpperCase();
+        if (st.includes('CURSO') || st.includes('ACT') || st.includes('CERR') || p <= currentYm) {
+          if (p > maxP) maxP = p;
+        }
+      }
+    }
+  }
+  return maxP;
+}
+
+function isPeriodoOperativoValido(p, maxPeriodo = null) {
   if (!p) return false;
-  const clean = String(p).trim();
-  return clean >= MIN_PERIODO_2026 && clean <= MAX_PERIODO_ACTUAL_2026;
+  const clean = String(p).replace(/\D/g, '').slice(0, 6);
+  if (clean.length !== 6 || !clean.startsWith('202')) return false;
+  const ceiling = maxPeriodo || getMaxPeriodoOperativo();
+  return clean >= MIN_PERIODO_2026 && clean <= ceiling;
 }
 
 const STATUS_META = {
@@ -534,6 +583,11 @@ export default function ConsolidadoPowerBI() {
     return () => window.removeEventListener('gea-global-refresh', handleGlobalRefresh);
   }, [loadData]);
 
+  // ── 0. Periodo operativo máximo dinámico según fecha actual y capacidades ──
+  const maxPeriodoOperativo = useMemo(() => {
+    return getMaxPeriodoOperativo(capacidades);
+  }, [capacidades]);
+
   // ── 1. Indexar capacidades por clave compuesta y por código directo para búsqueda ultra-rápida O(1) ──
   const { capacidadByKeyMap, capacidadByCodigoMap, allCapacidadItems } = useMemo(() => {
     const byKey = new Map();
@@ -542,14 +596,16 @@ export default function ConsolidadoPowerBI() {
 
     for (let i = 0; i < capacidades.length; i++) {
       const item = capacidades[i];
-      if (isCampanaProyectada(item)) continue;
+      const rawPeriodo = getPeriodoFromCapacidad(item);
+
+      // Si es una campaña proyectada de un periodo posterior al periodo operativo, omitir
+      if (isCampanaProyectada(item) && rawPeriodo > maxPeriodoOperativo) continue;
 
       const campana = normalizeCampana(item.campana);
       const gpe = normalizeGpe(item.codigo || item.grupo_codigo);
       const semanaStr = normalizeSemana(item.semana_label, item.semana_trabajo);
-      const rawPeriodo = normalize2026Period(item.periodo) || normalizeText(item.periodo);
 
-      if (rawPeriodo && !isPeriodoOperativoValido(rawPeriodo)) continue;
+      if (rawPeriodo && !isPeriodoOperativoValido(rawPeriodo, maxPeriodoOperativo)) continue;
 
       const isAreaReclutamiento = String(item.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO';
       const capInfo = {
@@ -559,7 +615,9 @@ export default function ConsolidadoPowerBI() {
         meta_dia_1: Number(item.meta_dia_1) || 0,
         rq_solicitado: isAreaReclutamiento ? (Number(item.rq_ftes_solicitado ?? item.rq_solicitado) || 0) : 0,
         rq_ftes_solicitado: isAreaReclutamiento ? (Number(item.rq_ftes_solicitado) || 0) : 0,
+        fecha_registro: normalizeText(item.fecha_registro),
         fecha_inicio_ojt: normalizeText(item.fecha_inicio_ojt),
+        fecha_ingreso_op: normalizeText(item.fecha_ingreso_op),
         periodo: rawPeriodo,
         semana: semanaStr,
         segmento: normalizeSegmento(item.segmento),
@@ -575,7 +633,7 @@ export default function ConsolidadoPowerBI() {
     }
 
     return { capacidadByKeyMap: byKey, capacidadByCodigoMap: byCode, allCapacidadItems: allItems };
-  }, [capacidades]);
+  }, [capacidades, maxPeriodoOperativo]);
 
   // Helper robusto para obtener capacidad (estricto por campaña + grupo para evitar cruces indebidos)
   const getCapInfo = useCallback((campana, gpe) => {
@@ -616,10 +674,17 @@ export default function ConsolidadoPowerBI() {
       // 2. Respetar la campaña real de asistencia
       const rowCampana = (campana && campana !== 'SIN CAMPAÑA') ? campana : (cap?.campana || campana);
 
-      // 3. Determinar periodo según el PERIODO DE INICIO (Capacidad RYS)
+      // 3. Determinar periodo sincronizado según las fechas y periodo de Capacidad RYS
       let rowPeriodo = '';
       if (cap?.periodo) {
-        rowPeriodo = normalize2026Period(cap.periodo) || normalizeText(cap.periodo);
+        rowPeriodo = cap.periodo;
+      } else if (cap?.fecha_registro) {
+        const d = parseLocalDate(cap.fecha_registro);
+        if (d) {
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          rowPeriodo = `${yyyy}${mm}`;
+        }
       } else if (row.periodo) {
         rowPeriodo = normalize2026Period(row.periodo) || normalizeText(row.periodo);
       } else if (row.archivo_origen && normalize2026Period(row.archivo_origen)) {
@@ -634,7 +699,7 @@ export default function ConsolidadoPowerBI() {
       }
 
       // Descartar registros con periodos fuera del rango histórico 2026 operativo
-      if (rowPeriodo && !isPeriodoOperativoValido(rowPeriodo)) continue;
+      if (rowPeriodo && !isPeriodoOperativoValido(rowPeriodo, maxPeriodoOperativo)) continue;
 
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
 
@@ -657,7 +722,7 @@ export default function ConsolidadoPowerBI() {
       });
     }
     return result;
-  }, [data, getCapInfo]);
+  }, [data, getCapInfo, maxPeriodoOperativo]);
 
   // ── Jerarquía en Cascada Estricta (Periodo -> Semana -> Segmento -> Campaña -> GPE) ──
   const filterOptions = useMemo(() => {
@@ -675,7 +740,7 @@ export default function ConsolidadoPowerBI() {
     // 1. Maestro de Periodos y Semanas por Periodo de Inicio (Capacidad RYS)
     for (let i = 0; i < allCapacidadItems.length; i++) {
       const c = allCapacidadItems[i];
-      if (isPeriodoOperativoValido(c.periodo)) periodos.add(c.periodo);
+      if (isPeriodoOperativoValido(c.periodo, maxPeriodoOperativo)) periodos.add(c.periodo);
       if (matchPeriodo(c.periodo)) {
         if (c.semana) semanas.add(c.semana);
         if (matchSemana(c.semana)) {
@@ -691,7 +756,7 @@ export default function ConsolidadoPowerBI() {
     // 2. Asistencias válidas asociadas a este Periodo de Inicio
     for (let i = 0; i < validData.length; i++) {
       const r = validData[i];
-      if (isPeriodoOperativoValido(r._periodo)) periodos.add(r._periodo);
+      if (isPeriodoOperativoValido(r._periodo, maxPeriodoOperativo)) periodos.add(r._periodo);
       if (matchPeriodo(r._periodo)) {
         if (filters.periodo === 'Todas' && r._semana) {
           semanas.add(r._semana);
@@ -715,14 +780,14 @@ export default function ConsolidadoPowerBI() {
     });
 
     return {
-      periodo: ['Todas', ...Array.from(periodos).filter(isPeriodoOperativoValido).sort().reverse()],
+      periodo: ['Todas', ...Array.from(periodos).filter(p => isPeriodoOperativoValido(p, maxPeriodoOperativo)).sort().reverse()],
       semana: ['Todas', ...sortedSemanas],
       segmento: sortOptions(segmentos),
       campana: sortOptions(campanas),
       gpe: sortOptions(gpes),
       estado: ['Todas', ...Array.from(estados)],
     };
-  }, [validData, allCapacidadItems, filters.periodo, filters.semana, filters.segmento, filters.campana]);
+  }, [validData, allCapacidadItems, filters.periodo, filters.semana, filters.segmento, filters.campana, maxPeriodoOperativo]);
 
   const handleFilterChange = (key, value) => {
     setPage(1);
