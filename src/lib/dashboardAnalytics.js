@@ -1145,7 +1145,7 @@ export function buildResumenMensualCapacitacion(
 
     if (!perVal || perVal < MIN_PERIODO_CORTE) continue
 
-    const groupDedupKey = `${cleanCode}|${normCamp}|${perVal}|${semVal}`
+    const groupDedupKey = `${cleanCode}|${normCamp}|${segVal}|${perVal}|${semVal}`
     if (processedGroups.has(groupDedupKey)) continue
     processedGroups.add(groupDedupKey)
 
@@ -1172,12 +1172,15 @@ export function buildResumenMensualCapacitacion(
     if (!rawNominas && cleanCode && nominasCode.has(cleanCode)) {
       const byCode = nominasCode.get(cleanCode) || []
       const matched = byCode.filter(n => {
-        const nPer = norm5Per(n.periodo_reclutado || n.periodo)
-        const nSem = norm5Sem(n.semana_trabajo || n.semana)
-        if (perVal && nPer && nPer !== perVal) return false
-        if (semVal && nSem && nSem !== semVal) return false
         const nCamp = norm5Str(n.campana)
-        return !nCamp || !normCamp || nameMatches(nCamp, normCamp) || nCamp.includes(normCamp) || normCamp.includes(nCamp)
+        if (normCamp && nCamp && !nameMatches(nCamp, normCamp) && !nCamp.includes(normCamp) && !normCamp.includes(nCamp)) return false
+        const nSeg = norm5Seg(n.segmento, n.campana)
+        if (segVal && nSeg && nSeg !== segVal) return false
+        const nPer = norm5Per(n.periodo_reclutado || n.periodo)
+        if (perVal && nPer && nPer !== perVal) return false
+        const nSem = norm5Sem(n.semana_trabajo || n.semana)
+        if (semVal && nSem && nSem !== semVal) return false
+        return true
       })
       rawNominas = matched
     }
@@ -1194,7 +1197,8 @@ export function buildResumenMensualCapacitacion(
         const doc = norm5Str(f.documento || f.postulante_documento)
         if (cohortDocs.has(doc)) return true
         const fCamp = norm5Str(f.campana)
-        return (!fCamp || !normCamp || nameMatches(fCamp, normCamp) || fCamp.includes(normCamp) || normCamp.includes(fCamp))
+        if (normCamp && fCamp && !nameMatches(fCamp, normCamp) && !fCamp.includes(normCamp) && !normCamp.includes(fCamp)) return false
+        return true
       })
       groupFormAsisRaw = matched
     }

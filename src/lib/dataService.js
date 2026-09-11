@@ -5498,24 +5498,79 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   const normSeg = (rawSeg, campana) => {
     let s = String(rawSeg || '').trim().toUpperCase();
     const c = String(campana || '').toUpperCase();
+
+    // 1. EXCEPCIÓN CLAVE: "RETENCIONES FIJA INBOUND" y "RETENCIONES FIJA" pertenecen estrictamente a "CLARO PERU"
     if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
       return 'CLARO PERU';
     }
+
+    // 2. EXCEPCIÓN CLAVE: Campañas de Claro Postpago (incluido CLARO POSTPAGO - CROSS) pertenecen a "CLARO PERU"
     if (c.includes('CLARO POSTPAGO')) {
       return 'CLARO PERU';
     }
-    if (!s || s === 'NULL' || s === 'SIN SEGMENTO' || s === '-') {
-      if (c.includes('CHILE')) return 'CLARO CHILE';
-      if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES';
-      if (c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA OUT') || c.includes('RENO OUT') || c.includes('VENTAS OUT') || c.includes('CROSS') || c.includes('MIGRACIONES')) return 'CLARO PERU OUT';
-      if (c.includes('LIPIGAS')) return 'LIPIGAS';
-      return 'CLARO PERU';
+
+    // 3. Campañas exclusivas de CLARO CHILE
+    if (c.includes('TUVES') || c.includes('CHILE')) {
+      return 'CLARO CHILE';
     }
-    if (s.includes('CHILE')) return 'CLARO CHILE';
-    if (s.includes('RETENCION') && !c.includes('RETENCIONES FIJA')) return 'CLARO PERU RETENCIONES';
-    if (s.includes('OUT')) return 'CLARO PERU OUT';
-    if (s.includes('LIPIGAS')) return 'LIPIGAS';
+
+    // 4. Campañas exclusivas de LIPIGAS
+    if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) {
+      return 'LIPIGAS';
+    }
+
+    // 5. Si ya viene explícito uno de los 5 segmentos oficiales, respetarlo
+    if (s === 'CLARO PERU') return 'CLARO PERU';
+    if (s === 'CLARO PERU RETENCIONES') return 'CLARO PERU RETENCIONES';
+    if (s === 'CLARO PERU OUT') return 'CLARO PERU OUT';
+    if (s === 'CLARO CHILE' || s.includes('CHILE')) return 'CLARO CHILE';
+    if (s === 'LIPIGAS' || s.includes('LIPIGAS')) return 'LIPIGAS';
+
+    // 6. Fallbacks por palabras clave
+    if (
+      s.includes('RETENCION') || 
+      c.includes('RETENCION') || 
+      c.includes('CONTACTADOS') || 
+      c.includes('CONTENCI') || 
+      c.includes('DESCUENTO') || 
+      c.includes('BABYSTING') || 
+      c.includes('CONSULTA PREVIA') || 
+      c.includes('MI CLARO') || 
+      c.includes('ENCUESTAS IZO') ||
+      c.includes('CANAL DIGITAL') ||
+      c.includes('WSP INBOUND')
+    ) {
+      return 'CLARO PERU RETENCIONES';
+    }
+    if (
+      s.includes('OUT') || 
+      c.includes('OUT') || 
+      c.includes('PREVENTIVA') || 
+      c.includes('PORTA OUT') || 
+      c.includes('RENO OUT') || 
+      c.includes('VENTAS OUT') || 
+      c.includes('CROSS') ||
+      c.includes('MIGRACIONES') ||
+      c.includes('UPGRADE') ||
+      c.includes('PORTABILIDAD')
+    ) {
+      return 'CLARO PERU OUT';
+    }
     return 'CLARO PERU';
+  };
+
+  const isCompatibleCampaign = (campA, campB) => {
+    if (!campA || !campB) return false;
+    const a = norm(campA);
+    const b = norm(campB);
+    if (a === b) return true;
+    const ca = normCleanCamp(campA);
+    const cb = normCleanCamp(campB);
+    if (ca === cb) return true;
+    if (ca.length >= 6 && cb.length >= 6) {
+      if (ca.includes(cb) || cb.includes(ca)) return true;
+    }
+    return false;
   };
 
   const build5K = (periodo, semana, segmento, campana, grupo) => {
@@ -5623,7 +5678,8 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const semVal = normSem(grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana);
     const segVal = normSeg(grupoInfo.segmento, campana);
 
-    const groupDedupKey = `${cleanCode}|${normCamp}|${perVal}|${semVal}`;
+    // Llave única de deduplicación basada estrictamente en las 5 Llaves
+    const groupDedupKey = `${cleanCode}|${normCamp}|${segVal}|${perVal}|${semVal}`;
     if (processedGroups.has(groupDedupKey)) continue;
     processedGroups.add(groupDedupKey);
 
@@ -5634,23 +5690,26 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const campKey = `${normCamp}|${cleanCode}`;
     const cleanCampKey = `${cleanCamp}|${cleanCode}`;
     
-    // Obtener nóminas: Prioridad Llaves Compuestas (5K periodo OP o RYS) -> Filtro por Código -> Fallback
+    // Obtener nóminas: Prioridad Llaves Compuestas (5K periodo OP o RYS) -> Filtro por Código con 5 Llaves
     let rawNominas = (perVal && semVal && normCamp && (nominas5K.get(k5) || (k5Clean && nominas5K.get(k5Clean))))
       || (rysPer && semVal && normCamp && (nominas5K.get(k5Rys) || (k5RysClean && nominas5K.get(k5RysClean))))
       || null;
 
-    // Si no hubo coincidencia 5K exacta, buscar por código pero permitir coincidencia con periodo OP o RYS
+    // Si no hubo coincidencia 5K exacta, buscar por código pero validando estrictamente las 5 llaves
     if (!rawNominas && cleanCode && nominasCode.has(cleanCode)) {
       const candidatesByCode = nominasCode.get(cleanCode) || [];
       const matched = candidatesByCode.filter(n => {
+        // 1. Campaña: DEBE coincidir o ser compatible (nunca cruzar postulantes de otra campaña)
+        if (normCamp && !isCompatibleCampaign(n.campana, campana)) return false;
+        // 2. Segmento: DEBE coincidir si viene informado
+        const nSeg = normSeg(n.segmento, n.campana);
+        if (segVal && nSeg && nSeg !== segVal) return false;
+        // 3. Periodo: DEBE pertenecer al periodo de OP o RYS
         const nPer = normPer(n.periodo_reclutado || n.periodo);
-        const nSem = normSem(n.semana_trabajo || n.semana);
         if (perVal && rysPer && nPer && nPer !== perVal && nPer !== rysPer) return false;
+        // 4. Semana: DEBE coincidir con la semana si viene informada
+        const nSem = normSem(n.semana_trabajo || n.semana);
         if (semVal && nSem && nSem !== semVal) return false;
-        if (normCamp) {
-          const nCamp = norm(n.campana);
-          if (nCamp && !nCamp.includes(normCamp) && !normCamp.includes(nCamp)) return false;
-        }
         return true;
       });
       if (matched.length > 0) rawNominas = matched;
@@ -5660,25 +5719,40 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
+
+    const cohortDocSet = new Set(validNominas.map(n => norm(n.documento)).filter(Boolean));
       
-    // Obtener asistencias: Prioridad Campaña+Código -> Fallback por Código
-    let groupFormAsisRaw = (normCamp && (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey)))
-      ? (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey))
-      : (formAsisCode.get(cleanCode) || []);
+    // Obtener asistencias: Prioridad Campaña+Código sin cruzar con campañas distintas
+    let groupFormAsisRaw = [];
+    if (normCamp && (formAsisCampCode.has(campKey) || formAsisCampCode.has(cleanCampKey))) {
+      groupFormAsisRaw = formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey) || [];
+    } else if (cleanCode && formAsisCode.has(cleanCode)) {
+      // Si se busca por código, NUNCA cruzar asistencias de otras campañas
+      const allForCode = formAsisCode.get(cleanCode) || [];
+      groupFormAsisRaw = allForCode.filter(f => {
+        const doc = norm(f.documento || f.postulante_documento);
+        // Si el postulante ya está registrado en la nómina de esta cohorte
+        if (doc && cohortDocSet.has(doc)) return true;
+        // O si la campaña es estrictamente compatible
+        return isCompatibleCampaign(f.campana, campana);
+      });
+    }
 
     // Aislamiento por cohorte: asociar asistencias de los postulantes de esta cohorte,
-    // o con pase formal a operación (I-OP), o cuyas fechas correspondan al periodo
-    const cohortDocSet = new Set(validNominas.map(n => norm(n.documento)).filter(Boolean));
+    // o con pase formal a operación (I-OP) para este grupo y campaña, o cuyas fechas correspondan al periodo
     if (groupFormAsisRaw.length > 0) {
       groupFormAsisRaw = groupFormAsisRaw.filter(f => {
         const doc = norm(f.documento || f.postulante_documento);
         if (cohortDocSet.has(doc)) return true;
+
+        // Si no está en nómina previa, la campaña DEBE ser compatible (prohibido cruzar datos de otra campaña)
+        if (!isCompatibleCampaign(f.campana, campana)) return false;
         
-        // Si tiene pase formal a operación (I-OP) para este grupo y campaña, es estrictamente parte de la cohorte
+        // Si tiene pase formal a operación (I-OP) para este grupo y campaña
         const siglaNorm = String(f.sigla || f.sigla_asistencia || '').trim().toUpperCase();
         if (siglaNorm === 'I-OP') return true;
 
-        // Si no está en nómina previa, validar por fecha de asistencia dentro del periodo de OP o de capacitación
+        // Validar por fecha de asistencia dentro del periodo de OP o de capacitación
         const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
         if (d && (perVal || rysPer)) {
           const dPer = normPer(d.replace(/\D/g, '').slice(0, 6));
@@ -5736,21 +5810,25 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Incorporar cualquier participante que registró asistencia o pase I-OP en esta cohorte
-    // garantizando que no se pierdan asistencias ni graduados reales que no figuraban en la nómina inicial
+    // Incorporar cualquier participante que registró asistencia o pase I-OP legítimo en esta cohorte
+    // garantizando que coincida la campaña y evaluando su asistencia real (sin forzar día 1 si no asistió)
     if (groupFormAsisRaw.length > 0) {
       groupFormAsisRaw.forEach(r => {
         const doc = norm(r.documento || r.postulante_documento);
         if (doc && !candidateMap.has(doc)) {
           if (descSet.has(makeDescuentoKey(doc, campana, grupo_codigo))) return;
+          if (!isCompatibleCampaign(r.campana, campana)) return;
+
+          const sig = String(r.sigla || r.sigla_asistencia || '').trim().toUpperCase();
+          const hasAttended = sig === 'A' || sig === 'FJ' || sig === 'I-OP' || sig === 'CAPACITACION' || sig === 'OJT';
           candidateMap.set(doc, {
             documento: doc,
             nombres: r.nombres || '',
             apellido_paterno: r.apellido_paterno || '',
             apellido_materno: r.apellido_materno || '',
             condicion: r.condicion_laboral || r.condicion || grupoInfo.condicion || 'FULL TIME',
-            dia_0: 'ASISTIO',
-            dia_1: 'ASISTIO',
+            dia_0: hasAttended ? 'ASISTIO' : (sig === 'F' ? 'FALTA' : (sig === 'B' ? 'BAJA' : null)),
+            dia_1: hasAttended ? 'ASISTIO' : (sig === 'F' ? 'FALTA' : (sig === 'B' ? 'BAJA' : null)),
             fromAsistencia: true
           });
         }
