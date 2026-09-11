@@ -706,8 +706,9 @@ export default function ConsolidadoPowerBI() {
       const txtEstado = String(row.estado || '').toUpperCase();
       const txtMotivo = String(row.motivo_baja || '').toUpperCase();
       const txtObs = String(row.observacion_estado || '').toUpperCase();
+      const isDescRow = Boolean(row.isDescuento) || txtEstado === 'DESCUENTO' || txtMotivo.includes('DESCUENTO');
       
-      const isBajaDia1Val = isBajaDia1(txtMotivo, row.sigla, row) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
+      const isBajaDia1Val = !isDescRow && (isBajaDia1(txtMotivo, row.sigla, row) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1'));
       
       result.push({
         ...row,
@@ -718,7 +719,7 @@ export default function ConsolidadoPowerBI() {
         _semana: rowSemana,
         _segmento: rowSegmento,
         isBajaDia1: isBajaDia1Val,
-        isDescuento: Boolean(row.isDescuento)
+        isDescuento: isDescRow
       });
     }
     return result;
@@ -930,6 +931,20 @@ export default function ConsolidadoPowerBI() {
     const latestDocMap = new Map();
     const descSet = new Set();
 
+    // 1. Añadir todos los DNIs de la tabla descuentos cargada
+    (descuentos || []).forEach(d => {
+      const procedeStr = String(d.procede || '').trim().toUpperCase();
+      const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
+      if (procedeStr !== 'NO' && procedeStr !== 'NO PROCEDE' && rysStr !== 'NO') {
+        const dni = normalizeText(d.dni_ce);
+        if (dni) {
+          descSet.add(dni);
+          descSet.add(dni.toLowerCase());
+          descSet.add(dni.toUpperCase());
+        }
+      }
+    });
+
     for (let i = 0; i < kpiFilteredData.length; i++) {
       const row = kpiFilteredData[i];
       const doc = normalizeText(row.documento);
@@ -952,7 +967,10 @@ export default function ConsolidadoPowerBI() {
     for (const [doc, { row }] of latestDocMap.entries()) {
       const motivo = row?.motivo_baja || row?.motivo;
       const sigla = normalizeSigla(row?.sigla);
-      if (isBajaDia1(motivo, sigla, row)) {
+      const isDesc = descSet.has(doc) || Boolean(row?.isDescuento) || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO');
+      if (isDesc) {
+        stateMap.set(doc, 'DESCUENTO');
+      } else if (isBajaDia1(motivo, sigla, row)) {
         stateMap.set(doc, 'BAJA DIA 1');
       } else if (isBajaCapacitacion(row) || sigla === 'B') {
         stateMap.set(doc, 'CESADO');
@@ -962,18 +980,24 @@ export default function ConsolidadoPowerBI() {
     }
 
     return { lastStateMap: stateMap, descuentosDocSet: descSet };
-  }, [kpiFilteredData]);
+  }, [kpiFilteredData, descuentos]);
 
-  // ── Datos filtrados para la Tabla ──
+  // ── Datos filtrados para la Tabla (Excluyendo Descuentos de la vista de Control de Asistencia) ──
   const filteredData = useMemo(() => {
-    if (filters.estado === 'Todas') return kpiFilteredData;
+    const nonDiscountData = kpiFilteredData.filter(row => {
+      const doc = normalizeText(row.documento);
+      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
+      return lastState !== 'DESCUENTO' && !descuentosDocSet.has(doc) && !row.isDescuento;
+    });
 
-    return kpiFilteredData.filter((row) => {
+    if (filters.estado === 'Todas') return nonDiscountData;
+
+    return nonDiscountData.filter((row) => {
       const doc = normalizeText(row.documento);
       const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
       return lastState === filters.estado;
     });
-  }, [kpiFilteredData, filters.estado, lastStateMap]);
+  }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
 
   const uniqueDates = useMemo(() => {
     const datesMap = new Map();
@@ -1033,6 +1057,11 @@ export default function ConsolidadoPowerBI() {
       const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
       const hasDescuento = descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
+
+      // Los postulantes con descuento ya no deben aparecer en la tabla de Control de Asistencia
+      if (hasDescuento || docState === 'DESCUENTO') {
+        continue;
+      }
 
       result.push({
         documento: doc,
@@ -1097,12 +1126,12 @@ export default function ConsolidadoPowerBI() {
 
     docMap.forEach((rows, doc) => {
       const docState = lastStateMap.get(doc) || 'SIN ESTADO';
-      const hasDescuento = descuentosDocSet.has(doc);
+      const hasDescuento = descuentosDocSet.has(doc) || docState === 'DESCUENTO';
       if (hasDescuento) descuentosAprobados += 1;
 
       const isActivo = docState === 'ACTIVO';
       const isB1 = docState === 'BAJA DIA 1';
-      const isCesado = docState === 'CESADO';
+      const isCesado = docState === 'CESADO' && !hasDescuento;
 
       const attendedAny = rows.some((r) => {
         const s = normalizeSigla(r.sigla);
@@ -1112,14 +1141,11 @@ export default function ConsolidadoPowerBI() {
       if (isActivo) activos += 1;
       if (isB1) bajasDia1 += 1;
       if (isCesado) {
-        // Regla: Los descuentos autorizados y bajas día 1 NO suman a la deserción de Formación
-        if (!hasDescuento) {
-          desertoresFormacion += 1;
-        }
+        desertoresFormacion += 1;
       }
 
-      // Q Día 1: Asistentes efectivos a Día 1 (excluye quien tuvo Baja Día 1)
-      if ((attendedAny || isActivo) && !isB1) qDia1 += 1;
+      // Q Día 1: Asistentes efectivos a Día 1 de Capacitación (excluye Baja Día 1 y Descuentos)
+      if ((attendedAny || isActivo) && !isB1 && !hasDescuento) qDia1 += 1;
     });
 
     let sumMetaDia1 = 0;
@@ -1497,10 +1523,18 @@ export default function ConsolidadoPowerBI() {
                   </td>
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
                     <div className="flex items-center gap-1">
-                      <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${row.ult_estado === 'ACTIVO' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : row.ult_estado === 'BAJA DIA 1' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'}`}>
+                      <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+                        row.ult_estado === 'ACTIVO'
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                          : row.ult_estado === 'BAJA DIA 1'
+                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                          : row.ult_estado === 'DESCUENTO'
+                          ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30'
+                          : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                      }`}>
                         {row.ult_estado}
                       </span>
-                      {row.isDescuento && (
+                      {row.isDescuento && row.ult_estado !== 'DESCUENTO' && (
                         <span className="inline-flex rounded px-1 py-0.5 text-[8px] font-black uppercase tracking-tight bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30" title="Descuento autorizado por RyS/Capacitación (No penaliza)">
                           DESC
                         </span>

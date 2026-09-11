@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { CheckSquare, Square, CheckCircle, RefreshCw, AlertTriangle, Save, ThumbsUp, ThumbsDown, Check, Loader2 } from 'lucide-react'
+import { CheckSquare, Square, CheckCircle, RefreshCw, AlertTriangle, Save, ThumbsUp, ThumbsDown, Check, Loader2, Clock } from 'lucide-react'
 import { fetchDescuentosPendientes, updateDescuentosIndividuales } from '../lib/dataService'
+import { getDescuentoStatus48h } from '../lib/businessHoursUtils'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
@@ -25,9 +26,13 @@ export default function DescuentosAutorizacion() {
       
       const edits = {}
       data.forEach(row => {
+        const isExp = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja).expired;
+        const defaultEstado = isExp && (!row.autoriza_rys || row.autoriza_rys === 'PENDIENTE') ? 'SI' : ((row.autoriza_rys === 'PENDIENTE' || !row.autoriza_rys) ? '' : row.autoriza_rys);
+        const defaultComentario = isExp && !row.comentario_rys ? 'descuento aprobado por tiempo de respuesta' : (row.comentario_rys || '');
+
         edits[row.id] = {
-          estado: (row.autoriza_rys === 'PENDIENTE' || !row.autoriza_rys) ? '' : row.autoriza_rys,
-          comentario: row.comentario_rys || ''
+          estado: defaultEstado,
+          comentario: defaultComentario
         }
       })
       setRowEdits(edits)
@@ -245,21 +250,28 @@ export default function DescuentosAutorizacion() {
                   <th className="p-3 border-r border-[var(--border-subtle)] font-bold uppercase tracking-wider bg-[var(--accent)]/10 text-[var(--accent)] min-w-[180px]">Comentario RYS</th>
                   <th className="p-3 border-r border-[var(--border-subtle)] font-bold uppercase tracking-wider text-center">Procede</th>
                   <th className="p-3 border-r border-[var(--border-subtle)] font-bold uppercase tracking-wider">Fecha Envío</th>
+                  <th className="p-3 border-r border-[var(--border-subtle)] font-bold uppercase tracking-wider text-center">Plazo 48h</th>
                   <th className="p-3 font-bold uppercase tracking-wider text-center sticky right-0 bg-[var(--table-head-bg)] shadow-l">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
               {pendientes.map(row => {
                 const isSelected = selectedIds.includes(row.id)
+                const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja);
+                const isExpired48h = status48h.expired;
+
                 const dbEstado = (row.autoriza_rys === 'PENDIENTE' || !row.autoriza_rys) ? '' : row.autoriza_rys
-                const editState = rowEdits[row.id] || { estado: dbEstado, comentario: row.comentario_rys || '' }
+                const editState = rowEdits[row.id] || { 
+                  estado: isExpired48h && (!dbEstado || dbEstado === 'PENDIENTE') ? 'SI' : dbEstado, 
+                  comentario: row.comentario_rys || (isExpired48h ? 'descuento aprobado por tiempo de respuesta' : '') 
+                }
                 
                 // Cálculo dinámico de PROCEDE
-                const currentAutRys = editState.estado
+                const currentAutRys = isExpired48h && (!editState.estado || editState.estado === 'PENDIENTE') ? 'SI' : editState.estado
                 const currentAutCap = row.autoriza_cap || 'SI'
                 
                 let procedeVisual = 'PENDIENTE'
-                if (currentAutRys === 'SI') {
+                if (currentAutRys === 'SI' || (isExpired48h && currentAutRys !== 'NO')) {
                   procedeVisual = (currentAutCap === 'SI') ? 'PROCEDE' : 'PENDIENTE'
                 } else if (currentAutRys === 'NO') {
                   procedeVisual = 'NO PROCEDE'
@@ -302,15 +314,15 @@ export default function DescuentosAutorizacion() {
                     <td className="p-1.5 border-r border-[var(--border-subtle)] bg-[var(--accent)]/5 text-center">
                       <select 
                         className={`w-full form-input py-1.5 px-2 text-xs rounded-lg uppercase font-bold border transition-colors ${
-                          editState.estado === 'SI' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40' :
+                          (editState.estado === 'SI' || (!editState.estado && isExpired48h)) ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40' :
                           editState.estado === 'NO' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40' :
                           'border-[var(--border-normal)] text-[var(--text-secondary)]'
                         }`}
-                        value={editState.estado}
+                        value={editState.estado || (isExpired48h ? 'SI' : '')}
                         onChange={e => handleRowEdit(row.id, 'estado', e.target.value)}
                       >
                         <option value="">-- PENDIENTE --</option>
-                        <option value="SI">SI (APROBADO)</option>
+                        <option value="SI">{isExpired48h ? 'SI (AUTO-APROBADO 48H)' : 'SI (APROBADO)'}</option>
                         <option value="NO">NO (RECHAZADO)</option>
                       </select>
                     </td>
@@ -319,9 +331,9 @@ export default function DescuentosAutorizacion() {
                     <td className="p-1.5 border-r border-[var(--border-subtle)] bg-[var(--accent)]/5">
                       <input 
                         type="text" 
-                        placeholder="Comentario RyS..."
+                        placeholder={isExpired48h ? "descuento aprobado por tiempo de respuesta" : "Comentario RyS..."}
                         className="w-full form-input py-1.5 px-2 text-xs rounded-lg uppercase border border-[var(--border-normal)]"
-                        value={editState.comentario}
+                        value={editState.comentario !== undefined && editState.comentario !== '' ? editState.comentario : (isExpired48h ? 'descuento aprobado por tiempo de respuesta' : '')}
                         onChange={e => handleRowEdit(row.id, 'comentario', e.target.value)}
                       />
                     </td>
@@ -339,6 +351,22 @@ export default function DescuentosAutorizacion() {
 
                     {/* FECHA DE ENVIO */}
                     <td className="p-2 text-[var(--text-muted)] text-[11px] font-mono">{row.fecha_registro ? new Date(row.fecha_registro).toLocaleString() : '-'}</td>
+
+                    {/* PLAZO 48H HÁBILES */}
+                    <td className="p-2 text-center border-r border-[var(--border-subtle)]">
+                      {(() => {
+                        const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja);
+                        return (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            status48h.expired 
+                              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30' 
+                              : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
+                          }`}>
+                            <Clock size={10} /> {status48h.label}
+                          </span>
+                        );
+                      })()}
+                    </td>
 
                     {/* ACCIÓN INDIVIDUAL */}
                     <td className="p-2 text-center sticky right-0 bg-[var(--bg-surface)] shadow-l">

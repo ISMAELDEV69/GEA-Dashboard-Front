@@ -20,6 +20,7 @@ export const AVAILABLE_MODULES = [
   { id: 'motivos_bajas_bi', label: 'Motivos Bajas' },
   { id: 'descuentos_bi', label: 'Motivos Desc.' },
   { id: 'propuestas', label: 'Propuestas' },
+  { id: 'pagos_capacitacion', label: 'Pagos Capacitación' },
   { id: 'descuentos_form', label: 'Cargar Descuentos' },
   { id: 'descuentos_auth', label: 'Autorizar RYS' },
   { id: 'nomina', label: 'Bolsa de Postulantes' },

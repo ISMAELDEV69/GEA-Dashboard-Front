@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { Save, AlertTriangle, CheckCircle, Trash2, Plus, RefreshCw, Send } from 'lucide-react'
 import { insertDescuentosBulk } from '../lib/dataService'
+import { isDescuentoVencido48h } from '../lib/businessHoursUtils'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
@@ -87,19 +88,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
   // Validación de 48h (Supervisor)
   const isSupervisorTarde = (fechaBajaStr) => {
     if (!fechaBajaStr) return false;
-    const hoyDate = new Date(new Date().toISOString().split('T')[0] + 'T00:00:00Z');
-    const dBaja = new Date(fechaBajaStr + 'T00:00:00Z');
-    
-    if (!isNaN(dBaja)) {
-       let addedDays = 0;
-       while (addedDays < 2) {
-         dBaja.setUTCDate(dBaja.getUTCDate() + 1);
-         if (dBaja.getUTCDay() !== 0) addedDays++; // Saltar domingos (0)
-       }
-       const limiteSupervisor = new Date(dBaja.toISOString().split('T')[0] + 'T00:00:00Z');
-       return hoyDate >= limiteSupervisor;
-    }
-    return false;
+    return isDescuentoVencido48h(fechaBajaStr);
   }
 
   const handleSave = async () => {

@@ -25,6 +25,7 @@ import {
   deletePersistentByPrefix,
   clearPersistentCache
 } from './persistentCache.js'
+import { isDescuentoVencido48h, parseFechaRegistro } from './businessHoursUtils.js'
 
 export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 
@@ -82,10 +83,13 @@ export function invalidateCache(keyPrefix) {
 }
 
 export function isBajaDia1(motivo, sigla, row) {
+  if (row?.isDescuento || row?.is_descuento || String(row?.estado || '').toUpperCase().trim() === 'DESCUENTO') return false;
   const m = String(motivo || '').toUpperCase().trim();
+  if (m.includes('DESCUENTO')) return false;
   const s = String(sigla || '').toUpperCase().trim();
   const t = String(row?.tipo_baja || row?.tipo || row?.tipo_reclutado || '').toUpperCase().trim();
   const stD1 = String(row?.status_dia_1 || '').toUpperCase().trim();
+  if (t.includes('DESCUENTO') || stD1.includes('DESCUENTO')) return false;
   
   if (t === 'CESE' || t.includes('CESE') || stD1 === 'CESE' || stD1.includes('CESE')) return true;
   if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1')) return true;
@@ -107,12 +111,14 @@ export function isBajaDia1(motivo, sigla, row) {
 
 export function isBajaCapacitacion(row) {
   if (!row) return false;
+  if (row.isDescuento || row.is_descuento || String(row.estado || '').toUpperCase().trim() === 'DESCUENTO') return false;
   const motivo = row.motivo_baja || row.motivo || '';
+  const m = String(motivo || '').toUpperCase().trim();
+  if (m.includes('DESCUENTO')) return false;
   const sigla = row.sigla || row.sigla_asistencia || '';
   if (isBajaDia1(motivo, sigla, row)) return false;
 
   const s = String(sigla || '').toUpperCase().trim();
-  const m = String(motivo || '').toUpperCase().trim();
   const e = String(row.estado || '').toUpperCase().trim();
 
   return (
@@ -122,6 +128,30 @@ export function isBajaCapacitacion(row) {
     (e.includes('BAJA') && !e.includes('BAJA DIA 1') && !e.includes('BAJA DÍA 1')) ||
     (m !== '' && m !== 'NULL' && m !== 'ASISTIO' && m !== 'ACTIVO')
   ) && s !== 'ASISTIO' && s !== 'A' && s !== 'I-OP';
+}
+
+/**
+ * Determina si un registro de descuento está aprobado o si ya venció el plazo legal
+ * de 48 horas hábiles en Perú (excluyendo domingos y feriados nacionales).
+ */
+export function isDescuentoAprobado(row) {
+  if (!row) return false;
+  if (row.isDescuento === false) return false;
+
+  const estado = String(row.estado || '').toUpperCase().trim();
+  const procede = String(row.procede || '').toUpperCase().trim();
+  const autRys = String(row.autoriza_rys || '').toUpperCase().trim();
+
+  if (procede === 'NO PROCEDE' || autRys === 'NO') return false;
+  if (procede === 'PROCEDE' || autRys === 'SI') return true;
+  if (estado === 'DESCUENTO APROBADO' || estado === 'DESCUENTO') return true;
+
+  // Si aún no está resuelto, verificar si ya vencieron las 48h hábiles en Perú
+  const regTime = row.fecha_registro || row.created_at || row.fecha_baja;
+  if (regTime && isDescuentoVencido48h(regTime)) {
+    return true;
+  }
+  return false;
 }
 
 export function normalizarMotivo(motivoCrudo) {
@@ -376,7 +406,7 @@ export function getDescuentosSetGlobal() {
     
     while(hasMore) {
       const { data } = await supabase.from('descuentos')
-        .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap')
+        .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap, fecha_registro, fecha_baja')
         .range(from, from + step - 1);
         
       if (data && data.length > 0) {
@@ -395,10 +425,25 @@ export function getDescuentosSetGlobal() {
       // Regla de negocio explícita (autoriza_rys = SI y autoriza_cap = SI/Vacio)
       const rys = String(row.autoriza_rys || '').trim().toUpperCase() === 'SI';
       const cap = (String(row.autoriza_cap || '').trim().toUpperCase() === 'SI' || !row.autoriza_cap);
-      return rys && cap;
+      if (rys && cap) return true;
+
+      // Regla 48h hábiles (sin contar domingos ni feriados de Perú)
+      const regTime = row.fecha_registro || row.created_at || row.fecha_baja;
+      if (isDescuentoVencido48h(regTime)) return true;
+
+      return false;
     });
     
-    return new Set(procedeData.map(d => makeDescuentoKey(d.dni_ce, d.campana, d.grupo_cap)));
+    const set = new Set();
+    procedeData.forEach(d => {
+      set.add(makeDescuentoKey(d.dni_ce, d.campana, d.grupo_cap));
+      const dni = normalizeDNI(d.dni_ce);
+      if (dni) {
+        set.add(dni);
+        set.add(`DNI:${dni}`);
+      }
+    });
+    return set;
   });
 }
 
@@ -471,7 +516,11 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
     if (descSet && descSet.size > 0) {
       for (let i = 0; i < allData.length; i++) {
         const row = allData[i];
-        row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo));
+        const doc = normalizeDNI(row.documento);
+        row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)) ||
+                          descSet.has(makeDescuentoKey(row.documento, row.campana, row.grupo)) ||
+                          descSet.has(doc) ||
+                          descSet.has(`DNI:${doc}`);
       }
     }
 
@@ -2392,7 +2441,8 @@ export async function insertConsolidado(payloads) {
         .from('consolidado_asistencias')
         .delete()
         .eq('codigo_grupo', targetGroup)
-        .eq('fecha_registro_asistencia', targetFecha);
+        .eq('fecha_registro_asistencia', targetFecha)
+        .neq('estado', 'DESCUENTO');
 
       if (targetCampana) {
         delQuery = delQuery.eq('campana', targetCampana);
@@ -2425,6 +2475,123 @@ export async function insertConsolidado(payloads) {
   }
 }
 
+export async function regularizarAsistenciaPostulante({
+  documento,
+  grupo_codigo,
+  campana = '',
+  semana = '',
+  formadorDoc = '',
+  formadorNombre = '',
+  postulanteInfo = {},
+  records = []
+}) {
+  const cleanDoc = String(documento || '').trim();
+  const targetGroup = String(grupo_codigo || '').trim();
+  if (!cleanDoc || !targetGroup || !records || records.length === 0) {
+    return { success: false, message: 'Datos incompletos para regularización.' };
+  }
+
+  const weekStr = semana ? `SEM${String(semana).replace(/\D/g, '')}` : '';
+  const nowStr = new Date().toLocaleString('es-PE');
+
+  if (DB_MODE === 'supabase') {
+    for (const r of records) {
+      const isoDate = r.fecha;
+      if (!isoDate) continue;
+      const [year, month, day] = isoDate.split('-');
+      const spreadsheetDate = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
+      const isBaja = r.sigla === 'B';
+
+      // 1. Limpiar SOLO el registro previo de ESTE postulante en esta fecha y grupo en consolidado_asistencias
+      try {
+        await supabase
+          .from('consolidado_asistencias')
+          .delete()
+          .eq('codigo_grupo', targetGroup)
+          .eq('documento', cleanDoc)
+          .or(`fecha_registro_asistencia.eq.${spreadsheetDate},fecha_registro_asistencia.eq.${isoDate}`);
+      } catch (errCleanConsolidado) {
+        console.warn('Aviso limpiando consolidado para regularización:', errCleanConsolidado);
+      }
+
+      // 2. Limpiar SOLO el registro de ESTE postulante en asistencias_capacitacion
+      try {
+        await supabase
+          .from('asistencias_capacitacion')
+          .delete()
+          .eq('grupo_codigo', targetGroup)
+          .eq('postulante_documento', cleanDoc)
+          .eq('fecha_asistencia', isoDate);
+      } catch (errCleanAsis) {
+        console.warn('Aviso limpiando asistencias_capacitacion para regularización:', errCleanAsis);
+      }
+
+      // 3. Insertar nuevo registro en consolidado_asistencias
+      const consolidadoPayload = {
+        archivo_origen: weekStr,
+        documento: cleanDoc,
+        apellido_materno: postulanteInfo.apellido_materno || '',
+        apellido_paterno: postulanteInfo.apellido_paterno || '',
+        nombres: postulanteInfo.nombres || '',
+        celular: postulanteInfo.celular || '',
+        condicion_laboral: postulanteInfo.condicion_laboral || '',
+        campana: campana || postulanteInfo.campana || '',
+        grupo: targetGroup,
+        codigo_grupo: targetGroup,
+        documento_formador: formadorDoc || '',
+        nombre_formador: formadorNombre || '',
+        fecha_registro_asistencia: spreadsheetDate,
+        tipo_reclutado: postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO',
+        estado: isBaja ? 'CESADO' : 'ACTIVO',
+        sigla: r.sigla,
+        motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : '',
+        fecha_hora_registro: nowStr
+      };
+
+      const { error: insConsolidadoErr } = await supabase
+        .from('consolidado_asistencias')
+        .insert([consolidadoPayload]);
+
+      if (insConsolidadoErr) {
+        console.error('Error insertando regularización en consolidado:', insConsolidadoErr);
+      }
+
+      // 4. Insertar nuevo registro en asistencias_capacitacion
+      try {
+        await supabase
+          .from('asistencias_capacitacion')
+          .insert([{
+            grupo_codigo: targetGroup,
+            postulante_documento: cleanDoc,
+            fecha_asistencia: isoDate,
+            sigla_asistencia: r.sigla,
+            motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : null,
+            usuario_registro: formadorNombre || 'REGULARIZACION'
+          }]);
+      } catch (insAsisErr) {
+        console.warn('Aviso insertando en asistencias_capacitacion:', insAsisErr);
+      }
+    }
+
+    // Invalidar cachés
+    invalidateCache('all_consolidado');
+    invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
+    invalidateCache('grupos_dia1');
+    invalidateCache('asistencias');
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: targetGroup, documento: cleanDoc } }));
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+    }
+
+    return { success: true };
+  } else {
+    initLocalStorageDb();
+    return { success: true };
+  }
+}
+
 export async function fetchConsolidado() {
   if (DB_MODE === 'supabase') {
     const data = await fetchAllConsolidado();
@@ -2438,7 +2605,7 @@ export async function fetchDashboardData() {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
       supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado'),
-      supabase.from('descuentos').select('dni_ce, campana, grupo_cap')
+      supabase.from('descuentos').select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap, fecha_registro, fecha_baja')
     ])
     if (capRes.error) throw capRes.error
     if (descRes.error) throw descRes.error
@@ -2762,7 +2929,10 @@ export function isFormadorAsistio(sigla) {
 export async function checkCalibracionDia1(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return
 
-  const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
+  const [fecha_dia1_ref, descSet] = await Promise.all([
+    getFirstDateFormador(grupo_codigo, campana),
+    fetchDescuentosAprobadosSet(grupo_codigo)
+  ]);
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (!rawRecAsis || rawRecAsis.length === 0) {
@@ -2827,6 +2997,22 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
+    const isDescuentoDoc = (descSet && descSet.has(doc)) || 
+                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
+                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+
+    if (isDescuentoDoc) {
+      // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
+      // El descuento no perjudica a Reclutamiento y está acordado entre ambas áreas,
+      // por lo que se valida como entrega conforme de Día 1 para Reclutamiento y Formación
+      // sin generar descalibración del grupo.
+      countRec++;
+      countForm++;
+      continue;
+    }
+
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
     const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
                        studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
@@ -2878,7 +3064,10 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
 export async function getCalibracionCountFast(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return { rec: 0, form: 0 }
 
-  const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
+  const [fecha_dia1_ref, descSet] = await Promise.all([
+    getFirstDateFormador(grupo_codigo, campana),
+    fetchDescuentosAprobadosSet(grupo_codigo)
+  ]);
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (!rawRecAsis || rawRecAsis.length === 0) {
@@ -2942,6 +3131,21 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
       continue
     }
 
+    const isDescuentoDoc = (descSet && descSet.has(doc)) || 
+                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
+                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+
+    if (isDescuentoDoc) {
+      // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
+      // El descuento no perjudica a Reclutamiento y se computa de mutuo acuerdo
+      // sin generar descalibración del grupo.
+      countRec++;
+      countForm++;
+      continue;
+    }
+
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
     const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
                        studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
@@ -2962,7 +3166,10 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
 export async function getDetalleCalibracion(grupo_codigo, campana, periodo = null, semana_label = null) {
   if (DB_MODE !== 'supabase') return []
 
-  const fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana)
+  const [fecha_dia1_ref, descSet] = await Promise.all([
+    getFirstDateFormador(grupo_codigo, campana),
+    fetchDescuentosAprobadosSet(grupo_codigo)
+  ]);
 
   let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (periodo) {
@@ -3052,6 +3259,17 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
       // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera discrepancia.
       continue
+    }
+
+    const isDescuentoDoc = (descSet && (descSet.has(doc) || descSet.has(`DNI:${doc}`))) || 
+                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
+                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+
+    if (isDescuentoDoc) {
+      // Descuento acordado y autorizado: no genera discrepancia entre áreas
+      continue;
     }
     
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
@@ -3555,10 +3773,155 @@ export async function fetchGoogleFormsPool(url, sheetName = null) {
 
 // ── DESCUENTOS API ──────────────────────────────────────────────────────────
 
+/**
+ * Sincroniza en consolidado_asistencias que el estado, sigla y motivo_baja sean 'DESCUENTO'
+ * para que en la base de datos oficial y en el Control de Asistencia figure con estado DESCUENTO
+ * (y nunca como 'CESADO').
+ */
+export async function syncApprovedDescuentosToConsolidado(dnis = []) {
+  if (DB_MODE !== 'supabase' || !dnis || dnis.length === 0) return;
+  try {
+    const cleanDnis = [...new Set(dnis.map(d => String(d || '').trim().replace(/\D/g, '') || String(d || '').trim().toUpperCase()).filter(Boolean))];
+    if (cleanDnis.length === 0) return;
+
+    for (const dni of cleanDnis) {
+      await supabase
+        .from('consolidado_asistencias')
+        .update({
+          estado: 'DESCUENTO',
+          sigla: 'DESC',
+          motivo_baja: 'DESCUENTO'
+        })
+        .or(`documento.eq.${dni},documento.ilike.%${dni}%`);
+    }
+
+    invalidateCache('all_consolidado');
+    invalidateCache('all_consolidado_recent');
+    invalidateCache('all_consolidado_full');
+    invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
+  } catch (err) {
+    console.warn('Aviso sincronizando estado DESCUENTO en consolidado_asistencias:', err);
+  }
+}
+
+/**
+ * Revisa descuentos pendientes y aprueba automáticamente aquellos que excedan
+ * las 48 horas hábiles (excluyendo domingos y feriados nacionales de Perú).
+ */
+export async function autoApproveExpiredDescuentos() {
+  if (DB_MODE !== 'supabase') return { approved: 0 };
+  try {
+    const { data, error } = await supabase
+      .from('descuentos')
+      .select('id, dni_ce, fecha_registro, fecha_baja, procede, autoriza_rys')
+      .or('procede.eq.PENDIENTE,procede.is.null,autoriza_rys.eq.PENDIENTE,autoriza_rys.is.null');
+
+    if (error || !data || data.length === 0) return { approved: 0 };
+
+    const now = new Date();
+    const expiredIds = [];
+    const expiredDnis = [];
+
+    for (const row of data) {
+      if (row.procede === 'NO PROCEDE' || row.autoriza_rys === 'NO') continue;
+      const regTime = row.fecha_registro || row.fecha_baja;
+      if (isDescuentoVencido48h(regTime, now)) {
+        expiredIds.push(row.id);
+        if (row.dni_ce) expiredDnis.push(row.dni_ce);
+      }
+    }
+
+    if (expiredIds.length > 0) {
+      const { error: updErr } = await supabase
+        .from('descuentos')
+        .update({
+          autoriza_rys: 'SI',
+          autoriza_cap: 'SI',
+          comentario_rys: 'descuento aprobado por tiempo de respuesta',
+          procede: 'PROCEDE',
+          fuera_de_plazo: 'SI'
+        })
+        .in('id', expiredIds);
+
+      if (updErr) {
+        console.warn('Error al auto-aprobar descuentos por 48h hábiles:', updErr);
+      } else {
+        if (expiredDnis.length > 0) {
+          syncApprovedDescuentosToConsolidado(expiredDnis).catch(() => {});
+        }
+        invalidateCache('descuentos_set_global');
+        invalidateCache('all_descuentos_bi');
+        invalidateCache('mis_descuentos_user');
+      }
+      return { approved: expiredIds.length, expiredIds };
+    }
+  } catch (err) {
+    console.error('Error en autoApproveExpiredDescuentos:', err);
+  }
+  return { approved: 0 };
+}
+
+/**
+ * Obtiene un Set con los documentos (DNI) de postulantes con descuentos aprobados
+ * (o vencidos > 48h hábiles en Perú) para un grupo o de forma global.
+ * Estos postulantes NO deben aparecer en la asistencia del formador.
+ */
+export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
+  if (DB_MODE !== 'supabase') return new Set();
+
+  // 1. Ejecutar auto-aprobación en segundo plano por si hay pendientes vencidos
+  try {
+    await autoApproveExpiredDescuentos();
+  } catch (e) {
+    // Non-blocking
+  }
+
+  try {
+    let query = supabase
+      .from('descuentos')
+      .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, fecha_registro, fecha_baja');
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn('Error en fetchDescuentosAprobadosSet:', error);
+      return new Set();
+    }
+
+    const setAprobados = new Set();
+    (data || []).forEach(d => {
+      const procedeStr = String(d.procede || '').trim().toUpperCase();
+      const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
+      // Descartar únicamente registros explícitamente rechazados
+      if (procedeStr === 'NO' || procedeStr === 'NO PROCEDE' || rysStr === 'NO') {
+        return;
+      }
+
+      const dni = String(d.dni_ce || '').trim();
+      if (dni) {
+        setAprobados.add(dni);
+        setAprobados.add(dni.toLowerCase());
+        setAprobados.add(dni.toUpperCase());
+        setAprobados.add(`DNI:${dni}`);
+      }
+    });
+
+    return setAprobados;
+  } catch (err) {
+    console.error('Error al obtener descuentos aprobados:', err);
+    return new Set();
+  }
+}
+
 export async function fetchDescuentosPendientes() {
   if (DB_MODE !== 'supabase') return [];
   
-  // La auto-aprobación ahora se maneja vía pg_cron en la base de datos a las 23:00 diarias.
+  // Ejecutar auto-aprobación de registros fuera del plazo de 48h hábiles
+  try {
+    await autoApproveExpiredDescuentos();
+  } catch (e) {
+    console.warn('Error en auto-aprobación previa:', e);
+  }
 
   const { data, error } = await supabase
     .from('descuentos')
@@ -3599,6 +3962,13 @@ export function fetchAllDescuentosBI() {
   return withCache('all_descuentos_bi', 180000, async () => {
     if (DB_MODE !== 'supabase') return [];
     
+    // Auto-aprobar vencidos antes de cargar métricas
+    try {
+      await autoApproveExpiredDescuentos();
+    } catch (e) {
+      // Non-blocking
+    }
+    
     let allData = [];
     let from = 0;
     const step = 2000;
@@ -3621,7 +3991,19 @@ export function fetchAllDescuentosBI() {
       from += step;
     }
     
-    return allData;
+    return allData.map(d => {
+      const isExpired = isDescuentoVencido48h(d.fecha_registro || d.created_at || d.fecha_baja);
+      if (isExpired && d.procede !== 'NO PROCEDE' && d.autoriza_rys !== 'NO') {
+        return {
+          ...d,
+          procede: 'PROCEDE',
+          autoriza_rys: 'SI',
+          fuera_de_plazo: 'SI',
+          comentario_rys: d.comentario_rys || 'descuento aprobado por tiempo de respuesta'
+        };
+      }
+      return d;
+    });
   });
 }
 
@@ -3630,9 +4012,8 @@ export async function insertDescuentosBulk(payloads, userEmail) {
   if (!payloads || payloads.length === 0) return { inserted: 0 };
 
   const batch = payloads.map(p => {
-    // Si la condición Fuera de Plazo se cumple al subir,
-    // aprobamos automáticamente emulando el script original de GAS.
-    const isFueraDePlazo = (String(p.fuera_de_plazo || '').trim().toUpperCase() === 'SI');
+    const isFueraDePlazo = (String(p.fuera_de_plazo || '').trim().toUpperCase() === 'SI') ||
+      isDescuentoVencido48h(p.fecha_baja || p.fecha_registro);
     
     return {
       sede: p.sede || '',
@@ -3650,9 +4031,9 @@ export async function insertDescuentosBulk(payloads, userEmail) {
       autoriza_cap: 'SI',
       fuera_de_plazo: isFueraDePlazo ? 'SI' : 'NO',
       
-      // Regla de aprobación automática (48h)
+      // Regla de respuesta 48h hábiles en Perú (sin domingos ni feriados)
       autoriza_rys: isFueraDePlazo ? 'SI' : '',
-      comentario_rys: isFueraDePlazo ? 'APROBACION 48 HORAS HABILES.' : '',
+      comentario_rys: isFueraDePlazo ? 'descuento aprobado por tiempo de respuesta' : '',
       procede: isFueraDePlazo ? 'PROCEDE' : 'PENDIENTE',
       
       usuario_registro: userEmail || 'admin',
@@ -3729,11 +4110,20 @@ export async function updateDescuentosAutorizacionBulk(ids, estado, comentario) 
     
   if (error) throw error;
   
+  if (estado === 'SI' && data && data.length > 0) {
+    const dnis = data.map(r => r.dni_ce).filter(Boolean);
+    if (dnis.length > 0) {
+      syncApprovedDescuentosToConsolidado(dnis).catch(() => {});
+    }
+  }
+
   (data || []).forEach(row => {
     mockAuditLog('descuentos', 'AUTORIZAR_RYS', row.id, null, { estado, comentario });
   });
 
   invalidateCache('descuentos_set_global');
+  invalidateCache('all_descuentos_bi');
+  invalidateCache('mis_descuentos_user');
   return { updated: (data || []).length };
 }
 
@@ -3777,11 +4167,16 @@ export async function updateDescuentosIndividuales(updatesArray) {
       
     if (!updErr) {
       successCount++;
+      if (procedeStr === 'PROCEDE' && update.dni_ce) {
+        syncApprovedDescuentosToConsolidado([update.dni_ce]).catch(() => {});
+      }
       mockAuditLog('descuentos', 'AUTORIZAR_RYS_INDIVIDUAL', update.id, null, { estado: update.estado, comentario: update.comentario, procede: procedeStr });
     }
   }
 
   invalidateCache('descuentos_set_global');
+  invalidateCache('all_descuentos_bi');
+  invalidateCache('mis_descuentos_user');
   return { updated: successCount };
 }
 
@@ -4915,6 +5310,25 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
           continue;
         }
+
+        const isDescuentoDoc = (descSet && (
+                                  descSet.has(doc) ||
+                                  descSet.has(`DNI:${doc}`) ||
+                                  descSet.has(`${normCamp}|${exactCode}|${doc}`) ||
+                                  descSet.has(`${exactCode}|${doc}`)
+                                )) ||
+                               String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                               String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
+                               String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                               String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+
+        if (isDescuentoDoc) {
+          // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
+          // El descuento no descalibra y cuenta como entrega válida de Día 1.
+          countRec++;
+          countForm++;
+          continue;
+        }
         
         const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
         const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
@@ -5143,6 +5557,12 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const k5 = build5K(per, sem, seg, camp, code);
         if (!nominas5K.has(k5)) nominas5K.set(k5, []);
         nominas5K.get(k5).push(n);
+
+        if (cleanCamp && cleanCamp !== camp) {
+          const k5Clean = build5K(per, sem, seg, cleanCamp, code);
+          if (!nominas5K.has(k5Clean)) nominas5K.set(k5Clean, []);
+          nominas5K.get(k5Clean).push(n);
+        }
       }
     }
   });
@@ -5198,26 +5618,60 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     processedGroups.add(groupDedupKey);
 
     const k5 = build5K(perVal, semVal, segVal, normCamp, cleanCode);
+    const k5Clean = cleanCamp ? build5K(perVal, semVal, segVal, cleanCamp, cleanCode) : null;
     const campKey = `${normCamp}|${cleanCode}`;
     const cleanCampKey = `${cleanCamp}|${cleanCode}`;
     
-    // Obtener nóminas: Prioridad Llaves Compuestas -> Campaña+Código -> Fallback por Código
-    const rawNominas = (perVal && semVal && normCamp && nominas5K.has(k5))
-      ? nominas5K.get(k5)
-      : (normCamp && (nominasCampCode.get(campKey) || nominasCampCode.get(cleanCampKey)))
-      ? (nominasCampCode.get(campKey) || nominasCampCode.get(cleanCampKey))
-      : (nominasCode.get(cleanCode) || []);
+    // Obtener nóminas: Prioridad Llaves Compuestas (5K) -> Filtro Estricto por Periodo+Semana -> Fallback
+    let rawNominas = (perVal && semVal && normCamp && (nominas5K.get(k5) || (k5Clean && nominas5K.get(k5Clean)))) || null;
+
+    // Si no hubo coincidencia 5K exacta, buscar por código pero EXIGIR coincidencia con periodo y semana
+    // para nunca absorber postulantes de otros meses/semanas reutilizando el mismo código de grupo
+    if (!rawNominas && cleanCode && nominasCode.has(cleanCode)) {
+      const candidatesByCode = nominasCode.get(cleanCode) || [];
+      const matched = candidatesByCode.filter(n => {
+        const nPer = normPer(n.periodo_reclutado || n.periodo);
+        const nSem = normSem(n.semana_trabajo || n.semana);
+        if (perVal && nPer && nPer !== perVal) return false;
+        if (semVal && nSem && nSem !== semVal) return false;
+        if (normCamp) {
+          const nCamp = norm(n.campana);
+          if (nCamp && !nCamp.includes(normCamp) && !normCamp.includes(nCamp)) return false;
+        }
+        return true;
+      });
+      if (matched.length > 0) rawNominas = matched;
+    }
+    rawNominas = rawNominas || [];
 
     const validNominas = descSet.size > 0 
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
     // Obtener asistencias: Prioridad Llaves Compuestas -> Campaña+Código -> Fallback por Código
-    let groupFormAsisRaw = (perVal && semVal && normCamp && formAsis5K.has(k5))
-      ? formAsis5K.get(k5)
+    let groupFormAsisRaw = (perVal && semVal && normCamp && (formAsis5K.get(k5) || (k5Clean && formAsis5K.get(k5Clean))))
+      ? (formAsis5K.get(k5) || formAsis5K.get(k5Clean))
       : (normCamp && (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey)))
       ? (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey))
       : (formAsisCode.get(cleanCode) || []);
+
+    // Aislamiento por cohorte: solo asociar asistencias de los postulantes de esta cohorte
+    // o cuyas fechas correspondan al periodo de la cohorte
+    const cohortDocSet = new Set(validNominas.map(n => norm(n.documento)).filter(Boolean));
+    if (groupFormAsisRaw.length > 0) {
+      groupFormAsisRaw = groupFormAsisRaw.filter(f => {
+        const doc = norm(f.documento || f.postulante_documento);
+        if (cohortDocSet.has(doc)) return true;
+        
+        // Si no está en nómina previa, validar estrictamente por fecha de asistencia dentro del periodo
+        const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
+        if (d && perVal) {
+          const dPer = normPer(d.replace(/\D/g, '').slice(0, 6));
+          if (dPer !== perVal) return false;
+        }
+        return false;
+      });
+    }
 
     // Aislamiento temporal inteligente para grupos reutilizando códigos:
     // Descartar asistencias que ocurrieron más de 7 días antes de la fecha de apertura/inicio del grupo
@@ -5259,7 +5713,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Unificación y deduplicación estricta por documento (DNI) para evitar duplicación de postulantes:
+    // Unificación y deduplicación estricta por documento (DNI) para postulantes de nómina:
     const candidateMap = new Map();
     for (const n of validNominas) {
       const doc = norm(n.documento);
@@ -5268,11 +5722,14 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Incorporar alumnos registrados directamente por el Formador en asistencia que no estén en nómina previa
-    if (groupFormAsisRaw.length > 0) {
+    // Solo si el grupo NO tiene postulantes en nóminas (ej. cohortes históricas sin carga en nóminas),
+    // se permite como fallback inferir alumnos desde las asistencias válidas de esa cohorte.
+    // Si el grupo YA tiene nómina oficial de Reclutamiento (validNominas > 0), total_nomina respeta la nómina oficial.
+    if (candidateMap.size === 0 && groupFormAsisRaw.length > 0) {
       groupFormAsisRaw.forEach(r => {
         const doc = norm(r.documento || r.postulante_documento);
         if (doc && !candidateMap.has(doc)) {
+          if (descSet.has(makeDescuentoKey(doc, campana, grupo_codigo))) return;
           candidateMap.set(doc, {
             documento: doc,
             nombres: r.nombres || '',
@@ -5307,6 +5764,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     for (const n of effectiveCandidates) {
       const doc = norm(n.documento);
+      const isDescuentoDoc = descSet.has(makeDescuentoKey(doc, campana, grupo_codigo));
       const records = asisByDoc.get(doc) || [];
       
       // Condición laboral para ponderación FTE: FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE
@@ -5396,7 +5854,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const txtObs = String(lastRecord.observacion_estado || '').toUpperCase();
         
         isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
-        isBajaGeneral = txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO';
+        isBajaGeneral = !isDescuentoDoc && (txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO');
         if (isBajaGeneral) {
           fechaUltimaBaja = parseFechaAsistencia(lastRecord.fecha_registro_asistencia || lastRecord.fecha_asistencia);
         }
@@ -5747,9 +6205,7 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
     let countRec = 0;
     
     const nominas = nominasGrouped.get(groupKey) || [];
-    const validNominas = descSet.size > 0 
-      ? nominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
-      : nominas;
+    const validNominas = nominas;
       
     totalNomina = validNominas.length;
     totalDia0 = validNominas.filter(n => String(n.dia_0).toUpperCase().trim() === 'ASISTIO').length;
@@ -5769,7 +6225,14 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
     for (const n of validNominas) {
       if (isCandidateActiveRec(n)) {
         const isBajaDia1 = bajasDia1Set.has(n.documento);
-        if (!isBajaDia1) {
+        const isDesc = (descSet && (
+                         descSet.has(n.documento) || 
+                         descSet.has(`DNI:${n.documento}`) ||
+                         descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo))
+                       )) ||
+                       String(n.estado || '').toUpperCase() === 'DESCUENTO' ||
+                       String(n.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+        if (!isBajaDia1 || isDesc) {
           countRec++;
         }
       }
@@ -5833,6 +6296,21 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
 
         if (!recCandidate) {
           // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
+          continue;
+        }
+
+        const isDescuentoDoc = (descSet && (
+                                  descSet.has(doc) ||
+                                  descSet.has(`DNI:${doc}`) ||
+                                  descSet.has(makeDescuentoKey(doc, campana, grupo_codigo))
+                                )) ||
+                               String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                               String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
+                               String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
+                               String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+
+        if (isDescuentoDoc) {
+          countForm++;
           continue;
         }
         
@@ -6208,4 +6686,327 @@ export function parseFechaAsistencia(raw) {
 }
 
 
+// ───────────────────────────────────────────────────────────────────────
+// PAGOS DE CAPACITACIÓN
+// ───────────────────────────────────────────────────────────────────────
 
+export async function fetchConfigPagosGrupo() {
+  let configs = [];
+  
+  // 1. Intentar leer de config_pagos_grupo
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data, error } = await supabase
+        .from('config_pagos_grupo')
+        .select('*');
+      if (!error && data) {
+        configs = data;
+      }
+    } catch (e) {
+      // Ignore if table does not exist
+    }
+  }
+
+  // 2. Unificar con propuestas_consolidado
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data: propData, error: propErr } = await supabase
+        .from('propuestas_consolidado')
+        .select('*');
+      if (!propErr && propData && propData.length > 0) {
+        const existingCodigos = new Set(configs.map(c => String(c.grupo_codigo || '').toUpperCase().trim()));
+        for (const p of propData) {
+          const cod = String(p.cod || p.grupo || p.grupo_codigo || '').toUpperCase().trim();
+          if (cod && !existingCodigos.has(cod)) {
+            existingCodigos.add(cod);
+            configs.push({
+              id: p.id,
+              grupo_codigo: cod,
+              campana: p.campana || '',
+              semana_trabajo: p.semana || '',
+              periodo: p.periodo_capa || p.periodoCapa || '',
+              segmento: p.segmento || '',
+              monto_dia_capa: parseFloat(p.pago_por_dia || p.pagoPorDia || p.pagoCapaPorDia) || 0,
+              bono_bienvenida: parseFloat(p.bono_bienvenida || p.bonoBienvenidaM1 || p.bBienvenidaM1) || 0,
+              bono_permanencia_total: parseFloat(p.bono_permanencia || p.bonoPermanenciaM1 || p.bPermM1) || 0,
+              cuotas_permanencia: parseInt(p.cuotas_permanencia) || 1,
+              bono_asistencia_perfecta: parseFloat(p.bono_asistencia_perfecta || p.bonoAsistenciaM1 || p.bAsisM1) || 0,
+              notas: 'Importado de Propuestas'
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  // 3. Fallback a LocalStorage si no hay datos
+  if (configs.length === 0) {
+    initLocalStorageDb();
+    const local = getFromStorage('config_pagos_grupo') || [];
+    if (local.length > 0) configs = local;
+  }
+
+  return configs.sort((a, b) => (a.campana || '').localeCompare(b.campana || ''));
+}
+
+export async function upsertConfigPagoGrupo(config) {
+  const payload = {
+    grupo_codigo: String(config.grupo_codigo || '').toUpperCase().trim(),
+    campana: config.campana || null,
+    semana_trabajo: config.semana_trabajo ? parseInt(String(config.semana_trabajo).replace(/\D/g, '')) || null : null,
+    periodo: config.periodo || null,
+    segmento: config.segmento || null,
+    monto_dia_capa: parseFloat(config.monto_dia_capa) || 0,
+    bono_bienvenida: parseFloat(config.bono_bienvenida) || 0,
+    bono_permanencia_total: parseFloat(config.bono_permanencia_total) || 0,
+    cuotas_permanencia: parseInt(config.cuotas_permanencia) || 1,
+    bono_asistencia_perfecta: parseFloat(config.bono_asistencia_perfecta) || 0,
+    notas: config.notas || null,
+    updated_at: new Date().toISOString(),
+    created_by: config.created_by || null,
+  };
+
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data, error } = await supabase
+        .from('config_pagos_grupo')
+        .upsert(payload, { onConflict: 'grupo_codigo' })
+        .select()
+        .single();
+      if (!error && data) return data;
+    } catch (e) {
+      // If table doesn't exist in Supabase, fallback to storage
+    }
+  }
+
+  initLocalStorageDb();
+  const existing = getFromStorage('config_pagos_grupo') || [];
+  const idx = existing.findIndex(c => c.grupo_codigo === payload.grupo_codigo);
+  if (idx >= 0) existing[idx] = { ...existing[idx], ...payload };
+  else existing.push({ id: Date.now(), ...payload });
+  saveToStorage('config_pagos_grupo', existing);
+  return payload;
+}
+
+export async function deleteConfigPagoGrupo(grupoCodigo) {
+  if (DB_MODE === 'supabase') {
+    try {
+      await supabase
+        .from('config_pagos_grupo')
+        .delete()
+        .eq('grupo_codigo', grupoCodigo);
+    } catch (e) {}
+  }
+  initLocalStorageDb();
+  const existing = getFromStorage('config_pagos_grupo') || [];
+  saveToStorage('config_pagos_grupo', existing.filter(c => c.grupo_codigo !== grupoCodigo));
+}
+
+export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento, campana, grupo_codigo } = {}) {
+  let q = supabase
+    .from('nominas')
+    .select(
+      'documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado,' +
+      'status_final, pago_capacitacion, bono_bienvenida, bono_permanencia, bono_asistencia_perfecta,' +
+      'fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op'
+    )
+    .in('status_final', ['COMPLETO', 'USUARIO CREADO']);
+
+  if (periodo && periodo !== 'TODOS') {
+    q = q.eq('periodo_reclutado', periodo);
+  }
+  if (semana && semana !== 'TODAS') {
+    const semNum = parseInt(String(semana).replace(/\D/g, ''));
+    if (!isNaN(semNum)) {
+      q = q.eq('semana_trabajo', semNum);
+    }
+  }
+  if (segmento && segmento !== 'TODOS') {
+    q = q.eq('segmento', segmento);
+  }
+  if (campana && campana !== 'TODAS') {
+    q = q.eq('campana', campana);
+  }
+  if (grupo_codigo && grupo_codigo !== 'TODOS') {
+    q = q.eq('grupo_codigo', grupo_codigo);
+  }
+
+  const { data, error } = await q.order('campana').order('semana_trabajo');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function fetchAsistenciasPagos(documentos = []) {
+  if (!documentos.length) return [];
+  const { data, error } = await supabase
+    .from('asistencias_capacitacion')
+    .select('postulante_documento, fecha_asistencia, sigla_asistencia, grupo_codigo')
+    .in('postulante_documento', documentos)
+    // 'B' = Baja: se necesita para excluir del pago a personas que fueron dadas de baja
+    .in('sigla_asistencia', ['A', 'FI', 'FJ', 'B']);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function fetchGruposPagosDisponibles() {
+  const { data, error } = await supabase
+    .from('nominas')
+    .select('grupo_codigo, campana, segmento, semana_trabajo, periodo_reclutado')
+    .not('grupo_codigo', 'is', null)
+    .not('campana', 'is', null);
+  if (error) throw error;
+  return data || [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAZABILIDAD DE PAGOS – Liquidaciones históricas
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Guarda un lote de pagos cerrado en la tabla de trazabilidad.
+ * Todas las filas del lote comparten el mismo lote_id (UUID).
+ *
+ * @param {Object[]} filas - Resultado de calcularPagosCapacitacion()
+ * @param {Object} meta - { periodo, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, notas_lote }
+ * @returns {string} lote_id generado
+ */
+export async function saveLiquidacionPagos(filas = [], meta = {}) {
+  if (!filas.length) throw new Error('No hay filas para liquidar');
+
+  // Generar UUID del lote en el cliente (el servidor también tiene DEFAULT gen_random_uuid())
+  const lote_id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const rows = filas.flatMap(f => {
+    // Una fila por cuota de permanencia (mínimo 1 fila)
+    const cuotas = f.cuotas_permanencia?.length ? f.cuotas_permanencia : [{ numero: 1, monto: f.bono_permanencia_total || 0 }];
+    return cuotas.map(cuota => ({
+      lote_id,
+      periodo: meta.periodo || f.periodo_reclutado || '',
+      semana_trabajo: meta.semana_trabajo ? parseInt(meta.semana_trabajo) : (f.semana_trabajo ? parseInt(f.semana_trabajo) : null),
+      segmento: meta.segmento || f.segmento || null,
+      campana: meta.campana || f.campana || null,
+      grupo_codigo: meta.grupo_codigo || f.grupo_codigo || null,
+      documento: f.documento,
+      nombre_completo: f.nombre_completo || null,
+      dias_asistidos: f.dias_asistidos || 0,
+      asistencia_perfecta: f.asistencia_perfecta || false,
+      monto_dias_capa: f.monto_dias_capa || 0,
+      bono_bienvenida: f.bono_bienvenida || 0,
+      bono_asistencia_perfecta: f.bono_asistencia_perfecta || 0,
+      bono_permanencia_total: f.bono_permanencia_total || 0,
+      cuota_numero: cuota.numero,
+      monto_cuota_permanencia: cuota.monto || 0,
+      total_general: f.total_general || 0,
+      cerrado_por: meta.cerrado_por || null,
+      notas_lote: meta.notas_lote || null,
+    }));
+  });
+
+  if (DB_MODE === 'supabase') {
+    const { error } = await supabase
+      .from('liquidaciones_pagos_capacitacion')
+      .insert(rows);
+    if (error) throw error;
+    invalidateCache('liquidaciones_');
+  } else {
+    // Fallback localStorage
+    initLocalStorageDb();
+    const existing = getFromStorage('liquidaciones_pagos_capacitacion') || [];
+    saveToStorage('liquidaciones_pagos_capacitacion', [...existing, ...rows]);
+  }
+
+  return lote_id;
+}
+
+/**
+ * Retorna la lista de lotes históricos cerrados (agrupados por lote_id).
+ * Cada entrada tiene: lote_id, periodo, semana, campana, fecha cierre, usuario, nº personas, total.
+ */
+export async function fetchLiquidacionesLotes() {
+  if (DB_MODE === 'supabase') {
+    const { data, error } = await withCache('liquidaciones_lotes', 60000, async () => {
+      const { data, error } = await supabase
+        .from('liquidaciones_pagos_capacitacion')
+        .select('lote_id, periodo, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, cerrado_at, notas_lote, documento, total_general')
+        .order('cerrado_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    });
+    if (error) throw error;
+
+    // Agrupar por lote_id en el cliente
+    const lotesMap = new Map();
+    for (const row of (data || [])) {
+      if (!lotesMap.has(row.lote_id)) {
+        lotesMap.set(row.lote_id, {
+          lote_id: row.lote_id,
+          periodo: row.periodo,
+          semana_trabajo: row.semana_trabajo,
+          segmento: row.segmento,
+          campana: row.campana,
+          grupo_codigo: row.grupo_codigo,
+          cerrado_por: row.cerrado_por,
+          cerrado_at: row.cerrado_at,
+          notas_lote: row.notas_lote,
+          total_personas: 0,
+          total_general: 0,
+          documentos: new Set(),
+        });
+      }
+      const lote = lotesMap.get(row.lote_id);
+      lote.documentos.add(row.documento);
+      lote.total_general += parseFloat(row.total_general || 0);
+    }
+
+    return Array.from(lotesMap.values()).map(l => ({
+      ...l,
+      total_personas: l.documentos.size,
+      total_general: +l.total_general.toFixed(2),
+      documentos: undefined,
+    }));
+  } else {
+    // Fallback localStorage
+    initLocalStorageDb();
+    const rows = getFromStorage('liquidaciones_pagos_capacitacion') || [];
+    const lotesMap = new Map();
+    for (const row of rows) {
+      if (!lotesMap.has(row.lote_id)) {
+        lotesMap.set(row.lote_id, {
+          lote_id: row.lote_id, periodo: row.periodo, semana_trabajo: row.semana_trabajo,
+          segmento: row.segmento, campana: row.campana, grupo_codigo: row.grupo_codigo,
+          cerrado_por: row.cerrado_por, cerrado_at: row.cerrado_at, notas_lote: row.notas_lote,
+          total_personas: 0, total_general: 0, documentos: new Set(),
+        });
+      }
+      const l = lotesMap.get(row.lote_id);
+      l.documentos.add(row.documento);
+      l.total_general += parseFloat(row.total_general || 0);
+    }
+    return Array.from(lotesMap.values()).map(l => ({
+      ...l, total_personas: l.documentos.size, total_general: +l.total_general.toFixed(2), documentos: undefined,
+    }));
+  }
+}
+
+/**
+ * Retorna las filas de detalle de un lote específico por lote_id.
+ */
+export async function fetchLiquidacionDetalle(lote_id) {
+  if (!lote_id) return [];
+  if (DB_MODE === 'supabase') {
+    const { data, error } = await supabase
+      .from('liquidaciones_pagos_capacitacion')
+      .select('*')
+      .eq('lote_id', lote_id)
+      .order('campana')
+      .order('documento');
+    if (error) throw error;
+    return data || [];
+  } else {
+    initLocalStorageDb();
+    const rows = getFromStorage('liquidaciones_pagos_capacitacion') || [];
+    return rows.filter(r => r.lote_id === lote_id);
+  }
+}

@@ -34,6 +34,7 @@ const BREADCRUMB_MAP = {
   nominas_completar: { section: 'Operaciones', label: 'Nóminas' },
   nomina: { section: 'Operaciones', label: 'Bolsa de Postulantes' },
   propuestas: { section: 'Operaciones', label: 'Propuestas' },
+  pagos_capacitacion: { section: 'Operaciones', label: 'Pagos de Capacitación' },
   descuentos_auth: { section: 'Operaciones', label: 'Autorización RYS' },
   descuentos_form: { section: 'Operaciones', label: 'Cargar Descuentos' },
   metas: { section: 'Administración', label: 'Metas y Equipos' },

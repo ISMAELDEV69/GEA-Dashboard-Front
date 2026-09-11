@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, useTransition } from 'react'
 import {
   LayoutDashboard, UserPlus, ClipboardCheck, History,
-  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award
+  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award, BanknoteIcon
 } from 'lucide-react'
 
 // ── Vistas Críticas / Modales Síncronos ──────────────────────────────────────────
@@ -59,6 +59,7 @@ const MotivosBajasBI = lazyWithRetry(() => import('./components/MotivosBajasBI')
 const DescuentosForm = lazyWithRetry(() => import('./components/DescuentosForm'))
 const DescuentosAutorizacion = lazyWithRetry(() => import('./components/DescuentosAutorizacion'))
 const PropuestasModule = lazyWithRetry(() => import('./pages/PropuestasModule'))
+const PagosCapacitacion = lazyWithRetry(() => import('./pages/PagosCapacitacion'))
 const ReporteDia1 = lazyWithRetry(() => import('./components/ReporteDia1'))
 const ResumenCapacitacion = lazyWithRetry(() => import('./components/ResumenCapacitacion'))
 const CapacidadRys = lazyWithRetry(() => import('./components/CapacidadRys'))
@@ -94,6 +95,7 @@ export const ALL_NAV = [
   { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
   { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor', 'calidad'] },
   { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'visor', 'reclutador'] },
+  { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días asistidos, bonos y permanencia', roles: ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys'] },
   { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos', roles: ['admin', 'jefe_rys', 'coordinador_rys', 'jefe_capacitacion'] },
   { id: 'descuentos_form', label: 'Cargar Descuentos', icon: Layers, description: 'Ingreso de incidencias', roles: ['admin', 'formador', 'reclutador'] },
   { id: 'metas', label: 'Metas y Equipos', icon: Target, description: 'Objetivos de campañas', roles: ['admin', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'] },
@@ -735,6 +737,13 @@ export default function App() {
                       {/* 12. Propuestas */}
                       <KeepAliveView viewId="propuestas" activeView={activeView}>
                         <PropuestasModule />
+                      </KeepAliveView>
+
+                      {/* 12b. Pagos Capacitación */}
+                      <KeepAliveView viewId="pagos_capacitacion" activeView={activeView}>
+                        {navItems.some(i => i.id === 'pagos_capacitacion') && (
+                          <PagosCapacitacion userProfile={effectiveProfile} />
+                        )}
                       </KeepAliveView>
 
                       {/* 13. Nómina Operativa */}

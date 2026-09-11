@@ -24,12 +24,13 @@ import {
   Laptop
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado } from '../lib/dataService'
 import { resolveFormadorSegment } from '../lib/flujoOperativo'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import { useToast } from '../context/ToastContext'
+import AsistenciaRegularizacionModal from './AsistenciaRegularizacionModal'
 
 const SIGLAS = [
   { value: 'A', label: 'A - Asistencia', bgVar: 'var(--status-a-bg)', textVar: 'var(--status-a-text)' },
@@ -73,7 +74,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
   onStatusChange,
   onMotiveChange,
   motivosBaja,
-  isReadOnly = false
+  isReadOnly = false,
+  onOpenRegularizacion
 }) {
   const isBaja = item.sigla === 'B'
   const estadoLabel = isBaja ? 'CESADO' : 'ACTIVO'
@@ -81,10 +83,38 @@ const AttendanceRow = React.memo(function AttendanceRow({
 
   return (
     <tr className="hover:bg-[var(--bg-elevated)] transition-colors group">
-      <td className="px-3 py-2 font-mono text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">{item.documento}</td>
+      <td className="px-3 py-2 font-mono text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">
+        <button
+          type="button"
+          onClick={() => onOpenRegularizacion && onOpenRegularizacion(item)}
+          className="font-mono font-bold text-cyan-600 dark:text-cyan-400 hover:underline cursor-pointer text-left"
+          title="Click para ver historial de asistencia de este postulante"
+        >
+          {item.documento}
+        </button>
+      </td>
       <td className="px-3 py-2 uppercase text-[var(--text-secondary)] font-semibold text-xs whitespace-nowrap">{item.apellido_paterno}</td>
       <td className="px-3 py-2 uppercase text-[var(--text-secondary)] font-semibold text-xs whitespace-nowrap">{item.apellido_materno}</td>
-      <td className="px-3 py-2 uppercase text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">{item.nombres}</td>
+      <td className="px-3 py-2 uppercase text-[var(--text-primary)] font-bold text-xs whitespace-nowrap">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenRegularizacion && onOpenRegularizacion(item)}
+            className="hover:text-cyan-600 dark:hover:text-cyan-400 hover:underline cursor-pointer text-left uppercase font-bold"
+            title="Click para ver historial y regularizar asistencia de este postulante"
+          >
+            {item.nombres}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenRegularizacion && onOpenRegularizacion(item)}
+            className="hidden group-hover:inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-normal)] bg-[var(--bg-elevated)] transition-colors cursor-pointer"
+            title="Abrir historial y regularización"
+          >
+            Regularizar
+          </button>
+        </div>
+      </td>
       <td className="px-3 py-2 text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{item.celular}</td>
       <td className="px-3 py-2 text-center text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{formatSpreadsheetDate(fecha)}</td>
       <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -211,10 +241,12 @@ export default function AsistenciaForm({
   const [copyFeedback, setCopyFeedback] = useState(false)
   const [showCalendarModal, setShowCalendarModal] = useState(false)
   const [calendarMonthIndex, setCalendarMonthIndex] = useState(-1)
+  const [regularizandoPostulante, setRegularizandoPostulante] = useState(null)
   
   const [dia1Calibrado, setDia1Calibrado] = useState(false)
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
   const [liveGrupoMeta, setLiveGrupoMeta] = useState(null)
+  const [descuentosAprobadosSet, setDescuentosAprobadosSet] = useState(new Set())
 
   useEffect(() => {
     getEquipoFormacion().then(data => {
@@ -582,20 +614,24 @@ export default function AsistenciaForm({
             qCap = qCap.eq('campana', targetCampana);
           }
 
-          const [res1, resNom, resCap] = await Promise.all([
+          const [res1, resNom, resCap, descSet] = await Promise.all([
             q1,
             qNom,
-            qCap
+            qCap,
+            fetchDescuentosAprobadosSet(targetGrupoCodigo)
           ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
-            return [{ data: [] }, { data: [] }, { data: [] }];
+            return [{ data: [] }, { data: [] }, { data: [] }, new Set()];
           });
 
           let dataQ1 = res1?.data || [];
           let dataNom = resNom?.data || [];
           let dataCap = resCap?.data || [];
+          const approvedDescuentos = descSet instanceof Set ? descSet : new Set();
 
           if (!isMounted) return;
+
+          setDescuentosAprobadosSet(approvedDescuentos);
 
           if (dataCap && dataCap.length > 0) {
             setLiveGrupoMeta(dataCap[0]);
@@ -619,9 +655,17 @@ export default function AsistenciaForm({
           const filteredQ1 = dataQ1.filter(isRowMatchWeekAndPeriod);
           const filteredNom = dataNom.filter(isRowMatchWeekAndPeriod);
 
-          // 1. Postulantes de v_nominas_consolidado
+          // 1. Postulantes de v_nominas_consolidado (excluyendo descuentos aprobados o registrados)
           filteredQ1.forEach(row => {
-            if (row.documento) {
+            const doc = String(row.documento || '').trim();
+            if (doc) {
+              const isDesc = approvedDescuentos.has(doc) || 
+                             approvedDescuentos.has(`DNI:${doc}`) ||
+                             isDescuentoAprobado(row) || 
+                             String(row.estado || '').toUpperCase() === 'DESCUENTO' ||
+                             String(row.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+              if (isDesc) return;
+
               docMap.set(row.documento, {
                 ...row,
                 motivo_baja: row.motivo_baja || '',
@@ -631,9 +675,17 @@ export default function AsistenciaForm({
             }
           });
 
-          // 2. Postulantes directos de tabla nominas (fuente de verdad oficial)
+          // 2. Postulantes directos de tabla nominas (fuente de verdad oficial, excluyendo descuentos aprobados o registrados)
           filteredNom.forEach(row => {
-            if (row.documento) {
+            const doc = String(row.documento || '').trim();
+            if (doc) {
+              const isDesc = approvedDescuentos.has(doc) || 
+                             approvedDescuentos.has(`DNI:${doc}`) ||
+                             isDescuentoAprobado(row) || 
+                             String(row.estado || '').toUpperCase() === 'DESCUENTO' ||
+                             String(row.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+              if (isDesc) return;
+
               docMap.set(row.documento, {
                 ...row,
                 motivo_baja: row.motivo_baja || '',
@@ -656,15 +708,16 @@ export default function AsistenciaForm({
   }, [selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana, activeGrupoObj]);
 
   const effectivePostulantes = useMemo(() => {
-    if (groupPostulantesDirect.length > 0) {
-      // FIX CRÍTICO: Ya NO se mezcla con el prop global `postulantes` (que contiene TODOS los
-      // postulantes de la app). Antes, ese merge sembraba registros sin dia_0/dia_1 que luego
-      // podían pasar el filtro y mostrar personas que no pertenecen al grupo/semana actual.
-      // Ahora: si tenemos datos específicos del grupo (de nóminas o consolidado), los usamos SOLOS.
-      return groupPostulantesDirect;
-    }
-    return postulantes;
-  }, [postulantes, groupPostulantesDirect]);
+    const list = groupPostulantesDirect.length > 0 ? groupPostulantesDirect : postulantes;
+    if (!descuentosAprobadosSet || descuentosAprobadosSet.size === 0) return list;
+    return list.filter(p => {
+      const doc = String(p.documento || '').trim();
+      return !descuentosAprobadosSet.has(doc) && 
+             !descuentosAprobadosSet.has(`DNI:${doc}`) &&
+             String(p.estado || '').toUpperCase() !== 'DESCUENTO' &&
+             !String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+    });
+  }, [postulantes, groupPostulantesDirect, descuentosAprobadosSet]);
 
   useEffect(() => {
     if (!selectedGrupo) {
@@ -687,6 +740,14 @@ export default function AsistenciaForm({
 
     for (let i = 0; i < asistencias.length; i++) {
       const a = asistencias[i]
+      const doc = String(a.postulante_documento || '').trim()
+      const isDesc = descuentosAprobadosSet.has(doc) || 
+                     descuentosAprobadosSet.has(`DNI:${doc}`) ||
+                     isDescuentoAprobado(a) || 
+                     String(a.estado || '').toUpperCase() === 'DESCUENTO' ||
+                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO')
+      if (isDesc) continue
+
       const matchGrupo = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.grupo_codigo) === normalize(targetGrupoCodigo)
       if (!matchGrupo) continue
       if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) continue
@@ -729,10 +790,31 @@ export default function AsistenciaForm({
     }
 
     // Ensure all historical attendees from asistencias are present in candidate pool
-    const candidateDocs = new Set(effectivePostulantes.map(p => p.documento));
-    const mergedCandidates = [...effectivePostulantes];
+    const candidateDocs = new Set();
+    const mergedCandidates = [];
+
+    for (const p of effectivePostulantes) {
+      const doc = String(p.documento || '').trim();
+      const isDesc = descuentosAprobadosSet.has(doc) || 
+                     descuentosAprobadosSet.has(`DNI:${doc}`) ||
+                     isDescuentoAprobado(p) || 
+                     String(p.estado || '').toUpperCase() === 'DESCUENTO' ||
+                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+      if (!isDesc) {
+        candidateDocs.add(p.documento);
+        mergedCandidates.push(p);
+      }
+    }
 
     for (const a of groupRecordsAll) {
+      const doc = String(a.postulante_documento || '').trim();
+      const isDesc = descuentosAprobadosSet.has(doc) || 
+                     descuentosAprobadosSet.has(`DNI:${doc}`) ||
+                     isDescuentoAprobado(a) || 
+                     String(a.estado || '').toUpperCase() === 'DESCUENTO' ||
+                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+      if (isDesc) continue;
+
       if (!candidateDocs.has(a.postulante_documento)) {
         candidateDocs.add(a.postulante_documento);
         mergedCandidates.push({
@@ -759,6 +841,14 @@ export default function AsistenciaForm({
     const invalidList = []
     const filteredPostulantes = mergedCandidates.filter(p => {
       if (!p.documento) return false
+      const doc = String(p.documento || '').trim();
+      const isDesc = descuentosAprobadosSet.has(doc) || 
+                     descuentosAprobadosSet.has(`DNI:${doc}`) ||
+                     isDescuentoAprobado(p) || 
+                     String(p.estado || '').toUpperCase() === 'DESCUENTO' ||
+                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+      if (isDesc) return false;
+
       if (String(p.estado || '').toUpperCase() === 'DESASIGNADO') return false
 
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
@@ -987,7 +1077,7 @@ export default function AsistenciaForm({
     })
 
     setAttendanceList(list)
-  }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado])
+  }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado, descuentosAprobadosSet])
 
   const handleStatusChange = useCallback((doc, newSigla) => {
     if (isReadOnly) return
@@ -1024,6 +1114,37 @@ export default function AsistenciaForm({
       return { ...item, sigla: 'A', motivo_baja: '' }
     }))
   }
+
+  // ── Historial de fechas del grupo para regularización ──
+  const groupDatesList = useMemo(() => {
+    const targetGroup = activeGrupoObj?.codigo || selectedGrupo
+    if (!targetGroup) return []
+    const dates = asistencias
+      .filter(a => normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.codigo_grupo) === normalize(targetGroup))
+      .map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia)
+      .filter(Boolean)
+    if (fecha && !dates.includes(fecha)) dates.push(fecha)
+    return Array.from(new Set(dates)).sort()
+  }, [asistencias, activeGrupoObj, selectedGrupo, fecha])
+
+  const handleOpenRegularizacion = useCallback((item) => {
+    setRegularizandoPostulante(item)
+  }, [])
+
+  const handleRegularizacionSaved = useCallback(({ documento, updatedRecords }) => {
+    // Si entre los registros actualizados está la fecha actualmente activa en pantalla, sincronizar
+    const currentRec = (updatedRecords || []).find(r => r.fecha === fecha)
+    if (currentRec) {
+      setAttendanceList(prev => prev.map(item => {
+        if (item.documento !== documento) return item
+        return {
+          ...item,
+          sigla: currentRec.sigla,
+          motivo_baja: currentRec.motivo_baja
+        }
+      }))
+    }
+  }, [fecha])
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();
@@ -1925,6 +2046,7 @@ export default function AsistenciaForm({
                     onMotiveChange={handleMotiveChange}
                     motivosBaja={motivosBaja}
                     isReadOnly={isReadOnly}
+                    onOpenRegularizacion={handleOpenRegularizacion}
                   />
                 ))}
               </tbody>
@@ -1954,6 +2076,23 @@ export default function AsistenciaForm({
           </div>
         </div>
       )}
+
+      {/* ── MODAL DE REGULARIZACIÓN INDIVIDUAL DE ASISTENCIA ── */}
+      <AsistenciaRegularizacionModal
+        isOpen={Boolean(regularizandoPostulante)}
+        onClose={() => setRegularizandoPostulante(null)}
+        postulante={regularizandoPostulante}
+        grupoCodigo={activeGrupoObj?.codigo || selectedGrupo}
+        campana={activeGrupoObj?.campana || selectedCampana}
+        semana={activeGrupoObj?.semana_trabajo || activeGrupoObj?.semana_label || selectedSemana}
+        formadorDoc={regularizandoPostulante?.docFormador || effectiveGrupoObj?.formador_documento}
+        formadorNombre={regularizandoPostulante?.nombreFormador || effectiveGrupoObj?.formador_nombre}
+        asistencias={asistencias}
+        groupDates={groupDatesList}
+        motivosBaja={motivosBaja}
+        isReadOnly={isReadOnly}
+        onRegularizacionSaved={handleRegularizacionSaved}
+      />
     </div>
   )
 }

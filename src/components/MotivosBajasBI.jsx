@@ -221,7 +221,7 @@ export default function MotivosBajasBI() {
       const sigla = normalizeText(row.sigla).toUpperCase();
       const txtMotivo = normalizeText(row.motivo_baja || row.motivo);
       const isDia1 = isBajaDia1(txtMotivo, sigla, row);
-      const isBaja = !isDia1 && (sigla === 'B' || sigla === 'BAJA' || (txtMotivo !== '' && txtMotivo.toUpperCase() !== 'NULL')) && sigla !== 'ASISTIO' && sigla !== 'A';
+      const isBaja = !isDia1 && isBajaCapacitacion(row);
       const motivoClean = isBaja ? normalizarMotivo(txtMotivo) : '';
 
       const formadorName = normalizeText(row.nombre_formador || row.formador || row.formador_nombre || cap?.formador_documento, 'SIN FORMADOR').toUpperCase();

@@ -1169,16 +1169,17 @@ export function buildResumenMensualCapacitacion(
     const campKey = `${normCamp}|${cleanCode}`
 
     let rawNominas = (perVal && semVal && normCamp && nominas5K.has(k5)) ? nominas5K.get(k5) : null
-    if (!rawNominas && normCamp && nominasCampCode.has(campKey)) {
-      rawNominas = nominasCampCode.get(campKey)
-    }
-    if (!rawNominas && nominasCode.has(cleanCode)) {
+    if (!rawNominas && cleanCode && nominasCode.has(cleanCode)) {
       const byCode = nominasCode.get(cleanCode) || []
       const matched = byCode.filter(n => {
+        const nPer = norm5Per(n.periodo_reclutado || n.periodo)
+        const nSem = norm5Sem(n.semana_trabajo || n.semana)
+        if (perVal && nPer && nPer !== perVal) return false
+        if (semVal && nSem && nSem !== semVal) return false
         const nCamp = norm5Str(n.campana)
         return !nCamp || !normCamp || nameMatches(nCamp, normCamp) || nCamp.includes(normCamp) || normCamp.includes(nCamp)
       })
-      rawNominas = matched.length > 0 ? matched : byCode
+      rawNominas = matched
     }
     rawNominas = rawNominas || []
 
@@ -1188,11 +1189,14 @@ export function buildResumenMensualCapacitacion(
     }
     if (!groupFormAsisRaw && formAsisCode.has(cleanCode)) {
       const byCode = formAsisCode.get(cleanCode) || []
+      const cohortDocs = new Set(rawNominas.map(n => norm5Str(n.documento)).filter(Boolean))
       const matched = byCode.filter(f => {
+        const doc = norm5Str(f.documento || f.postulante_documento)
+        if (cohortDocs.has(doc)) return true
         const fCamp = norm5Str(f.campana)
-        return !fCamp || !normCamp || nameMatches(fCamp, normCamp) || fCamp.includes(normCamp) || normCamp.includes(fCamp)
+        return (!fCamp || !normCamp || nameMatches(fCamp, normCamp) || fCamp.includes(normCamp) || normCamp.includes(fCamp))
       })
-      groupFormAsisRaw = matched.length > 0 ? matched : byCode
+      groupFormAsisRaw = matched
     }
     groupFormAsisRaw = groupFormAsisRaw || []
 
@@ -1215,8 +1219,8 @@ export function buildResumenMensualCapacitacion(
       }
     }
 
-    // Incorporar alumnos registrados directamente por el Formador en asistencia
-    if (groupFormAsisRaw.length > 0) {
+    // Incorporar alumnos registrados directamente por el Formador SOLO si no hay nómina previa
+    if (candidateMap.size === 0 && groupFormAsisRaw.length > 0) {
       groupFormAsisRaw.forEach(r => {
         const doc = norm5Str(r.documento || r.postulante_documento)
         if (doc && !candidateMap.has(doc)) {

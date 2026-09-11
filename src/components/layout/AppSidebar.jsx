@@ -20,7 +20,8 @@ import {
   Sparkles,
   Zap,
   Radio,
-  Award
+  Award,
+  BanknoteIcon
 } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
@@ -51,6 +52,7 @@ export const NAV_SECTIONS = [
       { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos' },
       { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro' },
       { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos' },
+      { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días, bonos y permanencia' },
       { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos' },
       { id: 'descuentos_form', label: 'Cargar Descuentos', icon: Layers, description: 'Ingreso de incidencias' },
     ]
