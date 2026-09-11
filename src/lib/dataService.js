@@ -462,16 +462,18 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
 
     let cutoffIso = null;
     if (!all && !periodo) {
-      // Periodo actual + mes anterior (ej. 1 de Agosto si estamos en Septiembre)
+      // Para carga general de asistencias en plataforma, cubrir registros del año operativo 2026 y nulos
+      // sin truncar cohortes que iniciaron en meses previos (ej. capacitaciones de julio con ingreso en agosto)
       const d = new Date();
-      d.setDate(1);
-      d.setMonth(d.getMonth() - 1);
+      d.setFullYear(2026, 0, 1);
       d.setHours(0, 0, 0, 0);
       cutoffIso = d.toISOString();
-      countQuery = countQuery.gte('created_at', cutoffIso);
+      countQuery = countQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
     } else if (periodo) {
       const pClean = String(periodo).trim();
-      countQuery = countQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%${pClean}%`);
+      const yyyy = pClean.slice(0, 4);
+      const mm = pClean.slice(4, 6);
+      countQuery = countQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%/${mm}/${yyyy}%,fecha_registro_asistencia.ilike.%${yyyy}-${mm}%`);
     }
 
     const { count, error: countErr } = await countQuery;
@@ -486,14 +488,16 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
       let dataQuery = supabase
         .from('consolidado_asistencias')
         .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
-        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, from + step - 1);
 
       if (!all && !periodo && cutoffIso) {
-        dataQuery = dataQuery.gte('created_at', cutoffIso);
+        dataQuery = dataQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
       } else if (periodo) {
         const pClean = String(periodo).trim();
-        dataQuery = dataQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%${pClean}%`);
+        const yyyy = pClean.slice(0, 4);
+        const mm = pClean.slice(4, 6);
+        dataQuery = dataQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%/${mm}/${yyyy}%,fecha_registro_asistencia.ilike.%${yyyy}-${mm}%`);
       }
 
       chunkPromises.push(dataQuery);
@@ -1807,10 +1811,10 @@ export async function saveAsistenciaSession({ grupoMeta, grupo_codigo, fecha_asi
 // ─────────────────────────────────────────────
 export async function fetchAsistencias() {
   if (DB_MODE === 'supabase') {
-    const data = await fetchAllConsolidado();
+    const data = await fetchAllConsolidado({ all: true });
 
     // Map consolidado_asistencias back to standard asistencias structure
-    // We only keep the latest record per document+date
+    // We keep the latest record per document+date, but always protect I-OP records
     const map = new Map();
     data.forEach(row => {
       let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
@@ -1819,6 +1823,11 @@ export async function fetchAsistencias() {
       
       if (isoDate && cleanDoc) {
         const key = `${cleanGrupo}_${cleanDoc}_${isoDate}`;
+        const existing = map.get(key);
+        const isCurrentIop = String(row.sigla || '').trim().toUpperCase() === 'I-OP';
+        if (existing && !isCurrentIop && String(existing.sigla || '').trim().toUpperCase() === 'I-OP') {
+          return;
+        }
         map.set(key, {
           documento: cleanDoc,
           postulante_documento: cleanDoc,
@@ -5610,6 +5619,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     const normCamp = norm(campana);
     const cleanCamp = normCleanCamp(campana);
     const perVal = normPer(grupoInfo.periodo_ingreso_op || grupoInfo.periodo);
+    const rysPer = normPer(grupoInfo.periodo || grupoInfo.periodo_rys);
     const semVal = normSem(grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana);
     const segVal = normSeg(grupoInfo.segmento, campana);
 
@@ -5619,20 +5629,23 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     const k5 = build5K(perVal, semVal, segVal, normCamp, cleanCode);
     const k5Clean = cleanCamp ? build5K(perVal, semVal, segVal, cleanCamp, cleanCode) : null;
+    const k5Rys = rysPer ? build5K(rysPer, semVal, segVal, normCamp, cleanCode) : null;
+    const k5RysClean = cleanCamp && rysPer ? build5K(rysPer, semVal, segVal, cleanCamp, cleanCode) : null;
     const campKey = `${normCamp}|${cleanCode}`;
     const cleanCampKey = `${cleanCamp}|${cleanCode}`;
     
-    // Obtener nóminas: Prioridad Llaves Compuestas (5K) -> Filtro Estricto por Periodo+Semana -> Fallback
-    let rawNominas = (perVal && semVal && normCamp && (nominas5K.get(k5) || (k5Clean && nominas5K.get(k5Clean)))) || null;
+    // Obtener nóminas: Prioridad Llaves Compuestas (5K periodo OP o RYS) -> Filtro por Código -> Fallback
+    let rawNominas = (perVal && semVal && normCamp && (nominas5K.get(k5) || (k5Clean && nominas5K.get(k5Clean))))
+      || (rysPer && semVal && normCamp && (nominas5K.get(k5Rys) || (k5RysClean && nominas5K.get(k5RysClean))))
+      || null;
 
-    // Si no hubo coincidencia 5K exacta, buscar por código pero EXIGIR coincidencia con periodo y semana
-    // para nunca absorber postulantes de otros meses/semanas reutilizando el mismo código de grupo
+    // Si no hubo coincidencia 5K exacta, buscar por código pero permitir coincidencia con periodo OP o RYS
     if (!rawNominas && cleanCode && nominasCode.has(cleanCode)) {
       const candidatesByCode = nominasCode.get(cleanCode) || [];
       const matched = candidatesByCode.filter(n => {
         const nPer = normPer(n.periodo_reclutado || n.periodo);
         const nSem = normSem(n.semana_trabajo || n.semana);
-        if (perVal && nPer && nPer !== perVal) return false;
+        if (perVal && rysPer && nPer && nPer !== perVal && nPer !== rysPer) return false;
         if (semVal && nSem && nSem !== semVal) return false;
         if (normCamp) {
           const nCamp = norm(n.campana);
@@ -5648,26 +5661,28 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       ? rawNominas.filter(n => !descSet.has(makeDescuentoKey(n.documento, campana, grupo_codigo)))
       : rawNominas;
       
-    // Obtener asistencias: Prioridad Llaves Compuestas -> Campaña+Código -> Fallback por Código
-    let groupFormAsisRaw = (perVal && semVal && normCamp && (formAsis5K.get(k5) || (k5Clean && formAsis5K.get(k5Clean))))
-      ? (formAsis5K.get(k5) || formAsis5K.get(k5Clean))
-      : (normCamp && (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey)))
+    // Obtener asistencias: Prioridad Campaña+Código -> Fallback por Código
+    let groupFormAsisRaw = (normCamp && (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey)))
       ? (formAsisCampCode.get(campKey) || formAsisCampCode.get(cleanCampKey))
       : (formAsisCode.get(cleanCode) || []);
 
-    // Aislamiento por cohorte: solo asociar asistencias de los postulantes de esta cohorte
-    // o cuyas fechas correspondan al periodo de la cohorte
+    // Aislamiento por cohorte: asociar asistencias de los postulantes de esta cohorte,
+    // o con pase formal a operación (I-OP), o cuyas fechas correspondan al periodo
     const cohortDocSet = new Set(validNominas.map(n => norm(n.documento)).filter(Boolean));
     if (groupFormAsisRaw.length > 0) {
       groupFormAsisRaw = groupFormAsisRaw.filter(f => {
         const doc = norm(f.documento || f.postulante_documento);
         if (cohortDocSet.has(doc)) return true;
         
-        // Si no está en nómina previa, validar estrictamente por fecha de asistencia dentro del periodo
+        // Si tiene pase formal a operación (I-OP) para este grupo y campaña, es estrictamente parte de la cohorte
+        const siglaNorm = String(f.sigla || f.sigla_asistencia || '').trim().toUpperCase();
+        if (siglaNorm === 'I-OP') return true;
+
+        // Si no está en nómina previa, validar por fecha de asistencia dentro del periodo de OP o de capacitación
         const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
-        if (d && perVal) {
+        if (d && (perVal || rysPer)) {
           const dPer = normPer(d.replace(/\D/g, '').slice(0, 6));
-          if (dPer !== perVal) return false;
+          if (dPer === perVal || dPer === rysPer) return true;
         }
         return false;
       });
@@ -5675,7 +5690,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     // Aislamiento temporal inteligente para grupos reutilizando códigos:
     // Descartar asistencias que ocurrieron más de 7 días antes de la fecha de apertura/inicio del grupo
-    // (ej. evita que un grupo futuro de Semana 37 absorba asistencias de Semana 32 de hace un mes)
     const rawFechaInicio = grupoInfo.fecha_inicio_capacitacion || grupoInfo.fecha_capacitacion || grupoInfo.fecha_registro;
     const fechaInicioIso = parseFechaAsistencia(rawFechaInicio);
     if (fechaInicioIso && groupFormAsisRaw.length > 0) {
@@ -5689,7 +5703,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       });
     }
 
-    // Si el grupo tiene fecha de ingreso a operación futura respecto a hoy (ej. grupos de septiembre programados a futuro),
+    // Si el grupo tiene fecha de ingreso a operación futura respecto a hoy,
     // no puede tener I-OP previos generados antes de su fecha de inicio
     if (fechaInicioIso && groupFormAsisRaw.length > 0) {
       const fechaIngresoOp = parseFechaAsistencia(grupoInfo.fecha_ingreso_op);
@@ -5722,10 +5736,9 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
     }
 
-    // Solo si el grupo NO tiene postulantes en nóminas (ej. cohortes históricas sin carga en nóminas),
-    // se permite como fallback inferir alumnos desde las asistencias válidas de esa cohorte.
-    // Si el grupo YA tiene nómina oficial de Reclutamiento (validNominas > 0), total_nomina respeta la nómina oficial.
-    if (candidateMap.size === 0 && groupFormAsisRaw.length > 0) {
+    // Incorporar cualquier participante que registró asistencia o pase I-OP en esta cohorte
+    // garantizando que no se pierdan asistencias ni graduados reales que no figuraban en la nómina inicial
+    if (groupFormAsisRaw.length > 0) {
       groupFormAsisRaw.forEach(r => {
         const doc = norm(r.documento || r.postulante_documento);
         if (doc && !candidateMap.has(doc)) {
@@ -5737,14 +5750,15 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
             apellido_materno: r.apellido_materno || '',
             condicion: r.condicion_laboral || r.condicion || grupoInfo.condicion || 'FULL TIME',
             dia_0: 'ASISTIO',
-            dia_1: 'ASISTIO'
+            dia_1: 'ASISTIO',
+            fromAsistencia: true
           });
         }
       });
     }
 
     const effectiveCandidates = Array.from(candidateMap.values());
-    const total_nomina = effectiveCandidates.length;
+    const total_nomina = validNominas.length > 0 ? validNominas.length : effectiveCandidates.length;
 
     let asistio_dia0 = 0;
     let asistio_dia1 = 0;
