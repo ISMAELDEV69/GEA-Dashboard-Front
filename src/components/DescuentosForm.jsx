@@ -20,23 +20,40 @@ const EMPTY_ROW = {
   comentarios: ''
 }
 
-export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [] }) {
+export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [] }) {
   const [dataRows, setDataRows] = useState([{ ...EMPTY_ROW }])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
   const [validationErrors, setValidationErrors] = useState([])
 
-  // Extraer opciones únicas globales desde homologadas
+  // Extraer opciones únicas de Sede combinando Homologadas y Capacidad RYS
   const sedesUnicas = useMemo(() => {
-    return [...new Set(opcionesHomologadas.map(o => o.sede).filter(Boolean))].sort()
+    const fromHom = opcionesHomologadas.map(o => o.sede)
+    const fromCap = grupos.map(g => g.sede)
+    return [...new Set([...fromHom, ...fromCap].filter(Boolean))].sort()
+  }, [opcionesHomologadas, grupos])
+
+  // Segmentos combinando Capacidad RYS y Homologadas
+  const segmentosUnicos = useMemo(() => {
+    const fromCap = grupos.map(g => g.segmento)
+    const fromCampanas = (campanas || []).map(c => c.segmento)
+    const fromHom = opcionesHomologadas.map(o => o.segmento)
+    return [...new Set([...fromCap, ...fromCampanas, ...fromHom].filter(Boolean))].sort()
+  }, [grupos, campanas, opcionesHomologadas])
+  
+  // Campañas globales combinando Capacidad RYS y Homologadas
+  const campanasGlobales = useMemo(() => {
+    const fromGrupos = grupos.map(g => g.campana)
+    const fromCampanas = (campanas || []).map(c => c.nombre || c.campana || c)
+    const fromHom = opcionesHomologadas.map(o => o.campana)
+    return [...new Set([...fromGrupos, ...fromCampanas, ...fromHom].filter(Boolean))].sort()
+  }, [grupos, campanas, opcionesHomologadas])
+
+  const todosSupervisores = useMemo(() => {
+    return [...new Set(opcionesHomologadas.map(o => o.supervisor).filter(Boolean))].sort()
   }, [opcionesHomologadas])
 
-  // Segmentos desde homologadas para mantener consistencia
-  const segmentosUnicos = useMemo(() => {
-    return [...new Set(opcionesHomologadas.map(o => o.segmento).filter(Boolean))].sort()
-  }, [opcionesHomologadas])
-  
   const motivosUnicos = useMemo(() => {
     return [...new Set(opcionesHomologadas.map(o => o.motivo).filter(Boolean))].sort()
   }, [opcionesHomologadas])
@@ -62,15 +79,53 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     const newRows = [...dataRows]
     newRows[idx][field] = value
     
-    // Filtros en cascada: Auto-limpieza si cambia padre
+    // Filtros en cascada inteligentes
     if (field === 'segmento') {
-      newRows[idx].campana = ''
+      if (newRows[idx].campana) {
+        const normSeg = String(value || '').trim().toUpperCase()
+        const matchG = grupos.some(g => 
+          String(g.campana || '').trim().toUpperCase() === String(newRows[idx].campana).trim().toUpperCase() &&
+          (!normSeg || String(g.segmento || '').trim().toUpperCase() === normSeg)
+        )
+        const matchH = opcionesHomologadas.some(o => 
+          String(o.campana || '').trim().toUpperCase() === String(newRows[idx].campana).trim().toUpperCase() &&
+          (!normSeg || String(o.segmento || '').trim().toUpperCase() === normSeg)
+        )
+        if (!matchG && !matchH) {
+          newRows[idx].campana = ''
+          newRows[idx].supervisor = ''
+          newRows[idx].grupo_cap = ''
+        }
+      }
+    }
+
+    if (field === 'campana') {
+      // Auto-inferir segmento desde Capacidad RYS si aún no fue seleccionado
+      if (value && !newRows[idx].segmento) {
+        const normCamp = String(value).trim().toUpperCase()
+        const matchG = grupos.find(g => String(g.campana || '').trim().toUpperCase() === normCamp)
+        const matchC = (campanas || []).find(c => String(c.nombre || c.campana || c).trim().toUpperCase() === normCamp)
+        const matchH = opcionesHomologadas.find(o => String(o.campana || '').trim().toUpperCase() === normCamp)
+        const inferred = matchG?.segmento || matchC?.segmento || matchH?.segmento
+        if (inferred) {
+          newRows[idx].segmento = inferred
+        }
+      }
       newRows[idx].supervisor = ''
       newRows[idx].grupo_cap = ''
     }
-    if (field === 'campana') {
-      newRows[idx].supervisor = ''
-      newRows[idx].grupo_cap = ''
+
+    if (field === 'grupo_cap' && value) {
+      const normCod = String(value).trim().toUpperCase()
+      const matchG = grupos.find(g => String(g.codigo || '').trim().toUpperCase() === normCod)
+      if (matchG) {
+        if (!newRows[idx].segmento && matchG.segmento) newRows[idx].segmento = matchG.segmento
+        if (!newRows[idx].campana && matchG.campana) newRows[idx].campana = matchG.campana
+        if (!newRows[idx].formador && (matchG.formador_nombre || matchG.formador)) {
+          newRows[idx].formador = matchG.formador_nombre || matchG.formador
+        }
+        if (!newRows[idx].sede && matchG.sede) newRows[idx].sede = matchG.sede
+      }
     }
     
     setDataRows(newRows)
@@ -238,28 +293,39 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
             <tbody>
               {dataRows.map((row, idx) => {
                 
-                // Filtros en cascada desde homologadas
-                // Campañas disponibles: Filtra homologadas por el segmento elegido
-                const campanasDisponibles = [...new Set(
-                  opcionesHomologadas
-                    .filter(o => row.segmento ? o.segmento === row.segmento : true)
+                // Campañas disponibles: Se alimenta prioritariamente de Capacidad RYS (grupos / campanas) y Homologadas
+                let campanasDisponibles = campanasGlobales
+                if (row.segmento) {
+                  const normSeg = String(row.segmento).trim().toUpperCase()
+                  const fromGruposSeg = grupos
+                    .filter(g => String(g.segmento || '').trim().toUpperCase() === normSeg)
+                    .map(g => g.campana)
+                  const fromCampanasSeg = (campanas || [])
+                    .filter(c => String(c.segmento || '').trim().toUpperCase() === normSeg)
+                    .map(c => c.nombre || c.campana || c)
+                  const fromHomSeg = opcionesHomologadas
+                    .filter(o => String(o.segmento || '').trim().toUpperCase() === normSeg)
                     .map(o => o.campana)
-                    .filter(Boolean)
-                )].sort()
+                  const filtered = [...new Set([...fromGruposSeg, ...fromCampanasSeg, ...fromHomSeg].filter(Boolean))].sort()
+                  if (filtered.length > 0) {
+                    campanasDisponibles = filtered
+                  }
+                }
                 
-                // Supervisores disponibles: Filtra homologadas por la campaña elegida
-                const supervisoresDisponibles = [...new Set(
+                // Supervisores disponibles: Filtra homologadas por la campaña elegida o todas
+                const supFilt = [...new Set(
                   opcionesHomologadas
-                    .filter(o => row.campana ? o.campana === row.campana : true)
+                    .filter(o => row.campana ? String(o.campana).trim().toUpperCase() === String(row.campana).trim().toUpperCase() : true)
                     .map(o => o.supervisor)
                     .filter(Boolean)
                 )].sort()
+                const supervisoresDisponibles = supFilt.length > 0 ? supFilt : todosSupervisores
                 
-                // Grupos disponibles: Filtra grupos (Capacidad) por segmento y campaña
+                // Grupos disponibles: Filtra grupos (Capacidad RYS) por segmento y campaña
                 const gruposDisponibles = [...new Set(
                   grupos
-                    .filter(g => row.segmento ? g.segmento === row.segmento : true)
-                    .filter(g => row.campana ? g.campana === row.campana : true)
+                    .filter(g => row.segmento ? String(g.segmento || '').trim().toUpperCase() === String(row.segmento).trim().toUpperCase() : true)
+                    .filter(g => row.campana ? String(g.campana || '').trim().toUpperCase() === String(row.campana).trim().toUpperCase() : true)
                     .map(g => g.codigo)
                     .filter(Boolean)
                 )].sort()

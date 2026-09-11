@@ -723,7 +723,7 @@ export default function App() {
                       {/* 10. Descuentos Form */}
                       <KeepAliveView viewId="descuentos_form" activeView={activeView}>
                         {navItems.some(i => i.id === 'descuentos_form') && (
-                          <DescuentosForm userProfile={effectiveProfile} grupos={grupos} opcionesHomologadas={opcionesHomologadas} />
+                          <DescuentosForm userProfile={effectiveProfile} grupos={grupos} opcionesHomologadas={opcionesHomologadas} campanas={campanas} />
                         )}
                       </KeepAliveView>
 
