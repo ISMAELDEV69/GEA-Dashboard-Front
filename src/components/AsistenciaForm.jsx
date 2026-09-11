@@ -1118,14 +1118,20 @@ export default function AsistenciaForm({
   // ── Historial de fechas del grupo para regularización ──
   const groupDatesList = useMemo(() => {
     const targetGroup = activeGrupoObj?.codigo || selectedGrupo
+    const targetCampana = activeGrupoObj?.campana || selectedCampana
     if (!targetGroup) return []
     const dates = asistencias
-      .filter(a => normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.codigo_grupo) === normalize(targetGroup))
+      .filter(a => {
+        const matchG = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.codigo_grupo) === normalize(targetGroup)
+        if (!matchG) return false
+        if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) return false
+        return true
+      })
       .map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia)
       .filter(Boolean)
     if (fecha && !dates.includes(fecha)) dates.push(fecha)
     return Array.from(new Set(dates)).sort()
-  }, [asistencias, activeGrupoObj, selectedGrupo, fecha])
+  }, [asistencias, activeGrupoObj, selectedGrupo, selectedCampana, fecha])
 
   const handleOpenRegularizacion = useCallback((item) => {
     setRegularizandoPostulante(item)
@@ -2089,6 +2095,8 @@ export default function AsistenciaForm({
         formadorNombre={regularizandoPostulante?.nombreFormador || effectiveGrupoObj?.formador_nombre}
         asistencias={asistencias}
         groupDates={groupDatesList}
+        grupoObj={effectiveGrupoObj || activeGrupoObj}
+        currentFormFecha={fecha}
         motivosBaja={motivosBaja}
         isReadOnly={isReadOnly}
         onRegularizacionSaved={handleRegularizacionSaved}
