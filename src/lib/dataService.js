@@ -5400,50 +5400,120 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     });
   }
 
-  // 2. Indexación O(1) de Nóminas / Postulantes en memoria por Código Exacto y Campaña
-  const nominasGrouped = new Map();
+  // Helper normalizadores para las 5 Llaves Compuestas Universales
+  const normSem = (val) => {
+    if (!val) return '';
+    const s = String(val).trim().toUpperCase();
+    if (['ALL', 'TODAS', 'TODOS', '-', 'NULL', 'UNDEFINED'].includes(s)) return '';
+    const num = s.replace(/\D/g, '');
+    return num ? `SEM ${parseInt(num, 10)}` : s;
+  };
+
+  const normPer = (val) => {
+    if (!val) return '';
+    const num = String(val).replace(/\D/g, '');
+    return num.length >= 6 ? num.slice(0, 6) : num;
+  };
+
+  const normSeg = (rawSeg, campana) => {
+    let s = String(rawSeg || '').trim().toUpperCase();
+    const c = String(campana || '').toUpperCase();
+    if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) return 'CLARO PERU';
+    if (c.includes('CLARO POSTPAGO')) return 'CLARO PERU';
+    if (c.includes('TUVES') || c.includes('CHILE')) return 'CLARO CHILE';
+    if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) return 'LIPIGAS';
+    if (s === 'CLARO PERU' || s === 'CLARO PERU RETENCIONES' || s === 'CLARO PERU OUT' || s === 'CLARO CHILE' || s === 'LIPIGAS') return s;
+    if (s.includes('RETENCION') || c.includes('RETENCION') || c.includes('CONTACTADOS') || c.includes('CONTENCI')) return 'CLARO PERU RETENCIONES';
+    if (s.includes('OUT') || c.includes('OUT') || c.includes('PREVENTIVA') || c.includes('PORTA') || c.includes('RENO') || c.includes('VENTAS') || c.includes('CROSS') || c.includes('MIGRA')) return 'CLARO PERU OUT';
+    return 'CLARO PERU';
+  };
+
+  const build5K = (periodo, semana, segmento, campana, grupo) => {
+    const p = normPer(periodo);
+    const s = normSem(semana);
+    const seg = normSeg(segmento, campana);
+    const c = norm(campana);
+    const g = norm(grupo);
+    return `${p}|${s}|${seg}|${c}|${g}`;
+  };
+
+  const isCampCompatible = (campA, campB) => {
+    if (!campA || !campB) return true;
+    const a = norm(campA);
+    const b = norm(campB);
+    if (a === b) return true;
+    const clean = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '').trim().toUpperCase();
+    const ca = clean(campA);
+    const cb = clean(campB);
+    if (ca === cb) return true;
+    if (ca.length >= 6 && cb.length >= 6 && (ca.includes(cb) || cb.includes(ca))) return true;
+    return false;
+  };
+
+  // 2. Indexación estricta por 5 Llaves Compuestas + fallback controlado por Código
+  const nominas5K = new Map();
+  const nominasCode = new Map();
   activePostulantes.forEach(n => {
     const code = norm(n.grupo_codigo);
     const cleanCode = cleanGroupCode(n.grupo_codigo);
     const camp = norm(n.campana);
-    
-    if (camp && code) {
-      const key = `${camp}|${code}`;
-      if (!nominasGrouped.has(key)) nominasGrouped.set(key, []);
-      nominasGrouped.get(key).push(n);
-    }
-    if (camp && cleanCode && cleanCode !== code) {
-      const cleanKey = `${camp}|${cleanCode}`;
-      if (!nominasGrouped.has(cleanKey)) nominasGrouped.set(cleanKey, []);
-      nominasGrouped.get(cleanKey).push(n);
-    }
+    const per = normPer(n.periodo_reclutado || n.periodo);
+    const sem = normSem(n.semana_trabajo || n.semana);
+    const seg = normSeg(n.segmento, n.campana);
+
     if (code) {
-      if (!nominasGrouped.has(code)) nominasGrouped.set(code, []);
-      nominasGrouped.get(code).push(n);
+      if (!nominasCode.has(code)) nominasCode.set(code, []);
+      nominasCode.get(code).push(n);
+      if (cleanCode && cleanCode !== code) {
+        if (!nominasCode.has(cleanCode)) nominasCode.set(cleanCode, []);
+        nominasCode.get(cleanCode).push(n);
+      }
+    }
+
+    if (per && sem && camp && code) {
+      const k5 = build5K(per, sem, seg, camp, code);
+      if (!nominas5K.has(k5)) nominas5K.set(k5, []);
+      nominas5K.get(k5).push(n);
+
+      if (cleanCode && cleanCode !== code) {
+        const k5Clean = build5K(per, sem, seg, camp, cleanCode);
+        if (!nominas5K.has(k5Clean)) nominas5K.set(k5Clean, []);
+        nominas5K.get(k5Clean).push(n);
+      }
     }
   });
 
-  // 3. Indexación O(1) de Asistencias en memoria por Código Exacto y Campaña
-  const formAsisGrouped = new Map();
+  // 3. Indexación de Asistencias por 5 Llaves Compuestas + fallback por Código
+  const formAsis5K = new Map();
+  const formAsisCode = new Map();
   activeAsistencias.forEach(f => {
     const rawCode = f.grupo_codigo || f.codigo_grupo;
     const code = norm(rawCode);
     const cleanCode = cleanGroupCode(rawCode);
     const camp = norm(f.campana);
-    
-    if (camp && code) {
-      const key = `${camp}|${code}`;
-      if (!formAsisGrouped.has(key)) formAsisGrouped.set(key, []);
-      formAsisGrouped.get(key).push(f);
-    }
-    if (camp && cleanCode && cleanCode !== code) {
-      const cleanKey = `${camp}|${cleanCode}`;
-      if (!formAsisGrouped.has(cleanKey)) formAsisGrouped.set(cleanKey, []);
-      formAsisGrouped.get(cleanKey).push(f);
-    }
+    const per = normPer(f.periodo_ingreso_op || f.periodo);
+    const sem = normSem(f.semana_trabajo || f.semana_label || f.semana);
+    const seg = normSeg(f.segmento, f.campana);
+
     if (code) {
-      if (!formAsisGrouped.has(code)) formAsisGrouped.set(code, []);
-      formAsisGrouped.get(code).push(f);
+      if (!formAsisCode.has(code)) formAsisCode.set(code, []);
+      formAsisCode.get(code).push(f);
+      if (cleanCode && cleanCode !== code) {
+        if (!formAsisCode.has(cleanCode)) formAsisCode.set(cleanCode, []);
+        formAsisCode.get(cleanCode).push(f);
+      }
+    }
+
+    if (per && sem && camp && code) {
+      const k5 = build5K(per, sem, seg, camp, code);
+      if (!formAsis5K.has(k5)) formAsis5K.set(k5, []);
+      formAsis5K.get(k5).push(f);
+
+      if (cleanCode && cleanCode !== code) {
+        const k5Clean = build5K(per, sem, seg, camp, cleanCode);
+        if (!formAsis5K.has(k5Clean)) formAsis5K.set(k5Clean, []);
+        formAsis5K.get(k5Clean).push(f);
+      }
     }
   });
 
@@ -5453,55 +5523,85 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const exactCode = norm(grupo_codigo);
     const cleanCode = cleanGroupCode(grupo_codigo);
     const normCamp = norm(campana);
-    const groupKey = `${normCamp}|${exactCode}`;
-    const cleanGroupKey = `${normCamp}|${cleanCode}`;
     
     let totalNomina = 0;
     let totalDia0 = 0;
-    
-    // Obtener nóminas por código exacto y campaña (con fallback por código si la campaña difiere en nómina)
-    const rawNominas = (normCamp ? (nominasGrouped.get(groupKey) || nominasGrouped.get(cleanGroupKey)) : null) || 
-                       nominasGrouped.get(exactCode) || 
-                       nominasGrouped.get(cleanCode) || [];
-    
-    // Aislamiento estricto por Periodo y Semana
-    const targetPeriodo = grupoInfo.periodo ? String(grupoInfo.periodo).trim() : null;
-    const targetSemanaNum = String(grupoInfo.semana_label || grupoInfo.semana_trabajo || '').replace(/\D/g, '');
-
-    let validNominas = rawNominas;
-    if (targetPeriodo) {
-      validNominas = validNominas.filter(n => {
-        const p = String(n.periodo_reclutado || n.periodo || '').trim();
-        if (p) return p === targetPeriodo;
-        const f = parseFechaAsistencia(n.fecha_registro || n.fecha_ingreso || n.created_at);
-        if (f) return f.replace(/-/g, '').substring(0, 6) === targetPeriodo;
-        return true;
-      });
-    }
-    if (targetSemanaNum && validNominas.length > 0) {
-      const bySemana = validNominas.filter(n => String(n.semana_trabajo || n.semana || '').replace(/\D/g, '') === targetSemanaNum);
-      if (bySemana.length > 0) {
-        validNominas = bySemana;
-      }
-    }
-      
-    // Obtener asistencias por código exacto y campaña (con fallback por código)
-    let groupFormAsisRaw = (normCamp ? (formAsisGrouped.get(groupKey) || formAsisGrouped.get(cleanGroupKey)) : null) || 
-                           formAsisGrouped.get(exactCode) || 
-                           formAsisGrouped.get(cleanCode) || [];
-
-    if (targetPeriodo && groupFormAsisRaw.length > 0) {
-      groupFormAsisRaw = groupFormAsisRaw.filter(f => {
-        const p = String(f.periodo || f.periodo_asistencia || '').trim();
-        if (p) return p === targetPeriodo;
-        const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia || f.created_at);
-        if (d) return d.replace(/-/g, '').substring(0, 6) === targetPeriodo;
-        return true;
-      });
-    }
 
     const rawFechaInicio = grupoInfo.fecha_inicio_capacitacion || grupoInfo.fecha_capacitacion || grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha;
     const fechaInicioIso = parseFechaAsistencia(rawFechaInicio);
+
+    // Extracción normalizada de las 5 Llaves de este Grupo
+    const targetPeriodo = normPer(grupoInfo.periodo || grupoInfo.periodo_rys);
+    const targetSemana = normSem(grupoInfo.semana_label || grupoInfo.semana_trabajo || grupoInfo.semana);
+    const targetSegmento = normSeg(grupoInfo.segmento, campana);
+
+    const k5 = build5K(targetPeriodo, targetSemana, targetSegmento, normCamp, exactCode);
+    const k5Clean = cleanCode && cleanCode !== exactCode ? build5K(targetPeriodo, targetSemana, targetSegmento, normCamp, cleanCode) : null;
+    
+    // Prioridad 1: Coincidencia EXACTA por las 5 Llaves Compuestas
+    let validNominas = (targetPeriodo && targetSemana && normCamp && (nominas5K.get(k5) || (k5Clean && nominas5K.get(k5Clean)))) || null;
+
+    // Prioridad 2: Si no hubo match 5K exacto (ej. formato de segmento), filtrar candidatos de este código validando estrictamente las 5 Llaves
+    if (!validNominas && exactCode && nominasCode.has(exactCode)) {
+      const candidates = nominasCode.get(exactCode) || [];
+      validNominas = candidates.filter(n => {
+        // 1. Periodo: DEBE coincidir
+        const nPer = normPer(n.periodo_reclutado || n.periodo);
+        if (targetPeriodo && nPer && nPer !== targetPeriodo) return false;
+
+        // 2. Semana: DEBE coincidir
+        const nSem = normSem(n.semana_trabajo || n.semana);
+        if (targetSemana && nSem && nSem !== targetSemana) return false;
+
+        // 3. Segmento: DEBE coincidir si viene informado
+        const nSeg = normSeg(n.segmento, n.campana);
+        if (targetSegmento && nSeg && nSeg !== targetSegmento) return false;
+
+        // 4. Campaña: DEBE ser compatible
+        if (normCamp && !isCampCompatible(n.campana, campana)) return false;
+
+        return true;
+      });
+    }
+    validNominas = validNominas || [];
+      
+    // Prioridad 1: Coincidencia EXACTA de Asistencias por las 5 Llaves Compuestas
+    let groupFormAsisRaw = (targetPeriodo && targetSemana && normCamp && (formAsis5K.get(k5) || (k5Clean && formAsis5K.get(k5Clean)))) || null;
+
+    // Prioridad 2: Filtrar asistencias por código aplicando estrictamente las 5 llaves y fecha de inicio
+    if (!groupFormAsisRaw && exactCode && formAsisCode.has(exactCode)) {
+      const candidates = formAsisCode.get(exactCode) || [];
+      groupFormAsisRaw = candidates.filter(f => {
+        const fPer = normPer(f.periodo_ingreso_op || f.periodo);
+        if (targetPeriodo && fPer && fPer !== targetPeriodo) return false;
+
+        const fSem = normSem(f.semana_trabajo || f.semana_label || f.semana);
+        if (targetSemana && fSem && fSem !== targetSemana) return false;
+
+        const fSeg = normSeg(f.segmento, f.campana);
+        if (targetSegmento && fSeg && fSeg !== targetSegmento) return false;
+
+        if (normCamp && !isCampCompatible(f.campana, campana)) return false;
+
+        // Aislamiento temporal estricto: Las asistencias NUNCA pueden ocurrir antes del inicio de la cohorte
+        if (fechaInicioIso) {
+          const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
+          if (d && d < fechaInicioIso) return false;
+        }
+
+        return true;
+      });
+    }
+    groupFormAsisRaw = groupFormAsisRaw || [];
+
+    // Aislamiento temporal estricto de seguridad: descartar asistencias previas a fecha de inicio
+    if (fechaInicioIso && groupFormAsisRaw.length > 0) {
+      groupFormAsisRaw = groupFormAsisRaw.filter(f => {
+        const d = parseFechaAsistencia(f.fecha_registro_asistencia || f.fecha_asistencia);
+        if (d && d < fechaInicioIso) return false;
+        return true;
+      });
+    }
 
     const effectiveCandidates = validNominas;
     totalNomina = effectiveCandidates.length;
@@ -5532,7 +5632,14 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
     // 2. Fallback: Configuración o fecha proyectada según capacidad_rys
     if (!fecha_dia1_ref) {
-      fecha_dia1_ref = config?.fecha_dia1 || grupoInfo.fecha_dia_1 || null;
+      const cfgDia1 = config?.fecha_dia1;
+      // Descartar fechas configuradas en grupos_dia1 que sean anteriores a la apertura de esta cohorte (obsoletas)
+      if (cfgDia1 && (!fechaInicioIso || cfgDia1 >= fechaInicioIso)) {
+        fecha_dia1_ref = cfgDia1;
+      } else if (grupoInfo.fecha_dia_1 && (!fechaInicioIso || grupoInfo.fecha_dia_1 >= fechaInicioIso)) {
+        fecha_dia1_ref = grupoInfo.fecha_dia_1;
+      }
+      
       if (!fecha_dia1_ref && fechaInicioIso) {
         const start = new Date(fechaInicioIso + 'T12:00:00Z');
         if (String(grupo_codigo).startsWith('GPE')) {
