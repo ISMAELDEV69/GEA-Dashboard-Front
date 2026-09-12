@@ -4173,8 +4173,14 @@ export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
 
       const procedeStr = String(d.procede || '').trim().toUpperCase();
       const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
-      // Descartar únicamente registros explícitamente rechazados
-      if (procedeStr === 'NO' || procedeStr === 'NO PROCEDE' || rysStr === 'NO') {
+      
+      // REGLA OFICIAL: Debe seguir apareciendo en asistencia hasta que el Jefe de RyS lo apruebe
+      const isAprobadoRyS = rysStr === 'SI' || procedeStr === 'PROCEDE' || procedeStr === 'APROBADO';
+      const regTime = d.fecha_registro || d.created_at || d.fecha_baja;
+      const isVencido = regTime && isDescuentoVencido48h(regTime) && procedeStr !== 'NO' && procedeStr !== 'NO PROCEDE' && rysStr !== 'NO';
+
+      // Si está PENDIENTE y dentro de plazo, o si fue rechazado por RyS, DEBE SEGUIR APARECIENDO en asistencia
+      if (!isAprobadoRyS && !isVencido) {
         return;
       }
 

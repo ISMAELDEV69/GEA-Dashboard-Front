@@ -27,6 +27,7 @@ import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBaj
 import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
 import AsistenciaCeldaEditorModal from './AsistenciaCeldaEditorModal';
+import { isDescuentoVencido48h } from '../lib/businessHoursUtils';
 
 const MIN_PERIODO_2026 = '202601';
 
@@ -934,17 +935,35 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     const latestDocMap = new Map();
     const descSet = new Set();
 
-    // 1. Añadir todos los DNIs de la tabla descuentos cargada
+    // 1. Añadir únicamente los DNIs con descuento efectivamente aprobado por RyS (o vencido)
     (descuentos || []).forEach(d => {
       const procedeStr = String(d.procede || '').trim().toUpperCase();
       const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
-      if (procedeStr !== 'NO' && procedeStr !== 'NO PROCEDE' && rysStr !== 'NO') {
-        const dni = normalizeText(d.dni_ce);
-        if (dni) {
-          descSet.add(dni);
-          descSet.add(dni.toLowerCase());
-          descSet.add(dni.toUpperCase());
+      
+      // REGLA OFICIAL: Debe seguir apareciendo en Control de Asistencia hasta que el Jefe de RyS lo apruebe
+      const isAprobadoRyS = rysStr === 'SI' || procedeStr === 'PROCEDE' || procedeStr === 'APROBADO';
+      const regTime = d.fecha_registro || d.created_at || d.fecha_baja;
+      const isVencido = regTime && isDescuentoVencido48h(regTime) && procedeStr !== 'NO' && procedeStr !== 'NO PROCEDE' && rysStr !== 'NO';
+
+      // Si está PENDIENTE y dentro de plazo, o si fue rechazado por RyS, DEBE SEGUIR APARECIENDO
+      if (!isAprobadoRyS && !isVencido) {
+        return;
+      }
+
+      // Si hay filtro de grupo activo en la vista, asegurar que corresponda al grupo
+      if (filters.gpe && filters.gpe !== 'Todas' && d.grupo_cap) {
+        const cleanFiltroGpe = normalizeText(filters.gpe);
+        const cleanRowGpe = normalizeText(d.grupo_cap);
+        if (cleanRowGpe && cleanFiltroGpe && cleanRowGpe !== cleanFiltroGpe && !cleanRowGpe.includes(cleanFiltroGpe) && !cleanFiltroGpe.includes(cleanRowGpe)) {
+          return;
         }
+      }
+
+      const dni = normalizeText(d.dni_ce);
+      if (dni) {
+        descSet.add(dni);
+        descSet.add(dni.toLowerCase());
+        descSet.add(dni.toUpperCase());
       }
     });
 
