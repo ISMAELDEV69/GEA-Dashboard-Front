@@ -12,6 +12,7 @@ import {
   fetchNominasPagosCapacitacion,
   fetchAsistenciasPagos,
   fetchGruposPagosDisponibles,
+  fetchCapacidadRysOperativo,
   saveLiquidacionPagos,
   fetchLiquidacionesLotes,
   fetchLiquidacionDetalle,
@@ -52,198 +53,966 @@ function KpiCard({ icon: Icon, label, value, sub, color = 'blue', highlight = fa
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Sub-componente: Formulario de configuración de grupo
 // ────────────────────────────────────────────────────────────────────────
-function ConfigGrupoForm({ gruposDisponibles, configsExistentes, onSaved, userProfile }) {
-  const [form, setForm] = useState({
-    grupo_codigo: '', campana: '', segmento: '', semana_trabajo: '', periodo: '',
-    monto_dia_capa: '', bono_bienvenida: '', bono_permanencia_total: '',
-    cuotas_permanencia: '3', bono_asistencia_perfecta: '', notas: ''
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState(null)
-  const [editingId, setEditingId] = useState(null)
-
-  const handleGrupoChange = (e) => {
-    const cod = e.target.value
-    const grupoInfo = gruposDisponibles.find(g => g.grupo_codigo === cod)
-    const configExist = configsExistentes.find(c => c.grupo_codigo === cod)
-    if (configExist) {
-      setForm({ 
-        ...configExist, 
-        semana_trabajo: configExist.semana_trabajo || '', 
-        cuotas_permanencia: configExist.cuotas_permanencia || '3',
-        segmento: configExist.segmento || grupoInfo?.segmento || ''
-      })
-      setEditingId(configExist.id)
-    } else {
-      setForm(f => ({
-        ...f,
-        grupo_codigo: cod,
-        campana: grupoInfo?.campana || '',
-        segmento: grupoInfo?.segmento || '',
-        semana_trabajo: grupoInfo?.semana_trabajo || '',
-        periodo: grupoInfo?.periodo_reclutado || grupoInfo?.periodo || '',
-      }))
-      setEditingId(null)
-    }
+// Sub-componente: Formulario de configuración de grupo (26 Campos Completos)
+// ────────────────────────────────────────────────────────────────────────
+function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved, userProfile, editingPropuesta, onCancelEdit }) {
+  const defaultForm = {
+    id: null,
+    periodoCapa: '',
+    semana: '',
+    segmento: '',
+    campana: '',
+    grupo: '',
+    modalidad: 'REMOTO',
+    condicionLaboral: 'FULL TIME',
+    cod: '',
+    fechaInicioCapa: '',
+    ingresoOperacion: '',
+    mesAfectacionCapa: '',
+    mesAfectacionBonos: '',
+    pagoPorDia: 30,
+    diasCapa: 9,
+    cantDiasFeriados: 0,
+    pagoCompleto: 270,
+    bonoBienvenidaM1: 100,
+    bonoBienvenidaM2: 0,
+    bonoBienvenidaM3: 0,
+    bonoPermanenciaM1: 100,
+    bonoPermanenciaM2: 100,
+    bonoPermanenciaM3: 0,
+    bonoPermanenciaM4: 0,
+    bonoAsistenciaM1: 0,
+    bonoAsistenciaM2: 0,
+    bonoAsistenciaM3: 0,
+    notas: ''
   }
 
+  const [form, setForm] = useState(defaultForm)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [successMsg, setSuccessMsg] = useState(null)
+  const [manualInput, setManualInput] = useState(false)
+
+  // Cargar si viene propuesta a editar desde la tabla
+  useEffect(() => {
+    if (editingPropuesta) {
+      setForm({
+        ...defaultForm,
+        ...editingPropuesta,
+        grupo: editingPropuesta.grupo || editingPropuesta.grupo_codigo || '',
+        periodoCapa: editingPropuesta.periodoCapa || editingPropuesta.periodo || '',
+        semana: editingPropuesta.semana || editingPropuesta.semana_trabajo || '',
+        pagoPorDia: editingPropuesta.pagoPorDia ?? editingPropuesta.monto_dia_capa ?? 0,
+        pagoCompleto: editingPropuesta.pagoCompleto ?? 0,
+        bonoBienvenidaM1: editingPropuesta.bonoBienvenidaM1 ?? editingPropuesta.bono_bienvenida ?? 0,
+        bonoPermanenciaM1: editingPropuesta.bonoPermanenciaM1 ?? editingPropuesta.bono_permanencia_total ?? 0,
+        bonoAsistenciaM1: editingPropuesta.bonoAsistenciaM1 ?? editingPropuesta.bono_asistencia_perfecta ?? 0,
+      })
+    }
+  }, [editingPropuesta])
+
+  // Helper para normalizar semana
+  const normalizarSemana = (val) => {
+    if (!val) return ''
+    const str = String(val).trim().toUpperCase()
+    const num = str.replace(/\D/g, '')
+    return num ? `SEM ${num}` : str
+  }
+
+  // 1. Periodos únicos desde capacidad_rys (orden descendente)
+  const periodosCapaDisponibles = useMemo(() => {
+    const set = new Set()
+    gruposCapacidad.forEach(g => {
+      const p = g.periodo
+      if (p) set.add(String(p).trim().toUpperCase())
+    })
+    if (form.periodoCapa) set.add(String(form.periodoCapa).trim().toUpperCase())
+    return Array.from(set).sort((a, b) => b.localeCompare(a))
+  }, [gruposCapacidad, form.periodoCapa])
+
+  // 2. Semanas filtradas por el Periodo seleccionado
+  const semanasCapaDisponibles = useMemo(() => {
+    if (!form.periodoCapa) return []
+    const pSel = String(form.periodoCapa).trim().toUpperCase()
+    const set = new Set()
+    gruposCapacidad.forEach(g => {
+      const p = String(g.periodo || '').trim().toUpperCase()
+      if (p === pSel) {
+        const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
+        if (s) set.add(s)
+      }
+    })
+    if (form.semana) set.add(normalizarSemana(form.semana))
+    return Array.from(set).sort((a, b) => {
+      const na = parseInt(a.replace(/\D/g, '')) || 0
+      const nb = parseInt(b.replace(/\D/g, '')) || 0
+      return na - nb
+    })
+  }, [gruposCapacidad, form.periodoCapa, form.semana])
+
+  // 3. Campañas filtradas por Periodo + Semana
+  const campanasCapaDisponibles = useMemo(() => {
+    if (!form.periodoCapa || !form.semana) return []
+    const pSel = String(form.periodoCapa).trim().toUpperCase()
+    const sSel = normalizarSemana(form.semana)
+    const set = new Set()
+    gruposCapacidad.forEach(g => {
+      const p = String(g.periodo || '').trim().toUpperCase()
+      const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
+      if (p === pSel && s === sSel && g.campana) {
+        set.add(String(g.campana).trim().toUpperCase())
+      }
+    })
+    if (form.campana) set.add(String(form.campana).trim().toUpperCase())
+    return Array.from(set).sort()
+  }, [gruposCapacidad, form.periodoCapa, form.semana, form.campana])
+
+  // 4. Grupos de Capacidad filtrados por Periodo + Semana + Campaña
+  const gruposCapaDisponibles = useMemo(() => {
+    if (!form.periodoCapa || !form.semana || !form.campana) return []
+    const pSel = String(form.periodoCapa).trim().toUpperCase()
+    const sSel = normalizarSemana(form.semana)
+    const cSel = String(form.campana).trim().toUpperCase()
+    const set = new Set()
+    gruposCapacidad.forEach(g => {
+      const p = String(g.periodo || '').trim().toUpperCase()
+      const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
+      const c = String(g.campana || '').trim().toUpperCase()
+      if (p === pSel && s === sSel && c === cSel && g.codigo) {
+        set.add(String(g.codigo).trim().toUpperCase())
+      }
+    })
+    if (form.grupo) set.add(String(form.grupo).trim().toUpperCase())
+    return Array.from(set).sort()
+  }, [gruposCapacidad, form.periodoCapa, form.semana, form.campana, form.grupo])
+
+  // Handlers de selección jerárquica
+  const handlePeriodoSelect = (e) => {
+    const val = e.target.value
+    setForm(prev => ({
+      ...prev,
+      periodoCapa: val,
+      semana: '',
+      campana: '',
+      grupo: '',
+      cod: '',
+      mesAfectacionCapa: val || prev.mesAfectacionCapa,
+    }))
+  }
+
+  const handleSemanaSelect = (e) => {
+    const val = e.target.value
+    setForm(prev => ({
+      ...prev,
+      semana: val,
+      campana: '',
+      grupo: '',
+      cod: '',
+    }))
+  }
+
+  const handleCampanaSelect = (e) => {
+    const val = e.target.value
+    setForm(prev => ({
+      ...prev,
+      campana: val,
+      grupo: '',
+      cod: '',
+    }))
+  }
+
+  const handleGrupoSelect = (e) => {
+    const grpCode = e.target.value
+    if (!grpCode) {
+      setForm(prev => ({ ...prev, grupo: '', cod: '' }))
+      return
+    }
+
+    // 1. Si ya existe una propuesta guardada en configsExistentes, cargarla directamente
+    const configExist = configsExistentes.find(c => 
+      (c.grupo && c.grupo.toUpperCase() === grpCode.toUpperCase()) || 
+      (c.grupo_codigo && c.grupo_codigo.toUpperCase() === grpCode.toUpperCase())
+    )
+
+    if (configExist) {
+      setForm({
+        ...defaultForm,
+        ...configExist,
+        grupo: configExist.grupo || configExist.grupo_codigo || grpCode,
+        periodoCapa: configExist.periodoCapa || configExist.periodo || form.periodoCapa,
+        semana: configExist.semana || configExist.semana_trabajo || form.semana,
+        campana: configExist.campana || form.campana,
+      })
+      setSuccessMsg(`ℹ Propuesta existente cargada para ${grpCode}.`)
+      setTimeout(() => setSuccessMsg(null), 3500)
+      return
+    }
+
+    // 2. Si es una propuesta nueva, autocompletar con los datos oficiales de capacidad_rys
+    const capInfo = gruposCapacidad.find(g => 
+      String(g.codigo || '').toUpperCase() === grpCode.toUpperCase()
+    )
+
+    const camp = capInfo?.campana || form.campana || ''
+    const codSugerido = `${camp}${grpCode}`.replace(/\s+/g, '')
+
+    setForm(prev => ({
+      ...prev,
+      id: null,
+      grupo: grpCode,
+      segmento: capInfo?.segmento || prev.segmento || '',
+      modalidad: (capInfo?.modalidad || 'REMOTO').toUpperCase(),
+      condicionLaboral: (capInfo?.condicion || 'FULL TIME').toUpperCase(),
+      cod: codSugerido,
+      fechaInicioCapa: capInfo?.fecha_registro || capInfo?.fecha_dia_1 || prev.fechaInicioCapa || '',
+      ingresoOperacion: capInfo?.fecha_ingreso_op || prev.ingresoOperacion || '',
+      mesAfectacionCapa: prev.periodoCapa || capInfo?.periodo || '',
+      mesAfectacionBonos: capInfo?.periodo_ingreso_op || prev.periodoCapa || '',
+    }))
+  }
+
+  const handleFieldChange = (key, val) => {
+    setForm(prev => {
+      const next = { ...prev, [key]: val }
+      if (key === 'pagoPorDia' || key === 'diasCapa') {
+        const p = parseFloat(key === 'pagoPorDia' ? val : next.pagoPorDia) || 0
+        const d = parseInt(key === 'diasCapa' ? val : next.diasCapa) || 0
+        next.pagoCompleto = +(p * d).toFixed(2)
+      }
+      if (key === 'campana' || key === 'grupo') {
+        const c = key === 'campana' ? val : next.campana
+        const g = key === 'grupo' ? val : next.grupo
+        if (!prev.id) {
+          next.cod = `${c || ''}${g || ''}`.replace(/\s+/g, '')
+        }
+      }
+      return next
+    })
+  }
+
+  // Totales de matriz calculados en tiempo real
+  const totalBienvenida = (Number(form.bonoBienvenidaM1) || 0) + (Number(form.bonoBienvenidaM2) || 0) + (Number(form.bonoBienvenidaM3) || 0)
+  const totalPermanencia = (Number(form.bonoPermanenciaM1) || 0) + (Number(form.bonoPermanenciaM2) || 0) + (Number(form.bonoPermanenciaM3) || 0) + (Number(form.bonoPermanenciaM4) || 0)
+  const totalAsistencia = (Number(form.bonoAsistenciaM1) || 0) + (Number(form.bonoAsistenciaM2) || 0) + (Number(form.bonoAsistenciaM3) || 0)
+  const granTotalPropuesta = (Number(form.pagoCompleto) || 0) + totalBienvenida + totalPermanencia + totalAsistencia
+
   const handleSave = async () => {
-    if (!form.grupo_codigo) { setError('Selecciona un grupo'); return }
-    setSaving(true); setError(null)
+    if (!form.grupo) { setError('El Código de Grupo es obligatorio.'); return }
+    if (!form.campana) { setError('La Campaña es obligatoria.'); return }
+    setSaving(true); setError(null); setSuccessMsg(null)
     try {
-      await upsertConfigPagoGrupo({ ...form, created_by: userProfile?.nombre || userProfile?.email })
-      setForm({ grupo_codigo: '', campana: '', segmento: '', semana_trabajo: '', periodo: '', monto_dia_capa: '', bono_bienvenida: '', bono_permanencia_total: '', cuotas_permanencia: '3', bono_asistencia_perfecta: '', notas: '' })
-      setEditingId(null)
+      await upsertConfigPagoGrupo({
+        ...form,
+        created_by: userProfile?.nombre || userProfile?.email || 'Usuario'
+      })
+      setSuccessMsg(`✓ Propuesta para ${form.grupo} guardada exitosamente.`)
+      setTimeout(() => setSuccessMsg(null), 4000)
+      if (onCancelEdit) onCancelEdit()
+      setForm(defaultForm)
       onSaved()
     } catch (err) {
-      setError(err.message)
+      setError(err.message || 'Error al guardar la propuesta.')
     } finally {
       setSaving(false)
     }
   }
 
-  const field = (label, key, type = 'text', placeholder = '') => (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">{label}</label>
-      <input
-        type={type}
-        value={form[key]}
-        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-        placeholder={placeholder}
-        className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-      />
-    </div>
-  )
-
   return (
-    <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5 shadow-sm">
-      <h3 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-        <Settings2 size={16} className="text-emerald-400" />
-        {editingId ? 'Editar Propuesta Económica del Grupo' : 'Nueva Propuesta Económica de Grupo'}
-      </h3>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">Código de Grupo</label>
-          <select
-            value={form.grupo_codigo}
-            onChange={handleGrupoChange}
-            className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          >
-            <option value="">-- Seleccionar grupo --</option>
-            {gruposDisponibles.map(g => (
-              <option key={g.grupo_codigo} value={g.grupo_codigo}>
-                {g.grupo_codigo} — {g.campana || ''}
-              </option>
-            ))}
-          </select>
+    <div className="bg-slate-900/90 border border-slate-700/90 rounded-2xl p-6 shadow-xl space-y-6">
+      {/* Cabecera del formulario */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-4">
+        <div>
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Settings2 size={18} className="text-emerald-400" />
+            {form.id ? `Editando Propuesta Económica: ${form.grupo}` : 'Nueva Propuesta Económica de Grupo'}
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Registro manual completo de las 26 variables económicas y meses de afectación para el cálculo automático.
+          </p>
         </div>
 
-        {field('Periodo', 'periodo', 'text', 'Ej: 202608')}
-        {field('Semana', 'semana_trabajo', 'text', 'Ej: SEM 28')}
-        {field('Segmento', 'segmento', 'text', 'Ej: RETENCIONES')}
-        {field('Campaña', 'campana', 'text', 'Ej: CLARO PERU')}
+        {form.id && (
+          <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-bold rounded-full">
+            Modo Edición
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mt-4">
-        {field('Monto/Día Capa (S/.)', 'monto_dia_capa', 'number', '0.00')}
-        {field('Bono Bienvenida (S/.)', 'bono_bienvenida', 'number', '0.00')}
-        {field('Bono Asist. Perfecta (S/.)', 'bono_asistencia_perfecta', 'number', '0.00')}
-        {field('Bono Permanencia Total (S/.)', 'bono_permanencia_total', 'number', '0.00')}
-        {field('Cuotas Permanencia', 'cuotas_permanencia', 'number', '1')}
+      {/* ── BLOQUE 1: IDENTIFICACIÓN Y CONDICIÓN (ORDEN EN CASCADA DESDE CAPACIDAD) ── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            1. Selección Jerárquica de Grupo (Fuente: Capacidad RYS)
+          </div>
+          <button
+            type="button"
+            onClick={() => setManualInput(!manualInput)}
+            className="text-[11px] text-slate-400 hover:text-emerald-400 underline transition-colors"
+          >
+            {manualInput ? '← Usar selector desde Capacidad' : '+ Ingresar código manual no listado'}
+          </button>
+        </div>
+
+        {/* Fila 1: Filtros en cascada Periodo -> Semana -> Campaña -> Grupo */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+          {/* 1. Periodo Capa */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-emerald-400 uppercase flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 1. Periodo Capa
+            </label>
+            <select
+              value={form.periodoCapa}
+              onChange={handlePeriodoSelect}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">-- Seleccionar Periodo --</option>
+              {periodosCapaDisponibles.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 2. Semana */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-300 uppercase flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span> 2. Semana
+            </label>
+            <select
+              value={form.semana}
+              onChange={handleSemanaSelect}
+              disabled={!form.periodoCapa}
+              className="bg-slate-800 border border-slate-700 disabled:opacity-40 rounded-lg px-2.5 py-2 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">-- Seleccionar Semana --</option>
+              {semanasCapaDisponibles.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 3. Campaña */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-300 uppercase flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> 3. Campaña
+            </label>
+            <select
+              value={form.campana}
+              onChange={handleCampanaSelect}
+              disabled={!form.semana}
+              className="bg-slate-800 border border-slate-700 disabled:opacity-40 rounded-lg px-2.5 py-2 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">-- Seleccionar Campaña --</option>
+              {campanasCapaDisponibles.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 4. Grupo */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-amber-400 uppercase flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> 4. Grupo de Capacitación
+            </label>
+            {manualInput ? (
+              <input
+                type="text"
+                value={form.grupo}
+                onChange={e => handleFieldChange('grupo', e.target.value.toUpperCase())}
+                placeholder="Ej: GPE-2025-029"
+                className="bg-slate-800 border border-amber-500/50 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
+              />
+            ) : (
+              <select
+                value={form.grupo}
+                onChange={handleGrupoSelect}
+                disabled={!form.campana}
+                className="bg-slate-800 border border-slate-700 disabled:opacity-40 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              >
+                <option value="">-- Seleccionar Grupo --</option>
+                {gruposCapaDisponibles.map(g => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
+        {/* Fila 2: Atributos complementarios auto-completados */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Segmento */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Segmento</label>
+            <input
+              type="text"
+              value={form.segmento}
+              onChange={e => handleFieldChange('segmento', e.target.value)}
+              placeholder="Ej: CLARO PERU RETENCIONES"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          {/* Modalidad */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Modalidad</label>
+            <select
+              value={form.modalidad}
+              onChange={e => handleFieldChange('modalidad', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="REMOTO">REMOTO</option>
+              <option value="PRESENCIAL">PRESENCIAL</option>
+              <option value="HIBRIDO">HÍBRIDO</option>
+            </select>
+          </div>
+
+          {/* Condición Laboral */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Condición Laboral</label>
+            <select
+              value={form.condicionLaboral}
+              onChange={e => handleFieldChange('condicionLaboral', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="FULL TIME">FULL TIME</option>
+              <option value="PART TIME">PART TIME</option>
+            </select>
+          </div>
+
+          {/* COD */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Código Concatenado (COD)</label>
+            <input
+              type="text"
+              value={form.cod}
+              onChange={e => handleFieldChange('cod', e.target.value)}
+              placeholder="CONTACTADOSGPE-2025-029"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="mt-4">
-        {field('Notas u Observaciones', 'notas', 'text', 'Detalles adicionales de la propuesta...')}
+      {/* ── BLOQUE 2: CRONOGRAMA Y AFECTACIÓN (4 CAMPOS) ── */}
+      <div className="space-y-3 pt-3 border-t border-slate-800">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+          2. Cronograma y Meses de Afectación Contable
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Fecha Inicio Capa</label>
+            <input
+              type="text"
+              value={form.fechaInicioCapa}
+              onChange={e => handleFieldChange('fechaInicioCapa', e.target.value)}
+              placeholder="Ej: 4/7/25 ó 2025-07-04"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Ingreso a la Operación</label>
+            <input
+              type="text"
+              value={form.ingresoOperacion}
+              onChange={e => handleFieldChange('ingresoOperacion', e.target.value)}
+              placeholder="Ej: 19/07/2025 ó 2025-07-19"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Mes Afectación - Pago Capa</label>
+            <input
+              type="text"
+              value={form.mesAfectacionCapa}
+              onChange={e => handleFieldChange('mesAfectacionCapa', e.target.value)}
+              placeholder="Ej: 202508"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Mes Afectación - Bonos</label>
+            <input
+              type="text"
+              value={form.mesAfectacionBonos}
+              onChange={e => handleFieldChange('mesAfectacionBonos', e.target.value)}
+              placeholder="Ej: 202508 ó 202509"
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-amber-400 font-bold focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+            />
+          </div>
+        </div>
       </div>
 
+      {/* ── BLOQUE 3: PAGO DE CAPACITACIÓN (4 CAMPOS) ── */}
+      <div className="space-y-3 pt-3 border-t border-slate-800">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            3. Tarifa y Días de Capacitación
+          </div>
+          <span className="text-[11px] text-slate-500 font-normal">
+            * Pago Completo se calcula multiplicando Pago/Día × Días Capa
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Pago Por Día (S/.)</label>
+            <input
+              type="number"
+              step="0.5"
+              value={form.pagoPorDia}
+              onChange={e => handleFieldChange('pagoPorDia', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Días de Capa</label>
+            <input
+              type="number"
+              value={form.diasCapa}
+              onChange={e => handleFieldChange('diasCapa', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Cant. Días Feriados</label>
+            <input
+              type="number"
+              value={form.cantDiasFeriados}
+              onChange={e => handleFieldChange('cantDiasFeriados', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase">Pago Completo (S/.)</label>
+            <input
+              type="number"
+              step="0.5"
+              value={form.pagoCompleto}
+              onChange={e => handleFieldChange('pagoCompleto', e.target.value)}
+              className="bg-slate-950 border border-emerald-500/40 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ── BLOQUE 4: MATRIZ MENSUAL DE BONOS (MES 1 A MES 4) ── */}
+      <div className="space-y-3 pt-3 border-t border-slate-800">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-violet-400"></span>
+            4. Matriz Mensual de Bonos (Mes 1 a Mes 4)
+          </div>
+          <span className="text-[11px] text-slate-500 font-normal">
+            Asigna el importe según el mes de afectación que corresponda
+          </span>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="bg-slate-800/80 border-b border-slate-700/80 text-slate-300">
+                <th className="px-3 py-2 font-bold uppercase">Concepto de Bono</th>
+                <th className="px-3 py-2 text-center font-bold uppercase text-amber-400">Mes 1 (S/.)</th>
+                <th className="px-3 py-2 text-center font-bold uppercase text-amber-400">Mes 2 (S/.)</th>
+                <th className="px-3 py-2 text-center font-bold uppercase text-amber-400">Mes 3 (S/.)</th>
+                <th className="px-3 py-2 text-center font-bold uppercase text-violet-400">Mes 4 (S/.)</th>
+                <th className="px-3 py-2 text-right font-bold uppercase text-emerald-400">Total Bono</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {/* Fila Bienvenida */}
+              <tr className="hover:bg-slate-800/30">
+                <td className="px-3 py-2 font-semibold text-amber-300">Bono de Bienvenida</td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoBienvenidaM1}
+                    onChange={e => handleFieldChange('bonoBienvenidaM1', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-amber-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoBienvenidaM2}
+                    onChange={e => handleFieldChange('bonoBienvenidaM2', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-amber-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoBienvenidaM3}
+                    onChange={e => handleFieldChange('bonoBienvenidaM3', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-amber-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center text-slate-600 font-mono">—</td>
+                <td className="px-3 py-2 text-right font-bold text-amber-400">{soles(totalBienvenida)}</td>
+              </tr>
+
+              {/* Fila Permanencia */}
+              <tr className="hover:bg-slate-800/30">
+                <td className="px-3 py-2 font-semibold text-violet-300">Bono de Permanencia</td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoPermanenciaM1}
+                    onChange={e => handleFieldChange('bonoPermanenciaM1', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-violet-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoPermanenciaM2}
+                    onChange={e => handleFieldChange('bonoPermanenciaM2', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-violet-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoPermanenciaM3}
+                    onChange={e => handleFieldChange('bonoPermanenciaM3', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-violet-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoPermanenciaM4}
+                    onChange={e => handleFieldChange('bonoPermanenciaM4', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-violet-500"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right font-bold text-violet-400">{soles(totalPermanencia)}</td>
+              </tr>
+
+              {/* Fila Asistencia Perfecta */}
+              <tr className="hover:bg-slate-800/30">
+                <td className="px-3 py-2 font-semibold text-rose-300">Bono Asistencia Perfecta</td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoAsistenciaM1}
+                    onChange={e => handleFieldChange('bonoAsistenciaM1', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-rose-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoAsistenciaM2}
+                    onChange={e => handleFieldChange('bonoAsistenciaM2', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-rose-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <input
+                    type="number"
+                    value={form.bonoAsistenciaM3}
+                    onChange={e => handleFieldChange('bonoAsistenciaM3', e.target.value)}
+                    className="w-24 text-center bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:ring-1 focus:ring-rose-500"
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center text-slate-600 font-mono">—</td>
+                <td className="px-3 py-2 text-right font-bold text-rose-400">{soles(totalAsistencia)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Resumen Global de la Propuesta */}
+      <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap gap-4 text-xs">
+          <div><span className="text-slate-500">Pago Capa:</span> <strong className="text-emerald-400">{soles(form.pagoCompleto)}</strong></div>
+          <div><span className="text-slate-500">Bienvenida:</span> <strong className="text-amber-400">{soles(totalBienvenida)}</strong></div>
+          <div><span className="text-slate-500">Permanencia:</span> <strong className="text-violet-400">{soles(totalPermanencia)}</strong></div>
+          <div><span className="text-slate-500">Asist. Perf.:</span> <strong className="text-rose-400">{soles(totalAsistencia)}</strong></div>
+        </div>
+        <div className="text-sm">
+          <span className="text-slate-400 font-medium mr-2">VALOR PROMEDIO TOTAL / PERSONA:</span>
+          <strong className="text-emerald-300 font-extrabold text-base bg-emerald-950/60 px-3 py-1 rounded-lg border border-emerald-500/30">
+            {soles(granTotalPropuesta)}
+          </strong>
+        </div>
+      </div>
+
+      {/* Alertas */}
       {error && (
-        <div className="mt-3 flex items-center gap-2 text-rose-400 text-sm bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 text-rose-400 text-xs bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
           <AlertCircle size={14} /> {error}
         </div>
       )}
+      {successMsg && (
+        <div className="flex items-center gap-2 text-emerald-400 text-xs bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+          <CheckCircle2 size={14} /> {successMsg}
+        </div>
+      )}
 
-      <div className="flex gap-3 mt-4">
+      {/* Botones de acción */}
+      <div className="flex items-center justify-between gap-3 pt-2">
         <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+          type="button"
+          onClick={() => { setForm(defaultForm); if (onCancelEdit) onCancelEdit() }}
+          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xs font-semibold rounded-lg transition-colors"
         >
-          {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-          {editingId ? 'Actualizar Propuesta' : 'Guardar Propuesta'}
+          Limpiar Campos
         </button>
-        {editingId && (
+
+        <div className="flex gap-2">
+          {form.id && (
+            <button
+              type="button"
+              onClick={() => { setForm(defaultForm); if (onCancelEdit) onCancelEdit() }}
+              className="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg transition-colors"
+            >
+              <X size={14} /> Cancelar Edición
+            </button>
+          )}
           <button
-            onClick={() => { setForm({ grupo_codigo: '', campana: '', segmento: '', semana_trabajo: '', periodo: '', monto_dia_capa: '', bono_bienvenida: '', bono_permanencia_total: '', cuotas_permanencia: '3', bono_asistencia_perfecta: '', notas: '' }); setEditingId(null) }}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-medium rounded-lg transition-colors"
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all shadow-md shadow-emerald-950/50"
           >
-            <X size={14} /> Cancelar
+            {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+            {form.id ? 'Actualizar Propuesta' : 'Guardar Propuesta'}
           </button>
-        )}
+        </div>
       </div>
     </div>
   )
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Sub-componente: Tabla de configuraciones guardadas
+// Sub-componente: Tabla Consolidada de Propuestas con 26 Columnas y Sticky
 // ────────────────────────────────────────────────────────────────────────
-function TablaConfigs({ configs, onDelete, onRefresh }) {
+function TablaConfigs({ configs, onDelete, onEdit, onRefresh }) {
+  const [searchTerm, setSearchTerm] = useState('')
   const [deleting, setDeleting] = useState(null)
 
-  const handleDelete = async (cod) => {
-    if (!confirm(`¿Eliminar configuración de ${cod}?`)) return
+  const handleDelete = async (item) => {
+    const cod = item.grupo || item.grupo_codigo || item.id
+    if (!confirm(`¿Estás seguro de eliminar la propuesta del grupo ${cod}?`)) return
     setDeleting(cod)
-    try { await deleteConfigPagoGrupo(cod); onRefresh() }
-    catch (e) { alert(e.message) }
-    finally { setDeleting(null) }
+    try { 
+      await onDelete(item)
+      onRefresh() 
+    } catch (e) { 
+      alert(e.message || 'Error al eliminar') 
+    } finally { 
+      setDeleting(null) 
+    }
   }
 
-  if (!configs.length) return (
-    <div className="text-center text-slate-500 py-8 text-sm">
-      No hay configuraciones registradas. Las propuestas cargadas se integrarán automáticamente.
-    </div>
-  )
+  const configsFiltradas = useMemo(() => {
+    if (!searchTerm.trim()) return configs
+    const q = searchTerm.toLowerCase().trim()
+    return configs.filter(c => 
+      (c.grupo || c.grupo_codigo || '').toLowerCase().includes(q) ||
+      (c.campana || '').toLowerCase().includes(q) ||
+      (c.segmento || '').toLowerCase().includes(q) ||
+      (c.periodoCapa || c.periodo || '').toLowerCase().includes(q) ||
+      (c.cod || '').toLowerCase().includes(q)
+    )
+  }, [configs, searchTerm])
+
+  const renderVal = (v, colorClass = 'text-slate-300') => {
+    const num = Number(v) || 0
+    if (num <= 0) return <span className="text-slate-600 font-mono">—</span>
+    return <span className={`font-mono font-medium ${colorClass}`}>{num.toFixed(0)}</span>
+  }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-700">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-800/80">
-          <tr>
-            {['Grupo', 'Periodo', 'Semana', 'Segmento', 'Campaña', 'S/./Día', 'Bienvenida', 'Asist. Perf.', 'Permanencia', 'Cuotas', ''].map(h => (
-              <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-700/50">
-          {configs.map(c => (
-            <tr key={c.id || c.grupo_codigo} className="hover:bg-slate-800/50 transition-colors">
-              <td className="px-3 py-2 font-mono text-emerald-400 font-bold text-xs">{c.grupo_codigo}</td>
-              <td className="px-3 py-2 text-slate-400 text-xs">{c.periodo || '—'}</td>
-              <td className="px-3 py-2 text-slate-400 text-xs">{c.semana_trabajo || '—'}</td>
-              <td className="px-3 py-2 text-slate-300 text-xs">{c.segmento || '—'}</td>
-              <td className="px-3 py-2 text-slate-300 whitespace-nowrap text-xs">{c.campana || '—'}</td>
-              <td className="px-3 py-2 text-emerald-400 font-medium">{soles(c.monto_dia_capa)}</td>
-              <td className="px-3 py-2 text-amber-400 font-medium">{soles(c.bono_bienvenida)}</td>
-              <td className="px-3 py-2 text-rose-400 font-medium">{soles(c.bono_asistencia_perfecta)}</td>
-              <td className="px-3 py-2 text-violet-400 font-medium">{soles(c.bono_permanencia_total)}</td>
-              <td className="px-3 py-2 text-slate-400 text-xs">{c.cuotas_permanencia}</td>
-              <td className="px-3 py-2 text-right">
-                <button
-                  onClick={() => handleDelete(c.grupo_codigo)}
-                  disabled={deleting === c.grupo_codigo}
-                  className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
-                  title="Eliminar"
-                >
-                  {deleting === c.grupo_codigo ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                </button>
-              </td>
+    <div className="space-y-3">
+      {/* Barra superior de búsqueda y conteo */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+        <div className="relative flex-1 max-w-sm w-full">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Buscar por grupo, campaña, periodo o COD..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="text-xs text-slate-400 font-medium">
+          Mostrando <strong className="text-emerald-400">{configsFiltradas.length}</strong> propuestas registradas
+        </div>
+      </div>
+
+      {/* Tabla con scroll horizontal y sticky columns */}
+      <div className="overflow-x-auto rounded-xl border border-slate-700/80 shadow-lg bg-slate-900/60 max-h-[650px] relative">
+        <table className="w-full text-xs text-left whitespace-nowrap border-collapse">
+          {/* Fila 1: Grupos temáticos */}
+          <thead className="bg-slate-800/95 sticky top-0 z-20">
+            <tr className="border-b border-slate-700 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+              <th colSpan={8} className="px-3 py-1.5 bg-slate-800 border-r border-slate-700 text-blue-300 text-center">
+                1. Datos de Identificación del Grupo
+              </th>
+              <th colSpan={4} className="px-3 py-1.5 bg-cyan-950/30 border-r border-slate-700 text-cyan-300 text-center">
+                2. Cronograma & Afectación
+              </th>
+              <th colSpan={4} className="px-3 py-1.5 bg-emerald-950/30 border-r border-slate-700 text-emerald-300 text-center">
+                3. Liquidación Capa
+              </th>
+              <th colSpan={3} className="px-3 py-1.5 bg-amber-950/30 border-r border-slate-700 text-amber-300 text-center">
+                4. Bono Bienvenida
+              </th>
+              <th colSpan={4} className="px-3 py-1.5 bg-violet-950/30 border-r border-slate-700 text-violet-300 text-center">
+                5. Bono Permanencia
+              </th>
+              <th colSpan={3} className="px-3 py-1.5 bg-rose-950/30 border-r border-slate-700 text-rose-300 text-center">
+                6. Asistencia Perfecta
+              </th>
+              <th className="px-3 py-1.5 bg-slate-800 text-slate-400 text-center sticky right-0 z-30 shadow-[-4px_0_6px_rgba(0,0,0,0.3)]">
+                Acciones
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+
+            {/* Fila 2: Cabeceras específicas */}
+            <tr className="border-b border-slate-700 text-slate-300 text-[11px] font-semibold bg-slate-900/90">
+              <th className="px-3 py-2 border-r border-slate-800">Periodo</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-center">Semana</th>
+              <th className="px-3 py-2 border-r border-slate-800">Segmento</th>
+              <th className="px-3 py-2 border-r border-slate-800">Campaña</th>
+              <th className="px-3 py-2 border-r border-slate-800 font-mono font-bold text-emerald-400 sticky left-0 z-10 bg-slate-900 shadow-[4px_0_6px_rgba(0,0,0,0.4)]">
+                Grupo
+              </th>
+              <th className="px-2 py-2 border-r border-slate-800 text-center">Modalidad</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-center">Condición</th>
+              <th className="px-3 py-2 border-r border-slate-700 font-mono text-[10px] text-slate-400">COD</th>
+
+              {/* Cronograma & Afectación */}
+              <th className="px-2.5 py-2 border-r border-slate-800 font-mono text-center">Inicio Capa</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 font-mono text-center">Ingreso Op.</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 font-mono text-center text-cyan-300">Af. Capa</th>
+              <th className="px-2.5 py-2 border-r border-slate-700 font-mono text-center text-amber-300">Af. Bonos</th>
+
+              {/* Pago Capa */}
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-emerald-400">S/./Día</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-center">Días</th>
+              <th className="px-2 py-2 border-r border-slate-800 text-center text-slate-400">Fer.</th>
+              <th className="px-3 py-2 border-r border-slate-700 text-right font-bold text-emerald-300 bg-emerald-950/20">Pago Total</th>
+
+              {/* Bono Bienvenida */}
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-amber-400">M1</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-amber-400">M2</th>
+              <th className="px-2.5 py-2 border-r border-slate-700 text-right text-amber-400">M3</th>
+
+              {/* Bono Permanencia */}
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-violet-400">M1</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-violet-400">M2</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-violet-400">M3</th>
+              <th className="px-2.5 py-2 border-r border-slate-700 text-right text-violet-400">M4</th>
+
+              {/* Asistencia Perfecta */}
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-rose-400">M1</th>
+              <th className="px-2.5 py-2 border-r border-slate-800 text-right text-rose-400">M2</th>
+              <th className="px-2.5 py-2 border-r border-slate-700 text-right text-rose-400">M3</th>
+
+              {/* Acciones */}
+              <th className="px-3 py-2 text-center sticky right-0 z-10 bg-slate-900 shadow-[-4px_0_6px_rgba(0,0,0,0.4)]">
+                Acciones
+              </th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-800/60">
+            {configsFiltradas.length === 0 ? (
+              <tr>
+                <td colSpan={27} className="px-4 py-12 text-center text-slate-500">
+                  No hay propuestas que coincidan con la búsqueda.
+                </td>
+              </tr>
+            ) : (
+              configsFiltradas.map(c => {
+                const grpCode = c.grupo || c.grupo_codigo || ''
+                return (
+                  <tr key={c.id || grpCode} className="hover:bg-slate-800/40 transition-colors">
+                    <td className="px-3 py-2 text-slate-300 font-mono text-[11px] border-r border-slate-800/60">{c.periodoCapa || c.periodo || '—'}</td>
+                    <td className="px-2 py-2 text-center text-slate-400 text-[11px] border-r border-slate-800/60">{c.semana || c.semana_trabajo || '—'}</td>
+                    <td className="px-3 py-2 text-slate-300 text-[11px] border-r border-slate-800/60">{c.segmento || '—'}</td>
+                    <td className="px-3 py-2 text-slate-200 font-medium text-[11px] border-r border-slate-800/60">{c.campana || '—'}</td>
+                    <td className="px-3 py-2 font-mono font-bold text-emerald-400 border-r border-slate-800/60 sticky left-0 z-10 bg-slate-900 shadow-[4px_0_6px_rgba(0,0,0,0.4)]">
+                      {grpCode}
+                    </td>
+                    <td className="px-2 py-2 text-center text-slate-400 text-[10px] border-r border-slate-800/60">{c.modalidad || 'REMOTO'}</td>
+                    <td className="px-2 py-2 text-center text-slate-400 text-[10px] border-r border-slate-800/60">{c.condicionLaboral || 'FULL TIME'}</td>
+                    <td className="px-3 py-2 text-slate-400 font-mono text-[10px] border-r border-slate-700/60">{c.cod || '—'}</td>
+
+                    {/* Fechas & Afectación */}
+                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{c.fechaInicioCapa || '—'}</td>
+                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{c.ingresoOperacion || '—'}</td>
+                    <td className="px-2.5 py-2 font-mono text-center font-bold text-cyan-400 border-r border-slate-800/60">{c.mesAfectacionCapa || '—'}</td>
+                    <td className="px-2.5 py-2 font-mono text-center font-bold text-amber-400 border-r border-slate-700/60">{c.mesAfectacionBonos || '—'}</td>
+
+                    {/* Pago Capa */}
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.pagoPorDia || c.monto_dia_capa, 'text-emerald-400')}</td>
+                    <td className="px-2 py-2 text-center text-slate-300 border-r border-slate-800/60">{c.diasCapa || 0}</td>
+                    <td className="px-2 py-2 text-center text-slate-500 border-r border-slate-800/60">{c.cantDiasFeriados || 0}</td>
+                    <td className="px-3 py-2 text-right font-bold text-emerald-300 bg-emerald-950/20 border-r border-slate-700/60">
+                      {soles(c.pagoCompleto || ((c.pagoPorDia || c.monto_dia_capa || 0) * (c.diasCapa || 0)))}
+                    </td>
+
+                    {/* Bono Bienvenida */}
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoBienvenidaM1 || c.bono_bienvenida, 'text-amber-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoBienvenidaM2, 'text-amber-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-700/60">{renderVal(c.bonoBienvenidaM3, 'text-amber-400')}</td>
+
+                    {/* Bono Permanencia */}
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoPermanenciaM1 || c.bono_permanencia_total, 'text-violet-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoPermanenciaM2, 'text-violet-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoPermanenciaM3, 'text-violet-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-700/60">{renderVal(c.bonoPermanenciaM4, 'text-violet-400')}</td>
+
+                    {/* Asistencia Perfecta */}
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoAsistenciaM1 || c.bono_asistencia_perfecta, 'text-rose-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-800/60">{renderVal(c.bonoAsistenciaM2, 'text-rose-400')}</td>
+                    <td className="px-2.5 py-2 text-right border-r border-slate-700/60">{renderVal(c.bonoAsistenciaM3, 'text-rose-400')}</td>
+
+                    {/* Acciones */}
+                    <td className="px-3 py-2 text-center sticky right-0 z-10 bg-slate-900 shadow-[-4px_0_6px_rgba(0,0,0,0.4)]">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => {
+                            if (onEdit) onEdit(c)
+                            window.scrollTo({ top: 0, behavior: 'smooth' })
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-md transition-colors"
+                          title="Editar propuesta"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(c)}
+                          disabled={deleting === grpCode}
+                          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-md transition-colors"
+                          title="Eliminar propuesta"
+                        >
+                          {deleting === grpCode ? <RefreshCw size={13} className="animate-spin text-rose-400" /> : <Trash2 size={13} />}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -378,7 +1147,14 @@ function TablaPagos({ filas, maxCuotas }) {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-center font-bold text-blue-400">{row.dias_asistidos}</td>
+                  <td className="px-3 py-2 text-center font-bold text-blue-400">
+                    {row.dias_asistidos}
+                    {row.fecha_ingreso_ojt && (
+                      <span className="block text-[9px] text-indigo-300 font-normal font-mono">
+                        OJT: {row.fecha_ingreso_ojt}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     {row.asistencia_perfecta ? (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
@@ -418,8 +1194,10 @@ export default function PagosCapacitacion({ userProfile }) {
   // Data
   const [configs, setConfigs] = useState([])
   const [gruposDisponibles, setGruposDisponibles] = useState([])
+  const [gruposCapacidad, setGruposCapacidad] = useState([])
   const [nominas, setNominas] = useState([])
   const [asistencias, setAsistencias] = useState([])
+  const [editingPropuesta, setEditingPropuesta] = useState(null)
 
   // ── 5 FILTROS EN CASCADA ──────────────────────────────────────────────
   // 1. Periodo -> 2. Semana -> 3. Segmento -> 4. Campaña -> 5. Código de Grupo
@@ -461,11 +1239,13 @@ export default function PagosCapacitacion({ userProfile }) {
     setLoadingConfigs(true)
     setErrMsg(null)
     try {
-      const [cfgs, grps] = await Promise.all([
+      const [cfgs, grps, caps] = await Promise.all([
         fetchConfigPagosGrupo(),
         fetchGruposPagosDisponibles(),
+        fetchCapacidadRysOperativo(),
       ])
       setConfigs(cfgs)
+      setGruposCapacidad(caps || [])
       // Deduplicar por grupo_codigo+campana+segmento+semana para evitar filas repetidas
       const seen = new Set()
       const grpsUnicos = grps.filter(g => {
@@ -501,7 +1281,7 @@ export default function PagosCapacitacion({ userProfile }) {
       const p = g.periodo_reclutado || g.periodo
       if (p) set.add(String(p).trim().toUpperCase())
     })
-    return ['TODOS', ...Array.from(set).sort()]
+    return ['TODOS', ...Array.from(set).sort().reverse()]
   }, [gruposDisponibles])
 
   // 2. Semanas (filtradas por Periodo)
@@ -625,9 +1405,13 @@ export default function PagosCapacitacion({ userProfile }) {
     setLoadingCalculo(true)
     setErrMsg(null)
     try {
-      // 1. Recargar configs de propuestas actualizadas
-      const cfgs = await fetchConfigPagosGrupo()
+      // 1. Recargar configs de propuestas actualizadas y capacidad
+      const [cfgs, caps] = await Promise.all([
+        fetchConfigPagosGrupo(),
+        fetchCapacidadRysOperativo(),
+      ])
       setConfigs(cfgs)
+      if (caps && caps.length) setGruposCapacidad(caps)
 
       // 2. Traer nóminas con los 5 filtros aplicados
       const noms = await fetchNominasPagosCapacitacion({
@@ -639,7 +1423,7 @@ export default function PagosCapacitacion({ userProfile }) {
       })
 
       const docs = [...new Set(noms.map(n => n.documento).filter(Boolean))]
-      const asis = await fetchAsistenciasPagos(docs)
+      const asis = await fetchAsistenciasPagos(docs, selectedGrupo)
       
       setNominas(noms)
       setAsistencias(asis)
@@ -655,19 +1439,24 @@ export default function PagosCapacitacion({ userProfile }) {
   // Motor de cálculo puro
   const filasCalculadas = useMemo(() => {
     if (!calculoReady) return []
-    return calcularPagosCapacitacion(nominas, asistencias, configs)
-  }, [nominas, asistencias, configs, calculoReady])
+    return calcularPagosCapacitacion(nominas, asistencias, configs, selectedPeriodo, gruposCapacidad)
+  }, [nominas, asistencias, configs, selectedPeriodo, gruposCapacidad, calculoReady])
+
+  // SOLO las personas que califican para pago (excluyendo bajas, registros sin propuesta y sin días de asistencia)
+  const filasQueCalifican = useMemo(() => {
+    return filasCalculadas.filter(f => !f.es_baja && f.dias_asistidos > 0 && !f.sin_propuesta)
+  }, [filasCalculadas])
 
   const resumen = useMemo(() => generarResumenPagos(filasCalculadas), [filasCalculadas])
 
   const maxCuotas = useMemo(() =>
-    filasCalculadas.reduce((m, f) => Math.max(m, f.cuotas_permanencia?.length || 0), 0)
-  , [filasCalculadas])
+    filasQueCalifican.reduce((m, f) => Math.max(m, f.cuotas_permanencia?.length || 0), 0)
+  , [filasQueCalifican])
 
-  // Exportar CSV
+  // Exportar CSV solo de calificados
   const handleExport = () => {
-    if (!filasCalculadas.length) return
-    const csv = exportarCSVPagos(filasCalculadas, maxCuotas)
+    if (!filasQueCalifican.length) return
+    const csv = exportarCSVPagos(filasQueCalifican, maxCuotas)
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -677,10 +1466,10 @@ export default function PagosCapacitacion({ userProfile }) {
     URL.revokeObjectURL(url)
   }
 
-  // Cerrar lote de pagos (guardar snapshot histórico)
+  // Cerrar lote de pagos (guardar snapshot histórico solo de calificados)
   const handleCerrarLote = useCallback(async () => {
-    if (!filasCalculadas?.length) return
-    if (!window.confirm(`¿Deseas cerrar y guardar este lote de ${filasCalculadas.length} personas como histórico?\n\nEsta acción es un snapshot inmutable del cálculo actual.`)) return
+    if (!filasQueCalifican?.length) return
+    if (!window.confirm(`¿Deseas cerrar y guardar este lote de ${filasQueCalifican.length} personas que califican como histórico?\n\nEsta acción es un snapshot inmutable del cálculo actual.`)) return
     setSavingLote(true)
     setLoteMsg(null)
     try {
@@ -693,7 +1482,7 @@ export default function PagosCapacitacion({ userProfile }) {
         cerrado_por: userProfile?.username || userProfile?.email || null,
         notas_lote: null,
       }
-      const lote_id = await saveLiquidacionPagos(filasCalculadas, meta)
+      const lote_id = await saveLiquidacionPagos(filasQueCalifican, meta)
       setLoteMsg({ type: 'success', text: `✓ Lote guardado correctamente. ID: ${lote_id.substring(0, 8)}...` })
       setTimeout(() => setLoteMsg(null), 8000)
     } catch (e) {
@@ -702,7 +1491,7 @@ export default function PagosCapacitacion({ userProfile }) {
       setSavingLote(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filasCalculadas, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo, userProfile])
+  }, [filasQueCalifican, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo, userProfile])
 
   // Ver detalle de lote histórico
   const handleVerDetalleLote = useCallback(async (lote_id) => {
@@ -713,6 +1502,7 @@ export default function PagosCapacitacion({ userProfile }) {
       setDetalleLote({ lote_id, filas })
     } catch (e) {
       console.error('Error cargando detalle de lote:', e)
+      setLoteMsg({ type: 'error', text: 'Error al cargar detalle del lote' })
     } finally {
       setLoadingDetalle(false)
     }
@@ -777,17 +1567,27 @@ export default function PagosCapacitacion({ userProfile }) {
       {activeTab === 'configurar' && (
         <div className="space-y-5">
           <ConfigGrupoForm
-            gruposDisponibles={gruposDisponibles}
+            gruposCapacidad={gruposCapacidad}
             configsExistentes={configs}
-            onSaved={loadInitialData}
+            onSaved={() => {
+              setEditingPropuesta(null)
+              loadInitialData()
+            }}
             userProfile={userProfile}
+            editingPropuesta={editingPropuesta}
+            onCancelEdit={() => setEditingPropuesta(null)}
           />
           <div>
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Settings2 size={14} /> Tarifas y Bonos por Grupo (Propuestas Integradas)
+              <Settings2 size={14} className="text-emerald-400" /> Tarifas y Bonos por Grupo (Propuestas Integradas en Base de Datos)
               {loadingConfigs && <RefreshCw size={12} className="animate-spin text-emerald-400" />}
             </h3>
-            <TablaConfigs configs={configs} onDelete={deleteConfigPagoGrupo} onRefresh={loadInitialData} />
+            <TablaConfigs 
+              configs={configs} 
+              onDelete={deleteConfigPagoGrupo} 
+              onEdit={(prop) => setEditingPropuesta(prop)}
+              onRefresh={loadInitialData} 
+            />
           </div>
         </div>
       )}
@@ -899,7 +1699,7 @@ export default function PagosCapacitacion({ userProfile }) {
                   Calcular Pagos
                 </button>
 
-                {calculoReady && filasCalculadas.length > 0 && (
+                {calculoReady && filasQueCalifican.length > 0 && (
                   <>
                     <button
                       onClick={handleExport}
@@ -939,7 +1739,7 @@ export default function PagosCapacitacion({ userProfile }) {
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
                   <CheckCircle2 size={14} className="text-emerald-400" />
-                  {resumen.personas_calificadas} personas califican para pago
+                  {filasQueCalifican.length} personas califican para pago
                   {resumen.personas_bajas > 0 && (
                     <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 normal-case">
                       {resumen.personas_bajas} excluidas por baja
@@ -947,7 +1747,7 @@ export default function PagosCapacitacion({ userProfile }) {
                   )}
                 </h3>
               </div>
-              <TablaPagos filas={filasCalculadas} maxCuotas={maxCuotas} />
+              <TablaPagos filas={filasQueCalifican} maxCuotas={maxCuotas} />
             </div>
           )}
 

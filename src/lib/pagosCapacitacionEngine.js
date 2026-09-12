@@ -19,7 +19,7 @@ const SIGLA_ASISTIO = 'A'
 const SIGLAS_FALTA = new Set(['FI', 'FJ'])
 const SIGLA_BAJA = 'B'
 
-export function calcularPagosCapacitacion(nominas = [], asistencias = [], configPagos = []) {
+export function calcularPagosCapacitacion(nominas = [], asistencias = [], configPagos = [], periodoConsulta = 'TODOS', gruposCapacidad = []) {
   const asistenciasPorDoc = new Map()
   for (const a of asistencias) {
     const doc = String(a.postulante_documento || '').trim()
@@ -37,37 +37,121 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       configPorGrupo.set(raw, c)
       configPorGrupo.set(cleanCode(raw), c)
     }
+    if (c.grupo) {
+      const rawG = String(c.grupo).trim().toUpperCase()
+      configPorGrupo.set(rawG, c)
+      configPorGrupo.set(cleanCode(rawG), c)
+    }
+    if (c.cod) {
+      const rawCod = String(c.cod).trim().toUpperCase()
+      configPorGrupo.set(rawCod, c)
+      configPorGrupo.set(cleanCode(rawCod), c)
+    }
+  }
+
+  const capacidadPorGrupo = new Map()
+  for (const cap of gruposCapacidad) {
+    const cod = String(cap.codigo || cap.grupo_capacitacion || cap.grupo || '').trim().toUpperCase()
+    if (cod) {
+      capacidadPorGrupo.set(cod, cap)
+      capacidadPorGrupo.set(cleanCode(cod), cap)
+    }
+  }
+
+  const getMesIndex = (periodo, mesAfectacionBonos, config) => {
+    if (!periodo || periodo === 'TODOS') return 1
+    const pClean = String(periodo).replace(/\D/g, '')
+    const bClean = String(mesAfectacionBonos || '').replace(/\D/g, '')
+    const cClean = String(config?.periodoCapa || config?.periodo || '').replace(/\D/g, '')
+
+    // Si coincide con el periodo de capacitación del grupo (cohorte) o con el mes de afectación, es Mes 1
+    if (!bClean || (cClean && pClean === cClean)) return 1
+    if (pClean === bClean) return 1
+
+    if (pClean.length !== 6 || bClean.length !== 6) return 1
+    const y1 = parseInt(bClean.slice(0, 4), 10)
+    const m1 = parseInt(bClean.slice(4, 6), 10)
+    const y2 = parseInt(pClean.slice(0, 4), 10)
+    const m2 = parseInt(pClean.slice(4, 6), 10)
+    const diff = (y2 - y1) * 12 + (m2 - m1)
+    if (diff <= 0) return 1 // Cohorte actual o mes inicial = Mes 1
+    return diff + 1 // 2=Mes 2, 3=Mes 3, 4=Mes 4
   }
 
   const resultado = []
 
   for (const n of nominas) {
-    if (!STATUS_CALIFICA.has(n.status_final)) continue
-
     const doc = String(n.documento || '').trim()
+    if (!doc) continue
+
     const rawGpe = String(n.grupo_codigo || '').trim().toUpperCase()
 
     const config = configPorGrupo.get(rawGpe) || configPorGrupo.get(cleanCode(rawGpe)) || null
-    const sinPropuesta = !config || !config.grupo_codigo
+    const capInfo = capacidadPorGrupo.get(rawGpe) || capacidadPorGrupo.get(cleanCode(rawGpe)) || null
+    const sinPropuesta = !config || (!config.grupo_codigo && !config.grupo)
 
-    const fechaInicioStr = n.fecha_inicio_capacitacion
-    const fechaOjt = n.fecha_conexion_ojt ? new Date(n.fecha_conexion_ojt) : null
+    const rawAsistencias = asistenciasPorDoc.get(doc) || []
 
-    const asistenciasPersona = (asistenciasPorDoc.get(doc) || []).filter(a => {
-      if (!a.fecha_asistencia) return false
-      const fa = new Date(a.fecha_asistencia)
-      if (fechaOjt && fa >= fechaOjt) return false
-      if (fechaInicioStr) {
-        const fi = new Date(fechaInicioStr)
-        if (fa < fi) return false
+    // 1. Detectar si la persona tiene registro formal de I-OP (Ingreso a Operaciones / OJT)
+    let fIopDetectada = null
+    for (const a of rawAsistencias) {
+      const s = String(a.sigla_asistencia || a.sigla || '').toUpperCase().trim()
+      if (s === 'I-OP' && a.fecha_asistencia) {
+        const dIso = String(a.fecha_asistencia).split('T')[0]
+        if (!fIopDetectada || dIso < fIopDetectada) {
+          fIopDetectada = dIso
+        }
       }
-      return true
+    }
+
+    // 2. Fechas límites para delimitar la capacitación
+    const fInicioCapacidad = capInfo?.fecha_registro ? String(capInfo.fecha_registro).split('T')[0] : null
+    const fInicioIso = n.fecha_inicio_capacitacion 
+      ? String(n.fecha_inicio_capacitacion).split('T')[0] 
+      : (config?.fechaInicioCapa ? String(config.fechaInicioCapa).split('T')[0] : (fInicioCapacidad || null))
+
+    // A partir de OJT, el pago corresponde a Operaciones (ya no al equipo de capacitación)
+    // Calibración: Tomar la fecha de inicio de OJT de capacidad_rys como corte
+    const fOjtCapacidad = capInfo?.fecha_inicio_ojt ? String(capInfo.fecha_inicio_ojt).split('T')[0] : null
+    const fOjtIso = fOjtCapacidad 
+      || (n.fecha_conexion_ojt ? String(n.fecha_conexion_ojt).split('T')[0] : null)
+      || fIopDetectada 
+      || (config?.ingresoOperacion ? String(config.ingresoOperacion).split('T')[0] : null)
+
+    // 3. Deduplicación por fecha única tomando el ÚLTIMO corte del día
+    // rawAsistencias viene ordenado cronológicamente por created_at ASC
+    const cortesPorFecha = new Map()
+    for (const a of rawAsistencias) {
+      if (!a.fecha_asistencia) continue
+      const faIso = String(a.fecha_asistencia).split('T')[0]
+
+      // Ignorar fechas fuera del rango de capacitación
+      if (fInicioIso && faIso < fInicioIso) continue
+      if (fOjtIso && faIso >= fOjtIso) continue
+
+      // Como la lista está ordenada en orden cronológico, el último registro del día sobreescribe al anterior
+      cortesPorFecha.set(faIso, a)
+    }
+
+    const asistenciasPersona = Array.from(cortesPorFecha.values())
+
+    // 4. Conteo de asistencias con el último corte del día
+    const diasAsistidos = asistenciasPersona.filter(a => {
+      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'A' || s === 'ASISTIO' || s === 'PRESENTE'
+    }).length
+
+    const tuveFaltas = asistenciasPersona.some(a => {
+      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'FI' || s === 'FJ' || s === 'F' || s === 'FALTA' || s === 'INASISTENCIA'
     })
 
-    const diasAsistidos = asistenciasPersona.filter(a => a.sigla_asistencia === SIGLA_ASISTIO).length
-    const tuveFaltas = asistenciasPersona.some(a => SIGLAS_FALTA.has(a.sigla_asistencia))
-    // Si fue dada de baja dentro del rango de capa → NO califica para pago
-    const esBaja = asistenciasPersona.some(a => a.sigla_asistencia === SIGLA_BAJA)
+    // Si fue dada de baja dentro del rango de capacitación
+    const esBaja = asistenciasPersona.some(a => {
+      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'B' || s === 'BAJA' || s === 'CESADO' || s === 'DESERTO'
+    })
+
     if (esBaja) {
       resultado.push({
         documento: doc,
@@ -81,7 +165,8 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
         periodo_reclutado: n.periodo_reclutado || '',
         fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || null,
         fecha_fin_capacitacion: n.fecha_fin_capacitacion || null,
-        fecha_conexion_ojt: n.fecha_conexion_ojt || null,
+        fecha_conexion_ojt: fOjtIso || n.fecha_conexion_ojt || null,
+        fecha_ingreso_ojt: fOjtIso || null,
         fecha_conexion_op: n.fecha_conexion_op || null,
         status_final: n.status_final || '',
         es_baja: true,
@@ -105,23 +190,61 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     let montoDias = 0
     let bonoBienvenida = 0
     let bonoAsistenciaPerfecta = 0
-    let bonoPermanenciaTotal = 0
+    let bonoPermanencia = 0
     let cuotas = 1
+    let mesBonoNumero = 1
 
     if (!sinPropuesta) {
-      montoDias = (parseFloat(config.monto_dia_capa) || 0) * diasAsistidos
-      bonoBienvenida = parseFloat(config.bono_bienvenida) || 0
-      if (!tuveFaltas && diasAsistidos > 0) {
-        bonoAsistenciaPerfecta = parseFloat(config.bono_asistencia_perfecta) || 0
+      const tarifaDia = parseFloat(config.pagoPorDia || config.monto_dia_capa) || 0
+      
+      // Mes de Afectación - Pago Capa
+      const pClean = String(periodoConsulta || '').replace(/\D/g, '')
+      const mesCapaClean = String(config.mesAfectacionCapa || '').replace(/\D/g, '')
+      const periodoCapaClean = String(config.periodoCapa || config.periodo || '').replace(/\D/g, '')
+
+      const aplicaPagoCapa = !periodoConsulta || periodoConsulta === 'TODOS' || 
+        !mesCapaClean || mesCapaClean === pClean || periodoCapaClean === pClean
+      
+      if (aplicaPagoCapa) {
+        const diasMax = parseInt(config.diasCapa) || diasAsistidos
+        const diasCalculo = diasMax > 0 ? Math.min(diasAsistidos, diasMax) : diasAsistidos
+        montoDias = +(tarifaDia * diasCalculo).toFixed(2)
+        const pagoCompletoConfig = parseFloat(config.pagoCompleto) || 0
+        if (pagoCompletoConfig > 0 && diasAsistidos >= diasMax) {
+          montoDias = pagoCompletoConfig
+        }
       }
-      bonoPermanenciaTotal = parseFloat(config.bono_permanencia_total) || 0
+
+      // Mes de Afectación - Bonos (M1, M2, M3, M4)
+      mesBonoNumero = getMesIndex(periodoConsulta, config.mesAfectacionBonos, config)
+
+      if (periodoConsulta === 'TODOS' || mesBonoNumero === 1) {
+        bonoBienvenida = parseFloat(config.bonoBienvenidaM1 ?? config.bono_bienvenida) || 0
+        bonoPermanencia = parseFloat(config.bonoPermanenciaM1 ?? config.bono_permanencia_total) || 0
+        if (!tuveFaltas && diasAsistidos > 0) {
+          bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0
+        }
+      } else if (mesBonoNumero === 2) {
+        bonoBienvenida = parseFloat(config.bonoBienvenidaM2) || 0
+        bonoPermanencia = parseFloat(config.bonoPermanenciaM2) || 0
+        if (!tuveFaltas && diasAsistidos > 0) {
+          bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM2) || 0
+        }
+      } else if (mesBonoNumero === 3) {
+        bonoBienvenida = parseFloat(config.bonoBienvenidaM3) || 0
+        bonoPermanencia = parseFloat(config.bonoPermanenciaM3) || 0
+        if (!tuveFaltas && diasAsistidos > 0) {
+          bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM3) || 0
+        }
+      } else if (mesBonoNumero === 4) {
+        bonoPermanencia = parseFloat(config.bonoPermanenciaM4) || 0
+      }
+      
       cuotas = parseInt(config.cuotas_permanencia) || 1
     }
 
     if (cuotas < 1) cuotas = 1
-    const montoCuota = cuotas > 0 ? +(bonoPermanenciaTotal / cuotas).toFixed(2) : 0
-    const cuotasArr = Array.from({ length: cuotas }, (_, i) => ({ numero: i + 1, monto: montoCuota }))
-    const totalGeneral = montoDias + bonoBienvenida + bonoAsistenciaPerfecta + bonoPermanenciaTotal
+    const totalGeneral = montoDias + bonoBienvenida + bonoAsistenciaPerfecta + bonoPermanencia
 
     resultado.push({
       documento: doc,
@@ -135,7 +258,8 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       periodo_reclutado: n.periodo_reclutado || '',
       fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || null,
       fecha_fin_capacitacion: n.fecha_fin_capacitacion || null,
-      fecha_conexion_ojt: n.fecha_conexion_ojt || null,
+      fecha_conexion_ojt: fOjtIso || n.fecha_conexion_ojt || null,
+      fecha_ingreso_ojt: fOjtIso || null,
       fecha_conexion_op: n.fecha_conexion_op || null,
       status_final: n.status_final || '',
       es_baja: false,
@@ -143,12 +267,13 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       tuvo_faltas: tuveFaltas,
       asistencia_perfecta: !tuveFaltas && diasAsistidos > 0,
       sin_propuesta: sinPropuesta,
+      mes_bono_numero: mesBonoNumero,
       monto_dias_capa: +montoDias.toFixed(2),
       bono_bienvenida: +bonoBienvenida.toFixed(2),
       bono_asistencia_perfecta: +bonoAsistenciaPerfecta.toFixed(2),
-      bono_permanencia_total: +bonoPermanenciaTotal.toFixed(2),
-      cuotas_permanencia: cuotasArr,
-      monto_cuota_permanencia: montoCuota,
+      bono_permanencia_total: +bonoPermanencia.toFixed(2),
+      cuotas_permanencia: [{ numero: mesBonoNumero, monto: bonoPermanencia }],
+      monto_cuota_permanencia: bonoPermanencia,
       total_sin_permanencia: +(montoDias + bonoBienvenida + bonoAsistenciaPerfecta).toFixed(2),
       total_general: +totalGeneral.toFixed(2),
       config_aplicada: config || null,
@@ -174,26 +299,25 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
 
 export function generarResumenPagos(filas = []) {
   const bajas = filas.filter(f => f.es_baja)
-  const sinBaja = filas.filter(f => !f.es_baja)
-  const conPropuesta = sinBaja.filter(f => !f.sin_propuesta)
-  const sinPropuesta = sinBaja.filter(f => f.sin_propuesta)
+  const calificados = filas.filter(f => !f.es_baja && f.dias_asistidos > 0 && !f.sin_propuesta)
+  const sinPropuesta = filas.filter(f => !f.es_baja && f.sin_propuesta)
   const gruposSinPropuesta = [...new Set(sinPropuesta.map(f => f.grupo_codigo).filter(Boolean))].sort()
 
   return {
     total_personas: filas.length,
     personas_bajas: bajas.length,
-    personas_calificadas: sinBaja.length,
-    personas_con_propuesta: conPropuesta.length,
+    personas_calificadas: calificados.length,
+    personas_con_propuesta: calificados.length,
     personas_sin_propuesta: sinPropuesta.length,
     grupos_sin_propuesta: gruposSinPropuesta,
-    total_monto_dias: +conPropuesta.reduce((s, f) => s + f.monto_dias_capa, 0).toFixed(2),
-    total_bono_bienvenida: +conPropuesta.reduce((s, f) => s + f.bono_bienvenida, 0).toFixed(2),
-    total_bono_asistencia_perfecta: +conPropuesta.reduce((s, f) => s + f.bono_asistencia_perfecta, 0).toFixed(2),
-    total_bono_permanencia: +conPropuesta.reduce((s, f) => s + f.bono_permanencia_total, 0).toFixed(2),
-    total_general: +conPropuesta.reduce((s, f) => s + f.total_general, 0).toFixed(2),
-    personas_asistencia_perfecta: conPropuesta.filter(f => f.asistencia_perfecta).length,
-    max_dias_asistidos: sinBaja.length ? Math.max(...sinBaja.map(f => f.dias_asistidos)) : 0,
-    promedio_dias: sinBaja.length ? +(sinBaja.reduce((s, f) => s + f.dias_asistidos, 0) / sinBaja.length).toFixed(1) : 0,
+    total_monto_dias: +calificados.reduce((s, f) => s + f.monto_dias_capa, 0).toFixed(2),
+    total_bono_bienvenida: +calificados.reduce((s, f) => s + f.bono_bienvenida, 0).toFixed(2),
+    total_bono_asistencia_perfecta: +calificados.reduce((s, f) => s + f.bono_asistencia_perfecta, 0).toFixed(2),
+    total_bono_permanencia: +calificados.reduce((s, f) => s + f.bono_permanencia_total, 0).toFixed(2),
+    total_general: +calificados.reduce((s, f) => s + f.total_general, 0).toFixed(2),
+    personas_asistencia_perfecta: calificados.filter(f => f.asistencia_perfecta).length,
+    max_dias_asistidos: calificados.length ? Math.max(...calificados.map(f => f.dias_asistidos)) : 0,
+    promedio_dias: calificados.length ? +(calificados.reduce((s, f) => s + f.dias_asistidos, 0) / calificados.length).toFixed(1) : 0,
   }
 }
 

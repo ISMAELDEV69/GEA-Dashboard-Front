@@ -2601,6 +2601,262 @@ export async function regularizarAsistenciaPostulante({
   }
 }
 
+/**
+ * Elimina asistencias en bloque de forma estrictamente acotada a este usuario,
+ * este grupo, esta campaña y estas fechas específicas.
+ * Deja las celdas vacías (—).
+ */
+export async function eliminarAsistenciaLoteFechas({
+  documento,
+  grupo_codigo,
+  campana = '',
+  semana = '',
+  periodo = '',
+  segmento = '',
+  fechas = []
+}) {
+  const cleanDoc = String(documento || '').trim();
+  const targetGroup = String(grupo_codigo || '').trim();
+  const cleanCampana = String(campana || '').trim();
+  if (!cleanDoc || !targetGroup || !fechas.length) {
+    return { success: false, message: 'Faltan datos obligatorios para la eliminación.' };
+  }
+
+  const matchDates = [];
+  const isoDates = [];
+
+  for (const f of fechas) {
+    if (!f) continue;
+    let iso = '';
+    let spreadsheet = '';
+    let padded = '';
+
+    if (f.includes('-')) {
+      const parts = f.split('T')[0].split('-');
+      if (parts.length === 3) {
+        iso = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        spreadsheet = `${parseInt(parts[2], 10)}/${parseInt(parts[1], 10)}/${parts[0]}`;
+        padded = `${String(parts[2]).padStart(2, '0')}/${String(parts[1]).padStart(2, '0')}/${parts[0]}`;
+      }
+    } else if (f.includes('/')) {
+      const parts = f.split('/');
+      if (parts.length === 3) {
+        iso = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+        spreadsheet = `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${parts[2]}`;
+        padded = `${String(parts[0]).padStart(2, '0')}/${String(parts[1]).padStart(2, '0')}/${parts[2]}`;
+      }
+    }
+
+    if (iso) isoDates.push(iso);
+    if (spreadsheet) matchDates.push(spreadsheet);
+    if (padded && padded !== spreadsheet) matchDates.push(padded);
+    if (iso && !matchDates.includes(iso)) matchDates.push(iso);
+  }
+
+  if (DB_MODE === 'supabase') {
+    // 1. Eliminar estrictamente de consolidado_asistencias (solo este usuario, este grupo, esta campaña y estas fechas)
+    try {
+      let q = supabase
+        .from('consolidado_asistencias')
+        .delete()
+        .eq('documento', cleanDoc);
+
+      if (targetGroup) {
+        q = q.or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`);
+      }
+
+      if (cleanCampana && cleanCampana !== 'Todas' && cleanCampana !== 'TODAS') {
+        q = q.eq('campana', cleanCampana);
+      }
+
+      if (matchDates.length > 0) {
+        q = q.in('fecha_registro_asistencia', matchDates);
+      }
+
+      const { error: delConsErr } = await q;
+      if (delConsErr) console.warn('Aviso eliminando de consolidado_asistencias:', delConsErr);
+    } catch (e) {
+      console.warn('Error en delete de consolidado_asistencias:', e);
+    }
+
+    // 2. Eliminar estrictamente de asistencias_capacitacion (solo este postulante, este grupo y estas fechas)
+    try {
+      let qAsis = supabase
+        .from('asistencias_capacitacion')
+        .delete()
+        .eq('postulante_documento', cleanDoc);
+
+      if (targetGroup) {
+        qAsis = qAsis.eq('grupo_codigo', targetGroup);
+      }
+
+      if (isoDates.length > 0) {
+        qAsis = qAsis.in('fecha_asistencia', isoDates);
+      }
+
+      const { error: delAsisErr } = await qAsis;
+      if (delAsisErr) console.warn('Aviso eliminando de asistencias_capacitacion:', delAsisErr);
+    } catch (e) {
+      console.warn('Error en delete de asistencias_capacitacion:', e);
+    }
+
+    // Invalidar cachés sin disparar recarga de pantalla completa
+    invalidateCache('all_consolidado');
+    invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
+    invalidateCache('asistencias');
+
+    return { success: true };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Guarda o actualiza un lote de fechas de forma estrictamente acotada a este usuario,
+ * este grupo y esta campaña.
+ */
+export async function guardarAsistenciaLoteFechas({
+  documento,
+  grupo_codigo,
+  campana = '',
+  semana = '',
+  periodo = '',
+  segmento = '',
+  fechas = [],
+  sigla = 'A',
+  motivo_baja = '',
+  postulanteInfo = {},
+  usuarioRegistro = 'ADMIN'
+}) {
+  const cleanDoc = String(documento || '').trim();
+  const targetGroup = String(grupo_codigo || '').trim();
+  const cleanCampana = String(campana || postulanteInfo.campana || '').trim();
+  if (!cleanDoc || !targetGroup || !fechas.length) {
+    return { success: false, message: 'Faltan datos obligatorios para registrar la asistencia en lote.' };
+  }
+
+  // 1. Limpieza estricta previa para este usuario, grupo, campaña, semana y fechas
+  await eliminarAsistenciaLoteFechas({
+    documento: cleanDoc,
+    grupo_codigo: targetGroup,
+    campana: cleanCampana,
+    semana: semana,
+    periodo: periodo,
+    segmento: segmento,
+    fechas: fechas
+  });
+
+  const isBaja = sigla === 'B';
+  const weekStr = semana ? `SEM${String(semana).replace(/\D/g, '')}` : (postulanteInfo.semana ? `SEM${String(postulanteInfo.semana).replace(/\D/g, '')}` : '');
+  const nowStr = new Date().toLocaleString('es-PE');
+
+  const consolidadoRows = [];
+  const asistenciasRows = [];
+
+  for (const f of fechas) {
+    let iso = '';
+    let spreadsheet = '';
+
+    if (f.includes('-')) {
+      const parts = f.split('T')[0].split('-');
+      if (parts.length === 3) {
+        iso = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        spreadsheet = `${parseInt(parts[2], 10)}/${parseInt(parts[1], 10)}/${parts[0]}`;
+      }
+    } else if (f.includes('/')) {
+      const parts = f.split('/');
+      if (parts.length === 3) {
+        iso = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+        spreadsheet = `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${parts[2]}`;
+      }
+    }
+
+    if (!iso || !spreadsheet) continue;
+
+    consolidadoRows.push({
+      archivo_origen: weekStr,
+      documento: cleanDoc,
+      apellido_materno: postulanteInfo.apellido_materno || '',
+      apellido_paterno: postulanteInfo.apellido_paterno || '',
+      nombres: postulanteInfo.nombres || '',
+      celular: postulanteInfo.celular || '',
+      condicion_laboral: postulanteInfo.condicion_laboral || '',
+      campana: cleanCampana,
+      grupo: targetGroup,
+      codigo_grupo: targetGroup,
+      documento_formador: postulanteInfo.documento_formador || '',
+      nombre_formador: postulanteInfo.nombre_formador || '',
+      fecha_registro_asistencia: spreadsheet,
+      tipo_reclutado: postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO',
+      estado: isBaja ? 'CESADO' : 'ACTIVO',
+      sigla: sigla,
+      motivo_baja: isBaja ? (motivo_baja || 'DESERCIÓN') : '',
+      fecha_hora_registro: nowStr
+    });
+
+    asistenciasRows.push({
+      grupo_codigo: targetGroup,
+      postulante_documento: cleanDoc,
+      fecha_asistencia: iso,
+      sigla_asistencia: sigla,
+      motivo_baja: isBaja ? (motivo_baja || 'DESERCIÓN') : null,
+      usuario_registro: usuarioRegistro || 'ADMIN'
+    });
+  }
+
+  if (DB_MODE === 'supabase') {
+    if (consolidadoRows.length > 0) {
+      const { error: insConsErr } = await supabase
+        .from('consolidado_asistencias')
+        .insert(consolidadoRows);
+      if (insConsErr) {
+        console.error('Error insertando lote en consolidado_asistencias:', insConsErr);
+        return { success: false, message: insConsErr.message };
+      }
+    }
+
+    if (asistenciasRows.length > 0) {
+      try {
+        await supabase
+          .from('asistencias_capacitacion')
+          .insert(asistenciasRows);
+      } catch (insAsisErr) {
+        console.warn('Aviso insertando lote en asistencias_capacitacion:', insAsisErr);
+      }
+    }
+
+    invalidateCache('all_consolidado');
+    invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
+    invalidateCache('asistencias');
+
+    return { success: true, rows: consolidadoRows };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Guarda o actualiza una celda individual de asistencia.
+ */
+export async function guardarAsistenciaCeldaIndividual(params) {
+  return guardarAsistenciaLoteFechas({
+    ...params,
+    fechas: [params.fecha]
+  });
+}
+
+/**
+ * Elimina una asistencia de una celda individual.
+ */
+export async function eliminarAsistenciaCeldaIndividual(params) {
+  return eliminarAsistenciaLoteFechas({
+    ...params,
+    fechas: [params.fecha]
+  });
+}
+
 export async function fetchConsolidado() {
   if (DB_MODE === 'supabase') {
     const data = await fetchAllConsolidado();
@@ -6785,171 +7041,420 @@ export function parseFechaAsistencia(raw) {
 export async function fetchConfigPagosGrupo() {
   let configs = [];
   
-  // 1. Intentar leer de config_pagos_grupo
-  if (DB_MODE === 'supabase') {
-    try {
-      const { data, error } = await supabase
-        .from('config_pagos_grupo')
-        .select('*');
-      if (!error && data) {
-        configs = data;
-      }
-    } catch (e) {
-      // Ignore if table does not exist
-    }
-  }
-
-  // 2. Unificar con propuestas_consolidado
+  // 1. Leer de propuestas_consolidado en Supabase (tabla canónica de 26 columnas)
   if (DB_MODE === 'supabase') {
     try {
       const { data: propData, error: propErr } = await supabase
         .from('propuestas_consolidado')
-        .select('*');
+        .select('*')
+        .order('created_at', { ascending: false });
+      
       if (!propErr && propData && propData.length > 0) {
-        const existingCodigos = new Set(configs.map(c => String(c.grupo_codigo || '').toUpperCase().trim()));
         for (const p of propData) {
-          const cod = String(p.cod || p.grupo || p.grupo_codigo || '').toUpperCase().trim();
-          if (cod && !existingCodigos.has(cod)) {
-            existingCodigos.add(cod);
-            configs.push({
-              id: p.id,
-              grupo_codigo: cod,
-              campana: p.campana || '',
-              semana_trabajo: p.semana || '',
-              periodo: p.periodo_capa || p.periodoCapa || '',
-              segmento: p.segmento || '',
-              monto_dia_capa: parseFloat(p.pago_por_dia || p.pagoPorDia || p.pagoCapaPorDia) || 0,
-              bono_bienvenida: parseFloat(p.bono_bienvenida || p.bonoBienvenidaM1 || p.bBienvenidaM1) || 0,
-              bono_permanencia_total: parseFloat(p.bono_permanencia || p.bonoPermanenciaM1 || p.bPermM1) || 0,
-              cuotas_permanencia: parseInt(p.cuotas_permanencia) || 1,
-              bono_asistencia_perfecta: parseFloat(p.bono_asistencia_perfecta || p.bonoAsistenciaM1 || p.bAsisM1) || 0,
-              notas: 'Importado de Propuestas'
-            });
-          }
+          const cod = String(p.cod || '').toUpperCase().trim();
+          const grp = String(p.grupo || p.grupo_codigo || '').toUpperCase().trim();
+          const grupoCodigo = grp || cod;
+          
+          const m1Bvda = parseFloat(p.bonoBienvenidaM1 || p.bono_bienvenida_m1 || p.bono_bienvenida) || 0;
+          const m2Bvda = parseFloat(p.bonoBienvenidaM2 || p.bono_bienvenida_m2) || 0;
+          const m3Bvda = parseFloat(p.bonoBienvenidaM3 || p.bono_bienvenida_m3) || 0;
+          
+          const m1Perm = parseFloat(p.bonoPermanenciaM1 || p.bono_permanencia_m1 || p.bono_permanencia) || 0;
+          const m2Perm = parseFloat(p.bonoPermanenciaM2 || p.bono_permanencia_m2) || 0;
+          const m3Perm = parseFloat(p.bonoPermanenciaM3 || p.bono_permanencia_m3) || 0;
+          const m4Perm = parseFloat(p.bonoPermanenciaM4 || p.bono_permanencia_m4) || 0;
+          
+          const m1Asis = parseFloat(p.bonoAsistenciaM1 || p.bono_asistencia_m1 || p.bono_asistencia_perfecta) || 0;
+          const m2Asis = parseFloat(p.bonoAsistenciaM2 || p.bono_asistencia_m2) || 0;
+          const m3Asis = parseFloat(p.bonoAsistenciaM3 || p.bono_asistencia_m3) || 0;
+          
+          const cuotasPermCount = [m1Perm, m2Perm, m3Perm, m4Perm].filter(v => v > 0).length || 1;
+          const totalPerm = m1Perm + m2Perm + m3Perm + m4Perm;
+
+          configs.push({
+            id: p.id,
+            // 26 columnas canónicas
+            periodoCapa: p.periodoCapa || p.periodo_capa || p.periodo || '',
+            semana: p.semana || p.semana_trabajo || '',
+            segmento: p.segmento || '',
+            campana: p.campana || '',
+            grupo: grp,
+            modalidad: p.modalidad || 'REMOTO',
+            condicionLaboral: p.condicionLaboral || p.condicion_laboral || 'FULL TIME',
+            cod: cod || `${p.campana || ''}${grp}`,
+            fechaInicioCapa: p.fechaInicioCapa || p.fecha_inicio_capa || '',
+            ingresoOperacion: p.ingresoOperacion || p.ingreso_operacion || '',
+            mesAfectacionCapa: p.mesAfectacionCapa || p.mes_afectacion_capa || '',
+            mesAfectacionBonos: p.mesAfectacionBonos || p.mes_afectacion_bonos || '',
+            pagoPorDia: parseFloat(p.pagoPorDia || p.pago_por_dia || p.pagoCapaPorDia) || 0,
+            diasCapa: parseInt(p.diasCapa || p.dias_capa) || 0,
+            cantDiasFeriados: parseInt(p.cantDiasFeriados || p.cant_dias_feriados) || 0,
+            pagoCompleto: parseFloat(p.pagoCompleto || p.pago_completo || p.pagoCapaTotal) || 0,
+            bonoBienvenidaM1: m1Bvda,
+            bonoBienvenidaM2: m2Bvda,
+            bonoBienvenidaM3: m3Bvda,
+            bonoPermanenciaM1: m1Perm,
+            bonoPermanenciaM2: m2Perm,
+            bonoPermanenciaM3: m3Perm,
+            bonoPermanenciaM4: m4Perm,
+            bonoAsistenciaM1: m1Asis,
+            bonoAsistenciaM2: m2Asis,
+            bonoAsistenciaM3: m3Asis,
+            
+            // Compatibilidad para filtros y tablas legacy
+            grupo_codigo: grupoCodigo,
+            periodo: p.periodoCapa || p.periodo_capa || p.periodo || '',
+            semana_trabajo: p.semana || p.semana_trabajo || '',
+            monto_dia_capa: parseFloat(p.pagoPorDia || p.pago_por_dia || p.pagoCapaPorDia) || 0,
+            bono_bienvenida: m1Bvda,
+            bono_permanencia_total: totalPerm,
+            cuotas_permanencia: cuotasPermCount,
+            bono_asistencia_perfecta: m1Asis,
+            notas: p.notas || 'Propuesta de Grupo Integrada'
+          });
         }
       }
     } catch (e) {
-      // Ignore
+      console.warn("Error leyendo propuestas_consolidado en Supabase:", e);
     }
   }
 
-  // 3. Fallback a LocalStorage si no hay datos
+  // 2. Fallback a LocalStorage si no hay datos
   if (configs.length === 0) {
     initLocalStorageDb();
-    const local = getFromStorage('config_pagos_grupo') || [];
+    const local = getFromStorage('propuestas_consolidado') || getFromStorage('config_pagos_grupo') || [];
     if (local.length > 0) configs = local;
   }
 
-  return configs.sort((a, b) => (a.campana || '').localeCompare(b.campana || ''));
+  return configs.sort((a, b) => (a.grupo || a.grupo_codigo || '').localeCompare(b.grupo || b.grupo_codigo || ''));
 }
 
 export async function upsertConfigPagoGrupo(config) {
-  const payload = {
-    grupo_codigo: String(config.grupo_codigo || '').toUpperCase().trim(),
-    campana: config.campana || null,
-    semana_trabajo: config.semana_trabajo ? parseInt(String(config.semana_trabajo).replace(/\D/g, '')) || null : null,
-    periodo: config.periodo || null,
-    segmento: config.segmento || null,
-    monto_dia_capa: parseFloat(config.monto_dia_capa) || 0,
-    bono_bienvenida: parseFloat(config.bono_bienvenida) || 0,
-    bono_permanencia_total: parseFloat(config.bono_permanencia_total) || 0,
-    cuotas_permanencia: parseInt(config.cuotas_permanencia) || 1,
-    bono_asistencia_perfecta: parseFloat(config.bono_asistencia_perfecta) || 0,
-    notas: config.notas || null,
-    updated_at: new Date().toISOString(),
-    created_by: config.created_by || null,
+  const grp = String(config.grupo || config.grupo_codigo || '').toUpperCase().trim();
+  const camp = String(config.campana || '').trim();
+  const codUnico = String(config.cod || `${camp}${grp}`.replace(/\s+/g, '')).toUpperCase().trim();
+
+  const pPorDia = parseFloat(config.pagoPorDia ?? config.monto_dia_capa) || 0;
+  const dCapa = parseInt(config.diasCapa) || 0;
+  const pComp = parseFloat(config.pagoCompleto) || (pPorDia * dCapa);
+
+  const payloadConsolidado = {
+    periodoCapa: String(config.periodoCapa || config.periodo || '').trim(),
+    semana: String(config.semana || config.semana_trabajo || '').trim(),
+    segmento: String(config.segmento || '').trim(),
+    campana: camp,
+    grupo: grp,
+    modalidad: String(config.modalidad || 'REMOTO').toUpperCase().trim(),
+    condicionLaboral: String(config.condicionLaboral || 'FULL TIME').toUpperCase().trim(),
+    cod: codUnico,
+    fechaInicioCapa: String(config.fechaInicioCapa || '').trim(),
+    ingresoOperacion: String(config.ingresoOperacion || '').trim(),
+    mesAfectacionCapa: String(config.mesAfectacionCapa || '').trim(),
+    mesAfectacionBonos: String(config.mesAfectacionBonos || '').trim(),
+    pagoPorDia: pPorDia,
+    diasCapa: dCapa,
+    cantDiasFeriados: parseInt(config.cantDiasFeriados) || 0,
+    pagoCompleto: pComp,
+    bonoBienvenidaM1: parseFloat(config.bonoBienvenidaM1 ?? config.bono_bienvenida) || 0,
+    bonoBienvenidaM2: parseFloat(config.bonoBienvenidaM2) || 0,
+    bonoBienvenidaM3: parseFloat(config.bonoBienvenidaM3) || 0,
+    bonoPermanenciaM1: parseFloat(config.bonoPermanenciaM1 ?? config.bono_permanencia_total) || 0,
+    bonoPermanenciaM2: parseFloat(config.bonoPermanenciaM2) || 0,
+    bonoPermanenciaM3: parseFloat(config.bonoPermanenciaM3) || 0,
+    bonoPermanenciaM4: parseFloat(config.bonoPermanenciaM4) || 0,
+    bonoAsistenciaM1: parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0,
+    bonoAsistenciaM2: parseFloat(config.bonoAsistenciaM2) || 0,
+    bonoAsistenciaM3: parseFloat(config.bonoAsistenciaM3) || 0
   };
 
   if (DB_MODE === 'supabase') {
     try {
-      const { data, error } = await supabase
-        .from('config_pagos_grupo')
-        .upsert(payload, { onConflict: 'grupo_codigo' })
-        .select()
-        .single();
-      if (!error && data) return data;
+      if (config.id && String(config.id).length > 20) {
+        // Actualizar por id existente
+        const { data, error } = await supabase
+          .from('propuestas_consolidado')
+          .update(payloadConsolidado)
+          .eq('id', config.id)
+          .select()
+          .single();
+        if (!error && data) return data;
+      } else {
+        // Verificar si ya existe por grupo o cod
+        const { data: existing } = await supabase
+          .from('propuestas_consolidado')
+          .select('id')
+          .or(`grupo.eq.${grp},cod.eq.${codUnico}`)
+          .maybeSingle();
+
+        if (existing?.id) {
+          const { data, error } = await supabase
+            .from('propuestas_consolidado')
+            .update(payloadConsolidado)
+            .eq('id', existing.id)
+            .select()
+            .single();
+          if (!error && data) return data;
+        } else {
+          const { data, error } = await supabase
+            .from('propuestas_consolidado')
+            .insert([payloadConsolidado])
+            .select()
+            .single();
+          if (!error && data) return data;
+        }
+      }
     } catch (e) {
-      // If table doesn't exist in Supabase, fallback to storage
+      console.warn("Error guardando propuesta en Supabase:", e);
     }
   }
 
+  // Fallback a LocalStorage
   initLocalStorageDb();
-  const existing = getFromStorage('config_pagos_grupo') || [];
-  const idx = existing.findIndex(c => c.grupo_codigo === payload.grupo_codigo);
-  if (idx >= 0) existing[idx] = { ...existing[idx], ...payload };
-  else existing.push({ id: Date.now(), ...payload });
-  saveToStorage('config_pagos_grupo', existing);
-  return payload;
+  const existing = getFromStorage('propuestas_consolidado') || [];
+  const idx = existing.findIndex(c => c.id === config.id || c.grupo === grp || c.cod === codUnico);
+  const recordWithId = { ...payloadConsolidado, id: config.id || ('local-' + Date.now()) };
+  if (idx >= 0) existing[idx] = recordWithId;
+  else existing.push(recordWithId);
+  saveToStorage('propuestas_consolidado', existing);
+  return recordWithId;
 }
 
-export async function deleteConfigPagoGrupo(grupoCodigo) {
+export async function deleteConfigPagoGrupo(target) {
   if (DB_MODE === 'supabase') {
     try {
-      await supabase
-        .from('config_pagos_grupo')
-        .delete()
-        .eq('grupo_codigo', grupoCodigo);
-    } catch (e) {}
+      if (target?.id) {
+        await supabase.from('propuestas_consolidado').delete().eq('id', target.id);
+      } else if (typeof target === 'string') {
+        await supabase.from('propuestas_consolidado').delete().or(`id.eq.${target},grupo.eq.${target},cod.eq.${target}`);
+      }
+    } catch (e) {
+      console.warn("Error eliminando propuesta en Supabase:", e);
+    }
   }
   initLocalStorageDb();
-  const existing = getFromStorage('config_pagos_grupo') || [];
-  saveToStorage('config_pagos_grupo', existing.filter(c => c.grupo_codigo !== grupoCodigo));
+  const existing = getFromStorage('propuestas_consolidado') || [];
+  const filtered = existing.filter(c => {
+    if (target?.id && c.id === target.id) return false;
+    if (typeof target === 'string' && (c.id === target || c.grupo === target || c.cod === target || c.grupo_codigo === target)) return false;
+    return true;
+  });
+  saveToStorage('propuestas_consolidado', filtered);
 }
 
 export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento, campana, grupo_codigo } = {}) {
-  let q = supabase
-    .from('nominas')
-    .select(
-      'documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado,' +
-      'status_final, pago_capacitacion, bono_bienvenida, bono_permanencia, bono_asistencia_perfecta,' +
-      'fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op'
-    )
-    .in('status_final', ['COMPLETO', 'USUARIO CREADO']);
-
-  if (periodo && periodo !== 'TODOS') {
-    q = q.eq('periodo_reclutado', periodo);
-  }
-  if (semana && semana !== 'TODAS') {
-    const semNum = parseInt(String(semana).replace(/\D/g, ''));
-    if (!isNaN(semNum)) {
-      q = q.eq('semana_trabajo', semNum);
+  // 1. Obtener grupos objetivo según filtros usando capacidad_rys como fuente oficial
+  let targetGrupos = [];
+  if (grupo_codigo && grupo_codigo !== 'TODOS') {
+    targetGrupos = [grupo_codigo];
+  } else {
+    try {
+      let capQ = supabase.from('capacidad_rys').select('codigo, campana, segmento, semana_label, semana_trabajo, periodo');
+      if (periodo && periodo !== 'TODOS') capQ = capQ.eq('periodo', periodo);
+      if (campana && campana !== 'TODAS') capQ = capQ.eq('campana', campana);
+      if (segmento && segmento !== 'TODOS') capQ = capQ.eq('segmento', segmento);
+      if (semana && semana !== 'TODAS') {
+        const sNum = parseInt(String(semana).replace(/\D/g, '')) || null;
+        capQ = capQ.or(`semana_label.eq.${semana},semana_trabajo.eq.${sNum}`);
+      }
+      const { data: caps } = await capQ;
+      if (caps && caps.length > 0) {
+        caps.forEach(c => {
+          if (c.codigo) targetGrupos.push(c.codigo);
+        });
+      }
+    } catch (e) {
+      console.warn('Error al buscar grupos en capacidad_rys:', e);
     }
   }
-  if (segmento && segmento !== 'TODOS') {
-    q = q.eq('segmento', segmento);
-  }
-  if (campana && campana !== 'TODAS') {
-    q = q.eq('campana', campana);
-  }
-  if (grupo_codigo && grupo_codigo !== 'TODOS') {
-    q = q.eq('grupo_codigo', grupo_codigo);
+
+  // 2. Consultar directamente de consolidado_asistencias (fuente real de formación)
+  let qAsis = supabase
+    .from('consolidado_asistencias')
+    .select('documento, apellido_paterno, apellido_materno, nombres, campana, codigo_grupo, grupo, sigla, estado, created_at')
+    .neq('sigla', 'DESC')
+    .neq('estado', 'DESCUENTO')
+    .order('created_at', { ascending: false });
+
+  if (targetGrupos.length === 1) {
+    qAsis = qAsis.or(`codigo_grupo.eq.${targetGrupos[0]},grupo.eq.${targetGrupos[0]}`);
+  } else if (targetGrupos.length > 1) {
+    const list = targetGrupos.slice(0, 50).map(g => `"${g}"`).join(',');
+    qAsis = qAsis.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
   }
 
-  const { data, error } = await q.order('campana').order('semana_trabajo');
-  if (error) throw error;
-  return data || [];
+  // Filtrar estrictamente por campaña si está seleccionada
+  if (campana && campana !== 'TODAS') {
+    qAsis = qAsis.eq('campana', campana);
+  }
+
+  const { data: asisRows, error: asisErr } = await qAsis.limit(5000);
+  if (asisErr) console.warn('Error consultando consolidado_asistencias para pagos:', asisErr);
+
+  // Mapa de personas únicas de formación
+  const personasMap = new Map();
+  (asisRows || []).forEach(r => {
+    const doc = String(r.documento || '').trim();
+    if (!doc) return;
+    if (!personasMap.has(doc)) {
+      personasMap.set(doc, {
+        documento: doc,
+        apellido_paterno: r.apellido_paterno || '',
+        apellido_materno: r.apellido_materno || '',
+        nombres: r.nombres || '',
+        campana: r.campana || (campana !== 'TODAS' ? campana : ''),
+        segmento: segmento !== 'TODOS' ? segmento : '',
+        grupo_codigo: r.codigo_grupo || r.grupo || (grupo_codigo !== 'TODOS' ? grupo_codigo : ''),
+        semana_trabajo: semana !== 'TODAS' ? semana : '',
+        periodo_reclutado: periodo !== 'TODOS' ? periodo : '',
+        status_final: 'ASISTENCIA REGISTRADA',
+        fecha_inicio_capacitacion: null,
+        fecha_fin_capacitacion: null,
+        fecha_conexion_ojt: null,
+        fecha_conexion_op: null,
+      });
+    }
+  });
+
+  // 3. Enriquecer con datos de 'nominas' (sin filtrar por status_final para no excluir a nadie)
+  // IMPORTANTE: NO sobreescribir campana ni grupo_codigo con valores antiguos de nómina
+  const docs = Array.from(personasMap.keys());
+  if (docs.length > 0) {
+    for (let i = 0; i < docs.length; i += 100) {
+      const chunk = docs.slice(i, i + 100);
+      const { data: nomRows } = await supabase
+        .from('nominas')
+        .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final')
+        .in('documento', chunk);
+
+      (nomRows || []).forEach(n => {
+        const doc = String(n.documento || '').trim();
+        if (personasMap.has(doc)) {
+          const current = personasMap.get(doc);
+          personasMap.set(doc, {
+            ...current,
+            apellido_paterno: n.apellido_paterno || current.apellido_paterno,
+            apellido_materno: n.apellido_materno || current.apellido_materno,
+            nombres: n.nombres || current.nombres,
+            // Mantener la campaña y grupo que vinieron de la asistencia de este filtro
+            campana: current.campana || n.campana,
+            segmento: current.segmento || n.segmento,
+            grupo_codigo: current.grupo_codigo || n.grupo_codigo,
+            semana_trabajo: current.semana_trabajo || n.semana_trabajo,
+            periodo_reclutado: current.periodo_reclutado || n.periodo_reclutado,
+            fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || current.fecha_inicio_capacitacion,
+            fecha_fin_capacitacion: n.fecha_fin_capacitacion || current.fecha_fin_capacitacion,
+            fecha_conexion_ojt: n.fecha_conexion_ojt || current.fecha_conexion_ojt,
+            fecha_conexion_op: n.fecha_conexion_op || current.fecha_conexion_op,
+            status_final: n.status_final || current.status_final,
+          });
+        }
+      });
+    }
+  }
+
+  // Si no hubieron asistencias pero existen personas en nominas para ese grupo, incluirlas como respaldo
+  if (personasMap.size === 0 && grupo_codigo && grupo_codigo !== 'TODOS') {
+    let fallbackQ = supabase
+      .from('nominas')
+      .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final')
+      .eq('grupo_codigo', grupo_codigo);
+
+    if (campana && campana !== 'TODAS') {
+      fallbackQ = fallbackQ.eq('campana', campana);
+    }
+
+    const { data: fallbackNoms } = await fallbackQ;
+
+    (fallbackNoms || []).forEach(n => {
+      const doc = String(n.documento || '').trim();
+      if (doc && !personasMap.has(doc)) {
+        personasMap.set(doc, n);
+      }
+    });
+  }
+
+  // Filtrado final estricto de coherencia
+  const personasResultado = Array.from(personasMap.values()).filter(p => {
+    if (campana && campana !== 'TODAS') {
+      const c = String(p.campana || '').trim().toUpperCase();
+      const cTarget = String(campana).trim().toUpperCase();
+      if (c && c !== cTarget) return false;
+    }
+    if (grupo_codigo && grupo_codigo !== 'TODOS') {
+      const g = String(p.grupo_codigo || '').trim().toUpperCase();
+      const gTarget = String(grupo_codigo).trim().toUpperCase();
+      if (g && g !== gTarget) return false;
+    }
+    return true;
+  });
+
+  return personasResultado;
 }
 
-export async function fetchAsistenciasPagos(documentos = []) {
+export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null) {
   if (!documentos.length) return [];
-  const { data, error } = await supabase
-    .from('asistencias_capacitacion')
-    .select('postulante_documento, fecha_asistencia, sigla_asistencia, grupo_codigo')
-    .in('postulante_documento', documentos)
-    // 'B' = Baja: se necesita para excluir del pago a personas que fueron dadas de baja
-    .in('sigla_asistencia', ['A', 'FI', 'FJ', 'B']);
-  if (error) throw error;
-  return data || [];
+  if (DB_MODE === 'supabase') {
+    let allRows = [];
+    for (let i = 0; i < documentos.length; i += 100) {
+      const chunk = documentos.slice(i, i + 100);
+      let q = supabase
+        .from('consolidado_asistencias')
+        .select('documento, fecha_registro_asistencia, sigla, estado, codigo_grupo, grupo, fecha_hora_registro, created_at')
+        .in('documento', chunk)
+        .neq('sigla', 'DESC')
+        .neq('estado', 'DESCUENTO');
+
+      if (grupoCodigo && grupoCodigo !== 'TODOS') {
+        q = q.or(`codigo_grupo.eq.${grupoCodigo},grupo.eq.${grupoCodigo}`);
+      }
+
+      const { data, error } = await q.order('created_at', { ascending: true });
+      if (!error && data) {
+        allRows.push(...data);
+      }
+    }
+
+    return allRows.map(r => ({
+      postulante_documento: r.documento,
+      fecha_asistencia: parseFechaAsistencia(r.fecha_registro_asistencia),
+      fecha_original: r.fecha_registro_asistencia,
+      sigla_asistencia: (r.sigla || (r.estado === 'ACTIVO' ? 'A' : (r.estado === 'CESADO' ? 'B' : 'FI'))).toUpperCase().trim(),
+      grupo_codigo: r.codigo_grupo || r.grupo,
+      estado: r.estado,
+      fecha_hora_registro: r.fecha_hora_registro,
+      created_at: r.created_at,
+    }));
+  }
+  return [];
 }
 
 export async function fetchGruposPagosDisponibles() {
-  const { data, error } = await supabase
-    .from('nominas')
-    .select('grupo_codigo, campana, segmento, semana_trabajo, periodo_reclutado')
-    .not('grupo_codigo', 'is', null)
-    .not('campana', 'is', null);
-  if (error) throw error;
-  return data || [];
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data, error } = await supabase
+        .from('capacidad_rys')
+        .select('codigo, campana, segmento, semana_label, semana_trabajo, periodo')
+        .order('periodo', { ascending: false });
+      if (error) throw error;
+      if (data && data.length) {
+        return data.map(row => {
+          const semNum = row.semana_trabajo || (parseInt(String(row.semana_label || '').replace(/\D/g, '')) || null);
+          return {
+            grupo_codigo: row.codigo,
+            campana: row.campana,
+            segmento: row.segmento,
+            semana_label: row.semana_label,
+            semana_trabajo: semNum,
+            periodo_reclutado: row.periodo,
+            periodo: row.periodo,
+          };
+        });
+      }
+    } catch (e) {
+      console.warn('Error fetching grupos from capacidad_rys:', e);
+    }
+  }
+  return [];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

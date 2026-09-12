@@ -702,7 +702,7 @@ export default function App() {
                       {/* 7. Consolidado PowerBI */}
                       <KeepAliveView viewId="consolidado" activeView={activeView}>
                         {navItems.some(i => i.id === 'consolidado') && (
-                          <ConsolidadoPowerBI />
+                          <ConsolidadoPowerBI userProfile={userProfile} />
                         )}
                       </KeepAliveView>
 

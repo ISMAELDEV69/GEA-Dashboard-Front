@@ -26,6 +26,7 @@ import {
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
+import AsistenciaCeldaEditorModal from './AsistenciaCeldaEditorModal';
 
 const MIN_PERIODO_2026 = '202601';
 
@@ -533,10 +534,12 @@ function CompactVolumeCard({
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL: CONSOLIDADO POWER BI
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ConsolidadoPowerBI() {
+export default function ConsolidadoPowerBI({ userProfile }) {
   const [data, setData] = useState([]);
   const [capacidades, setCapacidades] = useState([]);
   const [descuentos, setDescuentos] = useState([]);
+  const [celdaEditando, setCeldaEditando] = useState(null);
+  const isAdmin = userProfile?.rol === 'admin';
   const [loading, setLoading] = useState(true);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [error, setError] = useState(null);
@@ -1073,6 +1076,7 @@ export default function ConsolidadoPowerBI() {
         condicion_laboral: normalizeText(lastRow.condicion_laboral, '—'),
         tipo_reclutado: normalizeText(lastRow.tipo_reclutado, '—'),
         fechas: entry.fechas,
+        lastRow: lastRow,
       });
     }
 
@@ -1559,11 +1563,33 @@ export default function ConsolidadoPowerBI() {
                     return (
                       <td key={date} className="px-1 py-1 text-center border-b border-[var(--border-subtle)]">
                         <div
-                          className="heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-transform group-hover:scale-105"
+                          onClick={() => {
+                            if (!isAdmin) return;
+                            setCeldaEditando({
+                              documento: row.documento,
+                              nombre_completo: row.nombre_completo,
+                              gpe: row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : ''),
+                              campana: row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : ''),
+                              semana: row.lastRow?._semana || row.lastRow?.semana || (filters.semana !== 'Todas' ? filters.semana : ''),
+                              periodo: row.lastRow?._periodo || row.lastRow?.periodo || (filters.periodo !== 'Todas' ? filters.periodo : ''),
+                              segmento: row.lastRow?._segmento || row.lastRow?.segmento || (filters.segmento !== 'Todas' ? filters.segmento : ''),
+                              fecha: date,
+                              siglaActual: sigla,
+                              allCohortDates: uniqueDates,
+                              personFechas: row.fechas,
+                              rowInfo: row.lastRow || row
+                            });
+                          }}
+                          className={`heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${
+                            isAdmin 
+                              ? 'cursor-pointer hover:ring-2 hover:ring-cyan-400 hover:scale-110 active:scale-95' 
+                              : 'group-hover:scale-105'
+                          }`}
                           style={{
                             backgroundColor: meta ? meta.bg : 'var(--status-empty-bg)',
                             color: meta ? meta.text : 'var(--text-muted)',
                           }}
+                          title={isAdmin ? `Admin: Clic para editar o regularizar asistencia del ${date}` : undefined}
                         >
                           {sigla || '—'}
                         </div>
@@ -1607,20 +1633,17 @@ export default function ConsolidadoPowerBI() {
               }}
               className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded px-1.5 py-0.5 text-[10px] font-bold text-[var(--text-primary)] outline-none cursor-pointer"
             >
-              {[25, 50, 100, 250, 'Todas'].map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value="Todas">Todas</option>
             </select>
-            <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold ml-1">
-              {pivotRows.length > 0
-                ? `${pageSize === 'Todas' ? 1 : (currentPage - 1) * Number(pageSize) + 1}–${pageSize === 'Todas' ? pivotRows.length : Math.min(currentPage * Number(pageSize), pivotRows.length)} de ${pivotRows.length}`
-                : '0 de 0'}
-            </span>
           </div>
 
-          {pageSize !== 'Todas' && totalPages > 1 && (
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-[var(--text-muted)] font-mono">
+              Página {currentPage} de {totalPages} ({pivotRows.length} total)
+            </span>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setPage(1)}
@@ -1660,10 +1683,105 @@ export default function ConsolidadoPowerBI() {
                 <ChevronsRight size={12} />
               </button>
             </div>
-          )}
+          </div>
         </div>
 
       </div>
+
+      {/* Modal exclusivo de administración para editar / regularizar / eliminar celda */}
+      <AsistenciaCeldaEditorModal
+        isOpen={Boolean(celdaEditando)}
+        onClose={() => setCeldaEditando(null)}
+        cellData={celdaEditando}
+        onSaved={({ documento, fechas = [], sigla, motivo_baja }) => {
+          const docClean = String(documento || '').trim();
+          const targetGpe = String(celdaEditando?.gpe || '').trim();
+          const targetCampana = String(celdaEditando?.campana || '').trim();
+          const targetFechasSet = new Set(fechas.map(f => String(f).trim()));
+
+          setData(prev => {
+            const copy = [];
+            const touchedDates = new Set();
+
+            for (let i = 0; i < prev.length; i++) {
+              const r = prev[i];
+              const rDoc = String(r.documento || '').trim();
+              const rDate = formatCanonicalDate(r.fecha_registro_asistencia);
+              const rGpe = String(r.grupo || r.codigo_grupo || '').trim();
+
+              const matchUser = rDoc === docClean;
+              const matchGpe = !targetGpe || !rGpe || rGpe === targetGpe;
+              const matchDate = targetFechasSet.has(rDate);
+
+              if (matchUser && matchGpe && matchDate) {
+                copy.push({
+                  ...r,
+                  sigla,
+                  estado: sigla === 'B' ? 'CESADO' : 'ACTIVO',
+                  motivo_baja: sigla === 'B' ? (motivo_baja || 'DESERCIÓN') : ''
+                });
+                touchedDates.add(rDate);
+              } else {
+                copy.push(r);
+              }
+            }
+
+            // Para fechas que eran huecos vacíos (—), crear el registro optimista en memoria
+            fechas.forEach(f => {
+              const fCan = String(f).trim();
+              if (!touchedDates.has(fCan)) {
+                copy.push({
+                  id: `local_temp_${Date.now()}_${Math.random()}`,
+                  documento: docClean,
+                  fecha_registro_asistencia: fCan,
+                  sigla,
+                  estado: sigla === 'B' ? 'CESADO' : 'ACTIVO',
+                  motivo_baja: sigla === 'B' ? (motivo_baja || 'DESERCIÓN') : '',
+                  codigo_grupo: targetGpe,
+                  grupo: targetGpe,
+                  campana: targetCampana,
+                  archivo_origen: celdaEditando?.semana ? `SEM${String(celdaEditando.semana).replace(/\D/g, '')}` : '',
+                  nombres: celdaEditando?.rowInfo?.nombres || '',
+                  apellido_paterno: celdaEditando?.rowInfo?.apellido_paterno || '',
+                  apellido_materno: celdaEditando?.rowInfo?.apellido_materno || '',
+                  condicion_laboral: celdaEditando?.rowInfo?.condicion_laboral || '',
+                  tipo_reclutado: celdaEditando?.rowInfo?.tipo_reclutado || 'APTO'
+                });
+              }
+            });
+
+            return copy;
+          });
+          // SIN loadData(): Actualización 100% reactiva instantánea en <5ms sin recarga de pantalla
+        }}
+        onDeleted={({ documento, fechas = [] }) => {
+          const docClean = String(documento || '').trim();
+          const targetGpe = String(celdaEditando?.gpe || '').trim();
+          const targetCampana = String(celdaEditando?.campana || '').trim();
+          const targetFechasSet = new Set(fechas.map(f => String(f).trim()));
+
+          setData(prev => {
+            return prev.filter(r => {
+              const rDoc = String(r.documento || '').trim();
+              const rDate = formatCanonicalDate(r.fecha_registro_asistencia);
+              const rGpe = String(r.grupo || r.codigo_grupo || '').trim();
+              const rCamp = String(r.campana || r._campana || '').trim();
+
+              const matchUser = rDoc === docClean;
+              const matchGpe = !targetGpe || !rGpe || rGpe === targetGpe;
+              const matchCamp = !targetCampana || !rCamp || rCamp === targetCampana || targetCampana === 'Todas';
+              const matchDate = targetFechasSet.has(rDate);
+
+              // Eliminar de forma estrictamente acotada a este usuario, grupo, campaña y fechas seleccionadas
+              if (matchUser && matchGpe && matchCamp && matchDate) {
+                return false;
+              }
+              return true;
+            });
+          });
+          // SIN loadData(): Eliminación instantánea y reactiva sin pantalla de carga ni pérdida de filtros
+        }}
+      />
 
     </div>
   );
