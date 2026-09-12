@@ -5523,6 +5523,8 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const exactCode = norm(grupo_codigo);
     const cleanCode = cleanGroupCode(grupo_codigo);
     const normCamp = norm(campana);
+    const groupKey = `${normCamp}|${exactCode}`;
+    const cleanGroupKey = `${normCamp}|${cleanCode}`;
     
     let totalNomina = 0;
     let totalDia0 = 0;
