@@ -5543,9 +5543,13 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
     }
 
-    let countRec = 0;
-    let countForm = 0;
+    let asist_sala_rec = 0;
+    let asist_sala_form = 0;
+    let countDescuentos = 0;
+    const descuentosGroupList = [];
     const discrepanciasList = [];
+    const asistentesSalaList = [];
+
     if (groupFormAsisRaw.length > 0) {
       const formAsis = groupFormAsisRaw
         .filter(f => (f.fecha_registro_asistencia || f.fecha_asistencia))
@@ -5610,10 +5614,15 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
                                String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
 
         if (isDescuentoDoc) {
-          // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
-          // El descuento no descalibra y cuenta como entrega válida de Día 1.
-          countRec++;
-          countForm++;
+          // Regla de Negocio Oficial: El postulante fue justificado/aprobado por Descuento RyS.
+          // NO se cuenta a Formación como asistente en sala (no estuvo físicamente),
+          // pero SÍ se reconoce a favor de la entrega de Reclutamiento.
+          countDescuentos++;
+          descuentosGroupList.push({
+            documento: doc,
+            nombre: `${recCandidate?.apellido_paterno || ''} ${recCandidate?.apellido_materno || ''}, ${recCandidate?.nombres || ''}`.trim() || 'Postulante',
+            motivo: recCandidate?.motivo_baja || formRecord?.motivo_baja || 'DESCUENTO APROBADO RYS'
+          });
           continue;
         }
         
@@ -5622,16 +5631,23 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
                            studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
         const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
         
-        // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
-        // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
+        // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos en sala
         const isFormAsistencia = Boolean(formRecord && !isBajaForm);
         
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
         const isRecAsistencia = (recCandidate ? isCandidateActiveRec(recCandidate) : false) || isAuxAsistencia;
         
-        if (isRecAsistencia) countRec++;
-        if (isFormAsistencia) countForm++;
+        if (isRecAsistencia) asist_sala_rec++;
+        if (isFormAsistencia) asist_sala_form++;
+
+        if (isRecAsistencia && isFormAsistencia) {
+          asistentesSalaList.push({
+            documento: doc,
+            nombre: `${recCandidate?.apellido_paterno || ''} ${recCandidate?.apellido_materno || ''}, ${recCandidate?.nombres || ''}`.trim() || 'Postulante',
+            sigla_formador: formRecord?.sigla_asistencia || 'A'
+          });
+        }
 
         if (isFormAsistencia !== isRecAsistencia) {
           let displayFormSigla = 'SIN REGISTRO';
@@ -5680,30 +5696,37 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         }
       }
 
-      if (!fecha_dia1_ref || (countRec === 0 && countForm === 0)) {
+      // Conciliación Día 1: Compara la coincidencia de asistentes en sala
+      const coincideSala = asist_sala_rec === asist_sala_form;
+      if (!fecha_dia1_ref || (asist_sala_rec === 0 && asist_sala_form === 0)) {
         estado_calibracion = 'PENDIENTE';
-      } else if (countRec > 0 && countForm > 0 && countRec === countForm) {
+      } else if (coincideSala && (asist_sala_rec > 0 || countDescuentos > 0)) {
         estado_calibracion = 'CALIBRADO';
-      } else if (countRec > 0 && countForm > 0 && countRec !== countForm) {
-        estado_calibracion = 'DESCALIBRADO';
       } else {
-        estado_calibracion = 'PENDIENTE';
+        estado_calibracion = 'DESCALIBRADO';
       }
     } else {
       // El formador aún no ha registrado asistencias en sala para este grupo
-      // Si reclutamiento ya llenó nómina para semanas presentes/futuras (ej: SEM 36), se calculan sus postulantes activos pero el estado queda PENDIENTE
       for (const recCandidate of effectiveCandidates) {
         const doc = normDoc(recCandidate.documento);
+        const isDesc = descSet && (descSet.has(doc) || descSet.has(`DNI:${doc}`));
+        if (isDesc) {
+          countDescuentos++;
+          continue;
+        }
         const recAsisItem = recAsisMap.get(`${normCamp}|${exactCode}|${doc}`) || 
                             recAsisMap.get(`${normCamp}|${cleanCode}|${doc}`) || 
                             recAsisMap.get(`${exactCode}|${doc}`);
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
         const isRecAsistencia = isCandidateActiveRec(recCandidate) || isAuxAsistencia;
-        if (isRecAsistencia) countRec++;
+        if (isRecAsistencia) asist_sala_rec++;
       }
       estado_calibracion = 'PENDIENTE';
     }
+
+    const totalReclutadorAuditado = asist_sala_rec + countDescuentos;
+    const totalFormadorAuditado = asist_sala_form;
 
     results.push({
       grupo_codigo: grupo_codigo,
@@ -5716,8 +5739,13 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       estado: estado_calibracion,
       total_nomina: totalNomina,
       total_dia0: totalDia0,
-      total_reclutador: countRec,
-      total_formador: countForm,
+      asist_sala_rec: asist_sala_rec,
+      asist_sala_form: asist_sala_form,
+      descuentos_count: countDescuentos,
+      descuentos_list: descuentosGroupList,
+      asistentes_sala_list: asistentesSalaList,
+      total_reclutador: totalReclutadorAuditado,
+      total_formador: totalFormadorAuditado,
       discrepancias: discrepanciasList,
       discrepancias_count: discrepanciasList.length,
       discrepancia_nominal: false
@@ -6114,7 +6142,10 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     }
 
     const effectiveCandidates = Array.from(candidateMap.values());
-    const total_nomina = validNominas.length > 0 ? validNominas.length : effectiveCandidates.length;
+    const rawNominaCount = rawNominas.length > 0
+      ? (new Set(rawNominas.map(n => norm(n.documento)).filter(Boolean)).size || rawNominas.length)
+      : 0;
+    const total_nomina = rawNominaCount > 0 ? rawNominaCount : (validNominas.length > 0 ? validNominas.length : effectiveCandidates.length);
 
     let asistio_dia0 = 0;
     let asistio_dia1 = 0;

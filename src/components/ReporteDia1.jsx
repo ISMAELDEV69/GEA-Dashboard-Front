@@ -37,6 +37,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   const [loading, setLoading] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [selectedGroupDetail, setSelectedGroupDetail] = useState(null)
+  const [selectedRowData, setSelectedRowData] = useState(null)
   const [discrepancias, setDiscrepancias] = useState([])
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
@@ -347,6 +348,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
 
   const handleGrupoChange = (val) => {
     setSelectedGroupDetail(null)
+    setSelectedRowData(null)
     setDiscrepancias([])
     setFilters(prev => ({
       ...prev,
@@ -355,22 +357,25 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   }
 
   const handleRowClick = async (row) => {
-    if (row.estado !== 'DESCALIBRADO') {
-      setSelectedGroupDetail(null)
-      setDiscrepancias([])
-      return
-    }
-    
     if (selectedGroupDetail === row.grupo_codigo) {
       setSelectedGroupDetail(null)
+      setSelectedRowData(null)
+      setDiscrepancias([])
       return
     }
 
     setSelectedGroupDetail(row.grupo_codigo)
+    setSelectedRowData(row)
     
     // Si ya tenemos las discrepancias calculadas en memoria para esta fila exacta, usarlas de inmediato
     if (row.discrepancias && row.discrepancias.length > 0) {
       setDiscrepancias(row.discrepancias)
+      setLoadingDetails(false)
+      return
+    }
+
+    if (row.estado !== 'DESCALIBRADO') {
+      setDiscrepancias([])
       setLoadingDetails(false)
       return
     }
@@ -408,6 +413,9 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
       grupo: ''
     })
     setTableSearch('')
+    setSelectedGroupDetail(null)
+    setSelectedRowData(null)
+    setDiscrepancias([])
   }
 
   const getStatusBadge = (estado) => {
@@ -859,7 +867,9 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                     <th className="px-3 py-3">Fecha Día 1</th>
                     <th className="px-3 py-3 text-right">Nómina Total</th>
                     <th className="px-3 py-3 text-right">Asist. Día 0</th>
-                    <th className="px-3 py-3 text-right">Asist. Día 1 (Recl.)</th>
+                    <th className="px-3 py-3 text-right">Asist. Sala</th>
+                    <th className="px-3 py-3 text-center">Descuentos RyS</th>
+                    <th className="px-3 py-3 text-right">Entrega RyS</th>
                     <th className="px-3 py-3 text-right">Asist. Formador</th>
                     <th className="px-4 py-3 text-center">Estado Calibración</th>
                   </tr>
@@ -873,11 +883,11 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                       <tr 
                         key={`${row.grupo_codigo}-${row.campana}`} 
                         onClick={() => handleRowClick(row)}
-                        className={`transition-all duration-150 ${
+                        className={`transition-all duration-150 cursor-pointer ${
                           row.estado === 'DESCALIBRADO' 
-                            ? 'cursor-pointer bg-rose-500/[0.03] hover:bg-rose-500/[0.08] active:scale-[0.998]' 
+                            ? 'bg-rose-500/[0.03] hover:bg-rose-500/[0.08]' 
                             : 'hover:bg-[var(--bg-elevated)]/50'
-                        } ${isSelected ? 'bg-rose-500/[0.12] ring-1 ring-inset ring-rose-500/40' : ''}`}
+                        } ${isSelected ? 'bg-[var(--accent)]/[0.08] ring-1 ring-inset ring-[var(--accent)]/40' : ''}`}
                       >
                         {/* Grupo */}
                         <td className="px-4 py-2.5">
@@ -915,14 +925,42 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                           {row.total_dia0}
                         </td>
 
-                        {/* Día 1 Reclutador */}
+                        {/* Asist. Sala Día 1 */}
                         <td className="px-3 py-2.5 text-right tabular-nums">
-                          <div className="inline-flex items-center justify-end gap-2.5">
-                            <span className="font-mono font-black text-[var(--accent)] text-xs">
-                              {row.total_reclutador}
+                          <span className="font-mono font-bold text-[var(--text-primary)] text-xs">
+                            {row.asist_sala_rec ?? row.total_reclutador}
+                          </span>
+                        </td>
+
+                        {/* Descuentos RyS */}
+                        <td className="px-3 py-2.5 text-center">
+                          {(row.descuentos_count || 0) > 0 ? (
+                            <span 
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-black bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                              title={`${row.descuentos_count} postulante(s) con descuento aprobado por RyS`}
+                            >
+                              +{row.descuentos_count} desc.
                             </span>
+                          ) : (
+                            <span className="text-[var(--text-muted)] text-[11px]">—</span>
+                          )}
+                        </td>
+
+                        {/* Entrega Reclutador (Sala + Descuentos) */}
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <div className="flex flex-col items-end">
+                              <span className="font-mono font-black text-[var(--accent)] text-xs">
+                                {row.total_reclutador}
+                              </span>
+                              {(row.descuentos_count || 0) > 0 && (
+                                <span className="text-[9px] text-[var(--text-muted)] font-mono">
+                                  {row.asist_sala_rec ?? (row.total_reclutador - row.descuentos_count)} + {row.descuentos_count}
+                                </span>
+                              )}
+                            </div>
                             {row.total_nomina > 0 && (
-                              <div className="w-12 bg-[var(--bg-muted)] h-1.5 rounded-full overflow-hidden shrink-0" title={`${pctDia1}% de la nómina`}>
+                              <div className="w-10 bg-[var(--bg-muted)] h-1.5 rounded-full overflow-hidden shrink-0" title={`${pctDia1}% de la nómina`}>
                                 <div 
                                   className="h-full bg-gradient-to-r from-blue-500 to-[var(--accent)] rounded-full" 
                                   style={{ width: `${Math.min(100, pctDia1)}%` }} 
@@ -932,7 +970,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                           </div>
                         </td>
 
-                        {/* Asist Formador */}
+                        {/* Asist Formador (Asistentes reales en sala) */}
                         <td className="px-3 py-2.5 text-right font-mono font-black text-purple-600 dark:text-purple-400 tabular-nums text-xs">
                           {row.total_formador}
                         </td>
@@ -950,90 +988,169 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
           </div>
 
           {/* ─────────────────────────────────────────────────────────────
-              DETALLE DE DISCREPANCIAS (DRAWER / PANEL EN VIVO)
+              DETALLE DE CONCILIACIÓN Y DISCREPANCIAS (DRAWER / PANEL EN VIVO)
               ───────────────────────────────────────────────────────────── */}
           {selectedGroupDetail && (
-            <div className="bg-[var(--bg-surface)] border border-rose-500/40 rounded-2xl p-5 shadow-md shadow-rose-500/5 animate-fadeIn">
-              <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-[var(--border-normal)]">
+            <div className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-2xl p-5 shadow-md animate-fadeIn space-y-4">
+              <div className="flex items-center justify-between pb-3.5 border-b border-[var(--border-normal)]">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
-                    <AlertTriangle size={16} />
+                  <div className={`p-2 rounded-xl border ${
+                    selectedRowData?.estado === 'DESCALIBRADO'
+                      ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                      : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                  }`}>
+                    <Target size={16} />
                   </div>
                   <div>
-                    <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-                      Auditoría de Discrepancias — Grupo: <span className="font-mono text-rose-600 dark:text-rose-400">{selectedGroupDetail}</span>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+                      Auditoría y Conciliación Día 1 — Grupo: <span className="font-mono text-[var(--accent)]">{selectedGroupDetail}</span>
+                      <span className="text-[10px] font-bold text-[var(--text-muted)] font-sans">({selectedRowData?.campana})</span>
                     </h3>
-                    <p className="text-[11px] text-[var(--text-muted)] font-medium">Comparación uno a uno de marcas entre Reclutamiento y Formación</p>
+                    <p className="text-[11px] text-[var(--text-muted)] font-medium">
+                      Trazabilidad transparente entre Asistencia en Sala y Descuentos autorizados por RyS
+                    </p>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setSelectedGroupDetail(null)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-rose-600 dark:hover:text-white bg-[var(--bg-elevated)] hover:bg-rose-500/20 border border-[var(--border-normal)] transition-all font-bold cursor-pointer"
-                >
-                  Cerrar Auditoría ✕
-                </button>
+
+                <div className="flex items-center gap-3">
+                  {/* Resumen Pills */}
+                  <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono">
+                    <span className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-secondary)] font-bold">
+                      Sala Recl: <strong className="text-[var(--text-primary)]">{selectedRowData?.asist_sala_rec ?? selectedRowData?.total_reclutador}</strong>
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-secondary)] font-bold">
+                      Sala Form: <strong className="text-purple-600 dark:text-purple-400">{selectedRowData?.total_formador}</strong>
+                    </span>
+                    {(selectedRowData?.descuentos_count || 0) > 0 && (
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold">
+                        Desc. RyS: +{selectedRowData?.descuentos_count}
+                      </span>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={() => {
+                      setSelectedGroupDetail(null)
+                      setSelectedRowData(null)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-muted)] border border-[var(--border-normal)] transition-all font-bold cursor-pointer"
+                  >
+                    Cerrar Detalle ✕
+                  </button>
+                </div>
               </div>
+
+              {/* 1. Bloque de Descuentos Aprobados por Jefatura RyS */}
+              {selectedRowData?.descuentos_list && selectedRowData.descuentos_list.length > 0 && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                      <FileText size={13} />
+                      Descuentos Aprobados por Jefatura RyS ({selectedRowData.descuentos_list.length})
+                    </span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-medium">
+                      * Justificados ante Reclutamiento. No se cuentan a Formación como asistentes en sala.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    {selectedRowData.descuentos_list.map((desc, idx) => (
+                      <div key={desc.documento || idx} className="p-2.5 rounded-lg bg-[var(--bg-surface)] border border-amber-500/20 shadow-2xs">
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="font-mono font-bold text-xs text-[var(--text-primary)]">{desc.documento}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 uppercase">
+                            Descuento
+                          </span>
+                        </div>
+                        <p className="text-xs font-bold text-[var(--text-primary)] truncate uppercase">{desc.nombre}</p>
+                        <p className="text-[10px] text-[var(--text-muted)] font-semibold truncate mt-0.5" title={desc.motivo}>
+                          Motivo: {desc.motivo || 'Autorizado por RyS'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               
+              {/* 2. Bloque de Discrepancias en Sala */}
               {loadingDetails ? (
                 <div className="text-center py-8">
-                  <div className="animate-spin h-5 w-5 border-2 border-rose-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                  <div className="animate-spin h-5 w-5 border-2 border-[var(--accent)] border-t-transparent rounded-full mx-auto mb-2"></div>
                   <p className="text-xs text-[var(--text-muted)] font-mono">Cargando discrepancias del grupo...</p>
                 </div>
               ) : discrepancias.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[var(--text-muted)] bg-[var(--bg-base)] rounded-xl p-4 border border-[var(--border-normal)]">
-                  No se encontraron discrepancias directas por documento (la descalibración puede deberse a una diferencia en la cantidad total de registros).
+                <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs">
+                  <CheckCircle2 size={18} className="shrink-0 text-emerald-500" />
+                  <div>
+                    <span className="font-bold">Asistencia en Sala 100% Calibrada:</span> Ambos equipos coinciden en que hubo{' '}
+                    <strong className="font-mono">{selectedRowData?.asist_sala_rec ?? selectedRowData?.total_formador}</strong>{' '}
+                    asistente(s) en sala en la fecha oficial de Día 1.
+                    {(selectedRowData?.descuentos_count || 0) > 0 && (
+                      <span> Además, cuenta con <strong>{selectedRowData.descuentos_count}</strong> descuento(s) regularizado(s) por RyS.</span>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-xl border border-[var(--border-normal)] shadow-xs">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[var(--table-head-bg)] text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider border-b border-[var(--border-normal)]">
-                      <tr>
-                        <th className="px-4 py-2.5">Documento</th>
-                        <th className="px-4 py-2.5">Postulante</th>
-                        <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Reclutador Marcó</th>
-                        <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Formador Marcó</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
-                      {discrepancias.map(d => {
-                        const recStr = String(d.sigla_reclutador || '').toUpperCase()
-                        const formStr = String(d.sigla_formador || '').toUpperCase()
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                      <AlertTriangle size={13} />
+                      Discrepancias Detectadas ({discrepancias.length})
+                    </span>
+                    <span className="text-[10px] text-[var(--text-muted)]">
+                      Postulantes con marcas no coincidentes entre Reclutamiento y Formación
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-[var(--border-normal)] shadow-xs">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[var(--table-head-bg)] text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider border-b border-[var(--border-normal)]">
+                        <tr>
+                          <th className="px-4 py-2.5">Documento</th>
+                          <th className="px-4 py-2.5">Postulante</th>
+                          <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Reclutador Marcó</th>
+                          <th className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">Formador Marcó</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border-subtle)] bg-[var(--bg-surface)]">
+                        {discrepancias.map(d => {
+                          const recStr = String(d.sigla_reclutador || '').toUpperCase()
+                          const formStr = String(d.sigla_formador || '').toUpperCase()
 
-                        const recBadgeColor = recStr.includes('ACTIVO') || recStr.includes('ASISTIO')
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : (recStr.includes('BAJA') || recStr.includes('FALTA') || recStr.includes('CESADO')
-                            ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                            : (recStr.includes('SIN REGISTRO')
-                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                              : 'bg-[var(--bg-base)] text-[var(--text-muted)] border-[var(--border-normal)]'))
+                          const recBadgeColor = recStr.includes('ACTIVO') || recStr.includes('ASISTIO')
+                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                            : (recStr.includes('BAJA') || recStr.includes('FALTA') || recStr.includes('CESADO')
+                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                              : (recStr.includes('SIN REGISTRO')
+                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                : 'bg-[var(--bg-base)] text-[var(--text-muted)] border-[var(--border-normal)]'))
 
-                        const formBadgeColor = formStr.includes('ACTIVO') || formStr.includes('ASISTIO')
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : (formStr.includes('BAJA') || formStr.includes('CESADO') || formStr.includes('FALTA')
-                            ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                            : (formStr.includes('SIN REGISTRO')
-                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                              : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'))
+                          const formBadgeColor = formStr.includes('ACTIVO') || formStr.includes('ASISTIO')
+                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                            : (formStr.includes('BAJA') || formStr.includes('CESADO') || formStr.includes('FALTA')
+                              ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                              : (formStr.includes('SIN REGISTRO')
+                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'))
 
-                        return (
-                          <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
-                            <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
-                            <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
-                            <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
-                              <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${recBadgeColor}`}>
-                                {d.sigla_reclutador || '—'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
-                              <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${formBadgeColor}`}>
-                                {d.sigla_formador || '—'}
-                              </span>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                          return (
+                            <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
+                              <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
+                              <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
+                              <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                                <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${recBadgeColor}`}>
+                                  {d.sigla_reclutador || '—'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
+                                <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${formBadgeColor}`}>
+                                  {d.sigla_formador || '—'}
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
