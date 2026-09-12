@@ -142,6 +142,10 @@ export function isDescuentoAprobado(row) {
   const procede = String(row.procede || '').toUpperCase().trim();
   const autRys = String(row.autoriza_rys || '').toUpperCase().trim();
 
+  // Validar que realmente sea un registro o solicitud de descuento antes de evaluar vencimiento de 48h
+  const esRegistroDescuento = Boolean(row.procede || row.motivo || row.grupo_cap || estado.includes('DESCUENTO'));
+  if (!esRegistroDescuento) return false;
+
   if (procede === 'NO PROCEDE' || autRys === 'NO') return false;
   if (procede === 'PROCEDE' || autRys === 'SI') return true;
   if (estado === 'DESCUENTO APROBADO' || estado === 'DESCUENTO') return true;
@@ -4147,6 +4151,11 @@ export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
       .from('descuentos')
       .select('dni_ce, campana, grupo_cap, procede, autoriza_rys, fecha_registro, fecha_baja');
 
+    const cleanGrupo = grupoCodigo ? String(grupoCodigo).trim().toUpperCase() : null;
+    if (cleanGrupo) {
+      query = query.ilike('grupo_cap', `%${cleanGrupo}%`);
+    }
+
     const { data, error } = await query;
     if (error) {
       console.warn('Error en fetchDescuentosAprobadosSet:', error);
@@ -4155,6 +4164,13 @@ export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
 
     const setAprobados = new Set();
     (data || []).forEach(d => {
+      if (cleanGrupo) {
+        const rowGrupo = String(d.grupo_cap || '').trim().toUpperCase();
+        if (rowGrupo && rowGrupo !== cleanGrupo && !rowGrupo.includes(cleanGrupo) && !cleanGrupo.includes(rowGrupo)) {
+          return;
+        }
+      }
+
       const procedeStr = String(d.procede || '').trim().toUpperCase();
       const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
       // Descartar únicamente registros explícitamente rechazados
