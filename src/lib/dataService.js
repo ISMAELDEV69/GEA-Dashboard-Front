@@ -394,6 +394,17 @@ const normalizeGPE = (val) => String(val || '').replace(/^GPE-?/i, '').trim();
 const normalizeCampana = (c) => String(c || '').toUpperCase().replace(/\s+/g, '');
 const normalizeDNI = (d) => String(d || '').trim(); // Don't padStart yet in case CE is alphanumeric
 
+export const cleanGroupCode = (val) => {
+  if (!val) return '';
+  return String(val)
+    .trim()
+    .toUpperCase()
+    .replace(/\s*\(SEM\s*\d+.*?\)/i, '')
+    .replace(/\s*-\s*SEM\s*\d+.*$/i, '')
+    .replace(/_\d+$/, '')
+    .trim();
+};
+
 const makeDescuentoKey = (doc, camp, grupo) => {
   return `${normalizeDNI(doc)}|${normalizeCampana(camp)}|${normalizeGPE(grupo)}`;
 }
