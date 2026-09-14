@@ -446,11 +446,22 @@ export function getDescuentosSetGlobal() {
     
     const set = new Set();
     procedeData.forEach(d => {
-      set.add(makeDescuentoKey(d.dni_ce, d.campana, d.grupo_cap));
       const dni = normalizeDNI(d.dni_ce);
+      const camp = normalizeCampana(d.campana);
+      const grupo = normalizeGPE(d.grupo_cap);
+      const rawGrupo = String(d.grupo_cap || '').trim().toUpperCase();
+      const cleanCode = cleanGroupCode(d.grupo_cap);
+
       if (dni) {
-        set.add(dni);
-        set.add(`DNI:${dni}`);
+        // Llaves compuestas estrictas: DNI + Campaña + Grupo
+        if (camp && grupo) set.add(`${dni}|${camp}|${grupo}`);
+        if (camp && rawGrupo) set.add(`${dni}|${camp}|${rawGrupo}`);
+        if (camp && cleanCode) set.add(`${dni}|${camp}|${cleanCode}`);
+        set.add(makeDescuentoKey(dni, d.campana, d.grupo_cap));
+        // Llaves compuestas por DNI + Grupo (aislado por cohorte/grupo de capacitación)
+        if (grupo) set.add(`${dni}|${grupo}`);
+        if (cleanCode) set.add(`${dni}|${cleanCode}`);
+        if (rawGrupo) set.add(`${dni}|${rawGrupo}`);
       }
     });
     return set;
@@ -531,10 +542,11 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
       for (let i = 0; i < allData.length; i++) {
         const row = allData[i];
         const doc = normalizeDNI(row.documento);
+        const grp = row.codigo_grupo || row.grupo;
         row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)) ||
                           descSet.has(makeDescuentoKey(row.documento, row.campana, row.grupo)) ||
-                          descSet.has(doc) ||
-                          descSet.has(`DNI:${doc}`);
+                          descSet.has(`${doc}|${cleanGroupCode(grp)}`) ||
+                          descSet.has(`${doc}|${normalizeGPE(grp)}`);
       }
     }
 
@@ -3206,7 +3218,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
 
   const [fecha_dia1_ref, descSet] = await Promise.all([
     getFirstDateFormador(grupo_codigo, campana),
-    fetchDescuentosAprobadosSet(grupo_codigo)
+    fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
@@ -3272,26 +3284,33 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
-    const isDescuentoDoc = (descSet && descSet.has(doc)) || 
-                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
-                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
+    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+    // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
+    // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+    const isDescuentoDoc = !isBajaDia1Direct && (
+      (descSet && (
+        descSet.has(doc) ||
+        descSet.has(makeDescuentoKey(doc, campana, grupo_codigo)) ||
+        descSet.has(`${doc}|${cleanGroupCode(grupo_codigo)}`) ||
+        descSet.has(`${doc}|${normalizeGPE(grupo_codigo)}`)
+      )) || 
+      (String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct) ||
+      (String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct)
+    );
 
     if (isDescuentoDoc) {
-      // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
-      // El descuento no perjudica a Reclutamiento y está acordado entre ambas áreas,
-      // por lo que se valida como entrega conforme de Día 1 para Reclutamiento y Formación
-      // sin generar descalibración del grupo.
       countRec++;
       countForm++;
       continue;
     }
-
-    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
     
     // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
     // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
@@ -3341,7 +3360,7 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
 
   const [fecha_dia1_ref, descSet] = await Promise.all([
     getFirstDateFormador(grupo_codigo, campana),
-    fetchDescuentosAprobadosSet(grupo_codigo)
+    fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
@@ -3406,25 +3425,33 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
       continue
     }
 
-    const isDescuentoDoc = (descSet && descSet.has(doc)) || 
-                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
-                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
+    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+    // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
+    // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+    const isDescuentoDoc = !isBajaDia1Direct && (
+      (descSet && (
+        descSet.has(doc) ||
+        descSet.has(makeDescuentoKey(doc, campana, grupo_codigo)) ||
+        descSet.has(`${doc}|${cleanGroupCode(grupo_codigo)}`) ||
+        descSet.has(`${doc}|${normalizeGPE(grupo_codigo)}`)
+      )) || 
+      (String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct) ||
+      (String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct)
+    );
 
     if (isDescuentoDoc) {
-      // Regla de Negocio Oficial: Reclutamiento cumplió al traer al postulante para Día 1.
-      // El descuento no perjudica a Reclutamiento y se computa de mutuo acuerdo
-      // sin generar descalibración del grupo.
       countRec++;
       countForm++;
       continue;
     }
-
-    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
     
     // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
     // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
@@ -3443,7 +3470,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
 
   const [fecha_dia1_ref, descSet] = await Promise.all([
     getFirstDateFormador(grupo_codigo, campana),
-    fetchDescuentosAprobadosSet(grupo_codigo)
+    fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
 
   let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
@@ -3536,21 +3563,32 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       continue
     }
 
-    const isDescuentoDoc = (descSet && (descSet.has(doc) || descSet.has(`DNI:${doc}`))) || 
-                           String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
-                           String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                           String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
+    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+    // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
+    // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+    const isDescuentoDoc = !isBajaDia1Direct && (
+      (descSet && (
+        descSet.has(doc) ||
+        descSet.has(makeDescuentoKey(doc, campana, grupo_codigo)) ||
+        descSet.has(`${doc}|${cleanGroupCode(grupo_codigo)}`) ||
+        descSet.has(`${doc}|${normalizeGPE(grupo_codigo)}`)
+      )) || 
+      (String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct) ||
+      (String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+      (String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct)
+    );
 
     if (isDescuentoDoc) {
       // Descuento acordado y autorizado: no genera discrepancia entre áreas
       continue;
     }
-    
-    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
     
     // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
     // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
@@ -4142,7 +4180,7 @@ export async function autoApproveExpiredDescuentos() {
  * (o vencidos > 48h hábiles en Perú) para un grupo o de forma global.
  * Estos postulantes NO deben aparecer en la asistencia del formador.
  */
-export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
+export async function fetchDescuentosAprobadosSet(grupoCodigo = null, campana = null) {
   if (DB_MODE !== 'supabase') return new Set();
 
   // 1. Ejecutar auto-aprobación en segundo plano por si hay pendientes vencidos
@@ -4168,11 +4206,24 @@ export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
       return new Set();
     }
 
+    const normCamp = campana ? normalizeCampana(campana) : null;
+    const cleanGpe = cleanGrupo ? normalizeGPE(cleanGrupo) : null;
+
     const setAprobados = new Set();
     (data || []).forEach(d => {
       if (cleanGrupo) {
         const rowGrupo = String(d.grupo_cap || '').trim().toUpperCase();
-        if (rowGrupo && rowGrupo !== cleanGrupo && !rowGrupo.includes(cleanGrupo) && !cleanGrupo.includes(rowGrupo)) {
+        const rowGpe = normalizeGPE(d.grupo_cap);
+        const matchGrupo = (rowGrupo && (rowGrupo === cleanGrupo || rowGrupo.includes(cleanGrupo) || cleanGrupo.includes(rowGrupo))) ||
+                           (cleanGpe && rowGpe && (rowGpe === cleanGpe || rowGpe.includes(cleanGpe) || cleanGpe.includes(rowGpe)));
+        if (!matchGrupo) {
+          return;
+        }
+      }
+
+      if (normCamp) {
+        const rowCamp = normalizeCampana(d.campana);
+        if (rowCamp && normCamp !== rowCamp && !rowCamp.includes(normCamp) && !normCamp.includes(rowCamp)) {
           return;
         }
       }
@@ -4196,6 +4247,13 @@ export async function fetchDescuentosAprobadosSet(grupoCodigo = null) {
         setAprobados.add(dni.toLowerCase());
         setAprobados.add(dni.toUpperCase());
         setAprobados.add(`DNI:${dni}`);
+        if (d.grupo_cap) {
+          setAprobados.add(`${dni}|${normalizeGPE(d.grupo_cap)}`);
+          setAprobados.add(`${dni}|${cleanGroupCode(d.grupo_cap)}`);
+        }
+        if (d.campana && d.grupo_cap) {
+          setAprobados.add(makeDescuentoKey(dni, d.campana, d.grupo_cap));
+        }
       }
     });
 
@@ -5717,16 +5775,29 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           continue;
         }
 
-        const isDescuentoDoc = (descSet && (
-                                  descSet.has(doc) ||
-                                  descSet.has(`DNI:${doc}`) ||
-                                  descSet.has(`${normCamp}|${exactCode}|${doc}`) ||
-                                  descSet.has(`${exactCode}|${doc}`)
-                                )) ||
-                               String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                               String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
-                               String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                               String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+        const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+        const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+        const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
+                           studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
+        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
+        const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+        // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
+        // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+        const isDescuentoDoc = !isBajaDia1Direct && (
+          (descSet && (
+            descSet.has(makeDescuentoKey(doc, normCamp, exactCode)) ||
+            descSet.has(makeDescuentoKey(doc, normCamp, cleanCode)) ||
+            descSet.has(`${doc}|${normCamp}|${exactCode}`) ||
+            descSet.has(`${doc}|${normCamp}|${cleanCode}`) ||
+            descSet.has(`${doc}|${exactCode}`) ||
+            descSet.has(`${doc}|${cleanCode}`)
+          )) ||
+          (String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+          (String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct) ||
+          (String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1Direct) ||
+          (String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1Direct)
+        );
 
         if (isDescuentoDoc) {
           // Regla de Negocio Oficial: El postulante fue justificado/aprobado por Descuento RyS.
@@ -5740,11 +5811,6 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           });
           continue;
         }
-        
-        const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-        const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                           studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm;
         
         // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos en sala
         const isFormAsistencia = Boolean(formRecord && !isBajaForm);
@@ -5824,7 +5890,19 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       // El formador aún no ha registrado asistencias en sala para este grupo
       for (const recCandidate of effectiveCandidates) {
         const doc = normDoc(recCandidate.documento);
-        const isDesc = descSet && (descSet.has(doc) || descSet.has(`DNI:${doc}`));
+        const isBajaD1 = recCandidate && (
+          String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+          String(recCandidate.status_dia_1 || '').toUpperCase().includes('CESE') ||
+          String(recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE')
+        );
+        const isDesc = !isBajaD1 && descSet && (
+          descSet.has(makeDescuentoKey(doc, normCamp, exactCode)) ||
+          descSet.has(makeDescuentoKey(doc, normCamp, cleanCode)) ||
+          descSet.has(`${doc}|${normCamp}|${exactCode}`) ||
+          descSet.has(`${doc}|${normCamp}|${cleanCode}`) ||
+          descSet.has(`${doc}|${exactCode}`) ||
+          descSet.has(`${doc}|${cleanCode}`)
+        );
         if (isDesc) {
           countDescuentos++;
           continue;
@@ -6815,15 +6893,30 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
           continue;
         }
 
-        const isDescuentoDoc = (descSet && (
-                                  descSet.has(doc) ||
-                                  descSet.has(`DNI:${doc}`) ||
-                                  descSet.has(makeDescuentoKey(doc, campana, grupo_codigo))
-                                )) ||
-                               String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                               String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') ||
-                               String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' ||
-                               String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+        const isBajaDia1 = bajasDia1Set.has(doc) ||
+          (recCandidate && (
+            String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+            String(recCandidate.status_dia_1 || '').toUpperCase().includes('CESE') ||
+            String(recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE')
+          )) ||
+          (formRecord && (
+            String(formRecord.motivo_baja || '').toUpperCase().includes('BAJA DIA 1') ||
+            String(formRecord.tipo_reclutado || '').toUpperCase().includes('CESE')
+          ));
+
+        // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
+        // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+        const isDescuentoDoc = !isBajaDia1 && (
+          (descSet && (
+            descSet.has(makeDescuentoKey(doc, campana, grupo_codigo)) ||
+            descSet.has(`${doc}|${cleanGroupCode(grupo_codigo)}`) ||
+            descSet.has(`${doc}|${normalizeGPE(grupo_codigo)}`)
+          )) ||
+          (String(recCandidate?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1) ||
+          (String(recCandidate?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1) ||
+          (String(formRecord?.estado || '').toUpperCase() === 'DESCUENTO' && !isBajaDia1) ||
+          (String(formRecord?.motivo_baja || '').toUpperCase().includes('DESCUENTO') && !isBajaDia1)
+        );
 
         if (isDescuentoDoc) {
           countForm++;
@@ -6831,7 +6924,6 @@ export async function getMetricasReporteCalibracionBulk(gruposInfo) {
         }
         
         const formSigla = formRecord ? formRecord.sigla_asistencia : 'Sin registro'
-        const isBajaDia1 = bajasDia1Set.has(doc);
         
         // Formador: Cuenta a todos los aptos/activos recibidos (incluso con falta), salvo los que fueron Baja Día 1
         const isFormAsistencia = Boolean(formRecord && !isBajaDia1);

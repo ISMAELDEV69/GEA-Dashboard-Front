@@ -6,16 +6,17 @@
  * reduciendo el consumo de Egress a casi cero en consultas recurrentes.
  */
 
-const DB_NAME = 'gea_dashboard_cache_v2';
+const DB_NAME = 'gea_dashboard_cache_v3';
 const DB_VERSION = 1;
 const STORE_NAME = 'cache_store';
 
 let dbPromise = null;
 
-// Limpieza automática de la versión obsoleta v1
+// Limpieza automática de versiones obsoletas v1 y v2
 if (typeof window !== 'undefined' && window.indexedDB) {
   try {
     window.indexedDB.deleteDatabase('gea_dashboard_cache_v1');
+    window.indexedDB.deleteDatabase('gea_dashboard_cache_v2');
   } catch (e) {
     // Ignorar si no existe
   }
