@@ -423,11 +423,17 @@ export function getDescuentosSetGlobal() {
     }
     
     const procedeData = allData.filter(row => {
-      // Si la BD tiene explícitamente "PROCEDE"
-      if (String(row.procede || '').trim().toUpperCase() === 'PROCEDE') return true;
+      const procedeStr = String(row.procede || '').trim().toUpperCase();
+      const rysStr = String(row.autoriza_rys || '').trim().toUpperCase();
+
+      // Si fue explícitamente rechazado por RyS o marcado NO PROCEDE, JAMÁS debe considerarse procede
+      if (procedeStr === 'NO PROCEDE' || procedeStr === 'NO' || rysStr === 'NO') return false;
+
+      // Si la BD tiene explícitamente "PROCEDE" o "APROBADO"
+      if (procedeStr === 'PROCEDE' || procedeStr === 'APROBADO') return true;
       
       // Regla de negocio explícita (autoriza_rys = SI y autoriza_cap = SI/Vacio)
-      const rys = String(row.autoriza_rys || '').trim().toUpperCase() === 'SI';
+      const rys = rysStr === 'SI';
       const cap = (String(row.autoriza_cap || '').trim().toUpperCase() === 'SI' || !row.autoriza_cap);
       if (rys && cap) return true;
 
