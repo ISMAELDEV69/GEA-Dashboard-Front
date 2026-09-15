@@ -6,7 +6,13 @@ import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
 
-const EMPTY_ROW = {
+const getTodayPeruString = () => {
+  const now = new Date()
+  const peruTime = new Date(now.getTime() - (5 * 3600 * 1000))
+  return peruTime.toISOString().slice(0, 10)
+}
+
+const getEmptyRow = () => ({
   sede: '',
   segmento: '',
   campana: '',
@@ -15,13 +21,14 @@ const EMPTY_ROW = {
   formador: '',
   dni_ce: '',
   postulante: '',
-  fecha_baja: '',
+  fecha_baja: getTodayPeruString(),
   motivo: '',
   comentarios: ''
-}
+})
 
 export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [] }) {
-  const [dataRows, setDataRows] = useState([{ ...EMPTY_ROW }])
+  const todayPeruStr = useMemo(() => getTodayPeruString(), [])
+  const [dataRows, setDataRows] = useState([getEmptyRow()])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
@@ -65,13 +72,13 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
 
   // Manejo de Filas
   const addRow = () => {
-    setDataRows([...dataRows, { ...EMPTY_ROW }])
+    setDataRows([...dataRows, getEmptyRow()])
   }
 
   const removeRow = (idx) => {
     const newRows = [...dataRows]
     newRows.splice(idx, 1)
-    if (newRows.length === 0) newRows.push({ ...EMPTY_ROW })
+    if (newRows.length === 0) newRows.push(getEmptyRow())
     setDataRows(newRows)
   }
 
@@ -133,16 +140,17 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
 
   const clearAll = () => {
     if (window.confirm('¿Seguro que deseas limpiar toda la tabla?')) {
-      setDataRows([{ ...EMPTY_ROW }])
+      setDataRows([getEmptyRow()])
       setSuccess(false)
       setErrorMsg(null)
       setValidationErrors([])
     }
   }
 
-  // Validación de 48h (Supervisor)
+  // Validación de fecha (Supervisor): los descuentos deben registrarse con la fecha actual de envío (hora Perú)
   const isSupervisorTarde = (fechaBajaStr) => {
     if (!fechaBajaStr) return false;
+    if (fechaBajaStr === todayPeruStr) return false;
     return isDescuentoVencido48h(fechaBajaStr);
   }
 
@@ -170,14 +178,16 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     rowsToProcess.forEach((row, i) => {
       // 1. Validar campos obligatorios
       requiredFields.forEach(f => {
-        if (!row[f] || String(row[f]).trim() === '') {
+        const val = f === 'fecha_baja' ? (row[f] || todayPeruStr) : row[f];
+        if (!val || String(val).trim() === '') {
           errors.push(`Fila ${i + 1}: Falta ${f.replace('_', ' ').toUpperCase()}`)
         }
       })
       
-      // 2. Bloqueo estricto por 48 horas hábiles
-      if (isSupervisorTarde(row.fecha_baja)) {
-        errors.push(`Fila ${i + 1}: Superó las 48h hábiles desde la fecha de baja. NO SE PUEDE MANDAR EL DESCUENTO.`)
+      // 2. Bloqueo estricto: la fecha de baja debe ser la fecha actual de envío
+      const fVal = row.fecha_baja || todayPeruStr
+      if (fVal !== todayPeruStr && isSupervisorTarde(fVal)) {
+        errors.push(`Fila ${i + 1}: Los descuentos solo se pueden guardar con la fecha actual de envío (${todayPeruStr}).`)
       }
     })
 
@@ -189,10 +199,11 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     }
     
     try {
-      // Preparar payload
+      // Preparar payload garantizando fecha actual
       const payload = rowsToProcess.map(row => {
         return {
           ...row,
+          fecha_baja: row.fecha_baja || todayPeruStr,
           dni_ce: String(row.dni_ce).trim().toUpperCase(),
           postulante: String(row.postulante).toUpperCase(),
           comentarios: String(row.comentarios).toUpperCase()
@@ -201,7 +212,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
       
       const res = await insertDescuentosBulk(payload, userProfile?.email)
       setSuccess(`Se guardaron ${res.inserted} descuentos exitosamente.`)
-      setDataRows([{ ...EMPTY_ROW }]) 
+      setDataRows([getEmptyRow()]) 
     } catch (err) {
       console.error(err)
       setErrorMsg(err.message || 'Error al guardar los descuentos.')
@@ -215,7 +226,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
       {/* HEADER */}
       <PageHeader 
         title="Registro de Descuentos" 
-        subtitle="Ingresa manualmente los descuentos. No se permitirá mandar descuentos si han pasado más de 48h hábiles desde la baja."
+        subtitle="Ingresa los descuentos con la fecha actual de envío. Todo descuento nuevo ingresa en revisión para RyS dentro del plazo de 48h hábiles."
       >
         <div className="flex items-center gap-3">
           <button 
@@ -284,7 +295,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">FORMADOR <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">DNI/CE <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">POSTULANTE <span className="text-red-500">*</span></th>
-                <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">FECHA BAJA <span className="text-red-500">*</span></th>
+                <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider" title="Corresponde a la fecha actual del día de envío">FECHA BAJA (HOY) <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">MOTIVO <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">COMENTARIOS</th>
                 <th className="p-3 border-b border-[var(--border-subtle)] text-center w-12 font-bold uppercase tracking-wider">⚙️</th>
@@ -405,7 +416,15 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
                     </td>
                     
                     <td className="p-1 relative min-w-[140px]">
-                      <input type="date" className={`w-full form-input py-2 px-3 pr-8 text-xs rounded-lg ${supTarde ? '!border-red-500 !bg-red-500/10 !text-red-600 dark:!text-red-400 font-semibold' : ''}`} value={row.fecha_baja} onChange={e => updateRow(idx, 'fecha_baja', e.target.value)} />
+                      <input 
+                        type="date" 
+                        className={`w-full form-input py-2 px-3 pr-8 text-xs rounded-lg bg-[var(--bg-muted)]/60 cursor-not-allowed font-medium text-[var(--text-primary)] ${supTarde ? '!border-red-500 !bg-red-500/10 !text-red-600 dark:!text-red-400 font-semibold' : ''}`} 
+                        value={row.fecha_baja || todayPeruStr} 
+                        min={todayPeruStr} 
+                        max={todayPeruStr} 
+                        readOnly 
+                        title="La fecha de baja corresponde a la fecha actual del día de envío"
+                      />
                       {supTarde && <AlertTriangle size={14} className="absolute right-3 top-3 text-red-500" title=">48h Hábiles (BLOQUEADO)" />}
                     </td>
                     

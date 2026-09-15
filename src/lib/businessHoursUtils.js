@@ -116,10 +116,19 @@ export function parseFechaRegistro(rawDate) {
   const str = String(rawDate).trim();
   if (!str) return null;
   
-  // Check if standard ISO or YYYY-MM-DD
-  if (str.includes('T') || /^\d{4}-\d{2}-\d{2}/.test(str)) {
+  // Check if standard ISO with time
+  if (str.includes('T')) {
     const d = new Date(str);
     if (!isNaN(d.getTime())) return d;
+  }
+
+  // Format: YYYY-MM-DD (interpret in Peru time UTC-5)
+  const ymdMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (ymdMatch) {
+    const [_, y, m, d, h, min, s] = ymdMatch;
+    const isoString = `${y}-${m}-${d}T${(h || '00').padStart(2, '0')}:${(min || '00').padStart(2, '0')}:${(s || '00').padStart(2, '0')}-05:00`;
+    const parsed = new Date(isoString);
+    if (!isNaN(parsed.getTime())) return parsed;
   }
   
   // Format: DD/MM/YYYY HH:mm:ss or DD/MM/YYYY

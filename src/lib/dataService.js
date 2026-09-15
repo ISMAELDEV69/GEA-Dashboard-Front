@@ -4374,8 +4374,7 @@ export async function insertDescuentosBulk(payloads, userEmail) {
   if (!payloads || payloads.length === 0) return { inserted: 0 };
 
   const batch = payloads.map(p => {
-    const isFueraDePlazo = (String(p.fuera_de_plazo || '').trim().toUpperCase() === 'SI') ||
-      isDescuentoVencido48h(p.fecha_baja || p.fecha_registro);
+    const isExplicitFueraDePlazo = String(p.fuera_de_plazo || '').trim().toUpperCase() === 'SI';
     
     return {
       sede: p.sede || '',
@@ -4391,15 +4390,15 @@ export async function insertDescuentosBulk(payloads, userEmail) {
       comentarios: p.comentarios || '',
       bono: 'NO',
       autoriza_cap: 'SI',
-      fuera_de_plazo: isFueraDePlazo ? 'SI' : 'NO',
+      fuera_de_plazo: isExplicitFueraDePlazo ? 'SI' : 'NO',
       
-      // Regla de respuesta 48h hábiles en Perú (sin domingos ni feriados)
-      autoriza_rys: isFueraDePlazo ? 'SI' : '',
-      comentario_rys: isFueraDePlazo ? 'descuento aprobado por tiempo de respuesta' : '',
-      procede: isFueraDePlazo ? 'PROCEDE' : 'PENDIENTE',
+      // Todo descuento nuevo ingresa como PENDIENTE para revisión de RyS. El reloj de 48h hábiles empieza en fecha_registro.
+      autoriza_rys: isExplicitFueraDePlazo ? 'SI' : '',
+      comentario_rys: isExplicitFueraDePlazo ? (p.comentario_rys || 'descuento aprobado por tiempo de respuesta') : '',
+      procede: isExplicitFueraDePlazo ? 'PROCEDE' : 'PENDIENTE',
       
       usuario_registro: userEmail || 'admin',
-      fecha_registro: new Date().toISOString()
+      fecha_registro: p.fecha_registro || new Date().toISOString()
     };
   });
 
