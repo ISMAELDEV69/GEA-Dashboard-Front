@@ -172,7 +172,7 @@ function VisionGlassCard({
 export default function HomeSelector({
   userProfile,
   onSelectWorkforce,
-  ojtUrl = 'https://dashboard-ojt.geaperu.com',
+  ojtUrl = 'https://control-ojt.vercel.app/',
   csatUrl = 'https://encuesta-de-satisfaccion-eight.vercel.app/',
   onNavigateNav
 }) {
