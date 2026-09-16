@@ -3164,6 +3164,17 @@ export function isAsistioStr(val) {
   return s === 'ASISTIO' || s === 'ASISTIÓ' || s === 'A' || s === 'SI' || s === 'PRESENTE' || s === 'AGREGADO' || s === 'RECUPERADO';
 }
 
+/** FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE. Toma la primera condición informada. */
+export function resolveFteWeight(...sources) {
+  for (const raw of sources) {
+    const s = String(raw || '').toUpperCase().trim();
+    if (!s) continue;
+    if (s.includes('PART')) return 0.5;
+    return 1.0;
+  }
+  return 1.0;
+}
+
 export function isRecuperoCapCandidate(n) {
   if (!n) return false;
   const tipo = String(n.tipo_reclutado || n.tipo || '').toUpperCase().trim();
@@ -6453,11 +6464,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       const doc = norm(n.documento);
       const isDescuentoDoc = descSet.has(makeDescuentoKey(doc, campana, grupo_codigo));
       const records = asisByDoc.get(doc) || [];
-      
-      // Condición laboral para ponderación FTE: FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE
-      const rawCond = records[0]?.condicion_laboral || records[0]?.condicion || n.condicion || n.condicion_laboral || grupoInfo.condicion || 'FULL TIME';
-      const isPartTime = String(rawCond || '').toUpperCase().includes('PART');
-      const fteWeight = isPartTime ? 0.5 : 1.0;
 
       // Tiene I-OP o pase formal a operación con fecha del registro
       const iopRecord = records.find(r => {
@@ -6467,6 +6473,16 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const st = String(r.estado || '').toUpperCase().trim();
         return st === 'INGRESO A OPERACION' || st === 'I-OP' || st === 'INGRESO';
       });
+
+      // FTE real: condición del registro I-OP, luego nómina, luego grupo. FULL TIME = 1, PART TIME = 0.5
+      const fteWeight = resolveFteWeight(
+        iopRecord?.condicion_laboral,
+        iopRecord?.condicion,
+        n.condicion,
+        n.condicion_laboral,
+        grupoInfo.condicion
+      );
+      const isPartTime = fteWeight === 0.5;
 
       const tieneIngreso = Boolean(iopRecord);
 
@@ -6564,37 +6580,54 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       }
 
       // Activo en OJT, Desertor en OJT o Desertor en Teoría (CT)?
+      // Corte oficial: fecha_inicio_ojt de capacidad_rys. Las bajas de OJT solo cuentan
+      // si la fecha de baja es >= esa fecha. I-OP no es "activo en OJT" (ya graduó).
       let isOjtActive = false;
       let isOjtDesertor = false;
       let isCtDesertor = false;
       let attendedInOjt = false;
 
+      const iopDate = iopRecord
+        ? parseFechaAsistencia(iopRecord.fecha_registro_asistencia || iopRecord.fecha_asistencia || iopRecord.fecha)
+        : '';
+      const iopEnVentanaOjt = Boolean(
+        tieneIngreso && (!fechaOjtTarget || !iopDate || iopDate >= fechaOjtTarget)
+      );
+      const bajaEnOjt = Boolean(
+        isBajaGeneral && (
+          !fechaOjtTarget
+            ? false
+            : (!fechaUltimaBaja || fechaUltimaBaja >= fechaOjtTarget)
+        )
+      );
+
       if (dia1Asistio || tieneIngreso) {
-        // ¿Llegó a pisar la fase de OJT?
         attendedInOjt = records.some(r => {
-          const rawDate = r.fecha_registro_asistencia || r.fecha_asistencia;
           const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim();
-          const rDate = rawDate ? parseFechaAsistencia(rawDate) : null;
-          
-          const isDateInOjt = Boolean(fechaOjtTarget && rDate && rDate >= fechaOjtTarget);
-          const isSiglaOjt = sigla === 'OJT' || sigla === 'I-OP';
-          
-          return (isDateInOjt || isSiglaOjt) && (sigla === 'A' || sigla === 'FJ' || sigla === 'OJT' || sigla === 'CAPACITACION' || sigla === 'I-OP');
-        }) || tieneIngreso;
+          const isPresence = sigla === 'A' || sigla === 'FJ' || sigla === 'OJT' || sigla === 'I-OP' || sigla === 'CAPACITACION' || sigla === 'ASISTIO';
+          if (!isPresence) return false;
+          const rDate = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha);
+          if (fechaOjtTarget) {
+            return Boolean(rDate && rDate >= fechaOjtTarget);
+          }
+          return sigla === 'OJT' || sigla === 'I-OP';
+        }) || iopEnVentanaOjt;
 
         if (attendedInOjt) {
-          if (tieneIngreso) {
-            isOjtActive = true;
+          if (iopEnVentanaOjt) {
+            // Graduado I-OP: no inflar activos_ojt ni deserción OJT
+          } else if (bajaEnOjt) {
+            isOjtDesertor = true;
           } else if (!isBajaGeneral) {
             isOjtActive = true;
-          } else {
-            isOjtDesertor = true;
+          } else if (!isBajaDia1) {
+            // Baja formal anterior a OJT (aunque luego haya marcas de OJT residuales)
+            isCtDesertor = true;
           }
         } else {
-          // Permaneció en Teoría (CT): si fue baja antes de OJT o el grupo ya cerró sin graduar a I-OP:
-          if (isBajaGeneral) {
-            isCtDesertor = true;
-          } else if (isGrupoCerrado && !tieneIngreso) {
+          // Flujo aula/WhatsApp: desertor CT = sigla B de formación ANTES de OJT.
+          // No contar faltas (FI/FJ) ni "grupo cerrado sin I-OP" como deserción.
+          if (isBajaGeneral && !isBajaDia1) {
             isCtDesertor = true;
           }
         }

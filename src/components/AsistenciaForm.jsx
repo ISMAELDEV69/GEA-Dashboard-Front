@@ -1307,18 +1307,33 @@ export default function AsistenciaForm({
       const m = String(r.motivo_baja || '').toUpperCase();
       return m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('PERIODO GRACIA');
     };
-    const bajasFormacion = attendanceList.filter(r => r.sigla === 'B' && !isB1(r)).length;
+    const desertores = attendanceList.filter(r => r.sigla === 'B' && !isB1(r)).length;
     const bajasDia1 = attendanceList.filter(r => r.sigla === 'B' && isB1(r)).length;
-    const totalBajas = bajasFormacion + bajasDia1;
-    const activos = total - totalBajas;
-    const faltas = attendanceList.filter(r => r.sigla === 'FI' || r.sigla === 'FJ').length;
-    
-    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapacitacion}\n📄 Q Día 0: ${total}\n👥 Q Día 1 (Activos al corte): ${activos}\n❌ Q Bajas Formación: ${bajasFormacion}${bajasDia1 > 0 ? `\n⚠️ Q Bajas Día 1 (Reclutamiento): ${bajasDia1}` : ''}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
+    const qDia1 = Math.max(0, total - bajasDia1);
+    const activos = Math.max(0, qDia1 - desertores);
+    const enSala = attendanceList.filter(r => {
+      const s = String(r.sigla || '').toUpperCase().trim();
+      return s === 'A' || s === 'I-OP' || s === 'OJT' || s === 'CAPACITACION';
+    }).length;
+    const listaFaltas = attendanceList.filter(r => {
+      const s = String(r.sigla || '').toUpperCase().trim();
+      return s === 'FI' || s === 'FJ';
+    });
+    const faltas = listaFaltas.length;
+    const diaCapLabel = String(diaCapacitacion).padStart(2, '0');
 
-    const asistentes = attendanceList.filter(r => r.sigla !== 'B');
-    if (asistentes.length > 0) {
-      text += `\n\n📋 LISTA DE ASISTENCIA (ACTIVOS):\n`;
-      text += asistentes.map((r, i) => `${i + 1}. ${r.documento} - ${r.apellido_paterno} ${r.apellido_materno} ${r.nombres}`).join('\n');
+    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapLabel}\n📄 Q Día 1: ${qDia1}\n👥 Q Activos al corte: ${activos}\n🟢 Q en sala: ${enSala}\n❌ Q Desertores: ${desertores}${bajasDia1 > 0 ? `\n⚠️ Q Bajas Día 1 (Reclutamiento): ${bajasDia1}` : ''}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
+
+    if (listaFaltas.length > 0) {
+      text += `\n\n⚠️ LISTA DE FALTAS (SEGUIMIENTO):\n`;
+      text += listaFaltas.map((r, i) => {
+        const tipo = String(r.sigla || '').toUpperCase() === 'FJ' ? 'FJ' : 'FI';
+        const nombre = `${r.apellido_paterno || ''} ${r.apellido_materno || ''} ${r.nombres || ''}`.replace(/\s+/g, ' ').trim();
+        const celular = r.celular ? ` | ${r.celular}` : '';
+        return `${i + 1}. ${r.documento} - ${nombre} (${tipo})${celular}`;
+      }).join('\n');
+    } else {
+      text += `\n\n✅ Sin faltas para seguimiento.`;
     }
 
     try {

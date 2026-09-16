@@ -503,7 +503,10 @@ export default function ResumenCapacitacion({
 
     const hasDetailedIop = uniqueIopMap.size > 0;
     const uniqueIopCount = uniqueIopMap.size;
-    const uniqueIopFtes = Array.from(uniqueIopMap.values()).reduce((sum, item) => sum + (Number(item.fte) || 1.0), 0);
+    const uniqueIopFtes = Array.from(uniqueIopMap.values()).reduce((sum, item) => {
+      const w = Number(item.fte);
+      return sum + (Number.isFinite(w) && w > 0 ? w : 1.0);
+    }, 0);
 
     const totals = filteredData.reduce((acc, curr) => {
       // Requerimiento solicitado ponderado consistente
@@ -588,7 +591,7 @@ export default function ResumenCapacitacion({
       const desertoresRegistrados = (s.desertores_ct || 0) + (s.desertores_ojt || 0);
       const desertores = Math.max(desertoresRegistrados, Math.max(0, s.d1 - totalActivos - (s.iop || 0)));
       const pctDesercion = s.d1 > 0 ? ((desertores / s.d1) * 100) : 0;
-      const enTransito = Math.max(0, s.ojt - s.iop);
+      const enTransito = Math.max(0, s.ojt);
 
       return {
         ...s,
@@ -630,7 +633,7 @@ export default function ResumenCapacitacion({
   // ── 1. KPI SUPERIOR: CANTIDAD DE GRUPOS / COHORTES ──
   const kpiGrupos = useMemo(() => {
     const total = filteredData.length;
-    const gruposConOjt = filteredData.filter(d => (d.activos_ojt || 0) > (d.ingresos_iop || 0)).length;
+    const gruposConOjt = filteredData.filter(d => (d.activos_ojt || 0) > 0).length;
     const formadoresUnicos = new Set(filteredData.map(d => d.formador).filter(Boolean)).size;
     const segmentosUnicos = new Set(filteredData.map(d => normalizeSegmento(d.segmento, d.campana)).filter(Boolean)).size;
 
@@ -664,7 +667,7 @@ export default function ResumenCapacitacion({
         });
       } else {
         // Fallback en caso no haya detalle individual en memoria para este grupo
-        const transitoEnGrupo = Math.max(0, (d.activos_ojt || 0) - (d.ingresos_iop || 0));
+        const transitoEnGrupo = Math.max(0, d.activos_ojt || 0);
         if (transitoEnGrupo > 0) {
           let diffDays = 0;
           if (d.fecha_inicio_ojt && d.fecha_inicio_ojt !== 'No definida') {
@@ -761,7 +764,10 @@ export default function ResumenCapacitacion({
     // Cantidad real de documentos únicos ingresados a operación en el periodo
     const iopActual = docsMesActual.length > 0 ? docsMesActual.length : (kpis.ingresos_iop || 0);
     const iopActualFtes = docsMesActual.length > 0 
-      ? docsMesActual.reduce((sum, it) => sum + (Number(it.fte) || 1.0), 0)
+      ? docsMesActual.reduce((sum, it) => {
+          const w = Number(it.fte);
+          return sum + (Number.isFinite(w) && w > 0 ? w : 1.0);
+        }, 0)
       : (kpis.ingresos_iop_ftes || iopActual);
 
     // Proyección en FTEs (Full Time Equivalent):
@@ -797,15 +803,16 @@ export default function ResumenCapacitacion({
     };
   }, [kpis, filters.periodo, filters.semana, filters.grupo, filters.campana, filters.estado, filteredData]);
 
-  // ── 3. KPI SUPERIOR: RIESGO DE COBERTURA (BRECHA FTE & FUGA FORMATIVA) ──
+  // ── 3. KPI SUPERIOR: RIESGO DE COBERTURA (BRECHA FTE REAL vs RQ) ──
   const kpiAlertas = useMemo(() => {
     const metaRq = kpis.rq_solicitado || 0;
-    const isGranular = kpiProyeccion?.isGranularFilter;
-    
-    // Si es filtro granular o cohorte cerrada, la dotación evaluada es DIRECTAMENTE los FTEs reales graduados
-    const iopFtesEvaluado = isGranular 
-      ? (kpis.ingresos_iop_ftes || 0) 
-      : (kpiProyeccion?.iopProyectadoFtes ?? (kpis.ingresos_iop_ftes || 0));
+
+    // Siempre FTEs reales de I-OP (FULL TIME=1, PART TIME=0.5).
+    // La proyección a cierre de mes vive en el KPI 4 (run-rate).
+    // Filtrar solo por periodo (mes abierto) NO debe inflar la brecha con ritmo×30.
+    const iopFtesEvaluado = Number(
+      kpis.ingresos_iop_ftes ?? kpiProyeccion?.iopActualFtes ?? 0
+    ) || 0;
     
     // Brecha de FTEs en Riesgo frente a la Meta solicitada (FTEs vs FTEs)
     const brechaFtes = Math.max(0, Number((metaRq - iopFtesEvaluado).toFixed(1)));
@@ -937,21 +944,17 @@ export default function ResumenCapacitacion({
     const desertoresTotal = Math.max(desertoresRegistrados, Math.max(0, d1 - totalActivos - iop));
     const pctDesercionGlobal = d1 > 0 ? (desertoresTotal / d1) * 100 : 0;
 
-    // 2. Deserción CT (Aula / Capacitación Teórica)
-    // Mide a los alumnos que cayeron en la etapa teórica antes de entrar a OJT
+    // 2. Deserción CT (Aula): mismo flujo que el resumen WhatsApp.
+    // Numerador = bajas formación (sigla B) antes de OJT. Denominador = Q Día 1.
+    // Faltas (FI/FJ) y Baja Día 1 (reclutamiento) no entran.
     const pctDesercionCT = d1 > 0 ? (desertoresCt / d1) * 100 : 0;
 
-    // 3. Dotación FTEs — ALINEADO con kpiAlertas para consistencia con el KPI 3 Riesgo de Cobertura.
-    // Se usa el mismo valor FTEs evaluado: en filtros granulares/cerrados = FTEs reales;
-    // en filtros mensuales generales = FTEs proyectados al cierre.
-    // Esto elimina la discrepancia entre el Gauge y el semáforo del KPI 3.
-    const iopFtesAlineado = kpiAlertas ? kpiAlertas.pctCumplimiento !== undefined
-      ? (rq > 0 ? (kpiAlertas.pctCumplimiento / 100) * rq : iopFtes)
-      : iopFtes
-      : iopFtes;
-    const pctDotacion = rq > 0 ? (iopFtesAlineado / rq) * 100 : (iopFtesAlineado > 0 ? 100 : 0);
+    // 3. Dotación FTEs reales: cada I-OP FULL TIME = 1.0, PART TIME = 0.5.
+    // No usar proyección de cierre ni reconstruir desde % redondeado (eso fabricaba decimales como 391,4).
+    const pctDotacion = rq > 0 ? (iopFtes / rq) * 100 : (iopFtes > 0 ? 100 : 0);
 
-    // 4. Deserción OJT
+    // 4. Deserción OJT: bajas con fecha >= fecha_inicio_ojt / personas que pisaron OJT.
+    // activos_ojt ya excluye I-OP, así que no se suma el graduado dos veces.
     const qIniciaOjt = ojt + iop + desertoresOjt;
     const pctDesercionOJT = qIniciaOjt > 0 ? (desertoresOjt / qIniciaOjt) * 100 : 0;
 
@@ -988,7 +991,7 @@ export default function ResumenCapacitacion({
         target: 80.00,
         subMetrics: [
           { label: "RQ FTE's", value: formatFte(rq) },
-          { label: "Dotación FTE's", value: formatFte(iopFtesAlineado) }
+          { label: "Dotación FTE's", value: formatFte(iopFtes) }
         ]
       },
       desercionOJT: {
@@ -1000,7 +1003,7 @@ export default function ResumenCapacitacion({
         ]
       }
     };
-  }, [kpis, kpiAlertas]);
+  }, [kpis]);
 
   const formadoresRankingList = useMemo(() => {
     const map = new Map();
@@ -1147,7 +1150,7 @@ export default function ResumenCapacitacion({
         'Activos en OJT': d.activos_ojt,
         'Pases I-OP (Personas)': d.ingresos_iop,
         'Pases I-OP (FTEs)': d.ingresos_iop_ftes !== undefined ? d.ingresos_iop_ftes : d.ingresos_iop,
-        'Activos en Tránsito': Math.max(0, (d.activos_ojt || 0) - (d.ingresos_iop || 0)),
+        'Activos en Tránsito': Math.max(0, d.activos_ojt || 0),
         'Desertores Formación': desertores,
         '% Cumplimiento RQ': pctCumpl
       };
@@ -1493,7 +1496,7 @@ export default function ResumenCapacitacion({
                 </span>
               </div>
               <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                {kpiAlertas.hasBrecha ? 'Brecha Proyectada frente a Meta' : 'Meta Cubierta (Sin Brecha)'}
+                {kpiAlertas.hasBrecha ? 'Brecha real (I-OP FTE vs RQ)' : 'Meta Cubierta (Sin Brecha)'}
               </p>
               <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
                 <span className="text-[var(--text-muted)]">

@@ -3,7 +3,7 @@
  * Métricas y narrativas derivadas del consolidado de nóminas v2
  */
 
-import { isBajaDia1, isBajaCapacitacion } from './dataService.js'
+import { isBajaDia1, isBajaCapacitacion, resolveFteWeight } from './dataService.js'
 
 export const ATTENDANCE_PRESENT = ['A', 'I-OP', 'FJ']
 
@@ -1248,11 +1248,6 @@ export function buildResumenMensualCapacitacion(
       row.nominaDocs.add(doc)
       const records = asisByDoc.get(doc) || []
 
-      // Condición laboral para FTE: FULL TIME = 1.0, PART TIME = 0.5
-      const rawCond = records[0]?.condicion_laboral || records[0]?.condicion || n.condicion || n.condicion_laboral || grupoInfo.condicion || 'FULL TIME'
-      const isPartTime = String(rawCond || '').toUpperCase().includes('PART')
-      const fteWeight = isPartTime ? 0.5 : 1.0
-
       // Ingreso a Operación: registro formal I-OP o INGRESO A OPERACION en asistencias del grupo
       const iopRecord = records.find(r => {
         const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
@@ -1261,6 +1256,15 @@ export function buildResumenMensualCapacitacion(
         const st = String(r.estado || '').toUpperCase().trim()
         return st === 'INGRESO A OPERACION' || st === 'I-OP' || st === 'INGRESO'
       })
+
+      // FTE real: condición del I-OP, luego nómina, luego grupo. FULL TIME = 1, PART TIME = 0.5
+      const fteWeight = resolveFteWeight(
+        iopRecord?.condicion_laboral,
+        iopRecord?.condicion,
+        n.condicion,
+        n.condicion_laboral,
+        grupoInfo.condicion
+      )
 
       // Asistencia Día 0
       const d0 = String(n.dia_0 || '').toUpperCase().trim()
