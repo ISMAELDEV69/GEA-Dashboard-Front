@@ -133,31 +133,23 @@ const SEGMENTO_COLORS = {
   'LIPIGAS': '#00E676'
 };
 
-// Helper robusto para cálculo consistente y verdadero de RQ Solicitado (FTEs)
-// REGLA: Excluir solo áreas explícitamente no elegibles (ROTACIÓN, LÍNEA DE CARRERA, INTERNO).
-// Incluir RECLUTAMIENTO (explícito) o cualquier área no clasificada que sí tenga RQ > 0.
+// RQ FTE del gauge: solo área RECLUTAMIENTO (no TRASLADO, OPERACIONES, CAPACITACIÓN, etc.)
+const isAreaReclutamiento = (area) => String(area || '').trim().toUpperCase() === 'RECLUTAMIENTO';
+
 const getGrupoRq = (g) => {
   if (!g) return 0;
   if (g.is_cancelado) return 0;
-  const areaNorm = String(g.area_traslado || '').trim().toUpperCase();
-  // Excluir explícitamente áreas que no corresponden a dotación de reclutamiento
-  const isAreaExcl = areaNorm.includes('ROTACION') || areaNorm.includes('LINEA') ||
-    areaNorm.includes('INTERNO') || areaNorm.includes('TRASLADO INTERNO');
-  if (isAreaExcl) return 0;
+  if (!isAreaReclutamiento(g.area_traslado)) return 0;
 
   const rqFtes = g.rq_ftes_solicitado !== undefined && g.rq_ftes_solicitado !== null ? Number(g.rq_ftes_solicitado) : null;
   const rqSol = g.rq_solicitado !== undefined && g.rq_solicitado !== null ? Number(g.rq_solicitado) : null;
   const req = g.requerimiento !== undefined && g.requerimiento !== null ? Number(g.requerimiento) : null;
 
-  const rawVal = rqFtes !== null && !isNaN(rqFtes) ? rqFtes
+  const rawVal = rqFtes !== null && !isNaN(rqFtes) && rqFtes > 0 ? rqFtes
     : (rqSol !== null && !isNaN(rqSol) ? rqSol
       : (req !== null && !isNaN(req) ? req : 0));
 
-  // Incluir si: área es RECLUTAMIENTO, área vacía con RQ>0, o cualquier área no excluida con RQ>0
-  if (rawVal > 0) {
-    return Math.max(0, rawVal);
-  }
-  return 0;
+  return rawVal > 0 ? Math.max(0, rawVal) : 0;
 };
 
 export default function ResumenCapacitacion({

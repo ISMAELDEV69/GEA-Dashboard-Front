@@ -6808,33 +6808,27 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
-        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
-        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
-        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
-        return isRqEligible ? rawRq : 0;
+        return rawRq > 0 ? rawRq : 0;
       })(),
       rq_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
-        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
-        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
-        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
-        return isRqEligible ? rawRq : 0;
+        return rawRq > 0 ? rawRq : 0;
       })(),
       rq_ftes_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : Number(grupoInfo.rq_solicitado || 0);
-        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
-        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
-        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
-        return isRqEligible ? rawRq : 0;
+        return rawRq > 0 ? rawRq : 0;
       })(),
       total_nomina,
       asistio_dia0,
