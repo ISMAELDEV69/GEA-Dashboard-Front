@@ -1853,6 +1853,8 @@ export async function fetchAsistencias() {
       let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
       const cleanDoc = String(row.documento || '').trim();
       const cleanGrupo = String(row.codigo_grupo || row.grupo || '').trim();
+      const semNum = String(row.archivo_origen || '').replace(/\D/g, '');
+      const semFromArchivo = semNum ? `SEM ${parseInt(semNum, 10)}` : '';
       
       if (isoDate && cleanDoc) {
         const key = `${cleanGrupo}_${cleanDoc}_${isoDate}`;
@@ -1881,6 +1883,9 @@ export async function fetchAsistencias() {
           tipo_reclutado: row.tipo_reclutado || '',
           formador: row.nombre_formador,
           archivo_origen: row.archivo_origen || '',
+          semana: semFromArchivo,
+          semana_trabajo: semFromArchivo,
+          semana_label: semFromArchivo,
         });
       }
     });
@@ -5369,6 +5374,75 @@ export async function migrarPostulantesEntreGrupos({ origenGrupoCodigo, destinoG
 }
 
 
+function cleanGroupCodeKey(val) {
+  if (!val) return '';
+  return String(val)
+    .trim()
+    .toUpperCase()
+    .replace(/\s*\(SEM\s*\d+.*?\)/i, '')
+    .replace(/\s*-\s*SEM\s*\d+.*$/i, '')
+    .replace(/_\d+$/, '')
+    .trim();
+}
+
+function buildGrupoCohortLookup(gruposInfo = []) {
+  const map = new Map();
+  for (const g of gruposInfo) {
+    const codigo = g.codigo || g.grupo_codigo || '';
+    const camp = String(g.campana || '').trim().toUpperCase();
+    const code = String(codigo || '').trim().toUpperCase();
+    const clean = cleanGroupCodeKey(codigo);
+    const semanaFromNum = g.semana_trabajo != null && g.semana_trabajo !== ''
+      ? `SEM ${String(g.semana_trabajo).replace(/\D/g, '')}`
+      : '';
+    const payload = {
+      periodo: g.periodo || g.periodo_rys || '',
+      semana: g.semana_label || semanaFromNum || g.semana || '',
+      segmento: g.segmento || '',
+      campana: g.campana || '',
+      codigo
+    };
+    if (camp && code) map.set(`${camp}|${code}`, payload);
+    if (camp && clean) map.set(`${camp}|${clean}`, payload);
+    if (code && !map.has(code)) map.set(code, payload);
+    if (clean && !map.has(clean)) map.set(clean, payload);
+  }
+  return map;
+}
+
+function resolveCohortKeysFromGrupo(row, lookup) {
+  const rawCode = row.grupo_codigo || row.codigo_grupo || row.codigo || '';
+  const camp = String(row.campana || '').trim().toUpperCase();
+  const code = String(rawCode || '').trim().toUpperCase();
+  const clean = cleanGroupCodeKey(rawCode);
+  const maestro = (camp && code && lookup.get(`${camp}|${code}`))
+    || (camp && clean && lookup.get(`${camp}|${clean}`))
+    || lookup.get(code)
+    || lookup.get(clean)
+    || null;
+  return {
+    periodo: row.periodo_reclutado || row.periodo_ingreso_op || row.periodo || maestro?.periodo || '',
+    semana: row.semana_trabajo || row.semana_label || row.semana || maestro?.semana || '',
+    segmento: String(row.segmento || '').trim() || maestro?.segmento || '',
+    campana: row.campana || maestro?.campana || '',
+    codigo: rawCode || maestro?.codigo || ''
+  };
+}
+
+function enrichRowWithCohortKeys(row, lookup) {
+  const resolved = resolveCohortKeysFromGrupo(row, lookup);
+  if (!resolved.periodo && !resolved.semana && !resolved.segmento) return row;
+  return {
+    ...row,
+    periodo: row.periodo || resolved.periodo,
+    periodo_reclutado: row.periodo_reclutado || resolved.periodo,
+    semana: row.semana || resolved.semana,
+    semana_trabajo: row.semana_trabajo || resolved.semana,
+    semana_label: row.semana_label || resolved.semana,
+    segmento: String(row.segmento || '').trim() || resolved.segmento
+  };
+}
+
 /**
  * Cálculo Ultrarrápido de Métricas de Calibración Día 1 en Memoria (O(1) Map indexing).
  * Reutiliza postulantes y asistencias ya cargados en RAM sin repaginar Supabase.
@@ -5417,7 +5491,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('postulante_documento, grupo_codigo, campana, sigla_inicial, sigla_final, motivo_baja')
         .in('grupo_codigo', codigos),
       supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
+        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
         .in('grupo_codigo', codigos)
     ];
 
@@ -5523,6 +5597,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     if (ca.length >= 6 && cb.length >= 6 && (ca.includes(cb) || cb.includes(ca))) return true;
     return false;
   };
+
+  const grupoKeysLookup = buildGrupoCohortLookup(gruposInfo);
+  activePostulantes = (activePostulantes || []).map(n => enrichRowWithCohortKeys(n, grupoKeysLookup));
+  activeAsistencias = (activeAsistencias || []).map(f => enrichRowWithCohortKeys(f, grupoKeysLookup));
 
   // 2. Indexación estricta por 5 Llaves Compuestas + fallback controlado por Código
   const nominas5K = new Map();
@@ -6098,6 +6176,10 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     .trim()
     .toUpperCase();
 
+  const grupoKeysLookup = buildGrupoCohortLookup(gruposInfo);
+  effPostulantes = (effPostulantes || []).map(n => enrichRowWithCohortKeys(n, grupoKeysLookup));
+  effAsistencias = (effAsistencias || []).map(f => enrichRowWithCohortKeys(f, grupoKeysLookup));
+
   // Indexación Multi-Nivel (5-Llaves Exactas como Nivel 1)
   const nominas5K = new Map();
   const nominasCampCode = new Map();
@@ -6363,7 +6445,8 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
     const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
-    const isGrupoCerrado = estadoGrupo === 'CERRADO' || estadoGrupo === 'CANCELADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO' || periodoRys === 'CANCELADO';
+    const isGrupoCancelado = estadoGrupo === 'CANCELADO' || estadoGrupo === 'INACTIVO' || periodoRys === 'CANCELADO' || estadoGrupo.includes('CANCEL') || estadoGrupo.includes('ANULAD');
+    const isGrupoCerrado = !isGrupoCancelado && (estadoGrupo === 'CERRADO' || estadoGrupo === 'FINALIZADO' || estadoGrupo === 'CULMINADO');
     const fechaOjtTarget = fecha_inicio_ojt && fecha_inicio_ojt !== 'No definida' ? parseFechaAsistencia(fecha_inicio_ojt) : null;
 
     for (const n of effectiveCandidates) {
@@ -6688,22 +6771,38 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       ultima_fecha_asistencia: ultima_fecha_asistencia || '-',
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
+      is_cancelado: isGrupoCancelado,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
-      requerimiento: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
-        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+      requerimiento: (() => {
+        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
-          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0))
-        : 0,
-      rq_solicitado: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
-        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
+        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
+        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
+        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
+        return isRqEligible ? rawRq : 0;
+      })(),
+      rq_solicitado: (() => {
+        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
-          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0))
-        : 0,
-      rq_ftes_solicitado: (String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO')
-        ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== ''
+          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
+        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
+        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
+        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
+        return isRqEligible ? rawRq : 0;
+      })(),
+      rq_ftes_solicitado: (() => {
+        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+        const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
-          : Number(grupoInfo.rq_solicitado || 0))
-        : 0,
+          : Number(grupoInfo.rq_solicitado || 0);
+        // CORRECCIÓN: Excluir solo áreas explícitamente no-elegibles. Incluir cualquier grupo con RQ > 0 que no esté excluido ni cancelado.
+        const isAreaExplicitExcl = rawArea.includes('ROTACION') || rawArea.includes('LINEA') || rawArea.includes('INTERNO') || rawArea.includes('TRASLADO INTERNO');
+        const isRqEligible = !isGrupoCancelado && !isAreaExplicitExcl && rawRq > 0;
+        return isRqEligible ? rawRq : 0;
+      })(),
       total_nomina,
       asistio_dia0,
       asistio_dia1,

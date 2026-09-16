@@ -288,7 +288,10 @@ export function buildCampanaEtapaHeatmap(postulantes = [], asistencias = [], cam
         campanaMetasSum.set(cName, { metaDia1: 0, metaOp: 0, metaDia0: 0, countGrupos: 0 })
       }
       const cm = campanaMetasSum.get(cName)
-      const isRqEligible = String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO'
+      // CORRECIÓN: Aceptar cualquier grupo con RQ > 0 que no sea de área excluida ni esté cancelado
+      const _areaRqCm = String(g.area_traslado || '').trim().toUpperCase()
+      const _excluCm = _areaRqCm.includes('ROTACION') || _areaRqCm.includes('LINEA') || _areaRqCm.includes('INTERNO')
+      const isRqEligible = !_excluCm
       cm.metaDia1 += Number(g.meta_dia_1) || 0
       cm.metaOp += isRqEligible ? (Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0) : 0
       cm.metaDia0 += Number(g.meta_dia_0) || 0
@@ -1151,9 +1154,10 @@ export function buildResumenMensualCapacitacion(
 
     const row = getOrCreatePeriod(perVal)
 
-    // Meta Operativa (RQ) en FTEs: SOLO de RECLUTAMIENTO
+    // Meta Operativa (RQ) en FTEs: cualquier grupo con RQ > 0 no excluido explícitamente
     const areaNorm = String(grupoInfo.area_traslado || '').trim().toUpperCase()
-    const isRqEligible = areaNorm === 'RECLUTAMIENTO'
+    const _areaExcl1156 = areaNorm.includes('ROTACION') || areaNorm.includes('LINEA') || areaNorm.includes('INTERNO')
+    const isRqEligible = !_areaExcl1156
     const rqVal = isRqEligible ? (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && String(grupoInfo.rq_ftes_solicitado).trim() !== ''
       ? Number(grupoInfo.rq_ftes_solicitado)
       : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && String(grupoInfo.rq_solicitado).trim() !== ''
@@ -1566,7 +1570,10 @@ export function buildMultiEvolutivoData(
     const wObj = getWeekKey(g.semana_trabajo || g.semana_label || g.semana, g.periodo, g.grupo_codigo || g.codigo)
     if (!wObj) continue
     const row = getOrCreateWeek(wObj)
-    const isRqEligible = String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO'
+    // CORRECIÓN: Aceptar cualquier grupo con RQ > 0 no excluido explícitamente
+    const _area1569 = String(g.area_traslado || '').trim().toUpperCase()
+    const _exclu1569 = _area1569.includes('ROTACION') || _area1569.includes('LINEA') || _area1569.includes('INTERNO')
+    const isRqEligible = !_exclu1569
     const rq = isRqEligible ? (Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0) : 0
     const cupos = Number(g.cupos || g.meta_apertura || g.meta_dia_1) || (rq > 0 ? rq : 0)
     row.metaRqOp += rq
@@ -1947,7 +1954,10 @@ export function buildGraficoPersonalizadoData(
       const rawPer = normalize2026Period(g.periodo || g.codigo || g.grupo_codigo)
       if (!rawPer || !rawPer.startsWith('2026')) continue
       const row = getOrCreatePeriod(rawPer)
-      const isRqEligible = String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO'
+      // CORRECIÓN: Aceptar cualquier grupo con RQ > 0 no excluido explícitamente
+      const _area1950 = String(g.area_traslado || '').trim().toUpperCase()
+      const _exclu1950 = _area1950.includes('ROTACION') || _area1950.includes('LINEA') || _area1950.includes('INTERNO')
+      const isRqEligible = !_exclu1950
       const rq = isRqEligible ? (Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0) : 0
       const cupos = Number(g.cupos || g.meta_apertura || g.meta_dia_1) || (rq > 0 ? rq : 0)
       const d0 = Number(g.meta_dia_0) || cupos
@@ -2142,7 +2152,10 @@ export function buildGraficoPersonalizadoData(
       const wObj = getWeekKey(g.semana_trabajo || g.semana_label || g.semana, g.periodo, g.grupo_codigo || g.codigo)
       if (!wObj) continue
       const row = getOrCreateWeek(wObj)
-      const isRqEligible = String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO'
+      // CORRECIÓN: Aceptar cualquier grupo con RQ > 0 no excluido explícitamente
+      const _area2145 = String(g.area_traslado || '').trim().toUpperCase()
+      const _exclu2145 = _area2145.includes('ROTACION') || _area2145.includes('LINEA') || _area2145.includes('INTERNO')
+      const isRqEligible = !_exclu2145
       const rq = isRqEligible ? (Number(g.rq_ftes_solicitado ?? g.rq_solicitado) || 0) : 0
       const cupos = Number(g.cupos || g.meta_apertura || g.meta_dia_1) || (rq > 0 ? rq : 0)
       const d0 = Number(g.meta_dia_0) || cupos

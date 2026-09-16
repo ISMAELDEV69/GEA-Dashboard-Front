@@ -133,6 +133,33 @@ const SEGMENTO_COLORS = {
   'LIPIGAS': '#00E676'
 };
 
+// Helper robusto para cálculo consistente y verdadero de RQ Solicitado (FTEs)
+// REGLA: Excluir solo áreas explícitamente no elegibles (ROTACIÓN, LÍNEA DE CARRERA, INTERNO).
+// Incluir RECLUTAMIENTO (explícito) o cualquier área no clasificada que sí tenga RQ > 0.
+const getGrupoRq = (g) => {
+  if (!g) return 0;
+  if (g.is_cancelado) return 0;
+  const areaNorm = String(g.area_traslado || '').trim().toUpperCase();
+  // Excluir explícitamente áreas que no corresponden a dotación de reclutamiento
+  const isAreaExcl = areaNorm.includes('ROTACION') || areaNorm.includes('LINEA') ||
+    areaNorm.includes('INTERNO') || areaNorm.includes('TRASLADO INTERNO');
+  if (isAreaExcl) return 0;
+
+  const rqFtes = g.rq_ftes_solicitado !== undefined && g.rq_ftes_solicitado !== null ? Number(g.rq_ftes_solicitado) : null;
+  const rqSol = g.rq_solicitado !== undefined && g.rq_solicitado !== null ? Number(g.rq_solicitado) : null;
+  const req = g.requerimiento !== undefined && g.requerimiento !== null ? Number(g.requerimiento) : null;
+
+  const rawVal = rqFtes !== null && !isNaN(rqFtes) ? rqFtes
+    : (rqSol !== null && !isNaN(rqSol) ? rqSol
+      : (req !== null && !isNaN(req) ? req : 0));
+
+  // Incluir si: área es RECLUTAMIENTO, área vacía con RQ>0, o cualquier área no excluida con RQ>0
+  if (rawVal > 0) {
+    return Math.max(0, rawVal);
+  }
+  return 0;
+};
+
 export default function ResumenCapacitacion({
   grupos = [],
   campanasMetas = [],
@@ -254,7 +281,12 @@ export default function ResumenCapacitacion({
   // Opciones de filtros cruzados reactivos sobre el conjunto de datos calculado
   const filterOptions = useMemo(() => {
     const rawDataset = data.length > 0 ? data : (campanasMetas.length > 0 ? campanasMetas : (capacidadRys.length > 0 ? capacidadRys : grupos));
-    const dataset = (rawDataset || []).filter(g => !isCampanaProyectada(g));
+    const dataset = (rawDataset || []).filter(g => {
+      if (isCampanaProyectada(g) || g.is_cancelado) return false;
+      const st = norm(g.estado);
+      if (st.includes('CANCEL') || st.includes('ANULAD') || st.includes('INACT')) return false;
+      return true;
+    });
     
     // 1. Periodos (Periodo de Ingreso a Operación >= MIN_PERIODO_CORTE)
     const periodos = new Set();
@@ -340,7 +372,23 @@ export default function ResumenCapacitacion({
     };
   }, [data, capacidadRys, campanasMetas, grupos, filters, showAllPeriodos, maxAutoPeriodo]);
 
-  // Sincronización reactiva de filtros en cascada
+  // Sincronización reactiva de filtros en cascada completa
+  useEffect(() => {
+    if (filters.semana !== 'Todas') {
+      if (filterOptions.semanas && !filterOptions.semanas.includes(filters.semana)) {
+        setFilters(f => ({ ...f, semana: 'Todas', campana: 'Todas', grupo: 'Todos' }));
+      }
+    }
+  }, [filterOptions.semanas, filters.semana]);
+
+  useEffect(() => {
+    if (filters.segmento !== 'Todos') {
+      if (filterOptions.segmentos && !filterOptions.segmentos.includes(filters.segmento)) {
+        setFilters(f => ({ ...f, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }));
+      }
+    }
+  }, [filterOptions.segmentos, filters.segmento]);
+
   useEffect(() => {
     if (filters.campana !== 'Todas' && filters.campana !== 'Todos') {
       if (filterOptions.campanas && !filterOptions.campanas.includes(filters.campana)) {
@@ -364,6 +412,11 @@ export default function ResumenCapacitacion({
     return data.filter(d => {
       // Excluir grupos proyectados fuera de operación
       if (isCampanaProyectada(d)) return false;
+
+      // Excluir grupos cancelados o inactivos
+      if (d.is_cancelado) return false;
+      const stNorm = norm(d.estado);
+      if (stNorm.includes('CANCEL') || stNorm.includes('ANULAD') || stNorm.includes('INACT')) return false;
 
       // Filtro Periodo (Periodo de Ingreso a Operación)
       const cleanP = getGrupoPeriodo(d) || normalize2026Period(d.periodo_ingreso_op || d.periodo);
@@ -453,13 +506,8 @@ export default function ResumenCapacitacion({
     const uniqueIopFtes = Array.from(uniqueIopMap.values()).reduce((sum, item) => sum + (Number(item.fte) || 1.0), 0);
 
     const totals = filteredData.reduce((acc, curr) => {
-      // Regla de Negocio: Solo los grupos de RECLUTAMIENTO representan el requerimiento solicitado (RQ)
-      const areaNorm = curr.area_traslado ? String(curr.area_traslado).trim().toUpperCase() : '';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
-      const rqVal = isRqEligible ? (curr.rq_ftes_solicitado !== undefined && curr.rq_ftes_solicitado !== null
-        ? Number(curr.rq_ftes_solicitado)
-        : (curr.rq_solicitado !== undefined && curr.rq_solicitado !== null ? Number(curr.rq_solicitado) : Number(curr.requerimiento || 0))) : 0;
-      acc.rq_solicitado += rqVal;
+      // Requerimiento solicitado ponderado consistente
+      acc.rq_solicitado += getGrupoRq(curr);
       acc.total_nomina += (curr.total_nomina || 0);
       acc.asistio_dia1 += (curr.asistio_dia1 || 0);
       acc.activos_ojt += (curr.activos_ojt || 0);
@@ -503,12 +551,7 @@ export default function ResumenCapacitacion({
       const segKey = normalizeSegmento(d.segmento, d.campana);
       const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() });
 
-      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : '';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
-      const rqVal = isRqEligible ? (d.rq_ftes_solicitado !== undefined && d.rq_ftes_solicitado !== null
-        ? Number(d.rq_ftes_solicitado)
-        : (d.rq_solicitado !== undefined && d.rq_solicitado !== null ? Number(d.rq_solicitado) : Number(d.requerimiento || 0))) : 0;
-      target.rq += rqVal;
+      target.rq += getGrupoRq(d);
       target.reclutados += (d.total_nomina || 0);
       target.d1 += (d.asistio_dia1 || 0);
       target.ojt += (d.activos_ojt || 0);
@@ -663,6 +706,10 @@ export default function ResumenCapacitacion({
 
     const rqTotal = kpis.rq_solicitado || 0;
 
+    // Detectar si el filtro es granular (Semana puntual, Campaña puntual, Grupo puntual o Estado Cerrado)
+    const isGranularFilter = filters.semana !== 'Todas' || filters.grupo !== 'Todos' || (filters.campana !== 'Todas' && filters.campana !== 'Todos') || filters.estado === 'CERRADO';
+    const allClosed = filteredData.length > 0 && filteredData.every(d => d.is_cerrado);
+
     // Detectar si el periodo seleccionado es un mes pasado/cerrado
     const pStr = String(filters.periodo || '').trim();
     const pMatch = pStr.match(/(\d{4})[-_/\s]?(\d{2})/);
@@ -695,8 +742,6 @@ export default function ResumenCapacitacion({
     const currentYearMonthPrefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
     const currentPeriodoDigits = `${currentYear}${String(currentMonth + 1).padStart(2, '0')}`;
 
-    // Si el filtro de periodo es 'Todos', filtramos los I-OP con sigla cuya fecha o periodo corresponda al mes en curso
-    // para evitar que el ritmo diario divida el acumulado de todo el año histórico entre los días del mes actual
     let docsMesActual = [];
     if (filters.periodo === 'Todos') {
       docsMesActual = uniqueDocsList.filter(item => {
@@ -706,7 +751,6 @@ export default function ResumenCapacitacion({
         const pDigits = String(item.periodo || '').replace(/\D/g, '');
         return pDigits === currentPeriodoDigits;
       });
-      // Fallback si no hay fechas explícitas de este mes en los registros: usar los documentos únicos disponibles
       if (docsMesActual.length === 0) {
         docsMesActual = uniqueDocsList;
       }
@@ -720,10 +764,11 @@ export default function ResumenCapacitacion({
       ? docsMesActual.reduce((sum, it) => sum + (Number(it.fte) || 1.0), 0)
       : (kpis.ingresos_iop_ftes || iopActual);
 
-    // Proyección en FTEs (Full Time Equivalent) tal como solicitó el usuario
+    // Proyección en FTEs (Full Time Equivalent):
+    // REGLA CLAVE: En filtros granulares (Semana, Grupo, Campaña puntual o Cerrados), NO se extrapola a 30 días.
     let iopProyectadoFtes = 0;
-    let iopProyectado = 0; // personas físicas
-    if (isPeriodoCerrado || diasTranscurridos >= totalDaysInMonth) {
+    let iopProyectado = 0;
+    if (isGranularFilter || allClosed || isPeriodoCerrado || diasTranscurridos >= totalDaysInMonth) {
       iopProyectadoFtes = iopActualFtes;
       iopProyectado = iopActual;
     } else {
@@ -736,7 +781,7 @@ export default function ResumenCapacitacion({
 
     // Porcentaje de cobertura frente al RQ solicitado (FTEs vs FTEs)
     const pctProyeccion = rqTotal > 0 ? ((iopProyectadoFtes / rqTotal) * 100).toFixed(1) : (iopActualFtes > 0 ? '100.0' : '0.0');
-    const brechaFtes = Math.max(0, rqTotal - iopProyectadoFtes);
+    const brechaFtes = Math.max(0, Number((rqTotal - iopProyectadoFtes).toFixed(1)));
 
     return {
       iopActual,
@@ -747,19 +792,25 @@ export default function ResumenCapacitacion({
       diasTranscurridos,
       totalDaysInMonth,
       brechaFtes,
+      isGranularFilter: isGranularFilter || allClosed,
       isCloseToTarget: parseFloat(pctProyeccion) >= 80
     };
-  }, [kpis, filters.periodo]);
+  }, [kpis, filters.periodo, filters.semana, filters.grupo, filters.campana, filters.estado, filteredData]);
 
   // ── 3. KPI SUPERIOR: RIESGO DE COBERTURA (BRECHA FTE & FUGA FORMATIVA) ──
   const kpiAlertas = useMemo(() => {
     const metaRq = kpis.rq_solicitado || 0;
-    const iopProyectadoFtes = kpiProyeccion?.iopProyectadoFtes ?? (kpis.ingresos_iop_ftes || 0);
+    const isGranular = kpiProyeccion?.isGranularFilter;
+    
+    // Si es filtro granular o cohorte cerrada, la dotación evaluada es DIRECTAMENTE los FTEs reales graduados
+    const iopFtesEvaluado = isGranular 
+      ? (kpis.ingresos_iop_ftes || 0) 
+      : (kpiProyeccion?.iopProyectadoFtes ?? (kpis.ingresos_iop_ftes || 0));
     
     // Brecha de FTEs en Riesgo frente a la Meta solicitada (FTEs vs FTEs)
-    const brechaFtes = Math.max(0, Number((metaRq - iopProyectadoFtes).toFixed(1)));
-    const superavitFtes = Math.max(0, Number((iopProyectadoFtes - metaRq).toFixed(1)));
-    const pctCumplimiento = metaRq > 0 ? (iopProyectadoFtes / metaRq) * 100 : 100;
+    const brechaFtes = Math.max(0, Number((metaRq - iopFtesEvaluado).toFixed(1)));
+    const superavitFtes = Math.max(0, Number((iopFtesEvaluado - metaRq).toFixed(1)));
+    const pctCumplimiento = metaRq > 0 ? (iopFtesEvaluado / metaRq) * 100 : (iopFtesEvaluado > 0 ? 100 : 100);
     const hasBrecha = brechaFtes > 0.05;
 
     // Segmentos bajo meta (< 70% de cumplimiento RQ)
@@ -807,21 +858,20 @@ export default function ResumenCapacitacion({
     const countFormadoresCriticos = formadoresCriticosList.length;
 
     // Clasificación ejecutiva calibrada:
-    // CRÍTICO: Cobertura < 80% o Brecha severa (> 25 FTEs con < 90% cobertura)
-    // PRECAUCIÓN: Cobertura entre 80% y 94.9% con brecha perceptible (> 5 FTEs) o segmentos críticos
-    // CUBIERTO: Cobertura >= 95% o brecha mínima (<= 5 FTEs)
-    const isCritico = pctCumplimiento < 80 || (brechaFtes > 25 && pctCumplimiento < 90) || countSegBajoMeta >= 2;
-    const isObservado = !isCritico && (pctCumplimiento < 95 && brechaFtes > 5 || countSegBajoMeta > 0);
+    // CUBIERTO si no hay requerimiento o cobertura >= 95% o brecha mínima
+    const isCritico = metaRq > 0 && (pctCumplimiento < 80 || (brechaFtes > 25 && pctCumplimiento < 90) || countSegBajoMeta >= 2);
+    const isObservado = !isCritico && metaRq > 0 && ((pctCumplimiento < 95 && brechaFtes > 5) || countSegBajoMeta > 0);
 
     return {
       brechaFtes,
       superavitFtes,
       hasBrecha,
+      pctCumplimiento: parseFloat(pctCumplimiento.toFixed(1)),
       countSegBajoMeta,
       countFormadoresCriticos,
       formadoresCriticosList,
-      estadoSemaforo: isCritico ? 'CRÍTICO' : (isObservado ? 'PRECAUCIÓN' : 'CUBIERTO'),
-      isHealthy: !isCritico && !isObservado
+      estadoSemaforo: metaRq === 0 ? 'CUBIERTO' : (isCritico ? 'CRÍTICO' : (isObservado ? 'PRECAUCIÓN' : 'CUBIERTO')),
+      isHealthy: metaRq === 0 || (!isCritico && !isObservado)
     };
   }, [segmentData, filteredData, kpis, kpiProyeccion]);
 
@@ -891,8 +941,15 @@ export default function ResumenCapacitacion({
     // Mide a los alumnos que cayeron en la etapa teórica antes de entrar a OJT
     const pctDesercionCT = d1 > 0 ? (desertoresCt / d1) * 100 : 0;
 
-    // 3. Dotación FTEs (Ponderación: FULL TIME = 1.0 FTE, PART TIME = 0.5 FTE)
-    const pctDotacion = rq > 0 ? (iopFtes / rq) * 100 : (iopFtes > 0 ? 100 : 0);
+    // 3. Dotación FTEs — ALINEADO con kpiAlertas para consistencia con el KPI 3 Riesgo de Cobertura.
+    // Se usa el mismo valor FTEs evaluado: en filtros granulares/cerrados = FTEs reales;
+    // en filtros mensuales generales = FTEs proyectados al cierre.
+    // Esto elimina la discrepancia entre el Gauge y el semáforo del KPI 3.
+    const iopFtesAlineado = kpiAlertas ? kpiAlertas.pctCumplimiento !== undefined
+      ? (rq > 0 ? (kpiAlertas.pctCumplimiento / 100) * rq : iopFtes)
+      : iopFtes
+      : iopFtes;
+    const pctDotacion = rq > 0 ? (iopFtesAlineado / rq) * 100 : (iopFtesAlineado > 0 ? 100 : 0);
 
     // 4. Deserción OJT
     const qIniciaOjt = ojt + iop + desertoresOjt;
@@ -931,7 +988,7 @@ export default function ResumenCapacitacion({
         target: 80.00,
         subMetrics: [
           { label: "RQ FTE's", value: formatFte(rq) },
-          { label: "Dotación FTE's", value: formatFte(iopFtes) }
+          { label: "Dotación FTE's", value: formatFte(iopFtesAlineado) }
         ]
       },
       desercionOJT: {
@@ -943,7 +1000,7 @@ export default function ResumenCapacitacion({
         ]
       }
     };
-  }, [kpis]);
+  }, [kpis, kpiAlertas]);
 
   const formadoresRankingList = useMemo(() => {
     const map = new Map();
@@ -961,11 +1018,7 @@ export default function ResumenCapacitacion({
         });
       }
       const item = map.get(fName);
-      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : '';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
-      if (isRqEligible) {
-        item.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
-      }
+      item.rq += getGrupoRq(g);
       item.d1 += Number(g.asistio_dia1) || 0;
       item.iop += Number(g.ingresos_iop) || 0;
       item.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
@@ -978,7 +1031,7 @@ export default function ResumenCapacitacion({
     });
 
     return Array.from(map.values()).map(f => {
-      const pctDot = f.rq > 0 ? (f.iopFtes / f.rq) * 100 : (f.d1 > 0 ? (f.iop / f.d1) * 100 : 0);
+      const pctDot = f.rq > 0 ? (f.iopFtes / f.rq) * 100 : (f.iopFtes > 0 ? 100 : 0);
       const pctDes = f.d1 > 0 ? (f.desertores / f.d1) * 100 : 0;
       return {
         ...f,
@@ -997,11 +1050,7 @@ export default function ResumenCapacitacion({
     filteredData.forEach(g => {
       const mod = String(g.modalidad || '').toUpperCase().includes('REM') ? 'REMOTO' : 'PRESENCIAL';
       const target = map[mod];
-      const areaNorm = g.area_traslado ? String(g.area_traslado).trim().toUpperCase() : '';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
-      if (isRqEligible) {
-        target.rq += Number(g.rq_ftes_solicitado || g.rq_solicitado) || 0;
-      }
+      target.rq += getGrupoRq(g);
       target.d1 += Number(g.asistio_dia1) || 0;
       target.iop += Number(g.ingresos_iop) || 0;
       target.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
@@ -1012,7 +1061,7 @@ export default function ResumenCapacitacion({
     });
 
     return Object.values(map).map(m => {
-      const pctDot = m.rq > 0 ? (m.iopFtes / m.rq) * 100 : (m.d1 > 0 ? (m.iop / m.d1) * 100 : 0);
+      const pctDot = m.rq > 0 ? (m.iopFtes / m.rq) * 100 : (m.iopFtes > 0 ? 100 : 0);
       const pctDes = m.d1 > 0 ? (m.desertores / m.d1) * 100 : 0;
       return {
         ...m,
@@ -1076,11 +1125,10 @@ export default function ResumenCapacitacion({
   const handleExport = () => {
     if (filteredData.length === 0) return;
     const ws = XLSX.utils.json_to_sheet(filteredData.map(d => {
-      const areaNorm = d.area_traslado ? String(d.area_traslado).trim().toUpperCase() : '';
-      const isRqEligible = areaNorm === 'RECLUTAMIENTO';
+      const req = getGrupoRq(d);
       const desertores = Math.max(0, (d.asistio_dia1 || 0) - (d.activos_actuales || 0) - (d.ingresos_iop || 0));
-      const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
-      const pctCumpl = req > 0 ? `${Math.round(((d.ingresos_iop || 0) / req) * 100)}%` : '0%';
+      const iopFtes = d.ingresos_iop_ftes !== undefined ? Number(d.ingresos_iop_ftes) : Number(d.ingresos_iop || 0);
+      const pctCumpl = req > 0 ? `${Math.round((iopFtes / req) * 100)}%` : (iopFtes > 0 ? '100%' : '0%');
 
       return {
         'Periodo': d.periodo,
@@ -1908,8 +1956,7 @@ export default function ResumenCapacitacion({
               <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${filters.estado}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
                   const areaNorm = String(d.area_traslado || '').trim().toUpperCase();
-                  const isRqEligible = areaNorm === 'RECLUTAMIENTO';
-                  const req = isRqEligible ? (d.requerimiento || d.rq_solicitado || 0) : 0;
+                  const req = getGrupoRq(d);
                   const estadoStr = String(d.estado || 'CERRADO').toUpperCase().trim();
 
                   return (

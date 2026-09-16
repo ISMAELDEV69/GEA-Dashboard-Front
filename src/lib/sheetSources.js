@@ -34,7 +34,7 @@ export const SHEET_SOURCES = {
     importAsistencia: true,
     pubhtml: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQssMHy3RNTmi-LIARB-dGaZSfeyjk86_5mOFT0y4eULPPhXXqdVxd5q2ko4C1yDOEf-_xdo9O2BHQr/pubhtml',
   },
-}
+} 
 
 /** Fuente principal preseleccionada en el panel Admin */
 export const PRIMARY_SHEET_ID = 'nomina_sem25'
