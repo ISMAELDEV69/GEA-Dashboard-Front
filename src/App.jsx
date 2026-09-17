@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, useTransition } from 'react'
 import {
   LayoutDashboard, UserPlus, ClipboardCheck, History,
-  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award, BanknoteIcon
+  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award, BanknoteIcon, PieChart
 } from 'lucide-react'
 
 // ── Vistas Críticas / Modales Síncronos ──────────────────────────────────────────
@@ -62,6 +62,7 @@ const PropuestasModule = lazyWithRetry(() => import('./pages/PropuestasModule'))
 const PagosCapacitacion = lazyWithRetry(() => import('./pages/PagosCapacitacion'))
 const ReporteDia1 = lazyWithRetry(() => import('./components/ReporteDia1'))
 const ResumenCapacitacion = lazyWithRetry(() => import('./components/ResumenCapacitacion'))
+const CoberturaDotacion = lazyWithRetry(() => import('./components/CoberturaDotacion'))
 const CapacidadRys = lazyWithRetry(() => import('./components/CapacidadRys'))
 const MetasManagement = lazyWithRetry(() => import('./components/MetasManagement'))
 const AuditLogs = lazyWithRetry(() => import('./components/AuditLogs'))
@@ -82,6 +83,7 @@ const HomeSelector = lazyWithRetry(() => import('./components/HomeSelector'))
 export const ALL_NAV = [
   { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
   { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'cobertura_dotacion', label: 'Cobertura de Dotación', icon: PieChart, description: 'Reporte gerencial RQ vs ingresos OP', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
@@ -644,6 +646,16 @@ export default function App() {
                       <KeepAliveView viewId="resumen_capacitacion" activeView={activeView}>
                         {navItems.some(i => i.id === 'resumen_capacitacion') && (
                           <ResumenCapacitacion grupos={campanasMetas.length > 0 ? campanasMetas : grupos} campanasMetas={campanasMetas} postulantes={postulantes} asistencias={asistencias} />
+                        )}
+                      </KeepAliveView>
+
+                      <KeepAliveView viewId="cobertura_dotacion" activeView={activeView}>
+                        {navItems.some(i => i.id === 'cobertura_dotacion') && (
+                          <CoberturaDotacion
+                            grupos={campanasMetas.length > 0 ? campanasMetas : grupos}
+                            postulantes={postulantes}
+                            asistencias={asistencias}
+                          />
                         )}
                       </KeepAliveView>
 

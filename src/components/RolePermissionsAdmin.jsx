@@ -10,6 +10,7 @@ import { ALL_NAV } from '../App'
 export const AVAILABLE_MODULES = [
   { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador' },
   { id: 'resumen_capacitacion', label: 'Resumen Capacitación' },
+  { id: 'cobertura_dotacion', label: 'Cobertura de Dotación' },
   { id: 'cartera_reclutador', label: 'Mi Cartera' },
   { id: 'consolidado', label: 'Control de Asistencia' },
   { id: 'dashboard', label: 'Dashboard' },

@@ -21,7 +21,8 @@ import {
   Zap,
   Radio,
   Award,
-  BanknoteIcon
+  BanknoteIcon,
+  PieChart
 } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
@@ -34,6 +35,7 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador', icon: Award, description: 'Rendimiento 360°, rankings y metas', badge: 'Nuevo' },
       { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', badge: 'Live' },
+      { id: 'cobertura_dotacion', label: 'Cobertura de Dotación', icon: PieChart, description: 'RQ vs ingresos efectivos I-OP', badge: 'Nuevo' },
       { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real' },
       { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias' },
       { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción' },

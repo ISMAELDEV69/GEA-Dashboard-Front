@@ -36,6 +36,7 @@ import { filterPostulantesReclutador, filterGruposFormador, resolveFormadorDocum
 
 const QUICK_COMMANDS = [
   { id: 'resumen_capacitacion', title: 'Resumen Capacitación (Looker Studio)', section: 'Analítica & BI', icon: BarChart3 },
+  { id: 'cobertura_dotacion', title: 'Cobertura de Dotación (WFM Gerencial)', section: 'Analítica & BI', icon: Target },
   { id: 'reportedia1', title: 'Reporte de Calibración — Día 1', section: 'Analítica & BI', icon: Target },
   { id: 'consolidado', title: 'Control de Asistencia (Power BI)', section: 'Analítica & BI', icon: LayoutDashboard },
   { id: 'attendancebi', title: 'Dispersión BI (Métricas y Retención)', section: 'Analítica & BI', icon: Activity },

@@ -21,6 +21,7 @@ import { Badge } from '../ui/badge'
 const BREADCRUMB_MAP = {
   scorecard_individual: { section: 'Analítica & BI', label: 'KPIS - Reclutador / Formador' },
   resumen_capacitacion: { section: 'Analítica & BI', label: 'Resumen Capacitación' },
+  cobertura_dotacion: { section: 'Analítica & BI', label: 'Cobertura de Dotación' },
   consolidado: { section: 'Analítica & BI', label: 'Control de Asistencia' },
   descuentos_bi: { section: 'Analítica & BI', label: 'Descuentos BI' },
   motivos_bajas_bi: { section: 'Analítica & BI', label: 'Motivos de Bajas' },
