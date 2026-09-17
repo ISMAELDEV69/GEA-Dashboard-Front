@@ -1,9 +1,7 @@
 /**
  * Cobertura de Dotación — motor gerencial (réplica Power BI).
  *
- * RQ: suma de rq_ftes_solicitado de grupos RECLUTAMIENTO, anclada a periodo_ingreso_op.
- * Ingresos: primer I-OP único por DNI (los I-OP siguientes no cuentan), ponderado FTE
- *           (FULL TIME = 1, PART TIME = 0.5).
+ * Fuente canónica: tabla public.cobertura_dotacion (RQ_FTES / INGRESOS_FTES ya calculados).
  * Brecha: Ingresos − RQ (con signo). % cobertura = 0 si RQ = 0.
  */
 
@@ -21,7 +19,7 @@ export const COBERTURA_COLORS = {
   hibrido: '#2AA7A1',
 }
 
-export const MODALIDADES = ['PRESENCIAL', 'REMOTO', 'HIBRIDO']
+export const MODALIDADES = ['PRESENCIAL', 'REMOTO']
 
 function clean(val) {
   return String(val || '').trim()
@@ -38,9 +36,8 @@ export function isAreaReclutamiento(area) {
 export function normalizeModalidadDotacion(raw) {
   const s = cleanUpper(raw)
   if (!s) return 'PRESENCIAL'
-  if (s.includes('HIB')) return 'HIBRIDO'
   if (s.includes('REM')) return 'REMOTO'
-  if (s.includes('PRES')) return 'PRESENCIAL'
+  if (s.includes('PRES') || s.includes('HIB')) return 'PRESENCIAL'
   return 'PRESENCIAL'
 }
 
@@ -87,6 +84,53 @@ export function coberturaPct(ingresos, requerimiento) {
 
 export function brechaVal(ingresos, requerimiento) {
   return Number(((Number(ingresos) || 0) - (Number(requerimiento) || 0)).toFixed(2))
+}
+
+export function coberturaStatus(pct) {
+  const n = Number(pct) || 0
+  if (n >= 100) return 'CUBIERTO'
+  if (n >= 80) return 'OBSERVADO'
+  return 'BRECHA'
+}
+
+export function coberturaTone(pct) {
+  const n = Number(pct) || 0
+  if (n >= 100) return 'ok'
+  if (n >= 80) return 'warn'
+  return 'bad'
+}
+
+export function shortCampanaLabel(name, max = 22) {
+  const s = String(name || '').trim()
+  if (s.length <= max) return s
+  return `${s.slice(0, max - 1)}…`
+}
+
+export function topCampanasForChart(campanas = [], limit = 10) {
+  const list = Array.isArray(campanas) ? campanas : []
+  if (list.length <= limit) {
+    return list.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false }))
+  }
+  const top = list.slice(0, limit)
+  const rest = list.slice(limit)
+  const other = rest.reduce((acc, r) => {
+    acc.requerimiento += Number(r.requerimiento) || 0
+    acc.ingresos += Number(r.ingresos) || 0
+    return acc
+  }, { campana: 'OTRAS', requerimiento: 0, ingresos: 0 })
+  const otherRates = {
+    campana: 'OTRAS',
+    campanaShort: 'OTRAS',
+    isOtras: true,
+    requerimiento: round2(other.requerimiento),
+    ingresos: round2(other.ingresos),
+    coberturaPct: round2(coberturaPct(other.ingresos, other.requerimiento)),
+    brecha: brechaVal(other.ingresos, other.requerimiento),
+  }
+  return [
+    ...top.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false })),
+    otherRates,
+  ]
 }
 
 function periodoFromGrupo(g) {
@@ -153,12 +197,31 @@ export function extractFirstIops(asistencias = []) {
   return byDoc
 }
 
+function pickCol(row, ...names) {
+  if (!row) return ''
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(row, name) && row[name] != null && row[name] !== '') {
+      return row[name]
+    }
+  }
+  const lower = {}
+  for (const [key, value] of Object.entries(row)) {
+    lower[String(key).toLowerCase()] = value
+  }
+  for (const name of names) {
+    const value = lower[String(name).toLowerCase()]
+    if (value != null && value !== '') return value
+  }
+  return ''
+}
+
 function pushCell(bucket, keyParts, amount, field) {
   const key = keyParts.join('|')
   let row = bucket.get(key)
   if (!row) {
     row = {
       periodo: keyParts[0],
+      semana: keyParts[1],
       segmento: keyParts[1],
       campana: keyParts[2],
       modalidad: keyParts[3],
@@ -168,6 +231,72 @@ function pushCell(bucket, keyParts, amount, field) {
     bucket.set(key, row)
   }
   row[field] = round2(row[field] + amount)
+}
+
+export function normalizeCoberturaDotacionRow(raw) {
+  const periodo = normalize2026Period(pickCol(raw, 'PERIODO', 'periodo')) || clean(pickCol(raw, 'PERIODO', 'periodo'))
+  const semana = clean(pickCol(raw, 'SEMANA', 'semana')) || 'SIN SEMANA'
+  const campana = clean(pickCol(raw, 'CAMPAÑA', 'CAMPANA', 'campaña', 'campana')) || 'Sin Campaña'
+  const modalidad = normalizeModalidadDotacion(pickCol(raw, 'MODALIDAD_TRABAJO', 'modalidad_trabajo', 'modalidad'))
+  const gpe = cleanUpper(pickCol(raw, 'GPE', 'gpe'))
+  const requerimiento = round2(Number(pickCol(raw, 'RQ_FTES', 'rq_ftes')) || 0)
+  const ingresos = round2(Number(pickCol(raw, 'INGRESOS_FTES', 'ingresos_ftes')) || 0)
+  const fecha = clean(pickCol(raw, 'FECHA_INGRESO_OP', 'fecha_ingreso_op', 'created_at')).slice(0, 10)
+  return { periodo, semana, campana, modalidad, gpe, requerimiento, ingresos, fecha }
+}
+
+export function buildCoberturaDotacionModelFromTable(tableRows = []) {
+  const cells = new Map()
+  let corteIso = ''
+
+  for (const raw of tableRows) {
+    const n = normalizeCoberturaDotacionRow(raw)
+    if (!n.periodo) continue
+    if (!n.requerimiento && !n.ingresos) continue
+    const keyParts = [n.periodo, n.semana, n.campana, n.modalidad]
+    pushCell(cells, keyParts, n.requerimiento, 'requerimiento')
+    pushCell(cells, keyParts, n.ingresos, 'ingresos')
+    if (n.fecha && n.fecha > corteIso) corteIso = n.fecha
+  }
+
+  const rows = Array.from(cells.values()).sort((a, b) => {
+    if (a.periodo !== b.periodo) return a.periodo.localeCompare(b.periodo)
+    if (a.semana !== b.semana) return a.semana.localeCompare(b.semana)
+    return a.campana.localeCompare(b.campana, 'es')
+  })
+
+  const periodos = [...new Set(rows.map((r) => r.periodo))].sort()
+  const semanas = [...new Set(rows.map((r) => r.semana))].sort()
+  const campanas = [...new Set(rows.map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
+
+  const now = new Date()
+  const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+  const activity = new Map()
+  for (const r of rows) {
+    const slot = activity.get(r.periodo) || { rq: 0, ing: 0 }
+    slot.rq += Number(r.requerimiento) || 0
+    slot.ing += Number(r.ingresos) || 0
+    activity.set(r.periodo, slot)
+  }
+  const withData = periodos.filter((p) => {
+    const s = activity.get(p)
+    return s && p <= currentYm && (s.rq > 0 || s.ing > 0)
+  })
+  const defaultPeriodo = withData.length
+    ? withData[withData.length - 1]
+    : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
+
+  return {
+    rows,
+    periodos,
+    semanas,
+    segmentos: semanas,
+    campanas,
+    corteIso,
+    defaultPeriodo,
+    totalFirstIops: 0,
+    source: 'table',
+  }
 }
 
 export function buildCoberturaDotacionModel(grupos = [], asistencias = [], postulantes = []) {
@@ -274,8 +403,13 @@ export function buildCoberturaDotacionModel(grupos = [], asistencias = [], postu
   }
 }
 
+function rowSemana(row) {
+  return row?.semana || row?.segmento || 'SIN SEMANA'
+}
+
 function matchesFilter(row, filters) {
-  if (filters.segmento && row.segmento !== filters.segmento) return false
+  if (filters.semana && rowSemana(row) !== filters.semana) return false
+  if (filters.segmento && !filters.semana && row.segmento !== filters.segmento) return false
   if (filters.campana && row.campana !== filters.campana) return false
   const mods = filters.modalidades
   if (Array.isArray(mods) && mods.length > 0 && mods.length < MODALIDADES.length) {
@@ -355,18 +489,19 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
     selected: s.periodo === periodo,
   }))
 
-  const bySegmento = new Map()
+  const bySemana = new Map()
   for (const r of periodFiltered) {
-    let slot = bySegmento.get(r.segmento)
+    const label = rowSemana(r)
+    let slot = bySemana.get(label)
     if (!slot) {
-      slot = { segmento: r.segmento, requerimiento: 0, ingresos: 0 }
-      bySegmento.set(r.segmento, slot)
+      slot = { semana: label, segmento: label, requerimiento: 0, ingresos: 0 }
+      bySemana.set(label, slot)
     }
     addInto(slot, r)
   }
-  const segmentos = [...bySegmento.values()]
-    .map(s => ({ ...withRates(s), segmento: s.segmento }))
-    .sort((a, b) => b.coberturaPct - a.coberturaPct)
+  const segmentos = [...bySemana.values()]
+    .map((s) => ({ ...withRates(s), semana: s.semana, segmento: s.semana }))
+    .sort((a, b) => a.semana.localeCompare(b.semana))
 
   const byCampana = new Map()
   for (const r of periodFiltered) {
@@ -380,20 +515,22 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
   const campanas = [...byCampana.values()]
     .map(s => ({ ...withRates(s), campana: s.campana }))
     .sort((a, b) => b.requerimiento - a.requerimiento || b.ingresos - a.ingresos)
+  const campanasChart = topCampanasForChart(campanas)
 
   const byPair = new Map()
   for (const r of periodFiltered) {
-    const key = `${r.segmento}|${r.campana}`
+    const semana = rowSemana(r)
+    const key = `${semana}|${r.campana}`
     let slot = byPair.get(key)
     if (!slot) {
-      slot = { segmento: r.segmento, campana: r.campana, requerimiento: 0, ingresos: 0 }
+      slot = { semana, segmento: semana, campana: r.campana, requerimiento: 0, ingresos: 0 }
       byPair.set(key, slot)
     }
     addInto(slot, r)
   }
   const tabla = [...byPair.values()]
-    .map(s => ({ ...withRates(s), segmento: s.segmento, campana: s.campana }))
-    .sort((a, b) => a.segmento.localeCompare(b.segmento, 'es') || a.campana.localeCompare(b.campana, 'es'))
+    .map((s) => ({ ...withRates(s), semana: s.semana, segmento: s.semana, campana: s.campana }))
+    .sort((a, b) => a.semana.localeCompare(b.semana) || a.campana.localeCompare(b.campana, 'es'))
 
   const byMod = new Map(MODALIDADES.map(m => [m, { modalidad: m, requerimiento: 0, ingresos: 0 }]))
   for (const r of periodFiltered) {
@@ -414,9 +551,15 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
     }
   })
 
-  const campanasForSegmento = filters.segmento
-    ? [...new Set(rows.filter(r => r.segmento === filters.segmento).map(r => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
+  const campanasForSemana = filters.semana
+    ? [...new Set(rows.filter((r) => rowSemana(r) === filters.semana).map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
     : (model?.campanas || [])
+
+  const semanasInPeriod = [...new Set(
+    rows
+      .filter((r) => matchesFilter(r, { ...filters, semana: '' }) && (!periodo || r.periodo === periodo))
+      .map((r) => rowSemana(r))
+  )].sort()
 
   return {
     periodo,
@@ -424,13 +567,15 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
     seguimiento,
     segmentos,
     campanas,
+    campanasChart,
     tabla,
     modalidad,
     ingresosModTotal: round2(ingresosModTotal),
     filterOptions: {
       periodos: model?.periodos || [],
-      segmentos: model?.segmentos || [],
-      campanas: campanasForSegmento,
+      semanas: semanasInPeriod.length ? semanasInPeriod : (model?.semanas || model?.segmentos || []),
+      segmentos: semanasInPeriod.length ? semanasInPeriod : (model?.semanas || model?.segmentos || []),
+      campanas: campanasForSemana,
     },
   }
 }

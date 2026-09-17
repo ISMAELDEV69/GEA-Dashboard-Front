@@ -651,11 +651,7 @@ export default function App() {
 
                       <KeepAliveView viewId="cobertura_dotacion" activeView={activeView}>
                         {navItems.some(i => i.id === 'cobertura_dotacion') && (
-                          <CoberturaDotacion
-                            grupos={campanasMetas.length > 0 ? campanasMetas : grupos}
-                            postulantes={postulantes}
-                            asistencias={asistencias}
-                          />
+                          <CoberturaDotacion />
                         )}
                       </KeepAliveView>
 

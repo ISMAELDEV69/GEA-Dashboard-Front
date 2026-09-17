@@ -1412,6 +1412,88 @@ export async function fetchCapacidadRysOperativo() {
   return fetchGrupos()
 }
 
+const COBERTURA_DOTACION_SELECT = [
+  'id',
+  'created_at',
+  'PERIODO',
+  'SEMANA',
+  'CAMPAÑA',
+  'GPE',
+  'MODALIDAD_TRABAJO',
+  'CONDICION_LABORAL',
+  'FECHA_INGRESO_OP',
+  'RQ_FTES',
+  'INGRESOS_FTES',
+  'PROY_INGRESOS_FTES',
+  'Q_DIA_1',
+].join(',')
+
+/** Snapshot WFM ya calculado: public.cobertura_dotacion */
+export async function fetchCoberturaDotacion() {
+  if (DB_MODE !== 'supabase') return []
+  return withCache('cobertura_dotacion_v2', 180000, async () => {
+    const pageSize = 1000
+    const all = []
+    let from = 0
+    let selectList = COBERTURA_DOTACION_SELECT
+    while (true) {
+      const { data, error } = await supabase
+        .from('cobertura_dotacion')
+        .select(selectList)
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1)
+      if (error) {
+        if (selectList !== '*' && /CAMPAÑA|column/i.test(error.message || '')) {
+          selectList = '*'
+          continue
+        }
+        throw error
+      }
+      const batch = data || []
+      all.push(...batch)
+      if (batch.length < pageSize) break
+      from += pageSize
+      if (from > 20000) break
+    }
+    return all
+  })
+}
+
+const CAPACIDAD_RYS_LOOKUP_SELECT = [
+  'codigo',
+  'periodo',
+  'periodo_ingreso_op',
+  'semana_label',
+  'semana_trabajo',
+  'estado',
+  'campana',
+  'segmento',
+].join(',')
+
+/** Dimensión de grupos para cruzar cobertura_dotacion (inner join). */
+export async function fetchCapacidadRysLookup() {
+  if (DB_MODE !== 'supabase') return []
+  return withCache('capacidad_rys_lookup', 180000, async () => {
+    const pageSize = 1000
+    const all = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('capacidad_rys')
+        .select(CAPACIDAD_RYS_LOOKUP_SELECT)
+        .order('codigo', { ascending: true })
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      const batch = data || []
+      all.push(...batch)
+      if (batch.length < pageSize) break
+      from += pageSize
+      if (from > 20000) break
+    }
+    return all
+  })
+}
+
 /** 
  * Suscripción realtime a cambios de grupos y nóminas con invalidación de caché.
  * 
