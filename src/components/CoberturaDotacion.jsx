@@ -259,6 +259,74 @@ function KpiCard({
   )
 }
 
+function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModalidad, modColor }) {
+  return (
+    <div className="flex h-[268px] items-center gap-5">
+      <div className="relative min-h-0 min-w-0 flex-1 self-stretch">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={pieData}
+              dataKey="ingresos"
+              nameKey="modalidad"
+              cx="50%"
+              cy="50%"
+              innerRadius={58}
+              outerRadius={84}
+              paddingAngle={4}
+              stroke={isDark ? '#0F172A' : '#fff'}
+              strokeWidth={2}
+              animationDuration={320}
+              onClick={(_, idx) => {
+                const mod = pieData[idx]?.modalidad
+                if (mod) toggleModalidad(mod)
+              }}
+            >
+              {pieData.map((entry) => (
+                <Cell
+                  key={entry.modalidad}
+                  fill={modColor[entry.modalidad] || '#94a3b8'}
+                  fillOpacity={modalidades.includes(entry.modalidad) ? 1 : 0.28}
+                  cursor="pointer"
+                />
+              ))}
+            </Pie>
+            <Tooltip content={<PairTooltip mode="cobertura" theme={theme} />} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+          <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Total FTE</p>
+          <p className="text-[18px] font-black tabular-nums text-[var(--text-primary)]">{formatPeNumber(total)}</p>
+        </div>
+      </div>
+      <ul className="flex w-[132px] shrink-0 flex-col justify-center gap-3 border-l border-[var(--border-subtle)] pl-4 pr-1">
+        {pieData.map((m) => (
+          <li key={m.modalidad}>
+            <button
+              type="button"
+              onClick={() => toggleModalidad(m.modalidad)}
+              className="flex w-full items-start gap-2 text-left"
+            >
+              <i
+                className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: modColor[m.modalidad], opacity: modalidades.includes(m.modalidad) ? 1 : 0.35 }}
+              />
+              <span className="min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--text-primary)]">
+                  {m.modalidad}
+                </span>
+                <span className="block text-[10px] font-semibold text-[var(--text-secondary)]">
+                  {formatPeNumber(m.ingresos)} · {formatPePercent(m.participacion)}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function ChartCard({ children, className = '', theme }) {
   return (
     <div
@@ -706,35 +774,15 @@ function RequerimientosReport({
               {pieData.length === 0 ? (
                 <p className="flex h-full items-center justify-center text-sm text-[var(--text-muted)]">Sin ingresos en el periodo</p>
               ) : (
-                <>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={pieData} dataKey="ingresos" nameKey="modalidad" cx="38%" cy="50%" innerRadius={62} outerRadius={90} paddingAngle={4} stroke={isDark ? '#0F172A' : '#fff'} strokeWidth={2} onClick={(_, idx) => { const mod = pieData[idx]?.modalidad; if (mod) toggleModalidad(mod) }}>
-                        {pieData.map((entry) => (
-                          <Cell key={entry.modalidad} fill={modColor[entry.modalidad] || '#94a3b8'} fillOpacity={modalidades.includes(entry.modalidad) ? 1 : 0.28} cursor="pointer" />
-                        ))}
-                      </Pie>
-                      <Tooltip content={<PairTooltip mode="cobertura" theme={theme} />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute left-[38%] top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Total FTE</p>
-                    <p className="text-[18px] font-black tabular-nums text-[var(--text-primary)]">{formatPeNumber(view.ingresosModTotal)}</p>
-                  </div>
-                  <ul className="absolute right-1 top-1/2 flex w-[44%] -translate-y-1/2 flex-col gap-2 pr-1">
-                    {pieData.map((m) => (
-                      <li key={m.modalidad}>
-                        <button type="button" onClick={() => toggleModalidad(m.modalidad)} className="flex w-full items-center gap-2 text-left">
-                          <i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: modColor[m.modalidad], opacity: modalidades.includes(m.modalidad) ? 1 : 0.35 }} />
-                          <span className="min-w-0">
-                            <span className="block truncate text-[10px] font-black uppercase tracking-wide text-[var(--text-primary)]">{m.modalidad}</span>
-                            <span className="block text-[10px] font-semibold text-[var(--text-secondary)]">{formatPeNumber(m.ingresos)} · {formatPePercent(m.participacion)}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
+                <ModalidadDonut
+                  pieData={pieData}
+                  total={view.ingresosModTotal}
+                  theme={theme}
+                  isDark={isDark}
+                  modalidades={modalidades}
+                  toggleModalidad={toggleModalidad}
+                  modColor={modColor}
+                />
               )}
             </div>
           </ChartCard>
@@ -1355,65 +1403,15 @@ function CoberturaDotacion() {
               {pieData.length === 0 ? (
                 <p className="flex h-full items-center justify-center text-sm text-[var(--text-muted)]">Sin ingresos en el periodo</p>
               ) : (
-                <>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        dataKey="ingresos"
-                        nameKey="modalidad"
-                        cx="38%"
-                        cy="50%"
-                        innerRadius={62}
-                        outerRadius={90}
-                        paddingAngle={4}
-                        stroke={isDark ? '#0F172A' : '#fff'}
-                        strokeWidth={2}
-                        animationDuration={320}
-                        onClick={(_, idx) => {
-                          const mod = pieData[idx]?.modalidad
-                          if (mod) toggleModalidad(mod)
-                        }}
-                      >
-                        {pieData.map((entry) => {
-                          const active = modalidades.includes(entry.modalidad)
-                          return (
-                            <Cell
-                              key={entry.modalidad}
-                              fill={modColor[entry.modalidad] || '#94a3b8'}
-                              fillOpacity={active ? 1 : 0.28}
-                              cursor="pointer"
-                            />
-                          )
-                        })}
-                      </Pie>
-                      <Tooltip content={<PairTooltip mode="cobertura" theme={theme} />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="pointer-events-none absolute left-[38%] top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Total FTE</p>
-                    <p className="text-[18px] font-black tabular-nums text-[var(--text-primary)]">{formatPeNumber(view.ingresosModTotal)}</p>
-                  </div>
-                  <ul className="absolute right-1 top-1/2 flex w-[44%] -translate-y-1/2 flex-col gap-2 pr-1">
-                    {pieData.map((m) => (
-                      <li key={m.modalidad}>
-                        <button
-                          type="button"
-                          onClick={() => toggleModalidad(m.modalidad)}
-                          className="flex w-full items-center gap-2 text-left"
-                        >
-                          <i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: modColor[m.modalidad], opacity: modalidades.includes(m.modalidad) ? 1 : 0.35 }} />
-                          <span className="min-w-0">
-                            <span className="block truncate text-[10px] font-black uppercase tracking-wide text-[var(--text-primary)]">{m.modalidad}</span>
-                            <span className="block text-[10px] font-semibold text-[var(--text-secondary)]">
-                              {formatPeNumber(m.ingresos)} · {formatPePercent(m.participacion)}
-                            </span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
+                <ModalidadDonut
+                  pieData={pieData}
+                  total={view.ingresosModTotal}
+                  theme={theme}
+                  isDark={isDark}
+                  modalidades={modalidades}
+                  toggleModalidad={toggleModalidad}
+                  modColor={modColor}
+                />
               )}
             </div>
           </ChartCard>
