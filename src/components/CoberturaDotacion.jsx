@@ -15,9 +15,8 @@ import {
   Cell,
   ReferenceLine,
 } from 'recharts'
-import { Download, Eraser, ClipboardList, ArrowLeft, Target, TrendingUp, Percent, GitCompare, LineChart, GraduationCap, UserPlus } from 'lucide-react'
+import { Download, ArrowLeft, Target, TrendingUp, Percent, GitCompare, LineChart, GraduationCap, UserPlus } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { GeaModernDeltaEmblem } from './GeaLogo'
 import ViewLoadingSkeleton from './ui/ViewLoadingSkeleton'
 import { fetchCoberturaDotacion, fetchCapacidadRysLookup } from '../lib/dataService'
 import {
@@ -27,15 +26,17 @@ import {
   aggregateCoberturaDotacion,
   formatPeNumber,
   formatPePercent,
-  formatCorteDate,
   coberturaStatus,
   coberturaTone,
+  metricDecimals,
+  metricUnitLabel,
 } from '../lib/coberturaDotacionAnalytics'
 import {
   joinCoberturaConCapacidad,
   buildRequerimientosModel,
   aggregateRequerimientos,
 } from '../lib/coberturaRequerimientosAnalytics'
+import { CoberturaReportChrome } from './cobertura/CoberturaFilterBar'
 
 function useIsDarkTheme() {
   const [isDark, setIsDark] = useState(() => {
@@ -66,8 +67,8 @@ function getVisualTheme(isDark) {
       remoto: '#FACC15',
       hibrido: '#2DD4BF',
       headerBg: 'linear-gradient(90deg, #020617 0%, #0F172A 55%, #164E63 100%)',
-      filterBg: 'var(--bg-elevated)',
-      filterLabel: 'var(--text-primary)',
+      filterBg: 'var(--bg-surface)',
+      filterLabel: 'var(--text-muted)',
       cardBg: 'var(--bg-surface)',
       pageBg: 'var(--bg-base)',
       grid: 'rgba(148,163,184,0.22)',
@@ -96,8 +97,8 @@ function getVisualTheme(isDark) {
     remoto: COBERTURA_COLORS.remoto,
     hibrido: COBERTURA_COLORS.hibrido,
     headerBg: `linear-gradient(90deg, ${COBERTURA_COLORS.header} 0%, #1f4e89 55%, #163A6B 100%)`,
-    filterBg: COBERTURA_COLORS.filterBar,
-    filterLabel: '#163A6B',
+    filterBg: '#FFFFFF',
+    filterLabel: '#64748B',
     cardBg: '#FFFFFF',
     pageBg: '#e8edf3',
     grid: '#e2e8f0',
@@ -129,6 +130,27 @@ function formatDelta(ingresos, rq) {
   return `${sign}${formatPePercent(d)}`
 }
 
+function AxisToggle({ value, onChange, isDark }) {
+  return (
+    <div className="flex justify-end gap-1">
+      {[{ id: 'periodo', label: 'Periodo' }, { id: 'semana', label: 'Semana' }].map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={`h-7 rounded-full px-3 text-[10px] font-black uppercase tracking-wide ${
+            value === opt.id
+              ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
+              : (isDark ? 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-normal)]' : 'bg-[#d6d3ea] text-[#163A6B]')
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function coverageFill(pct, theme) {
   const tone = coberturaTone(pct)
   if (tone === 'ok') return theme.ingresos
@@ -143,7 +165,7 @@ function statusBadge(pct, theme) {
   return { status, cls }
 }
 
-const ComboTooltip = memo(({ active, payload, label, theme }) => {
+const ComboTooltip = memo(({ active, payload, label, theme, decimals = 2 }) => {
   if (!active || !payload?.length) return null
   const row = payload[0]?.payload
   if (!row) return null
@@ -160,24 +182,24 @@ const ComboTooltip = memo(({ active, payload, label, theme }) => {
         </span>
       </div>
       <div className="space-y-1 leading-tight">
-        <p style={{ color: theme.rq }}>RQ · {formatPeNumber(row.requerimiento)}</p>
-        <p style={{ color: theme.ingresos }}>Ingresos · {formatPeNumber(row.ingresos)}</p>
-        {row.proyeccion != null ? (
-          <p style={{ color: theme.proy || theme.line }}>Proyección · {formatPeNumber(row.proyeccion)}</p>
+        <p style={{ color: theme.rq }}>RQ · {formatPeNumber(row.requerimiento, decimals)}</p>
+        <p style={{ color: theme.ingresos }}>Ingresos · {formatPeNumber(row.ingresos, decimals)}</p>
+        {row.proyeccion != null && payload.some((p) => p.dataKey === 'proyeccion') ? (
+          <p style={{ color: theme.proy || theme.line }}>Proyección · {formatPeNumber(row.proyeccion, decimals)}</p>
         ) : null}
         <p style={{ color: theme.line }}>Cobertura · {formatPePercent(row.coberturaPct)}</p>
-        <p className={row.brecha >= 0 ? theme.up : theme.down}>Brecha · {formatPeNumber(row.brecha)}</p>
+        <p className={row.brecha >= 0 ? theme.up : theme.down}>Brecha · {formatPeNumber(row.brecha, decimals)}</p>
       </div>
     </div>
   )
 })
 ComboTooltip.displayName = 'ComboTooltip'
 
-const PairTooltip = memo(({ active, payload, label, mode, theme }) => {
+const PairTooltip = memo(({ active, payload, label, mode, theme, decimals = 2 }) => {
   if (!active || !payload?.length) return null
   const row = payload[0]?.payload
   if (!row) return null
-  const title = label || row.semana || row.segmento || row.campana
+  const title = label || row.condicionLabel || row.segmento || row.campanaShort || row.campana || row.semana
   const badge = statusBadge(row.coberturaPct, theme)
   return (
     <div
@@ -188,9 +210,9 @@ const PairTooltip = memo(({ active, payload, label, mode, theme }) => {
         <p className="font-black tracking-wide">{title}</p>
         <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${badge.cls}`}>{badge.status}</span>
       </div>
-      <p>RQ · {formatPeNumber(row.requerimiento)}</p>
-      <p>Ingresos · {formatPeNumber(row.ingresos)}</p>
-      <p>{mode === 'brecha' ? `Brecha · ${formatPeNumber(row.brecha)}` : `Cobertura · ${formatPePercent(row.coberturaPct)}`}</p>
+      <p>RQ · {formatPeNumber(row.requerimiento, decimals)}</p>
+      <p>Ingresos · {formatPeNumber(row.ingresos, decimals)}</p>
+      <p>{mode === 'brecha' ? `Brecha · ${formatPeNumber(row.brecha, decimals)}` : `Cobertura · ${formatPePercent(row.coberturaPct)}`}</p>
     </div>
   )
 })
@@ -259,7 +281,7 @@ function KpiCard({
   )
 }
 
-function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModalidad, modColor }) {
+function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModalidad, modColor, decimals = 2, unitLabel = 'FT' }) {
   return (
     <div className="flex h-[268px] items-center gap-5">
       <div className="relative min-h-0 min-w-0 flex-1 self-stretch">
@@ -291,12 +313,12 @@ function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModa
                 />
               ))}
             </Pie>
-            <Tooltip content={<PairTooltip mode="cobertura" theme={theme} />} />
+            <Tooltip content={<PairTooltip mode="cobertura" theme={theme} decimals={decimals} />} />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-          <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Total FTE</p>
-          <p className="text-[18px] font-black tabular-nums text-[var(--text-primary)]">{formatPeNumber(total)}</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Total {unitLabel}</p>
+          <p className="text-[18px] font-black tabular-nums text-[var(--text-primary)]">{formatPeNumber(total, decimals)}</p>
         </div>
       </div>
       <ul className="flex w-[132px] shrink-0 flex-col justify-center gap-3 border-l border-[var(--border-subtle)] pl-4 pr-1">
@@ -316,7 +338,7 @@ function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModa
                   {m.modalidad}
                 </span>
                 <span className="block text-[10px] font-semibold text-[var(--text-secondary)]">
-                  {formatPeNumber(m.ingresos)} · {formatPePercent(m.participacion)}
+                  {formatPeNumber(m.ingresos, decimals)} · {formatPePercent(m.participacion)}
                 </span>
               </span>
             </button>
@@ -324,6 +346,118 @@ function ModalidadDonut({ pieData, total, theme, isDark, modalidades, toggleModa
         ))}
       </ul>
     </div>
+  )
+}
+
+function JornadaMixChart({
+  data,
+  theme,
+  isDark,
+  mode,
+  setMode,
+  condicion,
+  onSelect,
+  decimals,
+  fmt,
+}) {
+  const mix = mode === 'volumen'
+  return (
+    <ChartCard theme={theme}>
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <SectionTitle isDark={isDark}>Cobertura por jornada</SectionTitle>
+        <div className="flex justify-end gap-1">
+          {[{ id: 'volumen', label: 'Volumen' }, { id: 'cobertura', label: 'Cobertura' }, { id: 'brecha', label: 'Brecha' }].map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setMode(opt.id)}
+              className={`h-7 rounded-full px-3 text-[10px] font-black uppercase tracking-wide ${
+                mode === opt.id
+                  ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
+                  : (isDark ? 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-normal)]' : 'bg-[#d6d3ea] text-[#163A6B]')
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mix ? (
+        <ChartLegend
+          theme={theme}
+          items={[
+            { label: 'Requerimiento', color: theme.rq },
+            { label: 'Ingresos', color: theme.ingresos },
+          ]}
+        />
+      ) : null}
+      <div className="h-[268px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={data}
+            margin={{ top: 16, right: 12, left: 0, bottom: 4 }}
+            onClick={(state) => {
+              const name = state?.activePayload?.[0]?.payload?.condicion
+              if (name) onSelect(name)
+            }}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.grid} />
+            <XAxis dataKey="condicionLabel" tick={{ fontSize: 11, fill: theme.tick }} axisLine={false} tickLine={false} />
+            <YAxis
+              tick={{ fontSize: 10, fill: theme.tick }}
+              axisLine={false}
+              tickLine={false}
+              unit={mode === 'cobertura' ? '%' : ''}
+            />
+            <Tooltip
+              content={<PairTooltip mode={mode === 'brecha' ? 'brecha' : 'cobertura'} theme={theme} decimals={decimals} />}
+            />
+            {mix ? (
+              <>
+                <Bar dataKey="requerimiento" maxBarSize={28} cursor="pointer" radius={[5, 5, 0, 0]} animationDuration={320}>
+                  {data.map((row) => (
+                    <Cell key={`jrq-${row.condicion}`} fill={theme.rq} fillOpacity={!condicion || condicion === row.condicion ? 1 : 0.35} />
+                  ))}
+                </Bar>
+                <Bar dataKey="ingresos" maxBarSize={28} cursor="pointer" radius={[5, 5, 0, 0]} animationDuration={320}>
+                  {data.map((row) => (
+                    <Cell key={`jing-${row.condicion}`} fill={theme.ingresos} fillOpacity={!condicion || condicion === row.condicion ? 1 : 0.35} />
+                  ))}
+                  <LabelList
+                    dataKey="coberturaPct"
+                    position="top"
+                    formatter={(v) => formatPePercent(v)}
+                    style={{ fontSize: 10, fill: theme.label, fontWeight: 700 }}
+                  />
+                </Bar>
+              </>
+            ) : (
+              <Bar
+                dataKey={mode === 'cobertura' ? 'coberturaPct' : 'brecha'}
+                maxBarSize={42}
+                cursor="pointer"
+                radius={[6, 6, 0, 0]}
+                animationDuration={320}
+              >
+                {data.map((row) => (
+                  <Cell
+                    key={`j-${row.condicion}`}
+                    fill={mode === 'cobertura' ? coverageFill(row.coberturaPct, theme) : (row.brecha >= 0 ? theme.ingresos : theme.danger)}
+                    fillOpacity={!condicion || condicion === row.condicion ? 1 : 0.35}
+                  />
+                ))}
+                <LabelList
+                  dataKey={mode === 'cobertura' ? 'coberturaPct' : 'brecha'}
+                  position="top"
+                  formatter={(v) => (mode === 'cobertura' ? formatPePercent(v) : fmt(v))}
+                  style={{ fontSize: 10, fill: theme.label, fontWeight: 700 }}
+                />
+              </Bar>
+            )}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </ChartCard>
   )
 }
 
@@ -394,48 +528,42 @@ function RequerimientosReport({
   isDark,
   gid,
   onBack,
+  semana,
+  setSemana,
+  segmento,
+  setSegmento,
+  campana,
+  setCampana,
+  periodo,
+  setPeriodo,
+  estado,
+  setEstado,
+  modalidades,
+  toggleModalidad,
+  tipo,
+  setTipo,
+  seguimientoAxis,
+  setSeguimientoAxis,
+  onSeguimientoClick,
+  clearFilters,
 }) {
-  const [segmento, setSegmento] = useState('')
-  const [campana, setCampana] = useState('')
-  const [periodo, setPeriodo] = useState('')
-  const [estado, setEstado] = useState('')
-  const [modalidades, setModalidades] = useState(() => [...MODALIDADES])
   const [segmentMode, setSegmentMode] = useState('cobertura')
   const [activeTableKey, setActiveTableKey] = useState('')
   const rqGrad = `rqReq-${gid}`
   const ingGrad = `ingReq-${gid}`
   const proyGrad = `proyReq-${gid}`
   const modColor = { PRESENCIAL: theme.presencial, REMOTO: theme.remoto }
-  const selectClass = 'mt-1 h-8 rounded-sm border border-[var(--border-normal)] bg-[var(--input-bg)] px-2 text-[12px] font-semibold text-[var(--text-primary)]'
+  const decimals = metricDecimals(tipo)
+  const fmt = (val) => formatPeNumber(val, decimals)
   const effectivePeriodo = periodo || model.defaultPeriodo
   const filters = useMemo(
-    () => ({ segmento, campana, periodo: effectivePeriodo, estado, modalidades }),
-    [segmento, campana, effectivePeriodo, estado, modalidades]
+    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado, modalidades, tipo, seguimientoAxis }),
+    [semana, segmento, campana, effectivePeriodo, estado, modalidades, tipo, seguimientoAxis]
   )
   const view = useMemo(() => aggregateRequerimientos(model, filters), [model, filters])
   const kpis = view.kpis
   const campanasChart = view.campanasChart || []
   const pieData = view.modalidad.filter((m) => m.ingresos > 0)
-
-  const clearFilters = useCallback(() => {
-    setSegmento('')
-    setCampana('')
-    setPeriodo(model.defaultPeriodo || '')
-    setEstado('')
-    setModalidades([...MODALIDADES])
-    setActiveTableKey('')
-  }, [model.defaultPeriodo])
-
-  const toggleModalidad = useCallback((mod) => {
-    setModalidades((prev) => {
-      const on = prev.includes(mod)
-      if (on) {
-        const next = prev.filter((m) => m !== mod)
-        return next.length ? next : [...MODALIDADES]
-      }
-      return [...prev, mod]
-    })
-  }, [])
 
   const handleExport = useCallback(() => {
     const rows = view.tabla.map((r) => ({
@@ -450,8 +578,8 @@ function RequerimientosReport({
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Requerimientos')
-    XLSX.writeFile(wb, `GEA_Requerimientos_${effectivePeriodo || 'all'}.xlsx`)
+    XLSX.utils.book_append_sheet(wb, ws, 'Proyectados')
+    XLSX.writeFile(wb, `GEA_Proyectados_${effectivePeriodo || 'all'}.xlsx`)
   }, [view.tabla, effectivePeriodo])
 
   const reqLegend = [
@@ -463,103 +591,35 @@ function RequerimientosReport({
   return (
     <div className="h-full overflow-auto p-3 text-[var(--text-primary)]" style={{ background: theme.pageBg }}>
       <div className="mx-auto max-w-[1600px] space-y-3">
-        <header className="flex items-center justify-between gap-4 px-5 py-3 text-white shadow-md" style={{ background: theme.headerBg }}>
-          <h1 className="text-[18px] font-black uppercase tracking-[0.06em] md:text-[22px]">
-            WFM Reporte Gerencial de Cobertura de Dotación
-          </h1>
-          <div className="flex items-center gap-3">
-            <div className="text-right leading-tight">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-white/80">Actualizado al corte de:</p>
-              <p className="text-[15px] font-black">{view.corteLabel}</p>
-            </div>
-            <div className="flex items-center gap-2 border-l border-white/20 pl-3">
-              <GeaModernDeltaEmblem className="h-9 w-9" variant="white" animated={false} />
-              <div className="leading-tight">
-                <p className="text-[13px] font-black tracking-wide">GEA</p>
-                <p className="text-[10px] font-semibold text-white/80">PERÚ</p>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <section className="flex flex-wrap items-end gap-3 rounded-sm px-4 py-3 shadow-sm border border-[var(--border-normal)]" style={{ background: theme.filterBg }}>
-          <p className="mr-1 text-[15px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>Filtros</p>
-          <label className="flex min-w-[140px] flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Segmento
-            <select value={segmento} onChange={(e) => { setSegmento(e.target.value); setCampana('') }} className={selectClass}>
-              <option value="">Todas</option>
-              {view.filterOptions.segmentos.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <label className="flex min-w-[180px] flex-1 flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Campaña
-            <select value={campana} onChange={(e) => setCampana(e.target.value)} className={selectClass}>
-              <option value="">Todas</option>
-              {view.filterOptions.campanas.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
-          <label className="flex min-w-[120px] flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Periodo
-            <select value={effectivePeriodo} onChange={(e) => setPeriodo(e.target.value)} className={selectClass}>
-              {view.filterOptions.periodos.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </label>
-          <label className="flex min-w-[120px] flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Estado
-            <select value={estado} onChange={(e) => setEstado(e.target.value)} className={selectClass}>
-              <option value="">Todas</option>
-              {view.filterOptions.estados.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <div className="flex flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Modalidad
-            <div className="mt-1 flex gap-1">
-              {MODALIDADES.map((m) => {
-                const on = modalidades.includes(m)
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => toggleModalidad(m)}
-                    className={`h-8 min-w-[96px] rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm transition ${
-                      on
-                        ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
-                        : (isDark ? 'bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-normal)]' : 'bg-white/70 text-[#163A6B]')
-                    }`}
-                  >
-                    {m}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className={`ml-auto flex h-8 items-center gap-1 rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm ${
-              isDark ? 'bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-normal)]' : 'bg-white text-[#163A6B]'
-            }`}
-          >
-            <ArrowLeft size={12} />
-            Volver
-          </button>
-          <button
-            type="button"
-            onClick={clearFilters}
-            className={`flex h-8 items-center gap-1 rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm ${
-              isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white'
-            }`}
-          >
-            <Eraser size={12} />
-            Borrar filtros
-          </button>
-        </section>
+        <CoberturaReportChrome
+          corteLabel={view.corteLabel}
+          isDark={isDark}
+          headerBg={theme.headerBg}
+          filterOptions={view.filterOptions}
+          periodo={effectivePeriodo}
+          defaultPeriodo={model.defaultPeriodo}
+          semana={semana}
+          segmento={segmento}
+          campana={campana}
+          estado={estado}
+          modalidades={modalidades}
+          tipo={tipo}
+          onPeriodoChange={(value) => { setPeriodo(value); setSemana(''); setSegmento(''); setCampana('') }}
+          onSemanaChange={(value) => { setSemana(value); setSegmento(''); setCampana('') }}
+          onSegmentoChange={(value) => { setSegmento(value); setCampana('') }}
+          onCampanaChange={setCampana}
+          onEstadoChange={setEstado}
+          onToggleModalidad={toggleModalidad}
+          onTipoChange={setTipo}
+          onClear={() => { clearFilters(); setActiveTableKey('') }}
+          onBack={onBack}
+        />
 
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <KpiCard
             theme={theme}
             title="Requerimiento"
-            value={formatPeNumber(kpis.requerimiento)}
+            value={fmt(kpis.requerimiento)}
             accent={theme.rq}
             icon={Target}
             period={effectivePeriodo}
@@ -567,58 +627,58 @@ function RequerimientosReport({
           <KpiCard
             theme={theme}
             title="Ingresos efectivos"
-            value={formatPeNumber(kpis.ingresos)}
+            value={fmt(kpis.ingresos)}
             tone={kpis.ingresos >= kpis.requerimiento ? 'up' : 'down'}
             accent={theme.ingresos}
             icon={TrendingUp}
             period={effectivePeriodo}
-            subtitle={`Objetivo: ${formatPeNumber(kpis.requerimiento)} (${formatDelta(kpis.ingresos, kpis.requerimiento)})`}
+            subtitle={`Objetivo: ${fmt(kpis.requerimiento)} (${formatDelta(kpis.ingresos, kpis.requerimiento)})`}
           />
           <KpiCard
             theme={theme}
             title="Ingresos proyectados"
-            value={formatPeNumber(kpis.proyeccion)}
+            value={fmt(kpis.proyeccion)}
             tone={kpis.proyeccion >= kpis.requerimiento ? 'up' : 'down'}
             accent={theme.proy}
             icon={LineChart}
             period={effectivePeriodo}
-            subtitle={`Objetivo: ${formatPeNumber(kpis.requerimiento)} (${formatDelta(kpis.proyeccion, kpis.requerimiento)})`}
+            subtitle={`Objetivo: ${fmt(kpis.requerimiento)} (${formatDelta(kpis.proyeccion, kpis.requerimiento)})`}
           />
           <KpiCard
             theme={theme}
             title="Brecha de capacitación"
-            value={formatPeNumber(kpis.brechaCapacitacion)}
+            value={fmt(kpis.brechaCapacitacion)}
             tone={kpis.brechaCapacitacion >= 0 ? 'up' : 'down'}
             accent={kpis.brechaCapacitacion >= 0 ? theme.ingresos : theme.danger}
             icon={GraduationCap}
             period={effectivePeriodo}
-            subtitle="Objetivo: 0,00"
+            subtitle={tipo === 'personas' ? 'Objetivo: 0' : 'Objetivo: 0,00'}
           />
           <KpiCard
             theme={theme}
             title="Brecha de reclutamiento"
-            value={formatPeNumber(kpis.brechaReclutamiento)}
+            value={fmt(kpis.brechaReclutamiento)}
             tone={kpis.brechaReclutamiento >= 0 ? 'up' : 'down'}
             accent={kpis.brechaReclutamiento >= 0 ? theme.ingresos : theme.danger}
             icon={UserPlus}
             period={effectivePeriodo}
-            subtitle="Objetivo: 0,00"
+            subtitle={tipo === 'personas' ? 'Objetivo: 0' : 'Objetivo: 0,00'}
           />
         </section>
 
         <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <ChartCard theme={theme} className="xl:col-span-2">
-            <SectionTitle isDark={isDark}>Seguimiento cobertura</SectionTitle>
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <SectionTitle isDark={isDark}>Seguimiento cobertura</SectionTitle>
+              <AxisToggle value={seguimientoAxis} onChange={setSeguimientoAxis} isDark={isDark} />
+            </div>
             <ChartLegend theme={theme} items={reqLegend} />
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={view.seguimiento}
                   margin={{ top: 16, right: 8, left: 0, bottom: 8 }}
-                  onClick={(state) => {
-                    const p = state?.activeLabel
-                    if (p) setPeriodo(p)
-                  }}
+                  onClick={onSeguimientoClick}
                 >
                   <defs>
                     <linearGradient id={rqGrad} x1="0" y1="0" x2="0" y2="1">
@@ -635,22 +695,22 @@ function RequerimientosReport({
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.grid} />
-                  <XAxis dataKey="periodo" tick={{ fontSize: 11, fill: theme.tick }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="axisKey" tick={{ fontSize: 11, fill: theme.tick }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ComboTooltip theme={theme} />} />
+                  <Tooltip content={<ComboTooltip theme={theme} decimals={decimals} />} />
                   <Bar dataKey="requerimiento" fill={`url(#${rqGrad})`} radius={[5, 5, 0, 0]} maxBarSize={22} cursor="pointer">
                     {view.seguimiento.map((row) => (
-                      <Cell key={`rq-${row.periodo}`} fill={`url(#${rqGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
+                      <Cell key={`rq-${row.axisKey}`} fill={`url(#${rqGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
                     ))}
                   </Bar>
                   <Bar dataKey="proyeccion" fill={`url(#${proyGrad})`} radius={[5, 5, 0, 0]} maxBarSize={22} cursor="pointer">
                     {view.seguimiento.map((row) => (
-                      <Cell key={`pr-${row.periodo}`} fill={`url(#${proyGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
+                      <Cell key={`pr-${row.axisKey}`} fill={`url(#${proyGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
                     ))}
                   </Bar>
                   <Bar dataKey="ingresos" fill={`url(#${ingGrad})`} radius={[5, 5, 0, 0]} maxBarSize={22} cursor="pointer">
                     {view.seguimiento.map((row) => (
-                      <Cell key={`ing-${row.periodo}`} fill={`url(#${ingGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
+                      <Cell key={`ing-${row.axisKey}`} fill={`url(#${ingGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
                     ))}
                   </Bar>
                 </ComposedChart>
@@ -659,7 +719,7 @@ function RequerimientosReport({
           </ChartCard>
 
           <ChartCard theme={theme}>
-            <SectionTitle isDark={isDark}>Brecha segmentada</SectionTitle>
+            <SectionTitle isDark={isDark}>Cobertura por segmento</SectionTitle>
             <div className="mb-2 flex justify-end gap-1">
               {['cobertura', 'brecha'].map((mode) => (
                 <button
@@ -691,8 +751,8 @@ function RequerimientosReport({
                 >
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
                   <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} unit={segmentMode === 'cobertura' ? '%' : ''} />
-                  <YAxis type="category" dataKey="segmento" width={118} tick={{ fontSize: 10, fill: theme.label }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<PairTooltip mode={segmentMode} theme={theme} />} />
+                  <YAxis type="category" dataKey="segmento" width={148} tick={{ fontSize: 10, fill: theme.label }} axisLine={false} tickLine={false} />
+                  <Tooltip content={<PairTooltip mode={segmentMode} theme={theme} decimals={decimals} />} />
                   <Bar dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'} maxBarSize={18} cursor="pointer" radius={[0, 8, 8, 0]} background={{ fill: theme.track, radius: 8 }}>
                     {view.segmentos.map((row) => (
                       <Cell
@@ -704,7 +764,7 @@ function RequerimientosReport({
                     <LabelList
                       dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'}
                       position="right"
-                      formatter={(v) => (segmentMode === 'cobertura' ? formatPePercent(v) : formatPeNumber(v))}
+                      formatter={(v) => (segmentMode === 'cobertura' ? formatPePercent(v) : fmt(v))}
                       style={{ fontSize: 10, fill: theme.label, fontWeight: 700 }}
                     />
                   </Bar>
@@ -747,20 +807,20 @@ function RequerimientosReport({
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
                   <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="campanaShort" width={132} tick={{ fontSize: 10, fill: theme.label }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ComboTooltip theme={theme} />} />
+                  <Tooltip content={<ComboTooltip theme={theme} decimals={decimals} />} />
                   <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
                     {campanasChart.map((row) => (
-                      <Cell key={`crq-${row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
                   <Bar dataKey="proyeccion" fill={`url(#${proyGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
                     {campanasChart.map((row) => (
-                      <Cell key={`cpr-${row.campana}`} fill={`url(#${proyGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`cpr-${row.campanaShort || row.campana}`} fill={`url(#${proyGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
                   <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
                     {campanasChart.map((row) => (
-                      <Cell key={`cing-${row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -782,6 +842,8 @@ function RequerimientosReport({
                   modalidades={modalidades}
                   toggleModalidad={toggleModalidad}
                   modColor={modColor}
+                  decimals={decimals}
+                  unitLabel={metricUnitLabel(tipo)}
                 />
               )}
             </div>
@@ -830,10 +892,10 @@ function RequerimientosReport({
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{r.campana}</td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{r.gpe}</td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{r.estado}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(r.requerimiento)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(r.dia1)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(r.proyeccion)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(r.ingresos)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(r.requerimiento)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(r.dia1, 0)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(r.proyeccion)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmt(r.ingresos)}</td>
                     </tr>
                   )
                 })}
@@ -841,10 +903,10 @@ function RequerimientosReport({
               <tfoot>
                 <tr className={`font-black ${isDark ? 'bg-slate-800 text-[var(--text-primary)]' : 'bg-slate-100'}`}>
                   <td className="px-2 py-1.5" colSpan={4}>Total</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.requerimiento)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.dia1)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.proyeccion)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.ingresos)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(kpis.requerimiento)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.dia1, 0)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(kpis.proyeccion)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(kpis.ingresos)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -872,8 +934,14 @@ function CoberturaDotacion() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [semana, setSemana] = useState('')
+  const [segmento, setSegmento] = useState('')
   const [campana, setCampana] = useState('')
   const [periodo, setPeriodo] = useState('')
+  const [estado, setEstado] = useState('')
+  const [tipo, setTipo] = useState('ftes')
+  const [condicion, setCondicion] = useState('')
+  const [jornadaMode, setJornadaMode] = useState('volumen')
+  const [seguimientoAxis, setSeguimientoAxis] = useState('periodo')
   const [modalidades, setModalidades] = useState(() => [...MODALIDADES])
   const [segmentMode, setSegmentMode] = useState('cobertura')
   const [activeTableKey, setActiveTableKey] = useState('')
@@ -902,8 +970,8 @@ function CoberturaDotacion() {
   }, [])
 
   const model = useMemo(
-    () => buildCoberturaDotacionModelFromTable(tableRows),
-    [tableRows]
+    () => buildCoberturaDotacionModelFromTable(tableRows, capacidadRows),
+    [tableRows, capacidadRows]
   )
   const requerimientosModel = useMemo(
     () => buildRequerimientosModel(joinCoberturaConCapacidad(tableRows, capacidadRows)),
@@ -911,10 +979,12 @@ function CoberturaDotacion() {
   )
 
   const effectivePeriodo = periodo || model.defaultPeriodo
+  const decimals = metricDecimals(tipo)
+  const fmt = (val) => formatPeNumber(val, decimals)
 
   const filters = useMemo(
-    () => ({ semana, campana, periodo: effectivePeriodo, modalidades }),
-    [semana, campana, effectivePeriodo, modalidades]
+    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado, modalidades, tipo, seguimientoAxis, condicion }),
+    [semana, segmento, campana, effectivePeriodo, estado, modalidades, tipo, seguimientoAxis, condicion]
   )
 
   const view = useMemo(
@@ -922,11 +992,18 @@ function CoberturaDotacion() {
     [model, filters]
   )
 
-  const campanaOptions = view.filterOptions.campanas
+  useEffect(() => {
+    if (estado && view.filterOptions.estados.length && !view.filterOptions.estados.includes(estado)) {
+      setEstado('')
+    }
+  }, [estado, view.filterOptions.estados])
 
   const clearFilters = useCallback(() => {
     setSemana('')
+    setSegmento('')
     setCampana('')
+    setEstado('')
+    setCondicion('')
     setPeriodo(model.defaultPeriodo || '')
     setModalidades([...MODALIDADES])
     setActiveTableKey('')
@@ -943,33 +1020,51 @@ function CoberturaDotacion() {
     })
   }, [])
 
+  const handleSeguimientoClick = useCallback((state) => {
+    const key = state?.activeLabel
+    if (!key) return
+    if (seguimientoAxis === 'semana') {
+      setSemana((prev) => (prev === key ? '' : key))
+      setCampana('')
+      return
+    }
+    setPeriodo(key)
+    setSemana('')
+    setSegmento('')
+    setCampana('')
+  }, [seguimientoAxis])
+
   const kpis = view.kpis
   const kpiTone = kpis.brecha >= 0 ? 'up' : 'down'
 
   const handleExport = useCallback(() => {
     const rows = [
       ...view.tabla.map((r) => ({
-        SEMANA: r.semana || r.segmento,
+        PERIODO: r.periodo,
+        SEMANA: r.semana,
         CAMPAÑA: r.campana,
         REQUERIMIENTO: r.requerimiento,
         INGRESOS: r.ingresos,
         '% COBERTURA': Number((r.coberturaPct / 100).toFixed(4)),
         BRECHA: r.brecha,
+        TIPO: metricUnitLabel(tipo),
       })),
       {
-        SEMANA: 'Total',
+        PERIODO: 'Total',
+        SEMANA: '',
         CAMPAÑA: '',
         REQUERIMIENTO: kpis.requerimiento,
         INGRESOS: kpis.ingresos,
         '% COBERTURA': Number((kpis.coberturaPct / 100).toFixed(4)),
         BRECHA: kpis.brecha,
+        TIPO: metricUnitLabel(tipo),
       },
     ]
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Cobertura')
     XLSX.writeFile(wb, `GEA_Cobertura_Dotacion_${effectivePeriodo || 'all'}.xlsx`)
-  }, [view.tabla, kpis, effectivePeriodo])
+  }, [view.tabla, kpis, effectivePeriodo, tipo])
 
   const pieData = view.modalidad.filter((m) => m.ingresos > 0)
   const campanasChart = (view.campanasChart || view.campanas || []).map((s) => ({
@@ -1014,7 +1109,7 @@ function CoberturaDotacion() {
           <p className="font-black uppercase tracking-wide">Sin cruce con capacidad</p>
           <p className="mt-2 text-[var(--text-secondary)]">
             No hay filas de cobertura_dotacion que coincidan con capacidad_rys en periodo, semana, campaña y grupo.
-            Segmento y estado del grupo se toman de esa ficha de capacidad.
+            El estado del grupo se toma de esa ficha de capacidad.
           </p>
         </div>
       )
@@ -1026,11 +1121,28 @@ function CoberturaDotacion() {
         isDark={isDark}
         gid={gid}
         onBack={() => setPage('cobertura')}
+        semana={semana}
+        setSemana={setSemana}
+        segmento={segmento}
+        setSegmento={setSegmento}
+        campana={campana}
+        setCampana={setCampana}
+        periodo={periodo}
+        setPeriodo={setPeriodo}
+        estado={estado}
+        setEstado={setEstado}
+        modalidades={modalidades}
+        toggleModalidad={toggleModalidad}
+        tipo={tipo}
+        setTipo={setTipo}
+        seguimientoAxis={seguimientoAxis}
+        setSeguimientoAxis={setSeguimientoAxis}
+        onSeguimientoClick={handleSeguimientoClick}
+        clearFilters={clearFilters}
       />
     )
   }
 
-  const selectClass = 'mt-1 h-8 rounded-sm border border-[var(--border-normal)] bg-[var(--input-bg)] px-2 text-[12px] font-semibold text-[var(--text-primary)]'
   const sharedLegend = [
     { label: 'Total Requerido', color: theme.rq },
     { label: 'Ingresos Efectivos', color: theme.ingresos },
@@ -1040,125 +1152,48 @@ function CoberturaDotacion() {
   return (
     <div className="h-full overflow-auto p-3 text-[var(--text-primary)]" style={{ background: theme.pageBg }}>
       <div className="mx-auto max-w-[1600px] space-y-3">
-        <header
-          className="flex items-center justify-between gap-4 px-5 py-3 text-white shadow-md"
-          style={{ background: theme.headerBg }}
-        >
-          <h1 className="text-[18px] font-black uppercase tracking-[0.06em] md:text-[22px]">
-            WFM Reporte Gerencial de Cobertura de Dotación
-          </h1>
-          <div className="flex items-center gap-3">
-            <div className="text-right leading-tight">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-white/80">
-                Actualizado al corte de:
-              </p>
-              <p className="text-[15px] font-black">{formatCorteDate(model.corteIso)}</p>
-            </div>
-            <div className="flex items-center gap-2 border-l border-white/20 pl-3">
-              <GeaModernDeltaEmblem className="h-9 w-9" variant="white" animated={false} />
-              <div className="leading-tight">
-                <p className="text-[13px] font-black tracking-wide">GEA</p>
-                <p className="text-[10px] font-semibold text-white/80">PERÚ</p>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <section
-          className="flex flex-wrap items-end gap-3 rounded-sm px-4 py-3 shadow-sm border border-[var(--border-normal)]"
-          style={{ background: theme.filterBg }}
-        >
-          <p className="mr-1 text-[15px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>Filtros</p>
-          <label className="flex min-w-[140px] flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Semana
-            <select
-              value={semana}
-              onChange={(e) => {
-                setSemana(e.target.value)
-                setCampana('')
-              }}
-              className={selectClass}
-            >
-              <option value="">Todas</option>
-              {(view.filterOptions.semanas || view.filterOptions.segmentos || []).map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex min-w-[180px] flex-1 flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Campaña
-            <select
-              value={campana}
-              onChange={(e) => setCampana(e.target.value)}
-              className={selectClass}
-            >
-              <option value="">Todas</option>
-              {campanaOptions.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex min-w-[120px] flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Periodo
-            <select
-              value={effectivePeriodo}
-              onChange={(e) => setPeriodo(e.target.value)}
-              className={selectClass}
-            >
-              {view.filterOptions.periodos.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </label>
-          <div className="flex flex-col text-[10px] font-black uppercase tracking-wide" style={{ color: theme.filterLabel }}>
-            Modalidad
-            <div className="mt-1 flex gap-1">
-              {MODALIDADES.map((m) => {
-                const on = modalidades.includes(m)
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => toggleModalidad(m)}
-                    className={`h-8 min-w-[96px] rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm transition ${
-                      on
-                        ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
-                        : (isDark ? 'bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-normal)]' : 'bg-white/70 text-[#163A6B]')
-                    }`}
-                  >
-                    {m}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setPage('requerimientos')}
-            className={`ml-auto flex h-8 items-center gap-1 rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm ${
-              isDark ? 'bg-[var(--bg-base)] text-cyan-200 border border-cyan-400/40' : 'bg-white text-[#163A6B]'
-            }`}
-          >
-            <ClipboardList size={12} />
-            Requerimientos
-          </button>
-          <button
-            type="button"
-            onClick={clearFilters}
-            className={`flex h-8 items-center gap-1 rounded-sm px-3 text-[11px] font-black uppercase tracking-wide shadow-sm ${
-              isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white'
-            }`}
-          >
-            <Eraser size={12} />
-            Borrar filtros
-          </button>
-        </section>
+        <CoberturaReportChrome
+          corteLabel={view.corteLabel}
+          isDark={isDark}
+          headerBg={theme.headerBg}
+          filterOptions={view.filterOptions}
+          periodo={effectivePeriodo}
+          defaultPeriodo={model.defaultPeriodo}
+          semana={semana}
+          segmento={segmento}
+          campana={campana}
+          estado={estado}
+          condicion={condicion}
+          modalidades={modalidades}
+          tipo={tipo}
+          onPeriodoChange={(value) => {
+            setPeriodo(value)
+            setSemana('')
+            setSegmento('')
+            setCampana('')
+          }}
+          onSemanaChange={(value) => {
+            setSemana(value)
+            setSegmento('')
+            setCampana('')
+          }}
+          onSegmentoChange={(value) => {
+            setSegmento(value)
+            setCampana('')
+          }}
+          onCampanaChange={setCampana}
+          onEstadoChange={setEstado}
+          onToggleModalidad={toggleModalidad}
+          onTipoChange={setTipo}
+          onClear={clearFilters}
+          onProyectados={() => setPage('requerimientos')}
+        />
 
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
             theme={theme}
             title="Requerimiento"
-            value={formatPeNumber(kpis.requerimiento)}
+            value={fmt(kpis.requerimiento)}
             accent={theme.rq}
             icon={Target}
             period={effectivePeriodo}
@@ -1166,12 +1201,12 @@ function CoberturaDotacion() {
           <KpiCard
             theme={theme}
             title="Ingresos efectivos"
-            value={formatPeNumber(kpis.ingresos)}
+            value={fmt(kpis.ingresos)}
             tone={kpiTone}
             accent={theme.ingresos}
             icon={TrendingUp}
             period={effectivePeriodo}
-            subtitle={`Objetivo: ${formatPeNumber(kpis.requerimiento)} (${formatDelta(kpis.ingresos, kpis.requerimiento)})`}
+            subtitle={`Objetivo: ${fmt(kpis.requerimiento)} (${formatDelta(kpis.ingresos, kpis.requerimiento)})`}
           />
           <KpiCard
             theme={theme}
@@ -1187,28 +1222,28 @@ function CoberturaDotacion() {
           <KpiCard
             theme={theme}
             title="Brecha"
-            value={formatPeNumber(kpis.brecha)}
+            value={fmt(kpis.brecha)}
             tone={kpiTone}
             accent={kpis.brecha >= 0 ? theme.ingresos : theme.danger}
             icon={GitCompare}
             period={effectivePeriodo}
-            subtitle="Objetivo: 0,00"
+            subtitle={tipo === 'personas' ? 'Objetivo: 0' : 'Objetivo: 0,00'}
           />
         </section>
 
         <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <ChartCard theme={theme} className="xl:col-span-2">
-            <SectionTitle isDark={isDark}>Seguimiento cobertura</SectionTitle>
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <SectionTitle isDark={isDark}>Seguimiento cobertura</SectionTitle>
+              <AxisToggle value={seguimientoAxis} onChange={setSeguimientoAxis} isDark={isDark} />
+            </div>
             <ChartLegend theme={theme} items={sharedLegend} />
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={view.seguimiento}
                   margin={{ top: 28, right: 22, left: 0, bottom: 8 }}
-                  onClick={(state) => {
-                    const p = state?.activeLabel
-                    if (p) setPeriodo(p)
-                  }}
+                  onClick={handleSeguimientoClick}
                 >
                   <defs>
                     <linearGradient id={rqGrad} x1="0" y1="0" x2="0" y2="1">
@@ -1221,7 +1256,7 @@ function CoberturaDotacion() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.grid} />
-                  <XAxis dataKey="periodo" tick={{ fontSize: 11, fill: theme.tick }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="axisKey" tick={{ fontSize: 11, fill: theme.tick }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
                   <YAxis
                     yAxisId="pct"
@@ -1233,15 +1268,15 @@ function CoberturaDotacion() {
                     unit="%"
                   />
                   <ReferenceLine yAxisId="pct" y={100} stroke={theme.line} strokeDasharray="5 5" strokeOpacity={0.55} />
-                  <Tooltip content={<ComboTooltip theme={theme} />} />
+                  <Tooltip content={<ComboTooltip theme={theme} decimals={decimals} />} />
                   <Bar dataKey="requerimiento" fill={`url(#${rqGrad})`} radius={[5, 5, 0, 0]} maxBarSize={26} cursor="pointer" animationDuration={320}>
                     {view.seguimiento.map((row) => (
-                      <Cell key={`rq-${row.periodo}`} fill={`url(#${rqGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
+                      <Cell key={`rq-${row.axisKey}`} fill={`url(#${rqGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
                     ))}
                   </Bar>
                   <Bar dataKey="ingresos" fill={`url(#${ingGrad})`} radius={[5, 5, 0, 0]} maxBarSize={26} cursor="pointer" animationDuration={320}>
                     {view.seguimiento.map((row) => (
-                      <Cell key={`ing-${row.periodo}`} fill={`url(#${ingGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
+                      <Cell key={`ing-${row.axisKey}`} fill={`url(#${ingGrad})`} fillOpacity={row.selected ? 1 : 0.42} />
                     ))}
                     <LabelList
                       dataKey="coberturaPct"
@@ -1264,7 +1299,7 @@ function CoberturaDotacion() {
           </ChartCard>
 
           <ChartCard theme={theme}>
-            <SectionTitle isDark={isDark}>Cobertura por semana</SectionTitle>
+            <SectionTitle isDark={isDark}>Cobertura por segmento</SectionTitle>
             <div className="mb-2 flex justify-end gap-1">
               {['cobertura', 'brecha'].map((mode) => (
                 <button
@@ -1288,9 +1323,9 @@ function CoberturaDotacion() {
                   layout="vertical"
                   margin={{ top: 4, right: 48, left: 8, bottom: 4 }}
                   onClick={(state) => {
-                    const name = state?.activePayload?.[0]?.payload?.semana || state?.activePayload?.[0]?.payload?.segmento
+                    const name = state?.activePayload?.[0]?.payload?.segmento
                     if (!name) return
-                    setSemana((prev) => (prev === name ? '' : name))
+                    setSegmento((prev) => (prev === name ? '' : name))
                     setCampana('')
                   }}
                 >
@@ -1304,13 +1339,13 @@ function CoberturaDotacion() {
                   />
                   <YAxis
                     type="category"
-                    dataKey="semana"
-                    width={118}
+                    dataKey="segmento"
+                    width={148}
                     tick={{ fontSize: 10, fill: theme.label }}
                     axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip content={<PairTooltip mode={segmentMode} theme={theme} />} />
+                  <Tooltip content={<PairTooltip mode={segmentMode} theme={theme} decimals={decimals} />} />
                   <Bar
                     dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'}
                     maxBarSize={18}
@@ -1321,15 +1356,15 @@ function CoberturaDotacion() {
                   >
                     {view.segmentos.map((row) => (
                       <Cell
-                        key={row.semana || row.segmento}
+                        key={row.segmento}
                         fill={segmentMode === 'cobertura' ? coverageFill(row.coberturaPct, theme) : (row.brecha >= 0 ? theme.ingresos : theme.danger)}
-                        fillOpacity={!semana || semana === (row.semana || row.segmento) ? 1 : 0.35}
+                        fillOpacity={!segmento || segmento === row.segmento ? 1 : 0.35}
                       />
                     ))}
                     <LabelList
                       dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'}
                       position="right"
-                      formatter={(v) => (segmentMode === 'cobertura' ? formatPePercent(v) : formatPeNumber(v))}
+                      formatter={(v) => (segmentMode === 'cobertura' ? formatPePercent(v) : fmt(v))}
                       style={{ fontSize: 10, fill: theme.label, fontWeight: 700 }}
                     />
                   </Bar>
@@ -1339,8 +1374,8 @@ function CoberturaDotacion() {
           </ChartCard>
         </section>
 
-        <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-          <ChartCard theme={theme} className="xl:col-span-2">
+        <section className="grid grid-cols-1 gap-3">
+          <ChartCard theme={theme}>
             <SectionTitle isDark={isDark}>Cobertura nivel campañas</SectionTitle>
             <ChartLegend
               theme={theme}
@@ -1381,22 +1416,24 @@ function CoberturaDotacion() {
                     axisLine={false}
                     tickLine={false}
                   />
-                  <Tooltip content={<PairTooltip mode="cobertura" theme={theme} />} />
+                  <Tooltip content={<PairTooltip mode="cobertura" theme={theme} decimals={decimals} />} />
                   <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={12} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
-                      <Cell key={`crq-${row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
                   <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={12} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
-                      <Cell key={`cing-${row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </ChartCard>
+        </section>
 
+        <section className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           <ChartCard theme={theme}>
             <SectionTitle isDark={isDark}>Participación por modalidad</SectionTitle>
             <div className="relative h-[268px]">
@@ -1411,16 +1448,29 @@ function CoberturaDotacion() {
                   modalidades={modalidades}
                   toggleModalidad={toggleModalidad}
                   modColor={modColor}
+                  decimals={decimals}
+                  unitLabel={metricUnitLabel(tipo)}
                 />
               )}
             </div>
           </ChartCard>
+          <JornadaMixChart
+            data={view.jornada || []}
+            theme={theme}
+            isDark={isDark}
+            mode={jornadaMode}
+            setMode={setJornadaMode}
+            condicion={condicion}
+            onSelect={(name) => setCondicion((prev) => (prev === name ? '' : name))}
+            decimals={decimals}
+            fmt={fmt}
+          />
         </section>
 
         <ChartCard theme={theme}>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-[11px] font-black uppercase tracking-wide text-[var(--text-primary)]">
-              Detalle semana × campaña · {effectivePeriodo}
+              Matriz detallada
             </p>
             <button
               type="button"
@@ -1437,7 +1487,7 @@ function CoberturaDotacion() {
             <table className="min-w-full border-collapse text-[11px]">
               <thead>
                 <tr className={isDark ? 'bg-slate-800 text-cyan-100' : 'bg-[#163A6B] text-white'}>
-                  {['Semana', 'Campaña', 'Requerimiento', 'Ingresos', '% Cobertura', 'Brecha'].map((h) => (
+                  {['Periodo', 'Semana', 'Campaña', 'Requerimiento', 'Ingresos', '% Cobertura', 'Brecha'].map((h) => (
                     <th key={h} className={`border px-2 py-1.5 text-left font-black uppercase tracking-wide ${isDark ? 'border-slate-700' : 'border-[#0f2b50]'}`}>
                       {h}
                     </th>
@@ -1446,14 +1496,13 @@ function CoberturaDotacion() {
               </thead>
               <tbody>
                 {view.tabla.map((r) => {
-                  const rowSemana = r.semana || r.segmento
-                  const key = `${rowSemana}|${r.campana}`
+                  const key = `${r.periodo}|${r.semana}|${r.campana}`
                   const active = activeTableKey === key
                   return (
                     <tr
                       key={key}
                       onClick={() => {
-                        setSemana(rowSemana)
+                        setSemana(r.semana)
                         setCampana(r.campana)
                         setActiveTableKey(key)
                       }}
@@ -1463,15 +1512,16 @@ function CoberturaDotacion() {
                           : (isDark ? 'odd:bg-[var(--bg-surface)] even:bg-[var(--bg-elevated)] hover:bg-cyan-500/10' : 'odd:bg-white even:bg-slate-50 hover:bg-indigo-50/70')
                       }`}
                     >
-                      <td className="px-2 py-1.5 font-semibold text-[var(--text-primary)]">{r.semana || r.segmento}</td>
+                      <td className="px-2 py-1.5 font-semibold text-[var(--text-primary)]">{r.periodo}</td>
+                      <td className="px-2 py-1.5 font-semibold tabular-nums text-[var(--text-primary)]">{r.semana}</td>
                       <td className="px-2 py-1.5 text-[var(--text-secondary)]">{r.campana}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-[var(--text-primary)]">{formatPeNumber(r.requerimiento)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-[var(--text-primary)]">{formatPeNumber(r.ingresos)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-[var(--text-primary)]">{fmt(r.requerimiento)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-[var(--text-primary)]">{fmt(r.ingresos)}</td>
                       <td className={`px-2 py-1.5 text-right font-bold tabular-nums ${r.coberturaPct >= 100 ? theme.up : theme.down}`}>
                         {formatPePercent(r.coberturaPct)}
                       </td>
                       <td className={`px-2 py-1.5 text-right font-bold tabular-nums ${r.brecha >= 0 ? theme.up : theme.down}`}>
-                        {formatPeNumber(r.brecha)}
+                        {fmt(r.brecha)}
                       </td>
                     </tr>
                   )
@@ -1479,14 +1529,14 @@ function CoberturaDotacion() {
               </tbody>
               <tfoot>
                 <tr className={`font-black ${isDark ? 'bg-slate-800 text-[var(--text-primary)]' : 'bg-slate-100'}`}>
-                  <td className="px-2 py-1.5" colSpan={2}>Total</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.requerimiento)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatPeNumber(kpis.ingresos)}</td>
+                  <td className="px-2 py-1.5" colSpan={3}>Total</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(kpis.requerimiento)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(kpis.ingresos)}</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums ${kpis.coberturaPct >= 100 ? theme.up : theme.down}`}>
                     {formatPePercent(kpis.coberturaPct)}
                   </td>
                   <td className={`px-2 py-1.5 text-right tabular-nums ${kpis.brecha >= 0 ? theme.up : theme.down}`}>
-                    {formatPeNumber(kpis.brecha)}
+                    {fmt(kpis.brecha)}
                   </td>
                 </tr>
               </tfoot>

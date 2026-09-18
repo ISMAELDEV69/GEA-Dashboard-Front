@@ -1,10 +1,9 @@
 /**
- * Vista Requerimientos — inner join cobertura_dotacion × capacidad_rys.
+ * Vista Proyectados — inner join cobertura_dotacion × capacidad_rys.
  * Llaves de cruce: periodo + semana + campaña + grupo.
- * Del match se trae la ficha ya filtrada de capacidad: segmento y estado del grupo.
+ * Segmento sale de cobertura_dotacion; estado del grupo sale de capacidad_rys.
  */
 
-import { normalize2026Period } from './dashboardAnalytics'
 import {
   MODALIDADES,
   coberturaPct,
@@ -13,145 +12,48 @@ import {
   shortCampanaLabel,
   currentYearMonth,
   listYearMonths,
-  normalizeModalidadDotacion,
+  normalizeCoberturaFact,
+  buildCapacidadIndex,
+  matchCapacidad,
+  normalizeEstadoGrupo,
+  normalizeMetricTipo,
+  metricsForTipo,
+  normalizeGrupoKey,
+  normalizeCampanaKey,
+  normalizeWeekKey,
+  corteIsoForWindow,
 } from './coberturaDotacionAnalytics'
 
-function clean(val) {
-  return String(val || '').trim()
-}
-
-function cleanUpper(val) {
-  return clean(val).toUpperCase()
-}
+export { normalizeGrupoKey, normalizeCampanaKey, normalizeWeekKey, normalizeEstadoGrupo, normalizeCoberturaFact }
 
 function round2(n) {
   return Number((Number(n) || 0).toFixed(2))
 }
 
-function pickCol(row, ...names) {
-  if (!row) return ''
-  for (const name of names) {
-    if (Object.prototype.hasOwnProperty.call(row, name) && row[name] != null && row[name] !== '') {
-      return row[name]
-    }
-  }
-  const lower = {}
-  for (const [key, value] of Object.entries(row)) {
-    lower[String(key).toLowerCase()] = value
-  }
-  for (const name of names) {
-    const value = lower[String(name).toLowerCase()]
-    if (value != null && value !== '') return value
-  }
-  return ''
+function clean(val) {
+  return String(val || '').trim()
 }
 
-export function normalizeGrupoKey(val) {
-  return cleanUpper(val).replace(/\s+/g, '')
-}
-
-export function normalizeCampanaKey(val) {
-  return cleanUpper(val)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-}
-
-export function normalizeWeekKey(val) {
-  const s = cleanUpper(val)
-  if (!s) return ''
-  if (/^20\d{4}$/.test(s)) return String(parseInt(s.slice(4, 6), 10))
-  const match = s.match(/(\d{1,2})/)
-  return match ? String(parseInt(match[1], 10)) : ''
-}
-
-export function normalizeEstadoGrupo(raw) {
-  const s = cleanUpper(raw)
-  if (!s) return 'SIN ESTADO'
-  if (s.includes('CERR')) return 'CERRADO'
-  if (s.includes('CURSO') || s === 'ACTIVO') return 'EN CURSO'
-  if (s.includes('PLAN')) return 'PLANIFICADO'
-  return s
-}
-
-function numCol(row, ...names) {
-  const n = Number(pickCol(row, ...names))
-  return Number.isFinite(n) ? n : 0
-}
-
-function buildCapacidadIndex(capacidadRows = []) {
-  const exact = new Map()
-  const noWeek = new Map()
-
-  const push = (map, key, row) => {
-    if (!key || key.includes('||')) return
-    if (!map.has(key)) map.set(key, row)
-  }
-
-  for (const g of capacidadRows) {
-    if (!g) continue
-    const grupo = normalizeGrupoKey(g.codigo || g.grupo_codigo || g.grupo_capacitacion)
-    const campana = normalizeCampanaKey(g.campana || g.campana_nombre)
-    const week = normalizeWeekKey(g.semana_label || g.semana_trabajo || g.semana)
-    const periodoOp = normalize2026Period(g.periodo_ingreso_op) || ''
-    const periodo = normalize2026Period(g.periodo) || ''
-    if (!grupo || !campana) continue
-
-    if (periodoOp && week) push(exact, `${periodoOp}|${week}|${campana}|${grupo}`, g)
-    if (periodo && week) push(exact, `${periodo}|${week}|${campana}|${grupo}`, g)
-    if (periodoOp) push(noWeek, `${periodoOp}|${campana}|${grupo}`, g)
-    if (periodo) push(noWeek, `${periodo}|${campana}|${grupo}`, g)
-  }
-
-  return { exact, noWeek }
-}
-
-function matchCapacidad(index, row) {
-  const grupo = normalizeGrupoKey(row.gpe)
-  const campana = normalizeCampanaKey(row.campana)
-  const week = normalizeWeekKey(row.semana)
-  const periodo = row.periodo
-  if (!grupo || !campana || !periodo) return null
-  if (week) {
-    const exact = index.exact.get(`${periodo}|${week}|${campana}|${grupo}`)
-    if (exact) return exact
-  }
-  return index.noWeek.get(`${periodo}|${campana}|${grupo}`) || null
-}
-
-export function normalizeCoberturaFact(raw) {
-  const periodo = normalize2026Period(pickCol(raw, 'PERIODO', 'periodo')) || clean(pickCol(raw, 'PERIODO', 'periodo'))
-  return {
-    periodo,
-    semana: clean(pickCol(raw, 'SEMANA', 'semana')) || 'SIN SEMANA',
-    campana: clean(pickCol(raw, 'CAMPAÑA', 'CAMPANA', 'campaña', 'campana')) || 'Sin Campaña',
-    gpe: clean(pickCol(raw, 'GPE', 'gpe')),
-    modalidad: normalizeModalidadDotacion(pickCol(raw, 'MODALIDAD_TRABAJO', 'modalidad_trabajo', 'modalidad')),
-    requerimiento: round2(numCol(raw, 'RQ_FTES', 'rq_ftes')),
-    ingresos: round2(numCol(raw, 'INGRESOS_FTES', 'ingresos_ftes')),
-    proyeccion: round2(numCol(raw, 'PROY_INGRESOS_FTES', 'proy_ingresos_ftes')),
-    dia1: round2(numCol(raw, 'Q_DIA_1', 'q_dia_1')),
-    createdAt: clean(pickCol(raw, 'created_at')).slice(0, 10),
-  }
+function uniqueSorted(values, locale = false) {
+  const list = [...new Set(values.filter(Boolean))]
+  return locale ? list.sort((a, b) => a.localeCompare(b, 'es')) : list.sort()
 }
 
 /**
  * Inner join: solo quedan filas de cobertura que existen en capacidad
  * con las mismas llaves (periodo, semana, campaña, grupo).
- * Segmento y estado salen de esa ficha de capacidad, no de cobertura.
  */
 export function joinCoberturaConCapacidad(tableRows = [], capacidadRows = []) {
   const index = buildCapacidadIndex(capacidadRows)
   const out = []
   for (const raw of tableRows) {
     const fact = normalizeCoberturaFact(raw)
-    if (!fact.periodo || !fact.gpe) continue
-    if (!fact.requerimiento && !fact.ingresos && !fact.proyeccion) continue
+    if (!fact.periodo || !fact.gpe || !fact.hasAmount) continue
     const cap = matchCapacidad(index, fact)
     if (!cap) continue
     out.push({
       ...fact,
-      segmento: clean(cap.segmento) || 'SIN SEGMENTO',
-      estado: normalizeEstadoGrupo(cap.estado),
+      estado: normalizeEstadoGrupo(cap.estado) || 'SIN ESTADO',
       gpe: fact.gpe || clean(cap.codigo),
     })
   }
@@ -179,18 +81,19 @@ function emptyTotals() {
   return { requerimiento: 0, ingresos: 0, proyeccion: 0, dia1: 0 }
 }
 
-function addInto(acc, row) {
-  acc.requerimiento += Number(row.requerimiento) || 0
-  acc.ingresos += Number(row.ingresos) || 0
-  acc.proyeccion += Number(row.proyeccion) || 0
+function addInto(acc, row, tipo = 'ftes') {
+  const metrics = metricsForTipo(row, tipo)
+  acc.requerimiento += metrics.requerimiento
+  acc.ingresos += metrics.ingresos
+  acc.proyeccion += metrics.proyeccion
   acc.dia1 += Number(row.dia1) || 0
 }
 
 function matchesFilter(row, filters) {
+  if (filters.semana && row.semana !== filters.semana) return false
   if (filters.segmento && row.segmento !== filters.segmento) return false
   if (filters.campana && row.campana !== filters.campana) return false
   if (filters.estado && row.estado !== filters.estado) return false
-  if (filters.semana && row.semana !== filters.semana) return false
   const mods = filters.modalidades
   if (Array.isArray(mods) && mods.length > 0 && mods.length < MODALIDADES.length) {
     if (!mods.includes(row.modalidad)) return false
@@ -207,29 +110,46 @@ export function buildRequerimientosModel(joinedRows = []) {
     let row = cells.get(key)
     if (!row) {
       row = {
-        periodo: n.periodo,
-        semana: n.semana,
-        segmento: n.segmento,
-        campana: n.campana,
-        gpe: n.gpe || 'SIN GRUPO',
-        estado: n.estado,
-        modalidad: n.modalidad,
-        requerimiento: 0,
-        ingresos: 0,
-        proyeccion: 0,
+        ...n,
+        rqQ: 0,
+        rqFtes: 0,
+        rqCap: 0,
+        ingQ: 0,
+        ingFtes: 0,
+        ingCap: 0,
+        proyQ: 0,
+        proyFtes: 0,
+        proyCap: 0,
         dia1: 0,
       }
       cells.set(key, row)
     }
-    addInto(row, n)
-    if (n.createdAt && n.createdAt > corteIso) corteIso = n.createdAt
+    row.rqQ += Number(n.rqQ) || 0
+    row.rqFtes += Number(n.rqFtes) || 0
+    row.rqCap += Number(n.rqCap) || 0
+    row.ingQ += Number(n.ingQ) || 0
+    row.ingFtes += Number(n.ingFtes) || 0
+    row.ingCap += Number(n.ingCap) || 0
+    row.proyQ += Number(n.proyQ) || 0
+    row.proyFtes += Number(n.proyFtes) || 0
+    row.proyCap += Number(n.proyCap) || 0
+    row.dia1 += Number(n.dia1) || 0
+    if (n.fecha && (!row.fecha || n.fecha > row.fecha)) row.fecha = n.fecha
+    if (n.fecha && n.fecha > corteIso) corteIso = n.fecha
+    else if (!n.fecha && n.createdAt && n.createdAt > corteIso) corteIso = n.createdAt
   }
 
   const rows = Array.from(cells.values()).map((r) => ({
     ...r,
-    requerimiento: round2(r.requerimiento),
-    ingresos: round2(r.ingresos),
-    proyeccion: round2(r.proyeccion),
+    rqQ: round2(r.rqQ),
+    rqFtes: round2(r.rqFtes),
+    rqCap: round2(r.rqCap),
+    ingQ: round2(r.ingQ),
+    ingFtes: round2(r.ingFtes),
+    ingCap: round2(r.ingCap),
+    proyQ: round2(r.proyQ),
+    proyFtes: round2(r.proyFtes),
+    proyCap: round2(r.proyCap),
     dia1: round2(r.dia1),
   })).sort((a, b) => {
     if (a.periodo !== b.periodo) return a.periodo.localeCompare(b.periodo)
@@ -238,24 +158,15 @@ export function buildRequerimientosModel(joinedRows = []) {
     return String(a.gpe).localeCompare(String(b.gpe))
   })
 
-  const periodos = [...new Set(rows.map((r) => r.periodo))].sort()
-  const segmentos = [...new Set(rows.map((r) => r.segmento))].sort((a, b) => a.localeCompare(b, 'es'))
-  const campanas = [...new Set(rows.map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
-  const estados = [...new Set(rows.map((r) => r.estado))].sort((a, b) => a.localeCompare(b, 'es'))
-
+  const periodos = uniqueSorted(rows.map((r) => r.periodo))
   const currentYm = currentYearMonth()
   const activity = new Map()
   for (const r of rows) {
-    const slot = activity.get(r.periodo) || { rq: 0, ing: 0, proy: 0 }
-    slot.rq += r.requerimiento
-    slot.ing += r.ingresos
-    slot.proy += r.proyeccion
+    const slot = activity.get(r.periodo) || { active: false }
+    if (r.rqQ || r.rqFtes || r.ingQ || r.ingFtes || r.proyQ || r.proyFtes) slot.active = true
     activity.set(r.periodo, slot)
   }
-  const withData = periodos.filter((p) => {
-    const s = activity.get(p)
-    return s && p <= currentYm && (s.rq > 0 || s.ing > 0 || s.proy > 0)
-  })
+  const withData = periodos.filter((p) => activity.get(p)?.active && p <= currentYm)
   const defaultPeriodo = withData.length
     ? withData[withData.length - 1]
     : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
@@ -263,56 +174,88 @@ export function buildRequerimientosModel(joinedRows = []) {
   return {
     rows,
     periodos,
-    segmentos,
-    campanas,
-    estados,
+    semanas: uniqueSorted(rows.map((r) => r.semana)),
+    segmentos: uniqueSorted(rows.map((r) => r.segmento), true),
+    campanas: uniqueSorted(rows.map((r) => r.campana), true),
+    estados: uniqueSorted(rows.map((r) => r.estado), true),
     corteIso,
     defaultPeriodo,
-    source: 'requerimientos',
+    source: 'proyectados',
   }
 }
 
 function topCampanas(list, limit = 10) {
   if (list.length <= limit) {
-    return list.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false }))
+    return list.map((s) => ({ ...s, campanaShort: s.campanaShort || shortCampanaLabel(s.campana), isOtras: false }))
   }
   const top = list.slice(0, limit)
   const rest = list.slice(limit)
   const other = rest.reduce((acc, r) => {
-    addInto(acc, r)
+    acc.requerimiento += Number(r.requerimiento) || 0
+    acc.ingresos += Number(r.ingresos) || 0
+    acc.proyeccion += Number(r.proyeccion) || 0
+    acc.dia1 += Number(r.dia1) || 0
     return acc
   }, emptyTotals())
   return [
-    ...top.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false })),
+    ...top.map((s) => ({ ...s, campanaShort: s.campanaShort || shortCampanaLabel(s.campana), isOtras: false })),
     { ...withRates(other), campana: 'OTRAS', campanaShort: 'OTRAS', isOtras: true },
   ]
 }
 
 export function aggregateRequerimientos(model, filters = {}) {
   const rows = model?.rows || []
+  const tipo = normalizeMetricTipo(filters.tipo)
+  const seguimientoAxis = filters.seguimientoAxis === 'semana' ? 'semana' : 'periodo'
   const dimFiltered = rows.filter((r) => matchesFilter(r, filters))
   const periodo = filters.periodo || model?.defaultPeriodo || ''
   const periodFiltered = dimFiltered.filter((r) => !periodo || r.periodo === periodo)
 
   const kpis = withRates(periodFiltered.reduce((acc, r) => {
-    addInto(acc, r)
+    addInto(acc, r, tipo)
     return acc
   }, emptyTotals()))
 
-  const axisEnd = currentYearMonth()
-  const byPeriodo = new Map()
-  for (const p of listYearMonths('202601', axisEnd)) {
-    byPeriodo.set(p, { periodo: p, ...emptyTotals() })
+  let seguimiento = []
+  if (seguimientoAxis === 'semana') {
+    const weekSource = rows
+      .filter((r) => matchesFilter(r, { ...filters, semana: '' }))
+      .filter((r) => !periodo || r.periodo === periodo)
+    const bySemana = new Map()
+    for (const r of weekSource) {
+      let slot = bySemana.get(r.semana)
+      if (!slot) {
+        slot = { axisKey: r.semana, semana: r.semana, periodo: r.periodo, ...emptyTotals() }
+        bySemana.set(r.semana, slot)
+      }
+      addInto(slot, r, tipo)
+    }
+    seguimiento = [...bySemana.values()]
+      .sort((a, b) => a.axisKey.localeCompare(b.axisKey))
+      .map((s) => ({
+        ...withRates(s),
+        axisKey: s.axisKey,
+        semana: s.semana,
+        periodo: s.periodo,
+        selected: Boolean(filters.semana) && s.semana === filters.semana,
+      }))
+  } else {
+    const axisEnd = currentYearMonth()
+    const byPeriodo = new Map()
+    for (const p of listYearMonths('202601', axisEnd)) {
+      byPeriodo.set(p, { axisKey: p, periodo: p, ...emptyTotals() })
+    }
+    for (const r of dimFiltered) {
+      if (!byPeriodo.has(r.periodo)) continue
+      addInto(byPeriodo.get(r.periodo), r, tipo)
+    }
+    seguimiento = [...byPeriodo.values()].map((s) => ({
+      ...withRates(s),
+      axisKey: s.axisKey,
+      periodo: s.periodo,
+      selected: s.periodo === periodo,
+    }))
   }
-  for (const r of dimFiltered) {
-    if (!byPeriodo.has(r.periodo)) continue
-    addInto(byPeriodo.get(r.periodo), r)
-  }
-  const seguimiento = [...byPeriodo.values()].map((s) => ({
-    ...withRates(s),
-    periodo: s.periodo,
-    selected: s.periodo === periodo,
-  }))
 
   const bySegmento = new Map()
   for (const r of periodFiltered) {
@@ -321,7 +264,7 @@ export function aggregateRequerimientos(model, filters = {}) {
       slot = { segmento: r.segmento, ...emptyTotals() }
       bySegmento.set(r.segmento, slot)
     }
-    addInto(slot, r)
+    addInto(slot, r, tipo)
   }
   const segmentos = [...bySegmento.values()]
     .map((s) => ({ ...withRates(s), segmento: s.segmento }))
@@ -334,10 +277,10 @@ export function aggregateRequerimientos(model, filters = {}) {
       slot = { campana: r.campana, ...emptyTotals() }
       byCampana.set(r.campana, slot)
     }
-    addInto(slot, r)
+    addInto(slot, r, tipo)
   }
   const campanas = [...byCampana.values()]
-    .map((s) => ({ ...withRates(s), campana: s.campana }))
+    .map((s) => ({ ...withRates(s), campana: s.campana, campanaShort: shortCampanaLabel(s.campana) }))
     .sort((a, b) => b.requerimiento - a.requerimiento || b.ingresos - a.ingresos)
   const campanasChart = topCampanas(campanas)
 
@@ -355,7 +298,7 @@ export function aggregateRequerimientos(model, filters = {}) {
       }
       byEscuela.set(key, slot)
     }
-    addInto(slot, r)
+    addInto(slot, r, tipo)
   }
   const tabla = [...byEscuela.values()]
     .map((r) => ({ ...withRates(r), ...r }))
@@ -368,7 +311,7 @@ export function aggregateRequerimientos(model, filters = {}) {
   const byMod = new Map(MODALIDADES.map((m) => [m, { modalidad: m, ...emptyTotals() }]))
   for (const r of periodFiltered) {
     const mod = MODALIDADES.includes(r.modalidad) ? r.modalidad : 'PRESENCIAL'
-    addInto(byMod.get(mod), r)
+    addInto(byMod.get(mod), r, tipo)
   }
   const ingresosModTotal = [...byMod.values()].reduce((s, m) => s + (m.ingresos || 0), 0)
   const modalidad = [...byMod.values()].map((s) => {
@@ -380,12 +323,15 @@ export function aggregateRequerimientos(model, filters = {}) {
     }
   })
 
-  const campanasForSegmento = filters.segmento
-    ? [...new Set(rows.filter((r) => r.segmento === filters.segmento).map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
-    : (model?.campanas || [])
+  const inPeriodo = rows.filter((r) => !periodo || r.periodo === periodo)
+  const afterSemana = filters.semana ? inPeriodo.filter((r) => r.semana === filters.semana) : inPeriodo
+  const afterSegmento = filters.segmento ? afterSemana.filter((r) => r.segmento === filters.segmento) : afterSemana
+  const afterCampana = filters.campana ? afterSegmento.filter((r) => r.campana === filters.campana) : afterSegmento
 
   return {
     periodo,
+    tipo,
+    seguimientoAxis,
     kpis,
     seguimiento,
     segmentos,
@@ -396,10 +342,11 @@ export function aggregateRequerimientos(model, filters = {}) {
     ingresosModTotal: round2(ingresosModTotal),
     filterOptions: {
       periodos: model?.periodos || [],
-      segmentos: model?.segmentos || [],
-      campanas: campanasForSegmento,
-      estados: model?.estados || [],
+      semanas: uniqueSorted(inPeriodo.map((r) => r.semana)),
+      segmentos: uniqueSorted(afterSemana.map((r) => r.segmento), true),
+      campanas: uniqueSorted(afterSegmento.map((r) => r.campana), true),
+      estados: uniqueSorted(afterCampana.map((r) => r.estado), true),
     },
-    corteLabel: formatCorteDate(model?.corteIso),
+    corteLabel: formatCorteDate(corteIsoForWindow(rows, { periodo, semana: filters.semana }) || model?.corteIso),
   }
 }

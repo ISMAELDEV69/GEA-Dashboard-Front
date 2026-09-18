@@ -1417,21 +1417,29 @@ const COBERTURA_DOTACION_SELECT = [
   'created_at',
   'PERIODO',
   'SEMANA',
+  'SEGMENTO',
   'CAMPAÑA',
   'GPE',
   'MODALIDAD_TRABAJO',
   'CONDICION_LABORAL',
   'FECHA_INGRESO_OP',
+  'RQ_Q',
   'RQ_FTES',
-  'INGRESOS_FTES',
-  'PROY_INGRESOS_FTES',
+  'RQ_CAPACIDAD',
   'Q_DIA_1',
+  'ACTUALES',
+  'INGRESOS_Q',
+  'INGRESOS_FTES',
+  'INGRESOS_CAPACIDAD',
+  'PROY_INGRESOS_Q',
+  'PROY_INGRESOS_FTES',
+  'PROY_INGRESOS_CAPACIDAD',
 ].join(',')
 
 /** Snapshot WFM ya calculado: public.cobertura_dotacion */
 export async function fetchCoberturaDotacion() {
   if (DB_MODE !== 'supabase') return []
-  return withCache('cobertura_dotacion_v2', 180000, async () => {
+  return withCache('cobertura_dotacion_v4', 180000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0

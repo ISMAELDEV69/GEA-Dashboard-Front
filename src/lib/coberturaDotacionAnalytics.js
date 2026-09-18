@@ -1,7 +1,8 @@
 /**
  * Cobertura de Dotación — motor gerencial (réplica Power BI).
  *
- * Fuente canónica: tabla public.cobertura_dotacion (RQ_FTES / INGRESOS_FTES ya calculados).
+ * Fuente canónica: tabla public.cobertura_dotacion
+ * Unidades: Personas (RQ_Q), FT (RQ_FTES), Capacidad (RQ_CAPACIDAD).
  * Brecha: Ingresos − RQ (con signo). % cobertura = 0 si RQ = 0.
  */
 
@@ -20,6 +21,40 @@ export const COBERTURA_COLORS = {
 }
 
 export const MODALIDADES = ['PRESENCIAL', 'REMOTO']
+export const CONDICIONES = ['FULL TIME', 'PART TIME']
+
+export function normalizeCondicionLaboral(raw) {
+  const s = cleanUpper(raw)
+  if (s.includes('PART')) return 'PART TIME'
+  if (s.includes('FULL')) return 'FULL TIME'
+  return 'FULL TIME'
+}
+
+export function condicionLabel(condicion) {
+  if (condicion === 'PART TIME') return 'Part time'
+  return 'Full time'
+}
+
+export const METRIC_TIPOS = [
+  { id: 'ftes', label: 'FT' },
+  { id: 'personas', label: 'Personas' },
+  { id: 'capacidad', label: 'Capacidad' },
+]
+
+export function metricDecimals(tipo) {
+  return tipo === 'personas' ? 0 : 2
+}
+
+export function metricUnitLabel(tipo) {
+  if (tipo === 'personas') return 'Personas'
+  if (tipo === 'capacidad') return 'Capacidad'
+  return 'FT'
+}
+
+export function normalizeMetricTipo(tipo) {
+  if (tipo === 'personas' || tipo === 'capacidad') return tipo
+  return 'ftes'
+}
 
 function clean(val) {
   return String(val || '').trim()
@@ -75,6 +110,18 @@ export function formatCorteDate(iso) {
   return `${d}/${m}/${y}`
 }
 
+/** Última FECHA_INGRESO_OP (fallback created_at) en la ventana periodo/semana. */
+export function corteIsoForWindow(rows = [], { periodo = '', semana = '' } = {}) {
+  let max = ''
+  for (const r of rows) {
+    if (periodo && r.periodo !== periodo) continue
+    if (semana && r.semana !== semana) continue
+    const iso = String(r.fecha || '').slice(0, 10)
+    if (iso && iso > max) max = iso
+  }
+  return max
+}
+
 export function coberturaPct(ingresos, requerimiento) {
   const rq = Number(requerimiento) || 0
   const ing = Number(ingresos) || 0
@@ -109,7 +156,7 @@ export function shortCampanaLabel(name, max = 22) {
 export function topCampanasForChart(campanas = [], limit = 10) {
   const list = Array.isArray(campanas) ? campanas : []
   if (list.length <= limit) {
-    return list.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false }))
+    return list.map((s) => ({ ...s, campanaShort: s.campanaShort || shortCampanaLabel(s.campana), isOtras: false }))
   }
   const top = list.slice(0, limit)
   const rest = list.slice(limit)
@@ -128,7 +175,7 @@ export function topCampanasForChart(campanas = [], limit = 10) {
     brecha: brechaVal(other.ingresos, other.requerimiento),
   }
   return [
-    ...top.map((s) => ({ ...s, campanaShort: shortCampanaLabel(s.campana), isOtras: false })),
+    ...top.map((s) => ({ ...s, campanaShort: s.campanaShort || shortCampanaLabel(s.campana), isOtras: false })),
     otherRates,
   ]
 }
@@ -215,6 +262,78 @@ function pickCol(row, ...names) {
   return ''
 }
 
+function numCol(row, ...names) {
+  const n = Number(pickCol(row, ...names))
+  return Number.isFinite(n) ? n : 0
+}
+
+export function normalizeGrupoKey(val) {
+  return cleanUpper(val).replace(/\s+/g, '')
+}
+
+export function normalizeCampanaKey(val) {
+  return cleanUpper(val)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+export function normalizeWeekKey(val) {
+  const s = cleanUpper(val)
+  if (!s) return ''
+  if (/^20\d{4}$/.test(s)) return String(parseInt(s.slice(4, 6), 10))
+  const match = s.match(/(\d{1,2})/)
+  return match ? String(parseInt(match[1], 10)) : ''
+}
+
+export function normalizeEstadoGrupo(raw) {
+  const s = cleanUpper(raw)
+  if (!s) return ''
+  if (s.includes('CERR')) return 'CERRADO'
+  if (s.includes('CURSO') || s === 'ACTIVO') return 'EN CURSO'
+  if (s.includes('PLAN')) return 'PLANIFICADO'
+  return s
+}
+
+export function buildCapacidadIndex(capacidadRows = []) {
+  const exact = new Map()
+  const noWeek = new Map()
+
+  const push = (map, key, row) => {
+    if (!key || key.includes('||')) return
+    if (!map.has(key)) map.set(key, row)
+  }
+
+  for (const g of capacidadRows) {
+    if (!g) continue
+    const grupo = normalizeGrupoKey(g.codigo || g.grupo_codigo || g.grupo_capacitacion)
+    const campana = normalizeCampanaKey(g.campana || g.campana_nombre)
+    const week = normalizeWeekKey(g.semana_label || g.semana_trabajo || g.semana)
+    const periodoOp = normalize2026Period(g.periodo_ingreso_op) || ''
+    const periodo = normalize2026Period(g.periodo) || ''
+    if (!grupo || !campana) continue
+
+    if (periodoOp && week) push(exact, `${periodoOp}|${week}|${campana}|${grupo}`, g)
+    if (periodo && week) push(exact, `${periodo}|${week}|${campana}|${grupo}`, g)
+    if (periodoOp) push(noWeek, `${periodoOp}|${campana}|${grupo}`, g)
+    if (periodo) push(noWeek, `${periodo}|${campana}|${grupo}`, g)
+  }
+
+  return { exact, noWeek }
+}
+
+export function matchCapacidad(index, row) {
+  const grupo = normalizeGrupoKey(row.gpe)
+  const campana = normalizeCampanaKey(row.campana)
+  const week = normalizeWeekKey(row.semana)
+  const periodo = row.periodo
+  if (!grupo || !campana || !periodo) return null
+  if (week) {
+    const exact = index.exact.get(`${periodo}|${week}|${campana}|${grupo}`)
+    if (exact) return exact
+  }
+  return index.noWeek.get(`${periodo}|${campana}|${grupo}`) || null
+}
+
 function pushCell(bucket, keyParts, amount, field) {
   const key = keyParts.join('|')
   let row = bucket.get(key)
@@ -233,67 +352,135 @@ function pushCell(bucket, keyParts, amount, field) {
   row[field] = round2(row[field] + amount)
 }
 
-export function normalizeCoberturaDotacionRow(raw) {
-  const periodo = normalize2026Period(pickCol(raw, 'PERIODO', 'periodo')) || clean(pickCol(raw, 'PERIODO', 'periodo'))
-  const semana = clean(pickCol(raw, 'SEMANA', 'semana')) || 'SIN SEMANA'
-  const campana = clean(pickCol(raw, 'CAMPAÑA', 'CAMPANA', 'campaña', 'campana')) || 'Sin Campaña'
-  const modalidad = normalizeModalidadDotacion(pickCol(raw, 'MODALIDAD_TRABAJO', 'modalidad_trabajo', 'modalidad'))
-  const gpe = cleanUpper(pickCol(raw, 'GPE', 'gpe'))
-  const requerimiento = round2(Number(pickCol(raw, 'RQ_FTES', 'rq_ftes')) || 0)
-  const ingresos = round2(Number(pickCol(raw, 'INGRESOS_FTES', 'ingresos_ftes')) || 0)
-  const fecha = clean(pickCol(raw, 'FECHA_INGRESO_OP', 'fecha_ingreso_op', 'created_at')).slice(0, 10)
-  return { periodo, semana, campana, modalidad, gpe, requerimiento, ingresos, fecha }
+export function metricsForTipo(row, tipo = 'ftes') {
+  const unit = normalizeMetricTipo(tipo)
+  if (unit === 'personas') {
+    return {
+      requerimiento: Number(row.rqQ) || 0,
+      ingresos: Number(row.ingQ) || 0,
+      proyeccion: Number(row.proyQ) || 0,
+    }
+  }
+  if (unit === 'capacidad') {
+    return {
+      requerimiento: Number(row.rqCap) || 0,
+      ingresos: Number(row.ingCap) || 0,
+      proyeccion: Number(row.proyCap) || 0,
+    }
+  }
+  return {
+    requerimiento: Number(row.rqFtes) || 0,
+    ingresos: Number(row.ingFtes) || 0,
+    proyeccion: Number(row.proyFtes) || 0,
+  }
 }
 
-export function buildCoberturaDotacionModelFromTable(tableRows = []) {
-  const cells = new Map()
+export function normalizeCoberturaFact(raw) {
+  const periodo = normalize2026Period(pickCol(raw, 'PERIODO', 'periodo')) || clean(pickCol(raw, 'PERIODO', 'periodo'))
+  const rqQ = round2(numCol(raw, 'RQ_Q', 'rq_q'))
+  const rqFtes = round2(numCol(raw, 'RQ_FTES', 'rq_ftes'))
+  const rqCap = round2(numCol(raw, 'RQ_CAPACIDAD', 'rq_capacidad'))
+  const ingQ = round2(numCol(raw, 'INGRESOS_Q', 'ingresos_q'))
+  const ingFtes = round2(numCol(raw, 'INGRESOS_FTES', 'ingresos_ftes'))
+  const ingCap = round2(numCol(raw, 'INGRESOS_CAPACIDAD', 'ingresos_capacidad'))
+  const proyQ = round2(numCol(raw, 'PROY_INGRESOS_Q', 'proy_ingresos_q'))
+  const proyFtes = round2(numCol(raw, 'PROY_INGRESOS_FTES', 'proy_ingresos_ftes'))
+  const proyCap = round2(numCol(raw, 'PROY_INGRESOS_CAPACIDAD', 'proy_ingresos_capacidad'))
+  const hasAmount = Boolean(rqQ || rqFtes || rqCap || ingQ || ingFtes || ingCap || proyQ || proyFtes || proyCap)
+  return {
+    periodo,
+    semana: clean(pickCol(raw, 'SEMANA', 'semana')) || 'SIN SEMANA',
+    segmento: clean(pickCol(raw, 'SEGMENTO', 'segmento')) || 'SIN SEGMENTO',
+    campana: clean(pickCol(raw, 'CAMPAÑA', 'CAMPANA', 'campaña', 'campana')) || 'Sin Campaña',
+    modalidad: normalizeModalidadDotacion(pickCol(raw, 'MODALIDAD_TRABAJO', 'modalidad_trabajo', 'modalidad')),
+    gpe: cleanUpper(pickCol(raw, 'GPE', 'gpe')),
+    condicion: normalizeCondicionLaboral(pickCol(raw, 'CONDICION_LABORAL', 'condicion_laboral', 'condicion')),
+    rqQ,
+    rqFtes,
+    rqCap,
+    ingQ,
+    ingFtes,
+    ingCap,
+    proyQ,
+    proyFtes,
+    proyCap,
+    dia1: round2(numCol(raw, 'Q_DIA_1', 'q_dia_1')),
+    actuales: round2(numCol(raw, 'ACTUALES', 'actuales')),
+    fecha: clean(pickCol(raw, 'FECHA_INGRESO_OP', 'fecha_ingreso_op')).slice(0, 10),
+    createdAt: clean(pickCol(raw, 'created_at')).slice(0, 10),
+    hasAmount,
+  }
+}
+
+export function normalizeCoberturaDotacionRow(raw) {
+  const n = normalizeCoberturaFact(raw)
+  const metrics = metricsForTipo(n, 'ftes')
+  return {
+    periodo: n.periodo,
+    semana: n.semana,
+    segmento: n.segmento,
+    campana: n.campana,
+    modalidad: n.modalidad,
+    gpe: n.gpe,
+    fecha: n.fecha,
+    ...n,
+    requerimiento: metrics.requerimiento,
+    ingresos: metrics.ingresos,
+  }
+}
+
+function uniqueSorted(values, locale = false) {
+  const list = [...new Set(values.filter(Boolean))]
+  return locale ? list.sort((a, b) => a.localeCompare(b, 'es')) : list.sort()
+}
+
+function defaultPeriodoFromRows(rows, getActivity) {
+  const periodos = uniqueSorted(rows.map((r) => r.periodo))
+  const currentYm = currentYearMonth()
+  const activity = new Map()
+  for (const r of rows) {
+    const slot = activity.get(r.periodo) || { active: false }
+    if (getActivity(r)) slot.active = true
+    activity.set(r.periodo, slot)
+  }
+  const withData = periodos.filter((p) => activity.get(p)?.active && p <= currentYm)
+  return withData.length
+    ? withData[withData.length - 1]
+    : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
+}
+
+export function buildCoberturaDotacionModelFromTable(tableRows = [], capacidadRows = []) {
+  const index = buildCapacidadIndex(capacidadRows)
+  const rows = []
   let corteIso = ''
 
   for (const raw of tableRows) {
-    const n = normalizeCoberturaDotacionRow(raw)
-    if (!n.periodo) continue
-    if (!n.requerimiento && !n.ingresos) continue
-    const keyParts = [n.periodo, n.semana, n.campana, n.modalidad]
-    pushCell(cells, keyParts, n.requerimiento, 'requerimiento')
-    pushCell(cells, keyParts, n.ingresos, 'ingresos')
+    const n = normalizeCoberturaFact(raw)
+    if (!n.periodo || !n.hasAmount) continue
+    const cap = matchCapacidad(index, n)
+    rows.push({
+      ...n,
+      estado: cap ? normalizeEstadoGrupo(cap.estado) : '',
+    })
     if (n.fecha && n.fecha > corteIso) corteIso = n.fecha
   }
 
-  const rows = Array.from(cells.values()).sort((a, b) => {
+  rows.sort((a, b) => {
     if (a.periodo !== b.periodo) return a.periodo.localeCompare(b.periodo)
+    if (a.segmento !== b.segmento) return a.segmento.localeCompare(b.segmento, 'es')
     if (a.semana !== b.semana) return a.semana.localeCompare(b.semana)
     return a.campana.localeCompare(b.campana, 'es')
   })
 
-  const periodos = [...new Set(rows.map((r) => r.periodo))].sort()
-  const semanas = [...new Set(rows.map((r) => r.semana))].sort()
-  const campanas = [...new Set(rows.map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
-
-  const now = new Date()
-  const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-  const activity = new Map()
-  for (const r of rows) {
-    const slot = activity.get(r.periodo) || { rq: 0, ing: 0 }
-    slot.rq += Number(r.requerimiento) || 0
-    slot.ing += Number(r.ingresos) || 0
-    activity.set(r.periodo, slot)
-  }
-  const withData = periodos.filter((p) => {
-    const s = activity.get(p)
-    return s && p <= currentYm && (s.rq > 0 || s.ing > 0)
-  })
-  const defaultPeriodo = withData.length
-    ? withData[withData.length - 1]
-    : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
-
   return {
     rows,
-    periodos,
-    semanas,
-    segmentos: semanas,
-    campanas,
+    periodos: uniqueSorted(rows.map((r) => r.periodo)),
+    semanas: uniqueSorted(rows.map((r) => r.semana)),
+    segmentos: uniqueSorted(rows.map((r) => r.segmento), true),
+    campanas: uniqueSorted(rows.map((r) => r.campana), true),
+    estados: uniqueSorted(rows.map((r) => r.estado), true),
     corteIso,
-    defaultPeriodo,
+    defaultPeriodo: defaultPeriodoFromRows(rows, (r) => r.hasAmount),
     totalFirstIops: 0,
     source: 'table',
   }
@@ -403,14 +590,12 @@ export function buildCoberturaDotacionModel(grupos = [], asistencias = [], postu
   }
 }
 
-function rowSemana(row) {
-  return row?.semana || row?.segmento || 'SIN SEMANA'
-}
-
 function matchesFilter(row, filters) {
-  if (filters.semana && rowSemana(row) !== filters.semana) return false
-  if (filters.segmento && !filters.semana && row.segmento !== filters.segmento) return false
+  if (filters.semana && row.semana !== filters.semana) return false
+  if (filters.segmento && row.segmento !== filters.segmento) return false
   if (filters.campana && row.campana !== filters.campana) return false
+  if (filters.estado && row.estado !== filters.estado) return false
+  if (filters.condicion && row.condicion !== filters.condicion) return false
   const mods = filters.modalidades
   if (Array.isArray(mods) && mods.length > 0 && mods.length < MODALIDADES.length) {
     if (!mods.includes(row.modalidad)) return false
@@ -419,23 +604,30 @@ function matchesFilter(row, filters) {
 }
 
 function emptyTotals() {
-  return { requerimiento: 0, ingresos: 0, coberturaPct: 0, brecha: 0 }
+  return { requerimiento: 0, ingresos: 0, proyeccion: 0, dia1: 0, coberturaPct: 0, brecha: 0 }
 }
 
 function withRates(tot) {
   const requerimiento = round2(tot.requerimiento)
   const ingresos = round2(tot.ingresos)
+  const proyeccion = round2(tot.proyeccion || 0)
+  const dia1 = round2(tot.dia1 || 0)
   return {
     requerimiento,
     ingresos,
+    proyeccion,
+    dia1,
     coberturaPct: round2(coberturaPct(ingresos, requerimiento)),
     brecha: brechaVal(ingresos, requerimiento),
   }
 }
 
-function addInto(acc, row) {
-  acc.requerimiento += Number(row.requerimiento) || 0
-  acc.ingresos += Number(row.ingresos) || 0
+function addInto(acc, row, tipo = 'ftes') {
+  const metrics = metricsForTipo(row, tipo)
+  acc.requerimiento += metrics.requerimiento
+  acc.ingresos += metrics.ingresos
+  acc.proyeccion += metrics.proyeccion
+  acc.dia1 += Number(row.dia1) || 0
 }
 
 export function currentYearMonth() {
@@ -464,85 +656,110 @@ export function listYearMonths(from, to) {
 
 export function aggregateCoberturaDotacion(model, filters = {}) {
   const rows = model?.rows || []
-  const dimFiltered = rows.filter(r => matchesFilter(r, filters))
+  const tipo = normalizeMetricTipo(filters.tipo)
+  const seguimientoAxis = filters.seguimientoAxis === 'semana' ? 'semana' : 'periodo'
+  const dimFiltered = rows.filter((r) => matchesFilter(r, filters))
   const periodo = filters.periodo || model?.defaultPeriodo || ''
-  const periodFiltered = dimFiltered.filter(r => !periodo || r.periodo === periodo)
+  const periodFiltered = dimFiltered.filter((r) => !periodo || r.periodo === periodo)
 
   const kpis = withRates(periodFiltered.reduce((acc, r) => {
-    addInto(acc, r)
+    addInto(acc, r, tipo)
     return acc
   }, emptyTotals()))
 
-  const axisEnd = currentYearMonth()
-  const axisStart = '202601'
-  const byPeriodo = new Map()
-  for (const p of listYearMonths(axisStart, axisEnd)) {
-    byPeriodo.set(p, { periodo: p, requerimiento: 0, ingresos: 0 })
-  }
-  for (const r of dimFiltered) {
-    if (!byPeriodo.has(r.periodo)) continue
-    addInto(byPeriodo.get(r.periodo), r)
-  }
-  const seguimiento = [...byPeriodo.values()].map(s => ({
-    ...withRates(s),
-    periodo: s.periodo,
-    selected: s.periodo === periodo,
-  }))
-
-  const bySemana = new Map()
-  for (const r of periodFiltered) {
-    const label = rowSemana(r)
-    let slot = bySemana.get(label)
-    if (!slot) {
-      slot = { semana: label, segmento: label, requerimiento: 0, ingresos: 0 }
-      bySemana.set(label, slot)
+  let seguimiento = []
+  if (seguimientoAxis === 'semana') {
+    const weekSource = rows
+      .filter((r) => matchesFilter(r, { ...filters, semana: '' }))
+      .filter((r) => !periodo || r.periodo === periodo)
+    const bySemana = new Map()
+    for (const r of weekSource) {
+      let slot = bySemana.get(r.semana)
+      if (!slot) {
+        slot = { axisKey: r.semana, semana: r.semana, periodo: r.periodo, ...emptyTotals() }
+        bySemana.set(r.semana, slot)
+      }
+      addInto(slot, r, tipo)
     }
-    addInto(slot, r)
+    seguimiento = [...bySemana.values()]
+      .sort((a, b) => a.axisKey.localeCompare(b.axisKey))
+      .map((s) => ({
+        ...withRates(s),
+        axisKey: s.axisKey,
+        semana: s.semana,
+        periodo: s.periodo,
+        selected: Boolean(filters.semana) && s.semana === filters.semana,
+      }))
+  } else {
+    const axisEnd = currentYearMonth()
+    const byPeriodo = new Map()
+    for (const p of listYearMonths('202601', axisEnd)) {
+      byPeriodo.set(p, { axisKey: p, periodo: p, ...emptyTotals() })
+    }
+    for (const r of dimFiltered) {
+      if (!byPeriodo.has(r.periodo)) continue
+      addInto(byPeriodo.get(r.periodo), r, tipo)
+    }
+    seguimiento = [...byPeriodo.values()].map((s) => ({
+      ...withRates(s),
+      axisKey: s.axisKey,
+      periodo: s.periodo,
+      selected: s.periodo === periodo,
+    }))
   }
-  const segmentos = [...bySemana.values()]
-    .map((s) => ({ ...withRates(s), semana: s.semana, segmento: s.semana }))
-    .sort((a, b) => a.semana.localeCompare(b.semana))
+
+  const bySegmento = new Map()
+  for (const r of periodFiltered) {
+    let slot = bySegmento.get(r.segmento)
+    if (!slot) {
+      slot = { segmento: r.segmento, ...emptyTotals() }
+      bySegmento.set(r.segmento, slot)
+    }
+    addInto(slot, r, tipo)
+  }
+  const segmentos = [...bySegmento.values()]
+    .map((s) => ({ ...withRates(s), segmento: s.segmento }))
+    .sort((a, b) => b.coberturaPct - a.coberturaPct)
 
   const byCampana = new Map()
   for (const r of periodFiltered) {
     let slot = byCampana.get(r.campana)
     if (!slot) {
-      slot = { campana: r.campana, requerimiento: 0, ingresos: 0 }
+      slot = { campana: r.campana, ...emptyTotals() }
       byCampana.set(r.campana, slot)
     }
-    addInto(slot, r)
+    addInto(slot, r, tipo)
   }
   const campanas = [...byCampana.values()]
-    .map(s => ({ ...withRates(s), campana: s.campana }))
+    .map((s) => ({ ...withRates(s), campana: s.campana, campanaShort: shortCampanaLabel(s.campana) }))
     .sort((a, b) => b.requerimiento - a.requerimiento || b.ingresos - a.ingresos)
   const campanasChart = topCampanasForChart(campanas)
 
-  const byPair = new Map()
+  const byPeriodoSemanaCampana = new Map()
   for (const r of periodFiltered) {
-    const semana = rowSemana(r)
-    const key = `${semana}|${r.campana}`
-    let slot = byPair.get(key)
+    const key = `${r.periodo}|${r.semana}|${r.campana}`
+    let slot = byPeriodoSemanaCampana.get(key)
     if (!slot) {
-      slot = { semana, segmento: semana, campana: r.campana, requerimiento: 0, ingresos: 0 }
-      byPair.set(key, slot)
+      slot = { periodo: r.periodo, semana: r.semana, campana: r.campana, ...emptyTotals() }
+      byPeriodoSemanaCampana.set(key, slot)
     }
-    addInto(slot, r)
+    addInto(slot, r, tipo)
   }
-  const tabla = [...byPair.values()]
-    .map((s) => ({ ...withRates(s), semana: s.semana, segmento: s.semana, campana: s.campana }))
-    .sort((a, b) => a.semana.localeCompare(b.semana) || a.campana.localeCompare(b.campana, 'es'))
+  const tabla = [...byPeriodoSemanaCampana.values()]
+    .map((s) => ({ ...withRates(s), periodo: s.periodo, semana: s.semana, campana: s.campana }))
+    .sort((a, b) =>
+      a.periodo.localeCompare(b.periodo)
+      || a.semana.localeCompare(b.semana)
+      || a.campana.localeCompare(b.campana, 'es')
+    )
 
-  const byMod = new Map(MODALIDADES.map(m => [m, { modalidad: m, requerimiento: 0, ingresos: 0 }]))
+  const byMod = new Map(MODALIDADES.map((m) => [m, { modalidad: m, ...emptyTotals() }]))
   for (const r of periodFiltered) {
-    let slot = byMod.get(r.modalidad)
-    if (!slot) {
-      slot = { modalidad: r.modalidad, requerimiento: 0, ingresos: 0 }
-      byMod.set(r.modalidad, slot)
-    }
-    addInto(slot, r)
+    const mod = MODALIDADES.includes(r.modalidad) ? r.modalidad : 'PRESENCIAL'
+    addInto(byMod.get(mod), r, tipo)
   }
   const ingresosModTotal = [...byMod.values()].reduce((s, m) => s + (m.ingresos || 0), 0)
-  const modalidad = [...byMod.values()].map(s => {
+  const modalidad = [...byMod.values()].map((s) => {
     const rates = withRates(s)
     return {
       ...rates,
@@ -551,18 +768,34 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
     }
   })
 
-  const campanasForSemana = filters.semana
-    ? [...new Set(rows.filter((r) => rowSemana(r) === filters.semana).map((r) => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
-    : (model?.campanas || [])
+  const jornadaSource = rows
+    .filter((r) => matchesFilter(r, { ...filters, condicion: '' }))
+    .filter((r) => !periodo || r.periodo === periodo)
+  const byJornada = new Map(CONDICIONES.map((c) => [c, { condicion: c, ...emptyTotals() }]))
+  for (const r of jornadaSource) {
+    const cond = CONDICIONES.includes(r.condicion) ? r.condicion : 'FULL TIME'
+    addInto(byJornada.get(cond), r, tipo)
+  }
+  const jornada = CONDICIONES.map((c) => {
+    const rates = withRates(byJornada.get(c))
+    return {
+      ...rates,
+      condicion: c,
+      condicionLabel: condicionLabel(c),
+      selected: Boolean(filters.condicion) && filters.condicion === c,
+    }
+  })
 
-  const semanasInPeriod = [...new Set(
-    rows
-      .filter((r) => matchesFilter(r, { ...filters, semana: '' }) && (!periodo || r.periodo === periodo))
-      .map((r) => rowSemana(r))
-  )].sort()
+  const inPeriodo = rows.filter((r) => !periodo || r.periodo === periodo)
+  const afterSemana = filters.semana ? inPeriodo.filter((r) => r.semana === filters.semana) : inPeriodo
+  const afterSegmento = filters.segmento ? afterSemana.filter((r) => r.segmento === filters.segmento) : afterSemana
+  const afterCampana = filters.campana ? afterSegmento.filter((r) => r.campana === filters.campana) : afterSegmento
+  const corteIso = corteIsoForWindow(rows, { periodo, semana: filters.semana }) || model?.corteIso || ''
 
   return {
     periodo,
+    tipo,
+    seguimientoAxis,
     kpis,
     seguimiento,
     segmentos,
@@ -570,12 +803,16 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
     campanasChart,
     tabla,
     modalidad,
+    jornada,
     ingresosModTotal: round2(ingresosModTotal),
     filterOptions: {
       periodos: model?.periodos || [],
-      semanas: semanasInPeriod.length ? semanasInPeriod : (model?.semanas || model?.segmentos || []),
-      segmentos: semanasInPeriod.length ? semanasInPeriod : (model?.semanas || model?.segmentos || []),
-      campanas: campanasForSemana,
+      semanas: uniqueSorted(inPeriodo.map((r) => r.semana)),
+      segmentos: uniqueSorted(afterSemana.map((r) => r.segmento), true),
+      campanas: uniqueSorted(afterSegmento.map((r) => r.campana), true),
+      estados: uniqueSorted(afterCampana.map((r) => r.estado), true),
     },
+    corteIso,
+    corteLabel: formatCorteDate(corteIso),
   }
 }
