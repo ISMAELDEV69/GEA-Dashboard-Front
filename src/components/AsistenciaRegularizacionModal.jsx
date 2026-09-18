@@ -15,6 +15,7 @@ import {
   UserCheck
 } from 'lucide-react'
 import { regularizarAsistenciaPostulante, parseFechaAsistencia } from '../lib/dataService'
+import { canAssignBajaDia1, defaultBajaMotivo, sanitizeBajaDia1Motivo, isBajaDia1Motivo } from '../lib/bajaDia1Rules'
 import { useToast } from '../context/ToastContext'
 
 const SIGLAS = [
@@ -57,6 +58,16 @@ function getDayOfWeekShort(dateStr) {
   const dt = new Date(Date.UTC(y, m - 1, d))
   const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
   return days[dt.getUTCDay()]
+}
+
+function withDayIndex(list = []) {
+  return [...list]
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+    .map((r, index) => ({
+      ...r,
+      dayIndex: index + 1,
+      isDia1: index === 0,
+    }))
 }
 
 function getInitials(name = '') {
@@ -242,6 +253,12 @@ export default function AsistenciaRegularizacionModal({
   const dropdownRef = useRef(null)
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], [])
+  const profileRow = useMemo(() => ({
+    tipo_reclutado: postulante?.tipo_reclutado || postulante?.tipoReclutado || '',
+    tipoReclutado: postulante?.tipoReclutado || postulante?.tipo_reclutado || '',
+    status_dia_1: postulante?.status_dia_1 || '',
+    estado: postulante?.estado || '',
+  }), [postulante])
 
   // Cerrar el selector desplegable al hacer clic fuera
   useEffect(() => {
@@ -317,7 +334,8 @@ export default function AsistenciaRegularizacionModal({
         sigla,
         motivo_baja,
         isRegistered,
-        isDia1
+        isDia1,
+        dayIndex: index + 1,
       }
     })
 
@@ -359,7 +377,11 @@ export default function AsistenciaRegularizacionModal({
       if (newSigla !== 'B') {
         newMotivo = ''
       } else if (!newMotivo) {
-        newMotivo = r.isDia1 ? 'BAJA DIA 1' : 'DESERCIÓN'
+        newMotivo = defaultBajaMotivo({
+          trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
+          row: profileRow,
+          existingMotivo: '',
+        })
       }
       return { ...r, sigla: newSigla, motivo_baja: newMotivo }
     }))
@@ -369,7 +391,14 @@ export default function AsistenciaRegularizacionModal({
   const handleMotiveChange = (fecha, newMotivo) => {
     setRecordsState(prev => prev.map(r => {
       if (r.fecha !== fecha) return r
-      return { ...r, motivo_baja: newMotivo }
+      const previous = originalRecordsMap.get(r.fecha)?.motivo_baja || r.motivo_baja
+      const nextMotivo = sanitizeBajaDia1Motivo({
+        trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
+        row: profileRow,
+        motivo: newMotivo,
+        previousMotivo: previous,
+      })
+      return { ...r, motivo_baja: nextMotivo }
     }))
   }
 
@@ -400,9 +429,10 @@ export default function AsistenciaRegularizacionModal({
       sigla: 'A',
       motivo_baja: '',
       isRegistered: false,
-      isDia1: false
+      isDia1: false,
+      dayIndex: 99,
     }
-    const updated = [...recordsState, newRecord].sort((a, b) => a.fecha.localeCompare(b.fecha))
+    const updated = withDayIndex([...recordsState, newRecord])
     setRecordsState(updated)
     setNewDateInput('')
     setShowAddDate(false)
@@ -418,6 +448,24 @@ export default function AsistenciaRegularizacionModal({
     const missingMotive = recordsState.find(r => r.sigla === 'B' && !r.motivo_baja)
     if (missingMotive) {
       toast.warning('Motivo requerido', `Selecciona un motivo de baja para el día ${formatSpreadsheetDate(missingMotive.fecha)}.`)
+      return
+    }
+
+    const blocked = recordsState.find((r) => {
+      if (r.sigla !== 'B' || !isBajaDia1Motivo(r.motivo_baja)) return false
+      const previous = originalRecordsMap.get(r.fecha)?.motivo_baja || ''
+      const allowed = canAssignBajaDia1({
+        trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
+        row: profileRow,
+        existingMotivo: previous,
+      })
+      return !allowed
+    })
+    if (blocked) {
+      toast.warning(
+        'Baja Día 1 no permitida',
+        `En ${formatSpreadsheetDate(blocked.fecha)} ya no se puede marcar Baja Día 1. Usa otro motivo de formación.`
+      )
       return
     }
 
@@ -734,7 +782,13 @@ export default function AsistenciaRegularizacionModal({
                                     title="Motivo de Baja"
                                   >
                                     <option value="">-- Motivo --</option>
-                                    <option value="BAJA DIA 1">BAJA DIA 1</option>
+                                    {canAssignBajaDia1({
+                                      trainingDayIndex: rec.dayIndex || (isDia1 ? 1 : 99),
+                                      row: profileRow,
+                                      existingMotivo: rec.motivo_baja,
+                                    }) ? (
+                                      <option value="BAJA DIA 1">BAJA DIA 1</option>
+                                    ) : null}
                                     <option value="OBSERVADO">OBSERVADO</option>
                                     <option value="SOBREDOTACIÓN">SOBREDOTACIÓN</option>
                                     <option value="DESERCIÓN">DESERCIÓN</option>

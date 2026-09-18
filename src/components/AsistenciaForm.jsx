@@ -25,6 +25,13 @@ import {
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado } from '../lib/dataService'
+import {
+  canAssignBajaDia1,
+  defaultBajaMotivo,
+  sanitizeBajaDia1Motivo,
+  isBajaDia1Motivo,
+  countsInFormacionDesercion,
+} from '../lib/bajaDia1Rules'
 import { resolveFormadorSegment } from '../lib/flujoOperativo'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
@@ -172,11 +179,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
                 isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-60' : ''
               }`}
             >
-              {/* Opción limpia universal: BAJA DIA 1 */}
-              <option value="BAJA DIA 1">BAJA DIA 1</option>
+              {item.showBajaDia1Option && <option value="BAJA DIA 1">BAJA DIA 1</option>}
 
-              {/* Días posteriores: Catálogo de Formación */}
-              {!item.isFirstRecordGroup && (
+              {item.allowOtherMotivos && (
                 <>
                   {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
                   <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
@@ -961,20 +966,27 @@ export default function AsistenciaForm({
       const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
       
       const prevList = previousRecordsByDoc.get(p.documento) || []
-      const effectiveAttendedDays = prevList.filter(r => (r.sigla_asistencia || r.sigla) === 'A' || (r.sigla_asistencia || r.sigla) === 'I-OP').length
-
-      // 1. Motivo histórico previo en asistencias registradas y nómina
       const pastBajaRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
       const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
       const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
-      const fallbackNominaMotive = p.motivo_baja && String(p.motivo_baja).trim() !== '' && String(p.motivo_baja).trim() !== 'null' ? String(p.motivo_baja).trim() : ''
 
-      // Agregados, Recuperados y Observados tienen un plazo de gracia de hasta 3 días
-      const isEligibleBajaD1 = 
-        isFirstRecordGroup || 
-        (isIngresoEspecial && effectiveAttendedDays <= 3) ||
-        String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('BAJA DIA 1') ||
-        String(existing?.motivo_baja || pastMotiveFromRecords || fallbackNominaMotive || '').toUpperCase().includes('PERIODO GRACIA')
+      const profileRow = {
+        tipo_reclutado: tipoReclutado,
+        tipoReclutado,
+        status_dia_1: p.status_dia_1,
+        estado: p.estado,
+      }
+      const showBajaDia1Option = canAssignBajaDia1({
+        trainingDayIndex,
+        row: profileRow,
+        existingMotivo: existing?.motivo_baja || pastMotiveFromRecords || '',
+      })
+      const allowOtherMotivos = trainingDayIndex > 1
+      const isEligibleBajaD1 = canAssignBajaDia1({
+        trainingDayIndex,
+        row: profileRow,
+        existingMotivo: '',
+      })
 
       const docFormador = String(p.formador_documento || effectiveGrupoObj?.formador_documento || '').trim()
       const nombreFormador = resolveFormadorDisplayName(allFormadores, docFormador, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador || '')
@@ -1047,7 +1059,11 @@ export default function AsistenciaForm({
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
       } else if (sigla === 'B' && !motivo_baja) {
-        motivo_baja = pastMotiveFromRecords || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
+        motivo_baja = pastMotiveFromRecords || defaultBajaMotivo({
+          trainingDayIndex,
+          row: profileRow,
+          existingMotivo: '',
+        })
       }
 
       const isHistoricalBaja = (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || (!existing && inheritedSigla === 'B')
@@ -1065,8 +1081,11 @@ export default function AsistenciaForm({
         docFormador,
         nombreFormador,
         tipoReclutado,
+        status_dia_1: p.status_dia_1 || '',
         trainingDayIndex,
         isEligibleBajaD1,
+        showBajaDia1Option,
+        allowOtherMotivos,
         sigla,
         motivo_baja,
         isLateInclusion,
@@ -1087,9 +1106,11 @@ export default function AsistenciaForm({
       if (newSigla !== 'B') {
         newMotivo = ''
       } else if (!newMotivo) {
-        if (item.isFirstRecordGroup || (item.isEligibleBajaD1 && (item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'OBSERVADO'))) {
-          newMotivo = 'BAJA DIA 1'
-        }
+        newMotivo = defaultBajaMotivo({
+          trainingDayIndex: item.trainingDayIndex,
+          row: item,
+          existingMotivo: '',
+        })
       }
       userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }
@@ -1100,8 +1121,14 @@ export default function AsistenciaForm({
     if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
-      userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: newMotivo })
-      return { ...item, motivo_baja: newMotivo }
+      const nextMotivo = sanitizeBajaDia1Motivo({
+        trainingDayIndex: item.trainingDayIndex,
+        row: item,
+        motivo: newMotivo,
+        previousMotivo: item.motivo_baja,
+      })
+      userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: nextMotivo })
+      return { ...item, motivo_baja: nextMotivo }
     }))
   }, [isReadOnly])
 
@@ -1174,11 +1201,23 @@ export default function AsistenciaForm({
     
     // Auto-sanitizar bajas históricas para que no bloqueen la marcación del día si venían sin motivo
     const sanitizedList = attendanceList.map(item => {
-      if (item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion) {
-        const fallback = item.isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN'
-        return { ...item, motivo_baja: fallback }
+      let motivo_baja = item.motivo_baja
+      if (item.sigla === 'B' && !motivo_baja && !item.isLateInclusion) {
+        motivo_baja = defaultBajaMotivo({
+          trainingDayIndex: item.trainingDayIndex,
+          row: item,
+          existingMotivo: '',
+        })
       }
-      return item
+      if (item.sigla === 'B') {
+        motivo_baja = sanitizeBajaDia1Motivo({
+          trainingDayIndex: item.trainingDayIndex,
+          row: item,
+          motivo: motivo_baja,
+          previousMotivo: item.motivo_baja,
+        })
+      }
+      return { ...item, motivo_baja }
     })
 
     const invalidItems = sanitizedList.filter(item => item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion)
@@ -1303,12 +1342,9 @@ export default function AsistenciaForm({
     const diaCapacitacion = allDatesUntilNow.size;
     
     const total = attendanceList.length;
-    const isB1 = (r) => {
-      const m = String(r.motivo_baja || '').toUpperCase();
-      return m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('PERIODO GRACIA');
-    };
-    const desertores = attendanceList.filter(r => r.sigla === 'B' && !isB1(r)).length;
-    const bajasDia1 = attendanceList.filter(r => r.sigla === 'B' && isB1(r)).length;
+    const isB1 = (r) => isBajaDia1Motivo(r.motivo_baja)
+    const desertores = attendanceList.filter(r => r.sigla === 'B' && countsInFormacionDesercion(r, r.motivo_baja)).length
+    const bajasDia1 = attendanceList.filter(r => r.sigla === 'B' && isB1(r)).length
     const qDia1 = Math.max(0, total - bajasDia1);
     const activos = Math.max(0, qDia1 - desertores);
     const enSala = attendanceList.filter(r => {
@@ -1367,12 +1403,9 @@ export default function AsistenciaForm({
     const asistieron = displayedList.filter(item => item.sigla === 'A' || item.sigla === 'I-OP').length
     
     // Bajas de Formación (Excluye 'BAJA DIA 1' / 'Periodo Gracia' imputadas a Reclutamiento)
-    const isBajaDia1Item = (item) => {
-      const m = String(item.motivo_baja || '').toUpperCase()
-      return m.includes('BAJA DIA 1') || m.includes('BAJA DÍA 1') || m.includes('PERIODO GRACIA')
-    }
+    const isBajaDia1Item = (item) => isBajaDia1Motivo(item.motivo_baja)
 
-    const bajas = displayedList.filter(item => item.sigla === 'B' && !isBajaDia1Item(item)).length
+    const bajas = displayedList.filter(item => item.sigla === 'B' && countsInFormacionDesercion(item, item.motivo_baja)).length
     const bajasDia1 = displayedList.filter(item => item.sigla === 'B' && isBajaDia1Item(item)).length
     const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
     const pctAsistencia = total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0'
