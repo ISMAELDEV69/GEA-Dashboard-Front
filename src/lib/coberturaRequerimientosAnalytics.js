@@ -209,8 +209,13 @@ export function aggregateRequerimientos(model, filters = {}) {
   const tipo = normalizeMetricTipo(filters.tipo)
   const seguimientoAxis = filters.seguimientoAxis === 'semana' ? 'semana' : 'periodo'
   const dimFiltered = rows.filter((r) => matchesFilter(r, filters))
+  const dimNoSlice = rows.filter((r) => matchesFilter(r, { ...filters, segmento: '', campana: '' }))
   const periodo = filters.periodo || model?.defaultPeriodo || ''
   const periodFiltered = dimFiltered.filter((r) => !periodo || r.periodo === periodo)
+  const periodBase = dimNoSlice.filter((r) => !periodo || r.periodo === periodo)
+  const campanaSlice = filters.segmento
+    ? periodBase.filter((r) => r.segmento === filters.segmento)
+    : periodBase
 
   const kpis = withRates(periodFiltered.reduce((acc, r) => {
     addInto(acc, r, tipo)
@@ -259,7 +264,7 @@ export function aggregateRequerimientos(model, filters = {}) {
   }
 
   const bySegmento = new Map()
-  for (const r of periodFiltered) {
+  for (const r of periodBase) {
     let slot = bySegmento.get(r.segmento)
     if (!slot) {
       slot = { segmento: r.segmento, ...emptyTotals() }
@@ -272,7 +277,7 @@ export function aggregateRequerimientos(model, filters = {}) {
     .sort((a, b) => b.coberturaPct - a.coberturaPct)
 
   const byCampana = new Map()
-  for (const r of periodFiltered) {
+  for (const r of campanaSlice) {
     let slot = byCampana.get(r.campana)
     if (!slot) {
       slot = { campana: r.campana, ...emptyTotals() }
@@ -283,7 +288,7 @@ export function aggregateRequerimientos(model, filters = {}) {
   const campanas = [...byCampana.values()]
     .map((s) => ({ ...withRates(s), campana: s.campana, campanaShort: shortCampanaLabel(s.campana) }))
     .sort((a, b) => b.requerimiento - a.requerimiento || b.ingresos - a.ingresos)
-  const campanasChart = topCampanas(campanas)
+  const campanasChart = topCampanas(campanas, 7)
 
   const byEscuela = new Map()
   for (const r of periodFiltered) {

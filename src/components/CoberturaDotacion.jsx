@@ -499,6 +499,184 @@ function SectionTitle({ children, isDark }) {
   )
 }
 
+function CoverageToggleChart({
+  title,
+  hint,
+  data = [],
+  nameKey,
+  selected,
+  onSelect,
+  theme,
+  isDark,
+  decimals,
+  fmt,
+  yWidth = 132,
+  emptyHint = 'Clic en un segmento para ver sus campañas',
+}) {
+  const [mode, setMode] = useState('cobertura')
+  const maxCob = Math.max(140, ...data.map((r) => Number(r.coberturaPct) || 0))
+  const maxBrecha = Math.max(1, ...data.map((r) => Math.abs(Number(r.brecha) || 0)))
+  return (
+    <ChartCard theme={theme}>
+      <SectionTitle isDark={isDark}>{title}</SectionTitle>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-[10px] font-semibold text-[var(--text-muted)]">{hint || ' '}</p>
+        <div className="flex shrink-0 justify-end gap-1">
+          {['cobertura', 'brecha'].map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setMode(id)}
+              className={`h-7 rounded-full px-3 text-[10px] font-black uppercase tracking-wide ${
+                mode === id
+                  ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
+                  : (isDark ? 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-normal)]' : 'bg-[#d6d3ea] text-[#163A6B]')
+              }`}
+            >
+              {id === 'cobertura' ? 'Cobertura' : 'Brecha'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="h-[268px] overflow-y-auto pr-1">
+        {data.length === 0 ? (
+          <p className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--text-muted)]">
+            {emptyHint}
+          </p>
+        ) : (
+          <div className="flex min-h-full flex-col justify-evenly gap-1.5">
+            {data.map((row) => {
+              const name = row[nameKey]
+              const label = nameKey === 'campana' ? (row.campanaShort || name) : name
+              const active = !selected || selected === name
+              const fill = mode === 'cobertura'
+                ? coverageFill(row.coberturaPct, theme)
+                : (row.brecha >= 0 ? theme.ingresos : theme.danger)
+              const valueLabel = mode === 'cobertura' ? formatPePercent(row.coberturaPct) : fmt(row.brecha)
+              const barPct = mode === 'cobertura'
+                ? Math.max(0, Math.min(100, (Number(row.coberturaPct) / maxCob) * 100))
+                : Math.max(0, Math.min(50, (Math.abs(Number(row.brecha)) / maxBrecha) * 50))
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  title={`${name} · ${valueLabel}`}
+                  onClick={() => onSelect?.(name)}
+                  className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-[var(--bg-elevated)]"
+                  style={{ opacity: active ? 1 : 0.38 }}
+                >
+                  <span
+                    className="shrink-0 truncate text-right text-[10px] font-semibold leading-tight text-[var(--text-secondary)]"
+                    style={{ width: yWidth }}
+                  >
+                    {label}
+                  </span>
+                  <span className="relative h-4 min-w-0 flex-1 rounded-full" style={{ background: theme.track }}>
+                    {mode === 'brecha' ? (
+                      <span
+                        className="absolute top-0 h-full rounded-full"
+                        style={{
+                          background: fill,
+                          width: `${barPct}%`,
+                          left: row.brecha >= 0 ? '50%' : `${50 - barPct}%`,
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="absolute inset-y-0 left-0 rounded-full"
+                        style={{ background: fill, width: `${barPct}%` }}
+                      />
+                    )}
+                  </span>
+                  <span className="w-[58px] shrink-0 text-right text-[10px] font-bold text-[var(--text-primary)]">
+                    {valueLabel}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </ChartCard>
+  )
+}
+
+function CampanasVolumeChart({
+  campanasChart = [],
+  theme,
+  isDark,
+  gid,
+  decimals,
+  fmt,
+  campana,
+  onSelectCampana,
+  volumeLegend,
+}) {
+  const ranking = (campanasChart || []).filter((r) => !r.isOtras).slice(0, 7)
+  const otras = (campanasChart || []).find((r) => r.isOtras)
+  const rqGrad = `rqCamp-${gid}`
+  const ingGrad = `ingCamp-${gid}`
+  const opacityFor = (row) => (!campana || campana === row.campana ? 1 : 0.35)
+  return (
+    <ChartCard theme={theme} className="xl:col-span-2">
+      <SectionTitle isDark={isDark}>Top campañas</SectionTitle>
+      <ChartLegend theme={theme} items={volumeLegend} />
+      <div className="h-[268px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={ranking}
+            layout="vertical"
+            margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+            onClick={(state) => {
+              const row = state?.activePayload?.[0]?.payload
+              if (!row || row.isOtras || !row.campana) return
+              onSelectCampana?.(row.campana)
+            }}
+          >
+            <defs>
+              <linearGradient id={rqGrad} x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor={theme.rq} />
+                <stop offset="100%" stopColor={theme.rqSoft} />
+              </linearGradient>
+              <linearGradient id={ingGrad} x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor={theme.ingresos} />
+                <stop offset="100%" stopColor={theme.ingSoft} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
+            <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
+            <YAxis
+              type="category"
+              dataKey="campanaShort"
+              width={118}
+              interval={0}
+              tick={{ fontSize: 10, fill: theme.label }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip content={<PairTooltip mode="cobertura" theme={theme} decimals={decimals} />} />
+            <Bar dataKey="requerimiento" fill={`url(#${rqGrad})`} maxBarSize={11} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
+              {ranking.map((row) => (
+                <Cell key={`crq-${row.campana}`} fill={`url(#${rqGrad})`} fillOpacity={opacityFor(row)} />
+              ))}
+            </Bar>
+            <Bar dataKey="ingresos" fill={`url(#${ingGrad})`} maxBarSize={11} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
+              {ranking.map((row) => (
+                <Cell key={`cing-${row.campana}`} fill={`url(#${ingGrad})`} fillOpacity={opacityFor(row)} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {otras ? (
+        <p className="mt-1 text-center text-[10px] text-[var(--text-muted)]">
+          Resto agrupado fuera del ranking · RQ {fmt(otras.requerimiento)} · Ingresos {fmt(otras.ingresos)}
+        </p>
+      ) : null}
+    </ChartCard>
+  )
+}
+
 function SelectedPctLabel({ x, y, width, index, value, data, theme }) {
   const row = data?.[index]
   if (!row?.selected || value == null || value === '') return null
@@ -547,7 +725,6 @@ function RequerimientosReport({
   onSeguimientoClick,
   clearFilters,
 }) {
-  const [segmentMode, setSegmentMode] = useState('cobertura')
   const [activeTableKey, setActiveTableKey] = useState('')
   const rqGrad = `rqReq-${gid}`
   const ingGrad = `ingReq-${gid}`
@@ -717,117 +894,36 @@ function RequerimientosReport({
               </ResponsiveContainer>
             </div>
           </ChartCard>
-
-          <ChartCard theme={theme}>
-            <SectionTitle isDark={isDark}>Cobertura por segmento</SectionTitle>
-            <div className="mb-2 flex justify-end gap-1">
-              {['cobertura', 'brecha'].map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setSegmentMode(mode)}
-                  className={`h-7 rounded-full px-3 text-[10px] font-black uppercase tracking-wide ${
-                    segmentMode === mode
-                      ? (isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white')
-                      : (isDark ? 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-normal)]' : 'bg-[#d6d3ea] text-[#163A6B]')
-                  }`}
-                >
-                  {mode === 'cobertura' ? 'Cobertura' : 'Brecha'}
-                </button>
-              ))}
-            </div>
-            <div className="h-[268px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={view.segmentos}
-                  layout="vertical"
-                  margin={{ top: 4, right: 48, left: 8, bottom: 4 }}
-                  onClick={(state) => {
-                    const name = state?.activePayload?.[0]?.payload?.segmento
-                    if (!name) return
-                    setSegmento((prev) => (prev === name ? '' : name))
-                    setCampana('')
-                  }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} unit={segmentMode === 'cobertura' ? '%' : ''} />
-                  <YAxis type="category" dataKey="segmento" width={148} tick={{ fontSize: 10, fill: theme.label }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<PairTooltip mode={segmentMode} theme={theme} decimals={decimals} />} />
-                  <Bar dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'} maxBarSize={18} cursor="pointer" radius={[0, 8, 8, 0]} background={{ fill: theme.track, radius: 8 }}>
-                    {view.segmentos.map((row) => (
-                      <Cell
-                        key={row.segmento}
-                        fill={segmentMode === 'cobertura' ? coverageFill(row.coberturaPct, theme) : (row.brecha >= 0 ? theme.ingresos : theme.danger)}
-                        fillOpacity={!segmento || segmento === row.segmento ? 1 : 0.35}
-                      />
-                    ))}
-                    <LabelList
-                      dataKey={segmentMode === 'cobertura' ? 'coberturaPct' : 'brecha'}
-                      position="right"
-                      formatter={(v) => (segmentMode === 'cobertura' ? formatPePercent(v) : fmt(v))}
-                      style={{ fontSize: 10, fill: theme.label, fontWeight: 700 }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </ChartCard>
+          <CoverageToggleChart
+            title="Cobertura por segmento"
+            hint={segmento ? `Seleccionado: ${segmento}` : 'Clic para filtrar'}
+            data={view.segmentos}
+            nameKey="segmento"
+            selected={segmento}
+            onSelect={(name) => {
+              setSegmento((prev) => (prev === name ? '' : name))
+              setCampana('')
+            }}
+            theme={theme}
+            isDark={isDark}
+            decimals={decimals}
+            fmt={fmt}
+            yWidth={148}
+          />
         </section>
 
         <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-          <ChartCard theme={theme} className="xl:col-span-2">
-            <SectionTitle isDark={isDark}>Cobertura nivel campañas</SectionTitle>
-            <ChartLegend theme={theme} items={reqLegend} />
-            <div style={{ height: Math.max(260, campanasChart.length * 36) }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={campanasChart}
-                  layout="vertical"
-                  margin={{ top: 8, right: 16, left: 4, bottom: 8 }}
-                  onClick={(state) => {
-                    const row = state?.activePayload?.[0]?.payload
-                    if (!row || row.isOtras) return
-                    if (row.campana) setCampana((prev) => (prev === row.campana ? '' : row.campana))
-                  }}
-                >
-                  <defs>
-                    <linearGradient id={`${rqGrad}-h`} x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor={theme.rq} />
-                      <stop offset="100%" stopColor={theme.rqSoft} />
-                    </linearGradient>
-                    <linearGradient id={`${proyGrad}-h`} x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor={theme.proy} />
-                      <stop offset="100%" stopColor={theme.proySoft} />
-                    </linearGradient>
-                    <linearGradient id={`${ingGrad}-h`} x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor={theme.ingresos} />
-                      <stop offset="100%" stopColor={theme.ingSoft} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="campanaShort" width={132} tick={{ fontSize: 10, fill: theme.label }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ComboTooltip theme={theme} decimals={decimals} />} />
-                  <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
-                    {campanasChart.map((row) => (
-                      <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
-                    ))}
-                  </Bar>
-                  <Bar dataKey="proyeccion" fill={`url(#${proyGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
-                    {campanasChart.map((row) => (
-                      <Cell key={`cpr-${row.campanaShort || row.campana}`} fill={`url(#${proyGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
-                    ))}
-                  </Bar>
-                  <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={10} cursor="pointer" radius={[0, 6, 6, 0]}>
-                    {campanasChart.map((row) => (
-                      <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </ChartCard>
-
+          <CampanasVolumeChart
+            campanasChart={campanasChart}
+            theme={theme}
+            isDark={isDark}
+            gid={`${gid}-rq`}
+            decimals={decimals}
+            fmt={fmt}
+            campana={campana}
+            onSelectCampana={(name) => setCampana((prev) => (prev === name ? '' : name))}
+            volumeLegend={reqLegend.filter((item) => item.label !== 'Proyección')}
+          />
           <ChartCard theme={theme}>
             <SectionTitle isDark={isDark}>Participación por modalidad</SectionTitle>
             <div className="relative h-[268px]">
@@ -1383,12 +1479,11 @@ function CoberturaDotacion() {
                 { label: 'Ingresos Efectivos', color: theme.ingresos },
               ]}
             />
-            <div style={{ height: Math.max(260, (campanasChart?.length || 6) * 34) }}>
+            <div className="h-[340px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={campanasChart}
-                  layout="vertical"
-                  margin={{ top: 8, right: 16, left: 4, bottom: 8 }}
+                  margin={{ top: 12, right: 8, left: 0, bottom: 8 }}
                   onClick={(state) => {
                     const row = state?.activePayload?.[0]?.payload
                     if (!row || row.isOtras) return
@@ -1396,32 +1491,34 @@ function CoberturaDotacion() {
                   }}
                 >
                   <defs>
-                    <linearGradient id={`${rqGrad}-h`} x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor={theme.rq} />
-                      <stop offset="100%" stopColor={theme.rqSoft} />
+                    <linearGradient id={`${rqGrad}-h`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.rqSoft} />
+                      <stop offset="100%" stopColor={theme.rq} />
                     </linearGradient>
-                    <linearGradient id={`${ingGrad}-h`} x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor={theme.ingresos} />
-                      <stop offset="100%" stopColor={theme.ingSoft} />
+                    <linearGradient id={`${ingGrad}-h`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.ingSoft} />
+                      <stop offset="100%" stopColor={theme.ingresos} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    type="category"
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.grid} />
+                  <XAxis
                     dataKey="campanaShort"
-                    width={132}
+                    interval={0}
                     tick={{ fontSize: 10, fill: theme.label }}
                     axisLine={false}
                     tickLine={false}
+                    angle={-38}
+                    textAnchor="end"
+                    height={78}
                   />
+                  <YAxis tick={{ fontSize: 10, fill: theme.tick }} axisLine={false} tickLine={false} />
                   <Tooltip content={<PairTooltip mode="cobertura" theme={theme} decimals={decimals} />} />
-                  <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={12} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
+                  <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={28} cursor="pointer" radius={[6, 6, 0, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
                       <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
                   </Bar>
-                  <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={12} cursor="pointer" radius={[0, 6, 6, 0]} animationDuration={320}>
+                  <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={28} cursor="pointer" radius={[6, 6, 0, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
                       <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
                     ))}
