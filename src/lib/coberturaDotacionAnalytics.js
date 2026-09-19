@@ -307,15 +307,21 @@ export function buildCapacidadIndex(capacidadRows = []) {
     if (!g) continue
     const grupo = normalizeGrupoKey(g.codigo || g.grupo_codigo || g.grupo_capacitacion)
     const campana = normalizeCampanaKey(g.campana || g.campana_nombre)
+    const segmento = normalizeCampanaKey(g.segmento)
     const week = normalizeWeekKey(g.semana_label || g.semana_trabajo || g.semana)
     const periodoOp = normalize2026Period(g.periodo_ingreso_op) || ''
     const periodo = normalize2026Period(g.periodo) || ''
     if (!grupo || !campana) continue
 
-    if (periodoOp && week) push(exact, `${periodoOp}|${week}|${campana}|${grupo}`, g)
-    if (periodo && week) push(exact, `${periodo}|${week}|${campana}|${grupo}`, g)
-    if (periodoOp) push(noWeek, `${periodoOp}|${campana}|${grupo}`, g)
-    if (periodo) push(noWeek, `${periodo}|${campana}|${grupo}`, g)
+    const bind = (periodoKey) => {
+      if (!periodoKey) return
+      if (week && segmento) push(exact, `${periodoKey}|${week}|${campana}|${segmento}|${grupo}`, g)
+      if (week) push(exact, `${periodoKey}|${week}|${campana}|${grupo}`, g)
+      if (segmento) push(noWeek, `${periodoKey}|${campana}|${segmento}|${grupo}`, g)
+      push(noWeek, `${periodoKey}|${campana}|${grupo}`, g)
+    }
+    bind(periodoOp)
+    bind(periodo)
   }
 
   return { exact, noWeek }
@@ -324,14 +330,16 @@ export function buildCapacidadIndex(capacidadRows = []) {
 export function matchCapacidad(index, row) {
   const grupo = normalizeGrupoKey(row.gpe)
   const campana = normalizeCampanaKey(row.campana)
+  const segmento = normalizeCampanaKey(row.segmento)
   const week = normalizeWeekKey(row.semana)
   const periodo = row.periodo
   if (!grupo || !campana || !periodo) return null
-  if (week) {
-    const exact = index.exact.get(`${periodo}|${week}|${campana}|${grupo}`)
-    if (exact) return exact
-  }
-  return index.noWeek.get(`${periodo}|${campana}|${grupo}`) || null
+  const tries = []
+  if (week && segmento) tries.push(index.exact.get(`${periodo}|${week}|${campana}|${segmento}|${grupo}`))
+  if (week) tries.push(index.exact.get(`${periodo}|${week}|${campana}|${grupo}`))
+  if (segmento) tries.push(index.noWeek.get(`${periodo}|${campana}|${segmento}|${grupo}`))
+  tries.push(index.noWeek.get(`${periodo}|${campana}|${grupo}`))
+  return tries.find(Boolean) || null
 }
 
 function pushCell(bucket, keyParts, amount, field) {

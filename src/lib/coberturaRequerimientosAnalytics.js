@@ -1,7 +1,9 @@
 /**
- * Vista Proyectados — inner join cobertura_dotacion × capacidad_rys.
- * Llaves de cruce: periodo + semana + campaña + grupo.
- * Segmento sale de cobertura_dotacion; estado del grupo sale de capacidad_rys.
+ * Vista Proyectados — mismas filas de cobertura_dotacion que la vista principal.
+ * Capacidad_rys solo aporta estado del grupo (left join).
+ * Llaves de cruce: periodo + semana + segmento + campaña + código de grupo.
+ * La semana de cobertura (202635) no coincide con SEM 32 de capacidad; el match
+ * de semana es preferente y, si no calza, se usa periodo + segmento + campaña + grupo.
  */
 
 import {
@@ -40,21 +42,20 @@ function uniqueSorted(values, locale = false) {
 }
 
 /**
- * Inner join: solo quedan filas de cobertura que existen en capacidad
- * con las mismas llaves (periodo, semana, campaña, grupo).
+ * Left join: se conservan todas las filas de cobertura.
+ * Si no hay grupo en capacidad, el estado queda vacío (no se descarta el RQ).
  */
 export function joinCoberturaConCapacidad(tableRows = [], capacidadRows = []) {
   const index = buildCapacidadIndex(capacidadRows)
   const out = []
   for (const raw of tableRows) {
     const fact = normalizeCoberturaFact(raw)
-    if (!fact.periodo || !fact.gpe || !fact.hasAmount) continue
-    const cap = matchCapacidad(index, fact)
-    if (!cap) continue
+    if (!fact.periodo || !fact.hasAmount) continue
+    const cap = fact.gpe ? matchCapacidad(index, fact) : null
     out.push({
       ...fact,
-      estado: normalizeEstadoGrupo(cap.estado) || 'SIN ESTADO',
-      gpe: fact.gpe || clean(cap.codigo),
+      estado: cap ? (normalizeEstadoGrupo(cap.estado) || 'SIN ESTADO') : '',
+      gpe: fact.gpe || clean(cap?.codigo),
     })
   }
   return out

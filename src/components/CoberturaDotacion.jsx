@@ -1106,10 +1106,9 @@ function CoberturaDotacion() {
             <ArrowLeft size={12} />
             Volver
           </button>
-          <p className="font-black uppercase tracking-wide">Sin cruce con capacidad</p>
+          <p className="font-black uppercase tracking-wide">Sin datos para Proyectados</p>
           <p className="mt-2 text-[var(--text-secondary)]">
-            No hay filas de cobertura_dotacion que coincidan con capacidad_rys en periodo, semana, campaña y grupo.
-            El estado del grupo se toma de esa ficha de capacidad.
+            No hay filas de cobertura_dotacion para mostrar. El estado del grupo se toma de capacidad_rys cuando existe ficha.
           </p>
         </div>
       )
