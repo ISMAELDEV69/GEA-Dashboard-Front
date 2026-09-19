@@ -92,7 +92,11 @@ export default function PropuestaForm({ onSaved }) {
 
   const handleSelectGrupo = (e) => {
     const code = e.target.value;
-    const g = gruposCapacidad.find(x => x.codigo === code);
+    const g = gruposCapacidad.find(x =>
+      String(x.codigo || '').toUpperCase() === String(code).toUpperCase()
+      && String(x.periodo || '').toUpperCase() === String(filtroPeriodo).toUpperCase()
+      && String(x.campana || '').toUpperCase() === String(filtroCampana).toUpperCase()
+    );
     if (!g) return;
 
     setFormData(prev => ({

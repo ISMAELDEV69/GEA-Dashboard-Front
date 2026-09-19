@@ -21,12 +21,20 @@ import {
   calcularPagosCapacitacion,
   generarResumenPagos,
   exportarCSVPagos,
+  normalizarSemanaPago,
+  claveGrupoPago,
+  claveDesdeCapacidad,
+  claveDesdeConfig,
 } from '../lib/pagosCapacitacionEngine'
 
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────
 const soles = v => `S/. ${Number(v || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+function semanaDeCapacidad(g) {
+  return normalizarSemanaPago(g?.semana_label || (g?.semana_trabajo != null && g?.semana_trabajo !== '' ? `SEM ${g.semana_trabajo}` : '') || g?.semana)
+}
 
 // ────────────────────────────────────────────────────────────────────────
 // Sub-componente: Tarjeta de resumen KPI
@@ -112,14 +120,6 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     }
   }, [editingPropuesta])
 
-  // Helper para normalizar semana
-  const normalizarSemana = (val) => {
-    if (!val) return ''
-    const str = String(val).trim().toUpperCase()
-    const num = str.replace(/\D/g, '')
-    return num ? `SEM ${num}` : str
-  }
-
   // 1. Periodos únicos desde capacidad_rys (orden descendente)
   const periodosCapaDisponibles = useMemo(() => {
     const set = new Set()
@@ -137,13 +137,11 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     const pSel = String(form.periodoCapa).trim().toUpperCase()
     const set = new Set()
     gruposCapacidad.forEach(g => {
-      const p = String(g.periodo || '').trim().toUpperCase()
-      if (p === pSel) {
-        const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
-        if (s) set.add(s)
-      }
+      if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
+      const s = semanaDeCapacidad(g)
+      if (s) set.add(s)
     })
-    if (form.semana) set.add(normalizarSemana(form.semana))
+    if (form.semana) set.add(normalizarSemanaPago(form.semana))
     return Array.from(set).sort((a, b) => {
       const na = parseInt(a.replace(/\D/g, '')) || 0
       const nb = parseInt(b.replace(/\D/g, '')) || 0
@@ -151,41 +149,56 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     })
   }, [gruposCapacidad, form.periodoCapa, form.semana])
 
-  // 3. Campañas filtradas por Periodo + Semana
-  const campanasCapaDisponibles = useMemo(() => {
+  // 3. Segmentos filtrados por Periodo + Semana
+  const segmentosCapaDisponibles = useMemo(() => {
     if (!form.periodoCapa || !form.semana) return []
     const pSel = String(form.periodoCapa).trim().toUpperCase()
-    const sSel = normalizarSemana(form.semana)
+    const sSel = normalizarSemanaPago(form.semana)
     const set = new Set()
     gruposCapacidad.forEach(g => {
-      const p = String(g.periodo || '').trim().toUpperCase()
-      const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
-      if (p === pSel && s === sSel && g.campana) {
-        set.add(String(g.campana).trim().toUpperCase())
-      }
+      if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
+      if (semanaDeCapacidad(g) !== sSel) return
+      if (g.segmento) set.add(String(g.segmento).trim().toUpperCase())
+    })
+    if (form.segmento) set.add(String(form.segmento).trim().toUpperCase())
+    return Array.from(set).sort()
+  }, [gruposCapacidad, form.periodoCapa, form.semana, form.segmento])
+
+  // 4. Campañas filtradas por Periodo + Semana + Segmento
+  const campanasCapaDisponibles = useMemo(() => {
+    if (!form.periodoCapa || !form.semana || !form.segmento) return []
+    const pSel = String(form.periodoCapa).trim().toUpperCase()
+    const sSel = normalizarSemanaPago(form.semana)
+    const segSel = String(form.segmento).trim().toUpperCase()
+    const set = new Set()
+    gruposCapacidad.forEach(g => {
+      if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
+      if (semanaDeCapacidad(g) !== sSel) return
+      if (String(g.segmento || '').trim().toUpperCase() !== segSel) return
+      if (g.campana) set.add(String(g.campana).trim().toUpperCase())
     })
     if (form.campana) set.add(String(form.campana).trim().toUpperCase())
     return Array.from(set).sort()
-  }, [gruposCapacidad, form.periodoCapa, form.semana, form.campana])
+  }, [gruposCapacidad, form.periodoCapa, form.semana, form.segmento, form.campana])
 
-  // 4. Grupos de Capacidad filtrados por Periodo + Semana + Campaña
+  // 5. Grupos filtrados por Periodo + Semana + Segmento + Campaña
   const gruposCapaDisponibles = useMemo(() => {
-    if (!form.periodoCapa || !form.semana || !form.campana) return []
+    if (!form.periodoCapa || !form.semana || !form.segmento || !form.campana) return []
     const pSel = String(form.periodoCapa).trim().toUpperCase()
-    const sSel = normalizarSemana(form.semana)
+    const sSel = normalizarSemanaPago(form.semana)
+    const segSel = String(form.segmento).trim().toUpperCase()
     const cSel = String(form.campana).trim().toUpperCase()
     const set = new Set()
     gruposCapacidad.forEach(g => {
-      const p = String(g.periodo || '').trim().toUpperCase()
-      const s = normalizarSemana(g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '') || g.semana)
-      const c = String(g.campana || '').trim().toUpperCase()
-      if (p === pSel && s === sSel && c === cSel && g.codigo) {
-        set.add(String(g.codigo).trim().toUpperCase())
-      }
+      if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
+      if (semanaDeCapacidad(g) !== sSel) return
+      if (String(g.segmento || '').trim().toUpperCase() !== segSel) return
+      if (String(g.campana || '').trim().toUpperCase() !== cSel) return
+      if (g.codigo) set.add(String(g.codigo).trim().toUpperCase())
     })
     if (form.grupo) set.add(String(form.grupo).trim().toUpperCase())
     return Array.from(set).sort()
-  }, [gruposCapacidad, form.periodoCapa, form.semana, form.campana, form.grupo])
+  }, [gruposCapacidad, form.periodoCapa, form.semana, form.segmento, form.campana, form.grupo])
 
   // Handlers de selección jerárquica
   const handlePeriodoSelect = (e) => {
@@ -194,6 +207,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       ...prev,
       periodoCapa: val,
       semana: '',
+      segmento: '',
       campana: '',
       grupo: '',
       cod: '',
@@ -206,6 +220,18 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     setForm(prev => ({
       ...prev,
       semana: val,
+      segmento: '',
+      campana: '',
+      grupo: '',
+      cod: '',
+    }))
+  }
+
+  const handleSegmentoSelect = (e) => {
+    const val = e.target.value
+    setForm(prev => ({
+      ...prev,
+      segmento: val,
       campana: '',
       grupo: '',
       cod: '',
@@ -229,11 +255,15 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       return
     }
 
-    // 1. Si ya existe una propuesta guardada en configsExistentes, cargarla directamente
-    const configExist = configsExistentes.find(c => 
-      (c.grupo && c.grupo.toUpperCase() === grpCode.toUpperCase()) || 
-      (c.grupo_codigo && c.grupo_codigo.toUpperCase() === grpCode.toUpperCase())
-    )
+    const claveSel = claveGrupoPago({
+      periodo: form.periodoCapa,
+      semana: form.semana,
+      segmento: form.segmento,
+      campana: form.campana,
+      codigo: grpCode,
+    })
+
+    const configExist = configsExistentes.find(c => claveDesdeConfig(c) === claveSel)
 
     if (configExist) {
       setForm({
@@ -241,7 +271,8 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
         ...configExist,
         grupo: configExist.grupo || configExist.grupo_codigo || grpCode,
         periodoCapa: configExist.periodoCapa || configExist.periodo || form.periodoCapa,
-        semana: configExist.semana || configExist.semana_trabajo || form.semana,
+        semana: normalizarSemanaPago(configExist.semana || configExist.semana_trabajo || form.semana),
+        segmento: configExist.segmento || form.segmento,
         campana: configExist.campana || form.campana,
       })
       setSuccessMsg(`ℹ Propuesta existente cargada para ${grpCode}.`)
@@ -249,11 +280,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       return
     }
 
-    // 2. Si es una propuesta nueva, autocompletar con los datos oficiales de capacidad_rys
-    const capInfo = gruposCapacidad.find(g => 
-      String(g.codigo || '').toUpperCase() === grpCode.toUpperCase()
-    )
-
+    const capInfo = gruposCapacidad.find(g => claveDesdeCapacidad(g) === claveSel)
     const camp = capInfo?.campana || form.campana || ''
     const codSugerido = `${camp}${grpCode}`.replace(/\s+/g, '')
 
@@ -261,6 +288,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       ...prev,
       id: null,
       grupo: grpCode,
+      campana: camp,
       segmento: capInfo?.segmento || prev.segmento || '',
       modalidad: (capInfo?.modalidad || 'REMOTO').toUpperCase(),
       condicionLaboral: (capInfo?.condicion || 'FULL TIME').toUpperCase(),
@@ -300,6 +328,9 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
   const handleSave = async () => {
     if (!form.grupo) { setError('El Código de Grupo es obligatorio.'); return }
     if (!form.campana) { setError('La Campaña es obligatoria.'); return }
+    if (!form.periodoCapa) { setError('El Periodo es obligatorio.'); return }
+    if (!form.semana) { setError('La Semana es obligatoria.'); return }
+    if (!form.segmento) { setError('El Segmento es obligatorio.'); return }
     setSaving(true); setError(null); setSuccessMsg(null)
     try {
       await upsertConfigPagoGrupo({
@@ -356,7 +387,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
         </div>
 
         {/* Fila 1: Filtros en cascada Periodo -> Semana -> Campaña -> Grupo */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
           {/* 1. Periodo Capa */}
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-bold text-emerald-400 uppercase flex items-center gap-1">
@@ -392,15 +423,33 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
             </select>
           </div>
 
-          {/* 3. Campaña */}
+          {/* 3. Segmento */}
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-bold text-slate-300 uppercase flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> 3. Campaña
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400"></span> 3. Segmento
+            </label>
+            <select
+              value={form.segmento}
+              onChange={handleSegmentoSelect}
+              disabled={!form.semana}
+              className="bg-slate-800 border border-slate-700 disabled:opacity-40 rounded-lg px-2.5 py-2 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">-- Seleccionar Segmento --</option>
+              {segmentosCapaDisponibles.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 4. Campaña */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-bold text-slate-300 uppercase flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> 4. Campaña
             </label>
             <select
               value={form.campana}
               onChange={handleCampanaSelect}
-              disabled={!form.semana}
+              disabled={!form.segmento}
               className="bg-slate-800 border border-slate-700 disabled:opacity-40 rounded-lg px-2.5 py-2 text-xs text-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
               <option value="">-- Seleccionar Campaña --</option>
@@ -410,17 +459,17 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
             </select>
           </div>
 
-          {/* 4. Grupo */}
+          {/* 5. Grupo */}
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-bold text-amber-400 uppercase flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> 4. Grupo de Capacitación
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> 5. Código de Grupo
             </label>
             {manualInput ? (
               <input
                 type="text"
                 value={form.grupo}
                 onChange={e => handleFieldChange('grupo', e.target.value.toUpperCase())}
-                placeholder="Ej: GPE-2025-029"
+                placeholder="Ej: GPE-2026012"
                 className="bg-slate-800 border border-amber-500/50 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
             ) : (
@@ -440,19 +489,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
         </div>
 
         {/* Fila 2: Atributos complementarios auto-completados */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Segmento */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-bold text-slate-400 uppercase">Segmento</label>
-            <input
-              type="text"
-              value={form.segmento}
-              onChange={e => handleFieldChange('segmento', e.target.value)}
-              placeholder="Ej: CLARO PERU RETENCIONES"
-              className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </div>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {/* Modalidad */}
           <div className="flex flex-col gap-1">
             <label className="text-[11px] font-bold text-slate-400 uppercase">Modalidad</label>
@@ -941,7 +978,7 @@ function TablaConfigs({ configs, onDelete, onEdit, onRefresh }) {
               configsFiltradas.map(c => {
                 const grpCode = c.grupo || c.grupo_codigo || ''
                 return (
-                  <tr key={c.id || grpCode} className="hover:bg-slate-800/40 transition-colors">
+                  <tr key={c.id || claveDesdeConfig(c)} className="hover:bg-slate-800/40 transition-colors">
                     <td className="px-3 py-2 text-slate-300 font-mono text-[11px] border-r border-slate-800/60">{c.periodoCapa || c.periodo || '—'}</td>
                     <td className="px-2 py-2 text-center text-slate-400 text-[11px] border-r border-slate-800/60">{c.semana || c.semana_trabajo || '—'}</td>
                     <td className="px-3 py-2 text-slate-300 text-[11px] border-r border-slate-800/60">{c.segmento || '—'}</td>

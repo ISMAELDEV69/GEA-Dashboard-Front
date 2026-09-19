@@ -7665,12 +7665,24 @@ export async function upsertConfigPagoGrupo(config) {
           .single();
         if (!error && data) return data;
       } else {
-        // Verificar si ya existe por grupo o cod
-        const { data: existing } = await supabase
+        const periodo = payloadConsolidado.periodoCapa
+        const semana = payloadConsolidado.semana
+        const segmento = payloadConsolidado.segmento
+        const { data: candidates } = await supabase
           .from('propuestas_consolidado')
-          .select('id')
-          .or(`grupo.eq.${grp},cod.eq.${codUnico}`)
-          .maybeSingle();
+          .select('id, grupo, campana, segmento, periodoCapa, semana, cod')
+          .eq('grupo', grp)
+
+        const sameSemana = (a, b) => {
+          const num = (v) => String(v || '').replace(/\D/g, '')
+          return num(a) && num(a) === num(b)
+        }
+        const existing = (candidates || []).find((row) => (
+          String(row.campana || '').trim().toUpperCase() === String(camp).trim().toUpperCase()
+          && String(row.segmento || '').trim().toUpperCase() === String(segmento).trim().toUpperCase()
+          && String(row.periodoCapa || '').trim().toUpperCase() === String(periodo).trim().toUpperCase()
+          && sameSemana(row.semana, semana)
+        ))
 
         if (existing?.id) {
           const { data, error } = await supabase
@@ -7697,7 +7709,20 @@ export async function upsertConfigPagoGrupo(config) {
   // Fallback a LocalStorage
   initLocalStorageDb();
   const existing = getFromStorage('propuestas_consolidado') || [];
-  const idx = existing.findIndex(c => c.id === config.id || c.grupo === grp || c.cod === codUnico);
+  const sameSemana = (a, b) => {
+    const num = (v) => String(v || '').replace(/\D/g, '')
+    return num(a) && num(a) === num(b)
+  }
+  const idx = existing.findIndex(c =>
+    (config.id && c.id === config.id)
+    || (
+      String(c.grupo || '').toUpperCase() === grp
+      && String(c.campana || '').trim().toUpperCase() === String(camp).trim().toUpperCase()
+      && String(c.segmento || '').trim().toUpperCase() === String(payloadConsolidado.segmento).trim().toUpperCase()
+      && String(c.periodoCapa || '').trim().toUpperCase() === String(payloadConsolidado.periodoCapa).trim().toUpperCase()
+      && sameSemana(c.semana, payloadConsolidado.semana)
+    )
+  );
   const recordWithId = { ...payloadConsolidado, id: config.id || ('local-' + Date.now()) };
   if (idx >= 0) existing[idx] = recordWithId;
   else existing.push(recordWithId);

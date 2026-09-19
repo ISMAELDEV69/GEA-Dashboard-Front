@@ -19,6 +19,70 @@ const SIGLA_ASISTIO = 'A'
 const SIGLAS_FALTA = new Set(['FI', 'FJ'])
 const SIGLA_BAJA = 'B'
 
+const normPago = (v) => String(v || '').trim().toUpperCase()
+
+/** SEM 35, 35 y SEM35 equivalen a la misma semana. */
+export function normalizarSemanaPago(val) {
+  if (val == null || val === '') return ''
+  const str = String(val).trim().toUpperCase()
+  const num = str.replace(/\D/g, '')
+  return num ? `SEM ${num}` : str
+}
+
+/** Llave de negocio: periodo + semana + segmento + campaña + código de grupo. */
+export function claveGrupoPago({ periodo = '', semana = '', segmento = '', campana = '', codigo = '' } = {}) {
+  return [
+    normPago(periodo),
+    normalizarSemanaPago(semana),
+    normPago(segmento),
+    normPago(campana),
+    normPago(codigo),
+  ].join('|')
+}
+
+export function claveDesdeCapacidad(g = {}) {
+  return claveGrupoPago({
+    periodo: g.periodo,
+    semana: g.semana_label || (g.semana_trabajo != null && g.semana_trabajo !== '' ? `SEM ${g.semana_trabajo}` : '') || g.semana,
+    segmento: g.segmento,
+    campana: g.campana,
+    codigo: g.codigo || g.grupo_capacitacion || g.grupo || g.grupo_codigo,
+  })
+}
+
+export function claveDesdeConfig(c = {}) {
+  return claveGrupoPago({
+    periodo: c.periodoCapa || c.periodo,
+    semana: c.semana || c.semana_trabajo,
+    segmento: c.segmento,
+    campana: c.campana,
+    codigo: c.grupo || c.grupo_codigo,
+  })
+}
+
+export function claveDesdeNomina(n = {}) {
+  return claveGrupoPago({
+    periodo: n.periodo_reclutado || n.periodo,
+    semana: n.semana_trabajo || n.semana,
+    segmento: n.segmento,
+    campana: n.campana,
+    codigo: n.grupo_codigo || n.codigo_grupo || n.grupo,
+  })
+}
+
+function lookupPorClaves(map, n) {
+  const full = claveDesdeNomina(n)
+  if (map.has(full)) return map.get(full)
+  const campanaCodigo = claveGrupoPago({
+    periodo: n.periodo_reclutado || n.periodo,
+    semana: n.semana_trabajo || n.semana,
+    campana: n.campana,
+    codigo: n.grupo_codigo || n.codigo_grupo || n.grupo,
+  })
+  if (map.has(campanaCodigo)) return map.get(campanaCodigo)
+  return null
+}
+
 export function calcularPagosCapacitacion(nominas = [], asistencias = [], configPagos = [], periodoConsulta = 'TODOS', gruposCapacidad = []) {
   const asistenciasPorDoc = new Map()
   for (const a of asistencias) {
@@ -28,34 +92,30 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     asistenciasPorDoc.get(doc).push(a)
   }
 
-  const cleanCode = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
-
   const configPorGrupo = new Map()
   for (const c of configPagos) {
-    if (c.grupo_codigo) {
-      const raw = String(c.grupo_codigo).trim().toUpperCase()
-      configPorGrupo.set(raw, c)
-      configPorGrupo.set(cleanCode(raw), c)
-    }
-    if (c.grupo) {
-      const rawG = String(c.grupo).trim().toUpperCase()
-      configPorGrupo.set(rawG, c)
-      configPorGrupo.set(cleanCode(rawG), c)
-    }
-    if (c.cod) {
-      const rawCod = String(c.cod).trim().toUpperCase()
-      configPorGrupo.set(rawCod, c)
-      configPorGrupo.set(cleanCode(rawCod), c)
-    }
+    const full = claveDesdeConfig(c)
+    if (full.replace(/\|/g, '')) configPorGrupo.set(full, c)
+    const sinSegmento = claveGrupoPago({
+      periodo: c.periodoCapa || c.periodo,
+      semana: c.semana || c.semana_trabajo,
+      campana: c.campana,
+      codigo: c.grupo || c.grupo_codigo,
+    })
+    if (!configPorGrupo.has(sinSegmento)) configPorGrupo.set(sinSegmento, c)
   }
 
   const capacidadPorGrupo = new Map()
   for (const cap of gruposCapacidad) {
-    const cod = String(cap.codigo || cap.grupo_capacitacion || cap.grupo || '').trim().toUpperCase()
-    if (cod) {
-      capacidadPorGrupo.set(cod, cap)
-      capacidadPorGrupo.set(cleanCode(cod), cap)
-    }
+    const full = claveDesdeCapacidad(cap)
+    if (full.replace(/\|/g, '')) capacidadPorGrupo.set(full, cap)
+    const sinSegmento = claveGrupoPago({
+      periodo: cap.periodo,
+      semana: cap.semana_label || cap.semana_trabajo || cap.semana,
+      campana: cap.campana,
+      codigo: cap.codigo || cap.grupo_capacitacion || cap.grupo,
+    })
+    if (!capacidadPorGrupo.has(sinSegmento)) capacidadPorGrupo.set(sinSegmento, cap)
   }
 
   const getMesIndex = (periodo, mesAfectacionBonos, config) => {
@@ -86,8 +146,8 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
 
     const rawGpe = String(n.grupo_codigo || '').trim().toUpperCase()
 
-    const config = configPorGrupo.get(rawGpe) || configPorGrupo.get(cleanCode(rawGpe)) || null
-    const capInfo = capacidadPorGrupo.get(rawGpe) || capacidadPorGrupo.get(cleanCode(rawGpe)) || null
+    const config = lookupPorClaves(configPorGrupo, n)
+    const capInfo = lookupPorClaves(capacidadPorGrupo, n)
     const sinPropuesta = !config || (!config.grupo_codigo && !config.grupo)
 
     const rawAsistencias = asistenciasPorDoc.get(doc) || []
