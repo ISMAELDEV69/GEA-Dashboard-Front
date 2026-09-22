@@ -1467,6 +1467,74 @@ export async function fetchCoberturaDotacion() {
   })
 }
 
+const KPI_RECLUTADORES_SELECT = [
+  'id',
+  'anio',
+  'periodo_reclutado',
+  'periodo_efectivo',
+  'semana',
+  'grupo_g',
+  'segmento',
+  'campana',
+  'modalidad',
+  'fecha_inicio',
+  'fecha_ingreso_op',
+  'rq',
+  'rq_individual',
+  'formato',
+  'responsable',
+  'estado_grupo',
+  'nomina',
+  'meta_dia_1_individual',
+  'dia_0',
+  'dia_1',
+  'meta_dia_1_campana',
+  'dotacion_ftes',
+  'dotacion_q',
+  'rq_asignado',
+  'dia_1_tope',
+  'dotacion_q_tope',
+  'dotacion_ftes_tope',
+  'rq_ftes',
+  'meta_dia_0_individual',
+  'n_reclutadores',
+  'updated_at',
+].join(',')
+
+export async function fetchKpiReclutadoresConsolidado() {
+  if (DB_MODE !== 'supabase') return []
+  return withCache('kpi_reclutadores_consolidado_v1', 120000, async () => {
+    const pageSize = 1000
+    const all = []
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('kpi_reclutadores_consolidado')
+        .select(KPI_RECLUTADORES_SELECT)
+        .gte('semana', 36)
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      const batch = data || []
+      all.push(...batch)
+      if (batch.length < pageSize) break
+      from += pageSize
+      if (from > 20000) break
+    }
+    return all
+  })
+}
+
+export async function refreshKpiReclutadores(semanaMin = 36) {
+  if (DB_MODE !== 'supabase') return 0
+  const { data, error } = await supabase.rpc('refresh_kpi_reclutadores', {
+    p_semana_min: semanaMin,
+  })
+  if (error) throw error
+  invalidateCache('kpi_reclutadores')
+  return data
+}
+
 const CAPACIDAD_RYS_LOOKUP_SELECT = [
   'codigo',
   'periodo',
@@ -1529,6 +1597,7 @@ export function subscribeOperationalData(onChange) {
     await invalidateCache('postulantes_');
     await invalidateCache('campanas_list');
     await invalidateCache('sedes_list');
+    await invalidateCache('kpi_reclutadores');
     
     // Auto-reload masivo desactivado para mitigar picos de carga concurrentes (>100 usuarios)
     // Si se requiere callback específico manual forzado, se puede invocar condicionalmente:
