@@ -1,16 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, memo } from 'react'
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, ScatterChart, Scatter, ZAxis, Cell, LabelList,
+  BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend, Cell, LabelList,
 } from 'recharts'
 import {
   RefreshCw, RotateCcw, AlertTriangle, CheckCircle2, Download,
 } from 'lucide-react'
 import {
   fetchKpiReclutadoresConsolidado,
+  fetchNominasAuditoria,
   refreshKpiReclutadores,
 } from '../../lib/dataService'
 import {
+  buildAuditoriaMatrix,
   buildFilterOptions,
   buildKpiModel,
   filterKpiRows,
@@ -68,6 +70,7 @@ function buildPresentation(mode) {
     label,
     rq: muted,
     nomina: cyan,
+    dia0: violet,
     dia1: amber,
     iop: green,
     tope: accent,
@@ -222,6 +225,211 @@ function HeatmapGrid({ rows, weeks }) {
   )
 }
 
+function labelDaySafe(iso) {
+  const d = new Date(`${iso}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+  return `${days[d.getDay()]} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function AuditoriaMatrix({ matrix }) {
+  const theme = useKpiTheme()
+  const columns = matrix?.columns || []
+  const rows = matrix?.rows || []
+  if (!rows.length) {
+    return <p className="text-xs text-[var(--text-muted)] py-8 text-center">Sin nóminas diarias en el corte para auditar.</p>
+  }
+  const maxDay = Math.max(1, ...rows.flatMap((row) => columns.map((col) => Number(row.days?.[col.key] || 0))))
+  return (
+    <div className="overflow-auto max-h-[520px] custom-scrollbar">
+      <table className="min-w-full border-collapse text-[11px]">
+        <thead className="sticky top-0 z-10 bg-[var(--bg-surface)]">
+          <tr>
+            <th className="sticky left-0 z-20 bg-[var(--bg-surface)] text-left font-medium text-[var(--text-muted)] px-2 py-1 min-w-[120px]">Reclutador</th>
+            <th className="text-left font-medium text-[var(--text-muted)] py-1 min-w-[88px]">Segmento</th>
+            <th className="text-left font-medium text-[var(--text-muted)] py-1 min-w-[110px]">Campaña</th>
+            <th className="text-left font-medium text-[var(--text-muted)] py-1 min-w-[88px]">Grupo</th>
+            <th className="text-center font-medium text-[var(--text-muted)] py-1 min-w-[72px]">Inicio</th>
+            <th className="text-center font-medium text-[var(--text-muted)] py-1 min-w-[40px]">Tot</th>
+            {columns.map((col) => (
+              <th key={col.key} className="text-center font-medium text-[var(--text-muted)] py-1 min-w-[40px]">{col.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="hover:bg-[var(--surface-hover)]">
+              <td className="sticky left-0 z-10 bg-[var(--bg-surface)] px-2 py-0.5 truncate text-[12px] text-[var(--text-secondary)]" title={row.reclutador}>
+                {shortName(row.reclutador)}
+              </td>
+              <td className="truncate text-[var(--text-secondary)] pr-1" title={row.segmento}>{prettySegment(row.segmento)}</td>
+              <td className="truncate text-[var(--text-secondary)] pr-1" title={row.campana}>{row.campana}</td>
+              <td className="font-mono text-[var(--accent)] truncate" title={row.grupo}>{row.grupo || '—'}</td>
+              <td className="text-center font-mono text-[10px] text-[var(--text-muted)] whitespace-nowrap">
+                {row.inicio ? row.inicio.slice(8, 10) + '/' + row.inicio.slice(5, 7) : '—'}
+              </td>
+              <td className="text-center font-mono font-semibold">{row.total}</td>
+              {columns.map((col) => {
+                const value = Number(row.days?.[col.key] || 0)
+                const fecha = row.dayDates?.[col.key] || ''
+                const empty = value === 0
+                const tone = empty ? { bg: theme.emptyCell, color: theme.muted } : heatFill(value, maxDay, theme)
+                return (
+                  <td
+                    key={`${row.key}-${col.key}`}
+                    className="text-center font-mono font-semibold h-8"
+                    style={{ background: tone.bg, color: tone.color }}
+                    title={fecha ? `${row.reclutador} · ${row.grupo} · ${col.label} ${labelDaySafe(fecha)}: ${value} pers.` : `${row.reclutador} · ${row.grupo} · ${col.label}`}
+                  >
+                    {empty ? '—' : value}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ResultadosAulaMatrix({ groups, useTope = false }) {
+  const theme = useKpiTheme()
+  const data = (groups || []).flatMap((g) => {
+    const people = (g.reclutadores || []).filter((r) => r.nombre)
+    const source = people.length ? people : [{ nombre: 'Sin reclutador', rqIndividual: g.rq, nomina: g.nomina, dia0: g.dia0, dia1: g.dia1, dia1Tope: g.dia1Tope, iop: g.iop, iopTope: g.iopTope }]
+    return source.map((r) => ({
+      key: `${g.key}|${r.nombre}`,
+      reclutador: r.nombre,
+      campana: g.campana,
+      grupo: g.grupo,
+      rq: r.rqIndividual,
+      nomina: r.nomina,
+      dia0: r.dia0,
+      dia1Show: useTope ? r.dia1Tope : r.dia1,
+      iopShow: useTope ? r.iopTope : r.iop,
+    }))
+  }).sort((a, b) => a.reclutador.localeCompare(b.reclutador) || String(a.grupo || '').localeCompare(String(b.grupo || '')))
+
+  if (!data.length) {
+    return <p className="text-xs text-[var(--text-muted)] py-8 text-center">Sin resultados de reclutamiento en el corte.</p>
+  }
+
+  const tot = data.reduce((acc, row) => {
+    acc.rq += numSafe(row.rq)
+    acc.nomina += numSafe(row.nomina)
+    acc.dia0 += numSafe(row.dia0)
+    acc.dia1 += numSafe(row.dia1Show)
+    acc.iop += numSafe(row.iopShow)
+    return acc
+  }, { rq: 0, nomina: 0, dia0: 0, dia1: 0, iop: 0 })
+
+  return (
+    <div className="overflow-auto max-h-[520px] custom-scrollbar">
+      <table className="w-full text-left text-xs border-collapse">
+        <thead className="sticky top-0 z-10 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)]">
+          <tr>
+            <th className="py-2 px-2">Reclutador</th>
+            <th className="py-2 px-2">Campaña</th>
+            <th className="py-2 px-2">Grupo</th>
+            <th className="py-2 px-2 text-right">RQ</th>
+            <th className="py-2 px-2 text-right">Nómina</th>
+            <th className="py-2 px-2 text-right">Día 0</th>
+            <th className="py-2 px-2 text-right">Día 1</th>
+            <th className="py-2 px-2 text-right">I-OP</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
+          {data.map((row) => (
+            <tr key={row.key} className="hover:bg-[var(--surface-hover)]">
+              <td className="py-1.5 px-2 font-sans text-[var(--text-primary)] truncate max-w-[180px]" title={row.reclutador}>
+                {shortName(row.reclutador)}
+              </td>
+              <td className="py-1.5 px-2 font-sans text-[var(--text-secondary)] truncate max-w-[160px]" title={row.campana}>
+                {row.campana || '—'}
+              </td>
+              <td className="py-1.5 px-2 text-[var(--accent)] truncate" title={row.grupo}>
+                {row.grupo || '—'}
+              </td>
+              <td className="py-1.5 px-2 text-right">{fmtNum(row.rq)}</td>
+              <td className="py-1.5 px-2 text-right" style={{ color: theme.nomina }}>{fmtNum(row.nomina)}</td>
+              <td className="py-1.5 px-2 text-right" style={{ color: theme.dia0 }}>{fmtNum(row.dia0)}</td>
+              <td className="py-1.5 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(row.dia1Show, useTope ? 1 : 0)}</td>
+              <td className="py-1.5 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(row.iopShow)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="sticky bottom-0 bg-[var(--bg-surface)] font-mono font-semibold">
+          <tr>
+            <td className="py-2 px-2 font-sans" colSpan={3}>{data.length} filas</td>
+            <td className="py-2 px-2 text-right">{fmtNum(tot.rq)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.nomina }}>{fmtNum(tot.nomina)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.dia0 }}>{fmtNum(tot.dia0)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(tot.dia1, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(tot.iop)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function RecruiterMatrix({ rows, useTope = false }) {
+  const theme = useKpiTheme()
+  const data = rows || []
+  if (!data.length) {
+    return <p className="text-xs text-[var(--text-muted)] py-8 text-center">Sin reclutadores en el corte.</p>
+  }
+  const totGrupos = data.reduce((acc, row) => acc + numSafe(row.grupos), 0)
+  const totDot = data.reduce((acc, row) => acc + numSafe(row.iopShow), 0)
+  const totDes = data.reduce((acc, row) => acc + numSafe(row.desercion), 0)
+  const totD1 = data.reduce((acc, row) => acc + numSafe(row.d1Show), 0)
+  const totPct = totD1 ? Math.round((totDes / totD1) * 1000) / 10 : 0
+
+  return (
+    <div className="overflow-x-auto max-h-[480px] custom-scrollbar">
+      <table className="w-full text-left text-xs border-collapse">
+        <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)]">
+          <tr>
+            <th className="py-2 px-2">Reclutador</th>
+            <th className="py-2 px-2 text-right">Grupos</th>
+            <th className="py-2 px-2 text-right">Dotación</th>
+            <th className="py-2 px-2 text-right">Deserción</th>
+            <th className="py-2 px-2 text-right">% Des.</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
+          {data.map((row) => (
+            <tr key={row.nombre} className="hover:bg-[var(--surface-hover)]">
+              <td className="py-2 px-2 font-sans text-[var(--text-primary)] truncate max-w-[240px]" title={row.nombre}>
+                {row.nombre}
+              </td>
+              <td className="py-2 px-2 text-right">{row.grupos}</td>
+              <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(row.iopShow, useTope ? 1 : 0)}</td>
+              <td className="py-2 px-2 text-right" style={{ color: theme.red }}>{fmtNum(row.desercion, useTope ? 1 : 0)}</td>
+              <td className="py-2 px-2 text-right">{row.pctDesercion}%</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-[var(--border-normal)] font-mono font-semibold">
+            <td className="py-2 px-2 font-sans">Total</td>
+            <td className="py-2 px-2 text-right">{totGrupos}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(totDot, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.red }}>{fmtNum(totDes, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right">{totPct}%</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function numSafe(value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
 function RankBarChart({ data, valueKey, nameKey = 'nombre', suffix = ' pers.', shorten = true }) {
   const theme = useKpiTheme()
   const rows = (data || []).map((row) => ({
@@ -301,7 +509,7 @@ function KpiTile({ label, value, sub, tone = 'cyan' }) {
   }[tone] || theme.accent
   return (
     <div
-      className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4"
+      className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 min-w-0 flex-1"
       style={{ borderLeft: `3px solid ${color}` }}
     >
       <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">{label}</p>
@@ -311,11 +519,27 @@ function KpiTile({ label, value, sub, tone = 'cyan' }) {
   )
 }
 
+function FlowArrow() {
+  return (
+    <div className="hidden md:flex items-center justify-center shrink-0 w-6 text-[var(--text-muted)]" aria-hidden>
+      <span className="text-lg leading-none">→</span>
+    </div>
+  )
+}
+
 function KpiReclutadoresDashboard({ userProfile = null }) {
-  const userRole = String(userProfile?.role || '').toLowerCase()
+  const userRole = String(userProfile?.rol || userProfile?.role || '').toLowerCase()
   const isLocked = userRole === 'reclutador'
+  const canSeeRanking = [
+    'admin',
+    'jefe_rys',
+    'coordinador_rys',
+    'supervisor_capacitacion',
+    'jefe_capacitacion',
+  ].includes(userRole)
 
   const [rows, setRows] = useState([])
+  const [nominas, setNominas] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -337,8 +561,12 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchKpiReclutadoresConsolidado()
+      const [data, nominaRows] = await Promise.all([
+        fetchKpiReclutadoresConsolidado(),
+        fetchNominasAuditoria().catch(() => []),
+      ])
       setRows(data || [])
+      setNominas(nominaRows || [])
       const stamp = (data || []).reduce((acc, row) => {
         if (!row.updated_at) return acc
         return !acc || row.updated_at > acc ? row.updated_at : acc
@@ -360,7 +588,11 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     [isLocked, rows, userProfile]
   )
 
-  const effectiveResponsable = lockedName || responsable
+  const effectiveResponsable = isLocked ? (lockedName || '__SIN_PERFIL__') : responsable
+
+  useEffect(() => {
+    if (!canSeeRanking && vista !== 'resumen') setVista('resumen')
+  }, [canSeeRanking, vista])
 
   const cascadeRows = useMemo(() => {
     return filterKpiRows(rows, {
@@ -417,6 +649,13 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     [filtered, useTope, effectiveResponsable]
   )
 
+  const auditoria = useMemo(
+    () => buildAuditoriaMatrix(nominas, filtered, {
+      lockedName: isLocked ? effectiveResponsable : (effectiveResponsable !== 'ALL' ? effectiveResponsable : null),
+    }),
+    [nominas, filtered, isLocked, effectiveResponsable]
+  )
+
   const activeFilters = [
     periodo !== 'ALL',
     semana !== 'ALL',
@@ -443,7 +682,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      await refreshKpiReclutadores(36)
+      await refreshKpiReclutadores(31)
       await loadRows()
     } catch (err) {
       setError(err?.message || 'No se pudo refrescar el consolidado')
@@ -454,14 +693,14 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
 
   const exportCsv = () => {
     const headers = [
-      'periodo', 'semana', 'segmento', 'campana', 'grupo', 'responsable',
+      'periodo_ingreso', 'periodo_capa', 'semana', 'segmento', 'campana', 'grupo', 'responsable',
       'rq', 'rq_individual', 'nomina', 'dia_0', 'dia_1', 'dia_1_tope',
       'dotacion_q', 'dotacion_q_tope', 'dotacion_ftes', 'n_reclutadores',
     ]
     const lines = [headers.join(';')]
     filtered.forEach((row) => {
       lines.push([
-        row.periodo_reclutado, row.semana, row.segmento, row.campana, row.grupo_g, row.responsable,
+        row.periodo_efectivo || row.periodo_reclutado, row.periodo_reclutado, row.semana, row.segmento, row.campana, row.grupo_g, row.responsable,
         row.rq, row.rq_individual, row.nomina, row.dia_0, row.dia_1, row.dia_1_tope,
         row.dotacion_q, row.dotacion_q_tope, row.dotacion_ftes, row.n_reclutadores,
       ].join(';'))
@@ -510,7 +749,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
         <MiniSelect value={periodo} onChange={(e) => { setPeriodo(e.target.value); setGrupo('ALL') }}>
-          <option value="ALL" className={OPTION_CLASS}>Periodo</option>
+          <option value="ALL" className={OPTION_CLASS}>Periodo ingreso</option>
           {options.all.periodos.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
         </MiniSelect>
         <MiniSelect value={semana} onChange={(e) => setSemana(e.target.value)}>
@@ -543,7 +782,9 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
         <span className="hidden sm:block h-4 w-px bg-[var(--border-normal)]" />
 
         <MiniToggle checked={useTope} onChange={(e) => setUseTope(e.target.checked)} label="Tope" />
-        <MiniToggle checked={includeEmptyGroups} onChange={(e) => setIncludeEmptyGroups(e.target.checked)} label="Sin nómina" />
+        {!isLocked && (
+          <MiniToggle checked={includeEmptyGroups} onChange={(e) => setIncludeEmptyGroups(e.target.checked)} label="Sin nómina" />
+        )}
 
         <span className="ml-auto flex items-center gap-1">
           {activeFilters > 0 && (
@@ -577,12 +818,11 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
         </span>
       </div>
 
+      {canSeeRanking && (
       <div className="flex items-center gap-1 px-1">
         {[
           { id: 'resumen', label: 'Resumen' },
-          { id: 'reclutadores', label: 'Reclutadores' },
-          { id: 'segmentos', label: 'Segmentos' },
-          { id: 'alertas', label: 'Alertas' },
+          { id: 'ranking', label: 'Ranking' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -598,61 +838,70 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
           </button>
         ))}
       </div>
+      )}
 
       {vista === 'resumen' && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          <div className="flex flex-col md:flex-row md:items-stretch gap-2">
             <KpiTile
-              label="Día 1 vs RQ"
-              value={`${fmtNum(t.d1Show, useTope ? 1 : 0)} / ${fmtNum(t.rq, 1)}`}
-              sub={`${t.pctD1Rq}% del pedido${useTope ? ' (tope)' : ''}`}
-              tone={t.pctD1Rq >= 80 ? 'emerald' : t.pctD1Rq >= 50 ? 'amber' : 'rose'}
-            />
-            <KpiTile
-              label="OP Q vs RQ"
-              value={`${fmtNum(t.iopShow, useTope ? 1 : 0)} / ${fmtNum(t.rq, 1)}`}
-              sub={`${t.pctOpRq}% ingreso a operación`}
-              tone="emerald"
-            />
-            <KpiTile
-              label="Nómina → Día 1"
-              value={`${t.pctNominaD1}%`}
-              sub={`${fmtNum(t.dia1)} de ${fmtNum(t.nomina)} citados`}
-              tone="cyan"
-            />
-            <KpiTile
-              label="Día 1 → OP"
-              value={`${t.pctOpD1}%`}
-              sub={`${fmtNum(t.iop)} ingresos · ${fmtNum(t.iopFtes, 1)} FTEs`}
+              label="1. Nómina"
+              value={fmtNum(t.nomina)}
+              sub={isLocked ? 'Personas que trajo' : 'Personas en nómina'}
               tone="indigo"
             />
+            <FlowArrow />
             <KpiTile
-              label={useTope ? 'Día 1 con tope' : 'Día 1 sin tope'}
+              label="2. Día 0"
+              value={fmtNum(t.dia0)}
+              sub={`${t.pctD0Nomina}% de la nómina`}
+              tone="indigo"
+            />
+            <FlowArrow />
+            <KpiTile
+              label="3. Día 1"
               value={fmtNum(useTope ? t.dia1Tope : t.dia1, useTope ? 1 : 0)}
-              sub={useTope ? `Real ${fmtNum(t.dia1)} · tope ${fmtNum(t.dia1Tope, 1)}` : `Tope ${fmtNum(t.dia1Tope, 1)}`}
+              sub={`${t.pctD1D0}% del Día 0`}
               tone="amber"
+            />
+            <FlowArrow />
+            <KpiTile
+              label="4. Operación"
+              value={fmtNum(useTope ? t.iopTope : t.iop, useTope ? 1 : 0)}
+              sub={`${t.pctOpD1}% del Día 1 · ${fmtNum(t.iopFtes, 1)} FTE`}
+              tone="emerald"
             />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <ChartFrame
               tall
-              title="Embudo global de conversión"
-              caption="Eje X: personas. Eje Y: etapa. Porcentaje vs la etapa anterior al pasar el cursor."
+              title="Dónde se cae la gente"
+              caption="La primera barra es la nómina. Las del medio son quienes no pasaron de etapa. La última es quien llegó a operación."
             >
-              <RankBarChart
-                data={model.funnel.map((step) => ({ nombre: step.etapa.replace(/^\d+\.\s*/, ''), d1Show: step.value }))}
-                valueKey="d1Show"
-              />
+              <RankBarChart data={model.fuga} valueKey="d1Show" shorten={false} />
             </ChartFrame>
 
             <ChartFrame
               tall
               title="Evolución semanal"
-              caption="Eje X: semana operativa. Eje Y: personas. RQ es el pedido grupal del corte."
+              caption="Eje X: semana operativa. Eje Y: personas. Solo nómina, Día 0 y Día 1."
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={model.weekly} margin={{ top: 16, right: 16, left: 4, bottom: 8 }}>
+                <AreaChart data={model.weekly} margin={{ top: 16, right: 16, left: 4, bottom: 8 }}>
+                  <defs>
+                    <linearGradient id="kpiAreaNomina" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.nomina} stopOpacity={0.42} />
+                      <stop offset="100%" stopColor={theme.nomina} stopOpacity={0.04} />
+                    </linearGradient>
+                    <linearGradient id="kpiAreaDia0" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.dia0} stopOpacity={0.42} />
+                      <stop offset="100%" stopColor={theme.dia0} stopOpacity={0.04} />
+                    </linearGradient>
+                    <linearGradient id="kpiAreaDia1" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.dia1} stopOpacity={0.42} />
+                      <stop offset="100%" stopColor={theme.dia1} stopOpacity={0.04} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} vertical={false} />
                   <XAxis
                     dataKey="label"
@@ -677,124 +926,57 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
                   />
                   <Tooltip content={<ChartTooltipContent />} />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
-                  <Line type="linear" dataKey="rq" name="RQ" stroke={theme.rq} strokeWidth={2} dot={false} isAnimationActive={false} />
-                  <Line type="linear" dataKey="nomina" name="Nómina" stroke={theme.nomina} strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                  <Line type="linear" dataKey="dia1" name="Día 1" stroke={theme.dia1} strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                  <Line type="linear" dataKey="iop" name="Ingreso OP" stroke={theme.iop} strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                </LineChart>
+                  <Area type="linear" dataKey="nomina" name="Nómina" stroke={theme.nomina} fill="url(#kpiAreaNomina)" strokeWidth={2.2} dot={{ r: 3, fill: theme.nomina }} isAnimationActive={false} />
+                  <Area type="linear" dataKey="dia0" name="Día 0" stroke={theme.dia0} fill="url(#kpiAreaDia0)" strokeWidth={2.2} dot={{ r: 3, fill: theme.dia0 }} isAnimationActive={false} />
+                  <Area type="linear" dataKey="dia1" name="Día 1" stroke={theme.dia1} fill="url(#kpiAreaDia1)" strokeWidth={2.2} dot={{ r: 3, fill: theme.dia1 }} isAnimationActive={false} />
+                </AreaChart>
               </ResponsiveContainer>
             </ChartFrame>
           </div>
+
+          <ChartFrame
+            auto
+            title="Auditoría diaria de nómina"
+            caption="D1 es el primer día que ese reclutador cargó nómina en ese grupo. D2, D3… son los siguientes días en que sí trajo gente. El cursor muestra la fecha real."
+          >
+            <AuditoriaMatrix matrix={auditoria} />
+          </ChartFrame>
+
+          <ChartFrame
+            auto
+            title="Matriz de resultados"
+            caption="Una fila por reclutador y grupo. RQ individual, nómina, Día 0, Día 1 e ingreso a operación del corte."
+          >
+            <ResultadosAulaMatrix groups={model.groups} useTope={useTope} />
+          </ChartFrame>
         </>
       )}
 
-      {vista === 'reclutadores' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <ChartFrame
-            tall
-            title="Top reclutadores del corte"
-            caption="Eje X: personas que llegaron a Día 1. Eje Y: reclutador. Ranking del filtro actual, sin ADMIN."
-          >
-            <RankBarChart data={model.recruiters.slice(0, 8)} valueKey="d1Show" />
-          </ChartFrame>
-
-          <ChartFrame
-            tall
-            title="Eficiencia vs cobertura"
-            caption="Eje X: % Día 1 / RQ. Eje Y: % Nómina → Día 1. Tamaño = nómina. Derecha cubre pedido; arriba la lista llega."
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
-                <XAxis type="number" dataKey="pctD1Rq" name="% D1/RQ" unit="%" stroke={theme.tick} fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis type="number" dataKey="pctNominaD1" name="% Nómina→D1" unit="%" stroke={theme.tick} fontSize={12} tickLine={false} axisLine={false} />
-                <ZAxis type="number" dataKey="nomina" range={[40, 220]} />
-                <Tooltip content={<ChartTooltipContent />} />
-                <Scatter data={model.recruiters} fill={theme.nomina} name="Reclutador">
-                  {model.recruiters.map((rec) => (
-                    <Cell key={rec.nombre} fill={rec.pctD1Rq >= 80 ? theme.iop : rec.pctD1Rq >= 50 ? theme.dia1 : theme.red} />
-                  ))}
-                </Scatter>
-              </ScatterChart>
-            </ResponsiveContainer>
-          </ChartFrame>
-
-          {model.topeCompare.length > 0 && (
-            <div className="xl:col-span-2">
-              <ChartFrame
-                title="Día 1 real vs tope"
-                caption="Eje X: reclutador. Eje Y: personas. Si la barra gris se aleja de la azul, hay sobrecumplimiento que el tope no cuenta."
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={model.topeCompare} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} vertical={false} />
-                    <XAxis dataKey="nombre" stroke={theme.tick} fontSize={11} tickLine={false} axisLine={false} interval={0} />
-                    <YAxis stroke={theme.tick} fontSize={12} tickLine={false} axisLine={false} />
-                    <Tooltip content={<ChartTooltipContent />} />
-                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                    <Bar dataKey="real" name="Día 1 real" fill={theme.rq} radius={[5, 5, 0, 0]} maxBarSize={22} />
-                    <Bar dataKey="tope" name="Día 1 tope" fill={theme.tope} radius={[5, 5, 0, 0]} maxBarSize={22} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartFrame>
-            </div>
-          )}
-        </div>
-      )}
-
-      {vista === 'segmentos' && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          <ChartFrame
-            tall
-            title="Día 1 por segmento"
-            caption="Eje X: personas en Día 1. Eje Y: segmento del corte filtrado."
-          >
-            <RankBarChart
-              data={model.segments.map((s) => ({ nombre: prettySegment(s.segmento), d1Show: s.dia1 }))}
-              valueKey="d1Show"
-            />
-          </ChartFrame>
-
-          <ChartFrame
-            tall
-            title="Segmento: RQ, Día 1 e ingreso OP"
-            caption="Eje X: segmento. Eje Y: personas. RQ es el pedido del grupo. Retenciones puede tener más OP que Día 1."
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={model.segments} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} vertical={false} />
-                <XAxis dataKey="segmento" stroke={theme.tick} fontSize={11} tickLine={false} axisLine={false} interval={0} />
-                <YAxis stroke={theme.tick} fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltipContent />} />
-                <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                <Bar dataKey="rq" name="RQ" fill={theme.rq} radius={[5, 5, 0, 0]} maxBarSize={26} />
-                <Bar dataKey="dia1" name="Día 1" fill={theme.dia1} radius={[5, 5, 0, 0]} maxBarSize={26} />
-                <Bar dataKey="iop" name="Ingreso OP" fill={theme.iop} radius={[5, 5, 0, 0]} maxBarSize={26} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartFrame>
-
-          <div className="xl:col-span-2">
-            <ChartFrame
-              auto
-              title="Semana × segmento"
-              caption="Eje X: semana. Eje Y: segmento. El número es Día 1 (mismas personas que el ranking). El ámbar es más intenso si hubo más Día 1."
-            >
-              <HeatmapGrid rows={model.heatmap} weeks={model.weeks} />
-            </ChartFrame>
-          </div>
-        </div>
-      )}
-
-      {vista === 'alertas' && (
+      {canSeeRanking && vista === 'ranking' && (
         <>
-          <ChartFrame
-            tall
-            title="Dónde se cae la gente"
-            caption="Misma lista, de arriba hacia abajo. La primera barra es la partida. Las del medio son bajas. La última es quien sí llegó a operación. Todas miden personas, con el mismo ancho."
-          >
-            <RankBarChart data={model.fuga} valueKey="d1Show" shorten={false} />
-          </ChartFrame>
+        <ChartFrame
+          tall
+          title="Top reclutadores"
+          caption="Eje X: personas que llegaron a Día 1. Eje Y: reclutador. Ranking del filtro actual, sin ADMIN."
+        >
+          <RankBarChart data={model.recruiters.slice(0, 8)} valueKey="d1Show" />
+        </ChartFrame>
+
+        <ChartFrame
+          auto
+          title="Matriz por reclutador"
+          caption="Dotación = ingreso a operación. Deserción = Día 1 que no llegó a operación. Grupos = aulas del corte en las que reclutó."
+        >
+          <RecruiterMatrix rows={model.recruiters} useTope={useTope} />
+        </ChartFrame>
+
+        <ChartFrame
+          auto
+          title="Semana × segmento"
+          caption="Eje X: semana. Eje Y: segmento. El número es Día 1 (mismas personas que el ranking). El ámbar es más intenso si hubo más Día 1."
+        >
+          <HeatmapGrid rows={model.heatmap} weeks={model.weeks} />
+        </ChartFrame>
 
           <Card>
         <CardHeader>
@@ -804,7 +986,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
               Alerta por grupo
             </CardTitle>
             <span className="text-[10px] font-mono text-[var(--text-muted)]">
-              {model.alerts.length} grupos · clic para ver reclutadores
+              {model.alerts.length} grupos{isLocked ? '' : ' · clic para ver reclutadores'}
             </span>
           </div>
         </CardHeader>
@@ -817,7 +999,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
                   <th className="py-2 px-2">Campaña</th>
                   <th className="py-2 px-2">Sem</th>
                   <th className="py-2 px-2 text-right">RQ</th>
-                  <th className="py-2 px-2 text-right">N</th>
+                  {!isLocked && <th className="py-2 px-2 text-right">N</th>}
                   <th className="py-2 px-2 text-right">Nómina</th>
                   <th className="py-2 px-2 text-right">D1</th>
                   <th className="py-2 px-2 text-right">OP</th>
@@ -829,14 +1011,14 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
                 {model.alerts.map((g) => (
                   <tr
                     key={g.key}
-                    onClick={() => setSelectedGrupo(g.key === selectedGrupo ? null : g.key)}
-                    className={`cursor-pointer hover:bg-[var(--surface-hover)] ${selectedGrupo === g.key ? 'bg-[var(--accent-soft)]' : ''}`}
+                    onClick={() => { if (!isLocked) setSelectedGrupo(g.key === selectedGrupo ? null : g.key) }}
+                    className={`${isLocked ? '' : 'cursor-pointer hover:bg-[var(--surface-hover)]'} ${selectedGrupo === g.key ? 'bg-[var(--accent-soft)]' : ''}`}
                   >
                     <td className="py-2 px-2 text-[var(--accent)]">{g.grupo}</td>
                     <td className="py-2 px-2 font-sans text-[var(--text-primary)] truncate max-w-[180px]">{g.campana}</td>
                     <td className="py-2 px-2">{g.semana}</td>
                     <td className="py-2 px-2 text-right">{fmtNum(g.rq, 1)}</td>
-                    <td className="py-2 px-2 text-right">{g.nReclutadores}</td>
+                    {!isLocked && <td className="py-2 px-2 text-right">{g.nReclutadores}</td>}
                     <td className="py-2 px-2 text-right" style={{ color: theme.nomina }}>{g.nomina}</td>
                     <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(g.d1Show, useTope ? 1 : 0)}</td>
                     <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(g.iopShow, useTope ? 1 : 0)}</td>
@@ -848,7 +1030,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
             </table>
           </div>
 
-          {selectedAlert && (
+          {!isLocked && selectedAlert && (
             <div className="mt-4 rounded-xl border border-[var(--border-normal)] bg-[var(--bg-elevated)] p-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-black text-[var(--accent)]">
@@ -896,7 +1078,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
 
       <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
         <CheckCircle2 size={12} style={{ color: theme.iop }} />
-        {fmtNum(t.grupos)} grupos · {fmtNum(t.reclutadores)} reclutadores · {fmtNum(t.nomina)} en nómina
+        {fmtNum(t.grupos)} grupos · {isLocked ? `${fmtNum(t.nomina)} en tu nómina` : `${fmtNum(t.reclutadores)} reclutadores · ${fmtNum(t.nomina)} en nómina`}
         {cascadeRows.length !== filtered.length ? ` · ${filtered.length} filas visibles` : ''}
       </div>
     </div>

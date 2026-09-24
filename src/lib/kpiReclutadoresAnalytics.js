@@ -31,9 +31,28 @@ export function isJunkResponsable(name) {
   return false
 }
 
+export const MIN_PERIODO_RECLUTADOR = '202608'
+export const MIN_SEMANA_RECLUTADOR = 31
+
+export function isPeriodoReclutadorActivo(periodo) {
+  const p = String(periodo || '').replace(/\D/g, '').slice(0, 6)
+  return Boolean(p) && p >= MIN_PERIODO_RECLUTADOR
+}
+
 export function isSinNomina(row) {
   const n = normKpi(row?.responsable)
   return n === 'SIN NOMINA' || n === 'SIN NOMINA'
+}
+
+export function periodoIngreso(row) {
+  const efectivo = String(row?.periodo_efectivo || '').replace(/\D/g, '').slice(0, 6)
+  if (efectivo.length === 6) return efectivo
+  const fecha = String(row?.fecha_ingreso_op || '').trim()
+  const iso = fecha.match(/^(\d{4})-(\d{2})/)
+  if (iso) return `${iso[1]}${iso[2]}`
+  const digits = fecha.replace(/\D/g, '')
+  if (digits.length >= 6) return digits.slice(0, 6)
+  return String(row?.periodo_reclutado || '').replace(/\D/g, '').slice(0, 6)
 }
 
 export function groupKey(row) {
@@ -92,8 +111,9 @@ export function filterKpiRows(rows, filters = {}) {
   } = filters
 
   return (rows || []).filter((row) => {
+    if (!isPeriodoReclutadorActivo(periodoIngreso(row))) return false
     if (!includeEmptyGroups && isSinNomina(row)) return false
-    if (periodo !== 'ALL' && String(row.periodo_reclutado) !== String(periodo)) return false
+    if (periodo !== 'ALL' && periodoIngreso(row) !== String(periodo)) return false
     if (semana !== 'ALL' && Number(row.semana) !== Number(semana)) return false
     if (segmento !== 'ALL' && normKpi(row.segmento) !== normKpi(segmento)) return false
     if (campana !== 'ALL' && normKpi(row.campana) !== normKpi(campana)) return false
@@ -112,7 +132,8 @@ export function buildFilterOptions(rows) {
   const responsables = new Set()
 
   ;(rows || []).forEach((row) => {
-    if (row.periodo_reclutado) periodos.add(String(row.periodo_reclutado))
+    const perIngreso = periodoIngreso(row)
+    if (isPeriodoReclutadorActivo(perIngreso)) periodos.add(perIngreso)
     if (row.semana != null) semanas.add(Number(row.semana))
     if (row.segmento) segmentos.add(String(row.segmento).trim())
     if (row.campana) campanas.add(String(row.campana).trim())
@@ -137,7 +158,8 @@ function uniqueGroups(rows) {
     if (!map.has(key)) {
       map.set(key, {
         key,
-        periodo: row.periodo_reclutado,
+        periodo: periodoIngreso(row),
+        periodoCapa: row.periodo_reclutado,
         semana: Number(row.semana),
         segmento: row.segmento,
         campana: row.campana,
@@ -235,15 +257,18 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
   const recruiters = Array.from(recruiterMap.values()).map((rec) => {
     const d1 = useTope ? rec.dia1Tope : rec.dia1
     const iop = useTope ? rec.iopTope : rec.iop
+    const desercion = Math.max(0, d1 - iop)
     return {
       ...rec,
       d1Show: d1,
       iopShow: iop,
+      desercion,
+      pctDesercion: pct(desercion, d1),
       pctD1Rq: pct(d1, rec.rq),
       pctNominaD1: pct(rec.dia1, rec.nomina),
       pctD1Op: pct(iop, rec.dia1),
     }
-  }).sort((a, b) => b.d1Show - a.d1Show || b.iopShow - a.iopShow)
+  }).sort((a, b) => b.iopShow - a.iopShow || b.d1Show - a.d1Show)
 
   const rq = singleRecruiter
     ? rows.reduce((acc, row) => acc + num(row.rq_individual), 0)
@@ -279,11 +304,12 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
   const weeklyMap = new Map()
   groups.forEach((g) => {
     if (!weeklyMap.has(g.semana)) {
-      weeklyMap.set(g.semana, { semana: g.semana, label: `Sem ${g.semana}`, rq: 0, nomina: 0, dia1: 0, iop: 0 })
+      weeklyMap.set(g.semana, { semana: g.semana, label: `Sem ${g.semana}`, rq: 0, nomina: 0, dia0: 0, dia1: 0, iop: 0 })
     }
     const w = weeklyMap.get(g.semana)
     w.rq += g.rq
     w.nomina += g.nomina
+    w.dia0 += g.dia0
     w.dia1 += useTope ? g.dia1Tope : g.dia1
     w.iop += useTope ? g.iopTope : g.iop
   })
@@ -374,13 +400,6 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
       return (order[a.semaforo] - order[b.semaforo]) || (a.pctD1Rq - b.pctD1Rq)
     })
 
-  const topeCompare = recruiters.slice(0, 12).map((rec) => ({
-    nombre: rec.nombre.split(' ')[0],
-    nombreFull: rec.nombre,
-    real: rec.dia1,
-    tope: rec.dia1Tope,
-  }))
-
   return {
     totals,
     groups,
@@ -393,8 +412,98 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
     waterfall,
     fuga,
     alerts,
-    topeCompare,
   }
+}
+
+function toIsoDay(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  const iso = text.slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
+  const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (slash) return `${slash[3]}-${slash[2].padStart(2, '0')}-${slash[1].padStart(2, '0')}`
+  return ''
+}
+
+export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null } = {}) {
+  const allowed = new Set()
+  const groupMeta = new Map()
+
+  ;(kpiRows || []).forEach((row) => {
+    if (isSinNomina(row) || isJunkResponsable(row.responsable)) return
+    if (lockedName && !matchName(row.responsable, lockedName)) return
+    const grupo = normKpi(row.grupo_g)
+    const campana = normKpi(row.campana)
+    const responsable = String(row.responsable || '').trim()
+    allowed.add(`${grupo}|${campana}|${normKpi(responsable)}`)
+    groupMeta.set(`${grupo}|${campana}`, {
+      segmento: String(row.segmento || '').trim(),
+      semana: row.semana,
+    })
+  })
+
+  const rowMap = new Map()
+  ;(nominas || []).forEach((row) => {
+    if (row.activo === false) return
+    const responsable = String(row.reclutador || '').trim()
+    if (!responsable || isJunkResponsable(responsable)) return
+    if (lockedName && !matchName(responsable, lockedName)) return
+    const grupo = String(row.grupo_codigo || '').trim()
+    const campana = String(row.campana || '').trim()
+    const allowKey = `${normKpi(grupo)}|${normKpi(campana)}|${normKpi(responsable)}`
+    if (allowed.size && !allowed.has(allowKey)) return
+    const day = toIsoDay(row.marca_temporal || row.created_at || row.fecha_ingreso)
+    const meta = groupMeta.get(`${normKpi(grupo)}|${normKpi(campana)}`) || {}
+    const key = `${normKpi(responsable)}|${normKpi(row.segmento || meta.segmento)}|${normKpi(campana)}|${normKpi(grupo)}`
+    if (!rowMap.has(key)) {
+      rowMap.set(key, {
+        key,
+        reclutador: responsable,
+        segmento: String(row.segmento || meta.segmento || '').trim() || 'SIN SEGMENTO',
+        campana,
+        grupo,
+        byDate: new Map(),
+        seen: new Set(),
+      })
+    }
+    const rec = rowMap.get(key)
+    const personKey = String(row.documento || '').trim() || `${responsable}|${day}|${rec.seen.size}`
+    if (rec.seen.has(personKey)) return
+    rec.seen.add(personKey)
+    if (!day) return
+    rec.byDate.set(day, (rec.byDate.get(day) || 0) + 1)
+  })
+
+  let maxSlots = 1
+  const rows = Array.from(rowMap.values()).map((rec) => {
+    const dates = Array.from(rec.byDate.keys()).sort()
+    const days = {}
+    const dayDates = {}
+    dates.forEach((iso, idx) => {
+      const slot = `d${idx + 1}`
+      days[slot] = rec.byDate.get(iso) || 0
+      dayDates[slot] = iso
+    })
+    maxSlots = Math.max(maxSlots, dates.length)
+    return {
+      key: rec.key,
+      reclutador: rec.reclutador,
+      segmento: rec.segmento,
+      campana: rec.campana,
+      grupo: rec.grupo,
+      inicio: dates[0] || '',
+      total: dates.reduce((acc, iso) => acc + (rec.byDate.get(iso) || 0), 0),
+      days,
+      dayDates,
+    }
+  }).sort((a, b) => a.reclutador.localeCompare(b.reclutador) || a.grupo.localeCompare(b.grupo) || b.total - a.total)
+
+  const columns = Array.from({ length: maxSlots }, (_, i) => ({
+    key: `d${i + 1}`,
+    label: `D${i + 1}`,
+  }))
+
+  return { columns, rows }
 }
 
 export function resolveLockedRecruiter(rows, userProfile) {
@@ -402,13 +511,17 @@ export function resolveLockedRecruiter(rows, userProfile) {
   const candidates = [
     userProfile.nombre_completo,
     userProfile.nombre,
+    userProfile.nombres_completos,
+    `${userProfile.apellido_paterno || ''} ${userProfile.apellido_materno || ''} ${userProfile.nombres_completos || userProfile.nombres || ''}`.trim(),
     userProfile.alias,
+    userProfile.alix,
     userProfile.usuario,
+    String(userProfile.email || '').split('@')[0],
   ].filter(Boolean)
   const names = Array.from(new Set((rows || []).map((r) => String(r.responsable || '').trim()).filter(Boolean)))
   for (const candidate of candidates) {
     const hit = names.find((name) => matchName(name, candidate))
     if (hit) return hit
   }
-  return null
+  return candidates[0] || null
 }

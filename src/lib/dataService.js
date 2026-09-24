@@ -1503,7 +1503,7 @@ const KPI_RECLUTADORES_SELECT = [
 
 export async function fetchKpiReclutadoresConsolidado() {
   if (DB_MODE !== 'supabase') return []
-  return withCache('kpi_reclutadores_consolidado_v1', 120000, async () => {
+  return withCache('kpi_reclutadores_consolidado_v3', 120000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
@@ -1511,7 +1511,7 @@ export async function fetchKpiReclutadoresConsolidado() {
       const { data, error } = await supabase
         .from('kpi_reclutadores_consolidado')
         .select(KPI_RECLUTADORES_SELECT)
-        .gte('semana', 36)
+        .gte('semana', 31)
         .order('id', { ascending: true })
         .range(from, from + pageSize - 1)
       if (error) throw error
@@ -1525,13 +1525,39 @@ export async function fetchKpiReclutadoresConsolidado() {
   })
 }
 
-export async function refreshKpiReclutadores(semanaMin = 36) {
+export async function fetchNominasAuditoria() {
+  if (DB_MODE !== 'supabase') return []
+  return withCache('nominas_auditoria_v1', 180000, async () => {
+    const pageSize = 1000
+    const all = []
+    let from = 0
+    const cols = 'documento, reclutador, campana, grupo_codigo, segmento, marca_temporal, created_at, fecha_ingreso, fecha_conexion_ojt, periodo_reclutado, semana_trabajo, activo'
+    while (true) {
+      const { data, error } = await supabase
+        .from('v_nominas_consolidado')
+        .select(cols)
+        .eq('activo', true)
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      const batch = data || []
+      all.push(...batch)
+      if (batch.length < pageSize) break
+      from += pageSize
+      if (from > 40000) break
+    }
+    return all
+  })
+}
+
+export async function refreshKpiReclutadores(semanaMin = 31) {
   if (DB_MODE !== 'supabase') return 0
   const { data, error } = await supabase.rpc('refresh_kpi_reclutadores', {
     p_semana_min: semanaMin,
   })
   if (error) throw error
   invalidateCache('kpi_reclutadores')
+  invalidateCache('nominas_auditoria')
   return data
 }
 
@@ -3066,10 +3092,19 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado, formador_documento, formador_nombre'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap, fecha_registro, fecha_baja')
     ])
-    if (capRes.error) throw capRes.error
+    if (capRes.error) {
+      const msg = String(capRes.error.message || '')
+      if (msg.includes('formador_nombre') || msg.includes('formador_documento')) {
+        const retry = await supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado')
+        if (retry.error) throw retry.error
+        capRes.data = retry.data
+      } else {
+        throw capRes.error
+      }
+    }
     if (descRes.error) throw descRes.error
     
     return {
@@ -6950,12 +6985,21 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       if (sDoc) sede = String(sDoc.sede).trim();
     }
 
+    const periodoIngresoOp = (() => {
+      const direct = String(grupoInfo.periodo_ingreso_op || '').trim()
+      if (direct) return direct
+      const fecha = String(grupoInfo.fecha_ingreso_op || '').trim()
+      const iso = fecha.match(/^(\d{4})-(\d{2})/)
+      if (iso) return `${iso[1]}${iso[2]}`
+      return ''
+    })()
+
     results.push({
       grupo_codigo,
       campana: campana || '',
       formador: formador || 'Sin Asignar',
-      periodo: (grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '') || (grupoInfo.periodo ? String(grupoInfo.periodo).trim() : ''),
-      periodo_ingreso_op: grupoInfo.periodo_ingreso_op ? String(grupoInfo.periodo_ingreso_op).trim() : '',
+      periodo: periodoIngresoOp || (grupoInfo.periodo ? String(grupoInfo.periodo).trim() : ''),
+      periodo_ingreso_op: periodoIngresoOp,
       area_traslado: (area_traslado && String(area_traslado).trim() !== '') ? String(area_traslado).trim().toUpperCase() : (grupoInfo.area_traslado ? String(grupoInfo.area_traslado).trim().toUpperCase() : ''),
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',

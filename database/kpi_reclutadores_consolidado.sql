@@ -78,7 +78,10 @@ BEGIN
     SELECT
       LEFT(periodo, 4)::integer AS anio,
       TRIM(periodo) AS periodo_reclutado,
-      TO_CHAR(fecha_ingreso_op, 'YYYYMM') AS periodo_efectivo,
+      COALESCE(
+        NULLIF(TRIM(periodo_ingreso_op), ''),
+        TO_CHAR(fecha_ingreso_op, 'YYYYMM')
+      ) AS periodo_efectivo,
       semana_trabajo AS semana,
       UPPER(TRIM(codigo)) AS grupo_g,
       UPPER(TRIM(segmento)) AS segmento,

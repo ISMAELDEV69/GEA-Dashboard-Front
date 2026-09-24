@@ -22,6 +22,7 @@ import {
 import PageLayout from '../ui/PageLayout'
 import Card, { CardHeader, CardTitle, CardContent } from '../ui/Card'
 import KpiReclutadoresDashboard from './KpiReclutadoresDashboard'
+import KpiFormadoresDashboard from './KpiFormadoresDashboard'
 
 // Paleta ejecutiva para gráficos y motivos
 const PALETTE_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#3b82f6', '#f43f5e']
@@ -61,7 +62,7 @@ function PerformanceScorecardIndividual({
   attendanceIndexes = null
 }) {
   // ── Detección de Rol y Seguridad de Auto-Consulta ───────────────────────
-  const userRole = (userProfile?.role || 'admin').toLowerCase()
+  const userRole = String(userProfile?.rol || userProfile?.role || '').toLowerCase()
   const isRecruiterUser = userRole === 'reclutador'
   const isTrainerUser = userRole === 'formador'
   const isSelfLocked = isRecruiterUser || isTrainerUser
@@ -591,52 +592,51 @@ function PerformanceScorecardIndividual({
     <PageLayout className="h-full overflow-y-auto flex flex-col gap-4 p-4 sm:p-6 w-full custom-scrollbar bg-[var(--surface-ground)]">
       
       {/* ── 1. BARRA DE CONTROL Y FILTROS EN CASCADA ── */}
-      <div className={`bg-[var(--surface)] border border-[var(--border-subtle)] ${
-        activeRole === 'RECLUTADOR' ? 'px-3 py-1 rounded-xl' : 'p-4 rounded-2xl shadow-sm space-y-3'
-      }`}>
-        <div className={`flex flex-wrap items-center justify-between ${activeRole === 'RECLUTADOR' ? 'gap-2' : 'gap-3'}`}>
+      <div className="bg-[var(--surface)] border border-[var(--border-subtle)] px-3 py-1 rounded-xl">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           
-          {/* Switcher de Rol (Reclutador / Formador) */}
-          <div className={`flex items-center gap-0.5 ${
-            activeRole === 'RECLUTADOR' ? '' : 'rounded-xl bg-[var(--bg-elevated)] p-1 border border-[var(--border-subtle)]'
-          }`}>
+          {isSelfLocked ? (
+            <span className="text-[11px] font-semibold text-[var(--accent)] px-2 py-1">
+              {isRecruiterUser ? 'Mis indicadores' : 'Mi formación'}
+            </span>
+          ) : (
+          <div className="flex items-center gap-0.5">
             <button
               type="button"
-              disabled={isTrainerUser}
               onClick={() => {
                 setActiveRole('RECLUTADOR')
                 setSelectedIdentifier('')
                 setSearchQuery('')
               }}
-              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none ${
+              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
                 activeRole === 'RECLUTADOR'
-                  ? 'text-[11px] px-2 py-1 text-[var(--accent)]'
-                  : 'text-xs px-4 py-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-              } ${isTrainerUser ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  ? 'text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
             >
-              <Users size={activeRole === 'RECLUTADOR' ? 12 : 14} />
-              <span>{activeRole === 'RECLUTADOR' ? 'Reclutadores' : 'RECLUTADORES (RyS)'}</span>
+              <Users size={12} />
+              <span>Reclutadores</span>
             </button>
             <button
               type="button"
-              disabled={isRecruiterUser}
               onClick={() => {
                 setActiveRole('FORMADOR')
                 setSelectedIdentifier('')
                 setSearchQuery('')
               }}
-              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none ${
+              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
                 activeRole === 'FORMADOR'
-                  ? 'text-xs px-4 py-2 bg-[var(--accent)] text-[var(--primary-foreground)]'
-                  : (activeRole === 'RECLUTADOR' ? 'text-[11px] px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]' : 'text-xs px-4 py-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]')
-              } ${isRecruiterUser ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  ? 'text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
             >
-              <GraduationCap size={activeRole === 'RECLUTADOR' ? 12 : 14} />
-              <span>{activeRole === 'RECLUTADOR' ? 'Formadores' : 'FORMADORES (CAPACITACIÓN)'}</span>
+              <GraduationCap size={12} />
+              <span>Formadores</span>
             </button>
           </div>
+          )}
 
-          {activeRole === 'FORMADOR' && (
+          {false && (
           <div className="flex flex-wrap items-center gap-2">
             {/* Período */}
             <div className="flex items-center gap-1.5 bg-slate-900/60 border border-slate-800 rounded-xl px-3 py-1.5 text-xs">
@@ -713,7 +713,7 @@ function PerformanceScorecardIndividual({
           )}
         </div>
 
-        {activeRole === 'FORMADOR' && (
+        {false && activeRole === 'FORMADOR' && (
         <div className="pt-3 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-[280px]">
             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
@@ -819,7 +819,16 @@ function PerformanceScorecardIndividual({
 
       {activeRole === 'RECLUTADOR' ? (
         <KpiReclutadoresDashboard userProfile={userProfile} />
-      ) : individualData ? (
+      ) : (
+        <KpiFormadoresDashboard
+          postulantes={postulantes}
+          asistencias={asistencias}
+          grupos={grupos}
+          campanasMetas={campanasMetas}
+          userProfile={userProfile}
+        />
+      )}
+      {false && individualData ? (
         <>
           {/* ── 2. HERO CARD: IDENTIDAD Y DESEMPEÑO OPERATIVO ── */}
           <div className="bg-[var(--surface)] p-5 rounded-2xl border border-[var(--border-subtle)] shadow-md flex flex-wrap items-center justify-between gap-4">
@@ -1441,12 +1450,7 @@ function PerformanceScorecardIndividual({
             )}
           </div>
         </>
-      ) : (
-        <div className="p-12 text-center text-slate-500 bg-[var(--surface)] rounded-2xl border border-[var(--border-subtle)]">
-          <AlertTriangle className="w-10 h-10 mx-auto mb-3 opacity-40 text-cyan-400" />
-          <p className="font-bold text-sm">No se encontraron datos para el colaborador o filtros seleccionados.</p>
-        </div>
-      )}
+      ) : null}
     </PageLayout>
   )
 }
