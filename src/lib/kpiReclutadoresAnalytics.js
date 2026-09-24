@@ -34,6 +34,22 @@ export function isJunkResponsable(name) {
 export const MIN_PERIODO_RECLUTADOR = '202608'
 export const MIN_SEMANA_RECLUTADOR = 31
 
+export function currentOperativePeriodo() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function recentOperativePeriodos(count = 4) {
+  const d = new Date()
+  const out = []
+  for (let i = 0; i < count; i += 1) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1)
+    const p = `${x.getFullYear()}${String(x.getMonth() + 1).padStart(2, '0')}`
+    if (p >= MIN_PERIODO_RECLUTADOR) out.push(p)
+  }
+  return out
+}
+
 export function isPeriodoReclutadorActivo(periodo) {
   const p = String(periodo || '').replace(/\D/g, '').slice(0, 6)
   return Boolean(p) && p >= MIN_PERIODO_RECLUTADOR

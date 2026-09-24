@@ -58,7 +58,8 @@ function getDb() {
   return dbPromise;
 }
 
-export async function getPersistentItem(key, ttlMs = 600000) {
+/** Devuelve { data, timestamp } aunque el TTL ya venció. No borra el registro. */
+export async function getPersistentRecord(key) {
   try {
     const db = await getDb();
     if (!db) return null;
@@ -71,29 +72,33 @@ export async function getPersistentItem(key, ttlMs = 600000) {
 
         req.onsuccess = (e) => {
           const record = e.target.result;
-          if (!record) {
+          if (!record || record.data === undefined) {
             resolve(null);
             return;
           }
-
-          const now = Date.now();
-          if (ttlMs > 0 && now - record.timestamp > ttlMs) {
-            // Expiró
-            resolve(null);
-            // Limpieza en segundo plano
-            deletePersistentItem(key).catch(() => {});
-          } else {
-            resolve(record.data);
-          }
+          resolve({ data: record.data, timestamp: record.timestamp || 0 });
         };
 
-        req.onerror = () => {
-          resolve(null);
-        };
+        req.onerror = () => resolve(null);
       } catch {
         resolve(null);
       }
     });
+  } catch {
+    return null;
+  }
+}
+
+export async function getPersistentItem(key, ttlMs = 600000) {
+  try {
+    const record = await getPersistentRecord(key);
+    if (!record) return null;
+
+    const now = Date.now();
+    if (ttlMs > 0 && now - record.timestamp > ttlMs) {
+      return null;
+    }
+    return record.data;
   } catch {
     return null;
   }

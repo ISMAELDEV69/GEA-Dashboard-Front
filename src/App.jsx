@@ -290,7 +290,7 @@ export default function App() {
       // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
       const [cm, p, a, al] = await Promise.all([
         fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
-        fetchPostulantes({ all: true }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
+        fetchPostulantes({ periodoMin: '202608' }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
         fetchAsistencias().catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
         fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] })
       ])
@@ -337,35 +337,29 @@ export default function App() {
         loadAllData({ silent: true })
       }, 400)
     }
+    const handleCacheRefreshed = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        loadAllData({ silent: true })
+      }, 400)
+    }
     window.addEventListener('gea-data-mutation', handleDataMutation)
+    window.addEventListener('gea-cache-refreshed', handleCacheRefreshed)
     return () => {
       clearTimeout(timer)
       window.removeEventListener('gea-data-mutation', handleDataMutation)
+      window.removeEventListener('gea-cache-refreshed', handleCacheRefreshed)
     }
   }, [loadAllData])
 
-  // ── JITTER DE ARRANQUE Y POLLING OPTIMIZADO (Page Visibility API + 15 min Interval) ──
-  
-  // 1. Jitter de arranque inicial (0 a 8 segundos): dispersa el login masivo de las 8:00 AM
+  // Arranque inmediato: la caché pinta al toque y el refresh a Supabase va atrás.
   useEffect(() => {
     if (!effectiveSession) {
       hasLoadedOnceRef.current = false
       return
     }
 
-    // Si ya cargó una vez en la sesión, no aplicar jitter
-    if (hasLoadedOnceRef.current) {
-      loadAllData()
-      return
-    }
-
-    // Delay aleatorio inicial entre 0 y 8 segundos para evitar que 100 usuarios golpeen a Supabase en el mismo segundo exacto al montar
-    const startupJitterMs = Math.floor(Math.random() * 8000)
-    const startupTimer = setTimeout(() => {
-      loadAllData()
-    }, startupJitterMs)
-
-    return () => clearTimeout(startupTimer)
+    loadAllData()
   }, [effectiveSession, loadAllData])
 
   // 2. Polling cada 15 minutos con Page Visibility API (Pausa en background, reanuda al enfocar)

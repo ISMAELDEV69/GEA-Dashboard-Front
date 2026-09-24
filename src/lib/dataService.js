@@ -19,7 +19,7 @@ import {
   initLocalStorageDb
 } from './mockData'
 import {
-  getPersistentItem,
+  getPersistentRecord,
   setPersistentItem,
   deletePersistentItem,
   deletePersistentByPrefix,
@@ -33,38 +33,74 @@ export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 // CACHE LAYER (RAM + IndexedDB Persistente)
 // ─────────────────────────────────────────────
 const apiCache = new Map();
+const inflightRefresh = new Map();
+const STALE_MAX_MS = 24 * 60 * 60 * 1000;
+const CACHE_MAX_KEYS = 40;
+
+function rememberCache(key, data, timestamp = Date.now(), persist = true) {
+  if (data === null || data === undefined) return;
+  if (apiCache.size >= CACHE_MAX_KEYS && !apiCache.has(key)) {
+    const oldestKey = apiCache.keys().next().value;
+    apiCache.delete(oldestKey);
+  }
+  apiCache.set(key, { data, timestamp });
+  if (persist) setPersistentItem(key, data).catch(() => {});
+}
+
+function notifyCacheRefreshed(key) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('gea-cache-refreshed', { detail: { key } }));
+}
+
+function refreshInBackground(key, fetcher) {
+  if (inflightRefresh.has(key)) return;
+  const job = (async () => {
+    try {
+      const data = await fetcher();
+      if (data !== null && data !== undefined) {
+        rememberCache(key, data);
+        notifyCacheRefreshed(key);
+      }
+    } catch (err) {
+      console.warn('[withCache] refresh en segundo plano falló:', key, err);
+    } finally {
+      inflightRefresh.delete(key);
+    }
+  })();
+  inflightRefresh.set(key, job);
+}
 
 async function withCache(key, ttlMs = 300000, fetcher) {
   if (DB_MODE !== 'supabase') return fetcher();
-  
+
   const now = Date.now();
-  // 1. Memoria RAM (Hit ultra-rápido síncrono)
   const cached = apiCache.get(key);
   if (cached && (now - cached.timestamp < ttlMs)) {
     return cached.data;
   }
+  if (cached && (now - cached.timestamp < STALE_MAX_MS)) {
+    refreshInBackground(key, fetcher);
+    return cached.data;
+  }
 
-  // 2. Almacenamiento Persistente en IndexedDB (Hit ultra-rápido sin consumir Egress tras F5)
   try {
-    const persistentData = await getPersistentItem(key, ttlMs);
-    if (persistentData !== null && persistentData !== undefined) {
-      apiCache.set(key, { data: persistentData, timestamp: now });
-      return persistentData;
+    const record = await getPersistentRecord(key);
+    if (record && record.data !== null && record.data !== undefined) {
+      rememberCache(key, record.data, record.timestamp, false);
+      if (now - record.timestamp < ttlMs) {
+        return record.data;
+      }
+      if (now - record.timestamp < STALE_MAX_MS) {
+        refreshInBackground(key, fetcher);
+        return record.data;
+      }
     }
   } catch (err) {
     console.warn('[withCache] Error reading IndexedDB cache:', err);
   }
-  
-  // 3. Consulta de red a Supabase
+
   const data = await fetcher();
-  if (data !== null && data !== undefined) {
-    if (apiCache.size >= 15) {
-      const oldestKey = apiCache.keys().next().value;
-      apiCache.delete(oldestKey);
-    }
-    apiCache.set(key, { data, timestamp: now });
-    setPersistentItem(key, data).catch(() => {});
-  }
+  rememberCache(key, data);
   return data;
 }
 
@@ -479,12 +515,14 @@ export function getDescuentosSetGlobal() {
   });
 }
 
-export async function fetchAllConsolidado({ periodo = null, all = false } = {}) {
+export async function fetchAllConsolidado({ periodo = null, all = false, since = null } = {}) {
   let cacheKey = 'all_consolidado_recent';
   if (all) {
     cacheKey = 'all_consolidado_full';
   } else if (periodo) {
     cacheKey = `consolidado_periodo_${periodo}`;
+  } else if (since) {
+    cacheKey = `consolidado_since_${since}`;
   }
 
   return withCache(cacheKey, 180000, async () => {
@@ -494,10 +532,8 @@ export async function fetchAllConsolidado({ periodo = null, all = false } = {}) 
 
     let cutoffIso = null;
     if (!all && !periodo) {
-      // Para carga general de asistencias en plataforma, cubrir registros del año operativo 2026 y nulos
-      // sin truncar cohortes que iniciaron en meses previos (ej. capacitaciones de julio con ingreso en agosto)
-      const d = new Date();
-      d.setFullYear(2026, 0, 1);
+      // Corte operativo: desde julio 2026 (margen sobre 202608) salvo que pidan histórico completo
+      const d = since ? new Date(since) : new Date(Date.UTC(2026, 6, 1));
       d.setHours(0, 0, 0, 0);
       cutoffIso = d.toISOString();
       countQuery = countQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
@@ -1077,27 +1113,60 @@ export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apelli
  * masivas y saturación en inicios de turno simultáneos.
  * Para obtener todo el histórico completo (ej. exportes Excel), pasar { all: true } o usar fetchAllPostulantes().
  */
-export async function fetchPostulantes({ limit = 5000, all = false } = {}) {
+export async function fetchPostulantes({ limit = 5000, all = false, periodoMin = null } = {}) {
   if (DB_MODE === 'supabase') {
-    const cacheKey = all ? 'postulantes_all' : `postulantes_${limit}`;
+    const cacheKey = all
+      ? 'postulantes_all'
+      : periodoMin
+        ? `postulantes_desde_${periodoMin}`
+        : `postulantes_${limit}`;
     return withCache(cacheKey, 180000, async () => {
-      let query = supabase
-        .from('v_nominas_consolidado')
-        .select(POSTULANTES_COLUMNS)
-        .order('created_at', { ascending: false })
-
-      if (!all && limit) {
-        query = query.limit(limit)
-      }
-
-      const { data, error } = await query
-      if (error) throw error
-      
-      return (data || []).map(row => ({
+      const mapRows = (rows) => (rows || []).map(row => ({
         ...row,
         campaign: row.campana,
         observacion: row.observacion_reclutamiento,
       }))
+
+      const applyWindow = (query) => {
+        if (all) return query
+        if (periodoMin) {
+          return query.or(`periodo_reclutado.gte.${periodoMin},created_at.gte.2026-07-01T00:00:00.000Z`)
+        }
+        if (limit) return query.limit(limit)
+        return query
+      }
+
+      if (all || !periodoMin) {
+        let query = applyWindow(
+          supabase
+            .from('v_nominas_consolidado')
+            .select(POSTULANTES_COLUMNS)
+            .order('created_at', { ascending: false })
+        )
+        const { data, error } = await query
+        if (error) throw error
+        return mapRows(data)
+      }
+
+      const pageSize = 1000
+      const allRows = []
+      let from = 0
+      while (true) {
+        const { data, error } = await applyWindow(
+          supabase
+            .from('v_nominas_consolidado')
+            .select(POSTULANTES_COLUMNS)
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1)
+        )
+        if (error) throw error
+        const batch = data || []
+        allRows.push(...batch)
+        if (batch.length < pageSize) break
+        from += pageSize
+        if (from > 40000) break
+      }
+      return mapRows(allRows)
     });
   }
   initLocalStorageDb()
@@ -1501,19 +1570,26 @@ const KPI_RECLUTADORES_SELECT = [
   'updated_at',
 ].join(',')
 
-export async function fetchKpiReclutadoresConsolidado() {
+export async function fetchKpiReclutadoresConsolidado({ periodo = null } = {}) {
   if (DB_MODE !== 'supabase') return []
-  return withCache('kpi_reclutadores_consolidado_v3', 120000, async () => {
+  const periodoKey = periodo && periodo !== 'ALL' ? String(periodo).replace(/\D/g, '').slice(0, 6) : 'min'
+  return withCache(`kpi_reclutadores_consolidado_v4_${periodoKey}`, 120000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('kpi_reclutadores_consolidado')
         .select(KPI_RECLUTADORES_SELECT)
         .gte('semana', 31)
         .order('id', { ascending: true })
         .range(from, from + pageSize - 1)
+      if (periodoKey !== 'min') {
+        query = query.or(`periodo_efectivo.eq.${periodoKey},periodo_reclutado.eq.${periodoKey}`)
+      } else {
+        query = query.or('periodo_efectivo.gte.202608,periodo_reclutado.gte.202608')
+      }
+      const { data, error } = await query
       if (error) throw error
       const batch = data || []
       all.push(...batch)
@@ -1525,20 +1601,27 @@ export async function fetchKpiReclutadoresConsolidado() {
   })
 }
 
-export async function fetchNominasAuditoria() {
+export async function fetchNominasAuditoria({ periodo = null } = {}) {
   if (DB_MODE !== 'supabase') return []
-  return withCache('nominas_auditoria_v1', 180000, async () => {
+  const periodoKey = periodo && periodo !== 'ALL' ? String(periodo).replace(/\D/g, '').slice(0, 6) : 'min'
+  return withCache(`nominas_auditoria_v2_${periodoKey}`, 180000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
     const cols = 'documento, reclutador, campana, grupo_codigo, segmento, marca_temporal, created_at, fecha_ingreso, fecha_conexion_ojt, periodo_reclutado, semana_trabajo, activo'
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('v_nominas_consolidado')
         .select(cols)
         .eq('activo', true)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1)
+      if (periodoKey !== 'min') {
+        query = query.eq('periodo_reclutado', periodoKey)
+      } else {
+        query = query.gte('periodo_reclutado', '202608')
+      }
+      const { data, error } = await query
       if (error) throw error
       const batch = data || []
       all.push(...batch)
@@ -2029,7 +2112,7 @@ export async function saveAsistenciaSession({ grupoMeta, grupo_codigo, fecha_asi
 // ─────────────────────────────────────────────
 export async function fetchAsistencias() {
   if (DB_MODE === 'supabase') {
-    const data = await fetchAllConsolidado({ all: true });
+    const data = await fetchAllConsolidado({ since: '2026-07-01' });
 
     // Map consolidado_asistencias back to standard asistencias structure
     // We keep the latest record per document+date, but always protect I-OP records

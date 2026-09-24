@@ -8,9 +8,11 @@ import {
   buildFilterOptions,
   buildFormadorModel,
   buildFormadorPeople,
+  currentOperativePeriodo,
   filterFormadorRows,
   fmtNum,
   GAUGE_METRICS,
+  recentOperativePeriodos,
   resolveLockedFormador,
   semaforoDesercion,
   semaforoDotacion,
@@ -471,7 +473,7 @@ export default function KpiFormadoresDashboard({
   const canSeeKpiFormadores = userRole !== 'formador' && userRole !== 'reclutador'
   const theme = useAppPresentation()
 
-  const [periodo, setPeriodo] = useState('ALL')
+  const [periodo, setPeriodo] = useState(() => currentOperativePeriodo())
   const [semana, setSemana] = useState('ALL')
   const [segmento, setSegmento] = useState('ALL')
   const [campana, setCampana] = useState('ALL')
@@ -559,8 +561,14 @@ export default function KpiFormadoresDashboard({
   const activeFilters = [periodo, semana, segmento, campana, grupo, modalidad, condicion, !isLocked && formador !== 'ALL' ? formador : null]
     .filter((v) => v && v !== 'ALL').length
 
+  const periodoOptions = useMemo(() => {
+    const seeded = recentOperativePeriodos(4)
+    const fromData = options.all.periodos || []
+    return Array.from(new Set([...seeded, ...fromData])).sort((a, b) => b.localeCompare(a))
+  }, [options.all.periodos])
+
   const resetFilters = () => {
-    setPeriodo('ALL'); setSemana('ALL'); setSegmento('ALL'); setCampana('ALL')
+    setPeriodo(currentOperativePeriodo()); setSemana('ALL'); setSegmento('ALL'); setCampana('ALL')
     setGrupo('ALL'); setModalidad('ALL'); setCondicion('ALL')
     if (!isLocked) setFormador('ALL')
   }
@@ -570,8 +578,8 @@ export default function KpiFormadoresDashboard({
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
           <MiniSelect value={periodo} onChange={(e) => { setPeriodo(e.target.value); setGrupo('ALL') }}>
-            <option value="ALL" className={OPTION_CLASS}>Periodo ingreso</option>
-            {options.all.periodos.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
+            <option value="ALL" className={OPTION_CLASS}>Todos los periodos (más lento)</option>
+            {periodoOptions.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
           </MiniSelect>
           <MiniSelect value={semana} onChange={(e) => setSemana(e.target.value)}>
             <option value="ALL" className={OPTION_CLASS}>Semana</option>

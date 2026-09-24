@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, memo } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, memo } from 'react'
 import {
   BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell, LabelList,
@@ -15,8 +15,10 @@ import {
   buildAuditoriaMatrix,
   buildFilterOptions,
   buildKpiModel,
+  currentOperativePeriodo,
   filterKpiRows,
   fmtNum,
+  recentOperativePeriodos,
   resolveLockedRecruiter,
 } from '../../lib/kpiReclutadoresAnalytics'
 import { ChartTooltipContent } from '../ui/chart-tooltip'
@@ -545,7 +547,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const [refreshing, setRefreshing] = useState(false)
   const [updatedAt, setUpdatedAt] = useState(null)
 
-  const [periodo, setPeriodo] = useState('ALL')
+  const [periodo, setPeriodo] = useState(() => currentOperativePeriodo())
   const [semana, setSemana] = useState('ALL')
   const [segmento, setSegmento] = useState('ALL')
   const [campana, setCampana] = useState('ALL')
@@ -557,27 +559,36 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const [vista, setVista] = useState('resumen')
   const theme = useAppPresentation()
 
+  const hasLoadedRef = useRef(false)
   const loadRows = useCallback(async () => {
-    setLoading(true)
     setError(null)
+    if (!hasLoadedRef.current) setLoading(true)
+    else setRefreshing(true)
     try {
       const [data, nominaRows] = await Promise.all([
-        fetchKpiReclutadoresConsolidado(),
-        fetchNominasAuditoria().catch(() => []),
+        fetchKpiReclutadoresConsolidado({ periodo }),
+        fetchNominasAuditoria({ periodo }).catch(() => []),
       ])
-      setRows(data || [])
+      const nextRows = data || []
+      setRows(nextRows)
       setNominas(nominaRows || [])
-      const stamp = (data || []).reduce((acc, row) => {
+      const stamp = nextRows.reduce((acc, row) => {
         if (!row.updated_at) return acc
         return !acc || row.updated_at > acc ? row.updated_at : acc
       }, null)
       setUpdatedAt(stamp)
+      hasLoadedRef.current = true
+      if (periodo === currentOperativePeriodo() && nextRows.length === 0) {
+        const prevPeriod = recentOperativePeriodos(2)[1]
+        if (prevPeriod && prevPeriod !== periodo) setPeriodo(prevPeriod)
+      }
     } catch (err) {
       setError(err?.message || 'No se pudo cargar kpi_reclutadores_consolidado')
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }, [])
+  }, [periodo])
 
   useEffect(() => {
     loadRows()
@@ -667,8 +678,14 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     includeEmptyGroups,
   ].filter(Boolean).length
 
+  const periodoOptions = useMemo(() => {
+    const seeded = recentOperativePeriodos(4)
+    const fromData = options.all.periodos || []
+    return Array.from(new Set([...seeded, ...fromData])).sort((a, b) => b.localeCompare(a))
+  }, [options.all.periodos])
+
   const resetFilters = () => {
-    setPeriodo('ALL')
+    setPeriodo(currentOperativePeriodo())
     setSemana('ALL')
     setSegmento('ALL')
     setCampana('ALL')
@@ -749,8 +766,8 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
         <MiniSelect value={periodo} onChange={(e) => { setPeriodo(e.target.value); setGrupo('ALL') }}>
-          <option value="ALL" className={OPTION_CLASS}>Periodo ingreso</option>
-          {options.all.periodos.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
+          <option value="ALL" className={OPTION_CLASS}>Todos los periodos (más lento)</option>
+          {periodoOptions.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
         </MiniSelect>
         <MiniSelect value={semana} onChange={(e) => setSemana(e.target.value)}>
           <option value="ALL" className={OPTION_CLASS}>Semana</option>

@@ -22,6 +22,22 @@ function resolvePeriodoIngreso(g) {
 
 export const MIN_PERIODO_FORMADOR = '202608'
 
+export function currentOperativePeriodo() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function recentOperativePeriodos(count = 4) {
+  const d = new Date()
+  const out = []
+  for (let i = 0; i < count; i += 1) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1)
+    const p = `${x.getFullYear()}${String(x.getMonth() + 1).padStart(2, '0')}`
+    if (p >= MIN_PERIODO_FORMADOR) out.push(p)
+  }
+  return out
+}
+
 export function isPeriodoFormadorActivo(periodo) {
   const p = String(periodo || '').trim()
   return Boolean(p) && p >= MIN_PERIODO_FORMADOR
