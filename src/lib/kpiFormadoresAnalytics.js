@@ -6,7 +6,19 @@
  */
 
 import { isBajaDia1, isBajaCapacitacion, resolveFteWeight, parseFechaAsistencia } from './dataService'
-import { resolvePeriodoIngreso, normalize2026Period } from './dashboardAnalytics'
+import { normalize2026Period } from './dashboardAnalytics'
+
+/** Periodo de ingreso OP: campo explícito o mes de fecha_ingreso_op. No usa periodo de capa. */
+function resolvePeriodoIngreso(g) {
+  if (!g) return null
+  const direct = normalize2026Period(g.periodo_ingreso_op || g.periodo_ingreso || g.periodo_efectivo)
+  if (direct) return direct
+  if (g.fecha_ingreso_op) {
+    const fromFecha = normalize2026Period(g.fecha_ingreso_op)
+    if (fromFecha) return fromFecha
+  }
+  return null
+}
 
 export const MIN_PERIODO_FORMADOR = '202608'
 
