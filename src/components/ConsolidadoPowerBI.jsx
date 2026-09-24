@@ -626,6 +626,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         semana: semanaStr,
         segmento: normalizeSegmento(item.segmento),
         estado: normalizeText(item.estado),
+        formador: normalizeText(item.formador_nombre || item.formador || item.nombre_formador),
+        formador_documento: normalizeText(item.formador_documento),
       };
 
       const cKey = cleanCodeKey(gpe);
@@ -929,6 +931,30 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       return true;
     });
   }, [validData, filters.periodo, filters.semana, filters.segmento, filters.campana, filters.gpe]);
+
+  const selectedGrupoFormador = useMemo(() => {
+    if (filters.gpe === 'Todas') return ''
+    const cap = getCapInfo(filters.campana !== 'Todas' ? filters.campana : '', filters.gpe)
+    const junk = /^(ADMIN|FORMADOR|SIN ASIGNAR|SIN FORMADOR|POR ASIGNAR)$/i
+    const fromCap = String(cap?.formador || '').trim()
+    if (fromCap && !junk.test(fromCap)) return fromCap
+
+    const counts = new Map()
+    for (let i = 0; i < kpiFilteredData.length; i++) {
+      const name = String(kpiFilteredData[i].nombre_formador || kpiFilteredData[i].formador || '').trim()
+      if (!name || junk.test(name)) continue
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    let best = ''
+    let bestN = 0
+    counts.forEach((n, name) => {
+      if (n > bestN) {
+        best = name
+        bestN = n
+      }
+    })
+    return best
+  }, [filters.gpe, filters.campana, getCapInfo, kpiFilteredData])
 
   // ── Mapa de último estado y Set de Descuentos autorizados por documento ──
   const { lastStateMap, descuentosDocSet } = useMemo(() => {
@@ -1341,6 +1367,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
           <h2 className="text-xs sm:text-sm font-black tracking-tight text-[var(--text-primary)] uppercase">
             Control de Asistencia <span className="text-[10px] text-[var(--text-muted)] font-medium lowercase">· consolidado bi</span>
           </h2>
+          {filters.gpe !== 'Todas' && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[var(--accent-soft)] border border-[var(--border-subtle)] text-[11px] font-semibold text-[var(--accent)] max-w-[280px] truncate" title={selectedGrupoFormador || 'Sin formador asignado'}>
+              Formador: {selectedGrupoFormador || 'Sin asignar'}
+            </span>
+          )}
           {loadingHistorical && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[9px] font-bold text-cyan-400 animate-pulse">
               <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />
