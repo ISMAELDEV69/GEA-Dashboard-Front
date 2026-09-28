@@ -1,218 +1,463 @@
-import { useState } from 'react'
-import { Mail, Lock, Eye, EyeOff, Sun, Moon, Laptop, Loader2, AlertCircle } from 'lucide-react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import '../styles/loginPortal.css'
+import GalaxyCanvas from './login/GalaxyCanvas'
+import FloatingKpiChips from './login/FloatingKpiChips'
+import GeaLogo, { GeaModernDeltaEmblem } from './GeaLogo'
 import { supabase } from '../lib/supabase'
-import GeaLogo from './GeaLogo'
+import { useRocketLaunch } from '../hooks/useRocketLaunch'
 
-const THEMES = [
-  { id: 'dark',        label: 'Oscuro',   icon: Moon,   desc: 'Modo noche clásico' },
-  { id: 'comfortable', label: 'Cómodo',   icon: Laptop, desc: 'Azul profundo para jornadas largas' },
-  { id: 'light',       label: 'Claro',    icon: Sun,    desc: 'Alta luminosidad' },
-]
+const CODE_PREFIXES = ['GPE', 'GPOP', 'GPR']
 
 export default function Login({ theme, setTheme }) {
-  const [email,    setEmail]    = useState('')
-  const [password, setPassword] = useState('')
-  const [showPw,   setShowPw]   = useState(false)
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState(null)
+  const [usuario, setUsuario] = useState(() => {
+    try {
+      return localStorage.getItem('gea_saved_user') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [contrasena, setContrasena] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(() => {
+    try {
+      return localStorage.getItem('gea_remember_user') === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const [userError, setUserError] = useState(false)
+  const [authError, setAuthError] = useState(null)
   const [isResetMode, setIsResetMode] = useState(false)
   const [resetSent, setResetSent] = useState(false)
+  const [isResetLoading, setIsResetLoading] = useState(false)
 
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
+  const cardRef = useRef(null)
+  const btnRef = useRef(null)
+  const userInputRef = useRef(null)
+
+  const { isLaunching, launch } = useRocketLaunch({ btnRef, cardRef })
+
+  // Fecha actual en formato "Sábado 26 sep"
+  const formattedDate = useMemo(() => {
     try {
-      const cleanInput = email.trim().toLowerCase()
-      const loginEmail = cleanInput.includes('@') ? cleanInput : `${cleanInput}@gea.com`
-      const { error: authErr } = await supabase.auth.signInWithPassword({ email: loginEmail, password })
-      if (authErr) throw authErr
+      const now = new Date()
+      const d = now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short' })
+      return d.charAt(0).toUpperCase() + d.slice(1).replace('.', '')
+    } catch {
+      return 'Sábado 26 sep'
+    }
+  }, [])
+
+  // Grupo actual aleatorio con cambio periódico
+  const [groupCode, setGroupCode] = useState('GPOP-202631')
+  const [isCodeFading, setIsCodeFading] = useState(false)
+  const [isCodeFlashing, setIsCodeFlashing] = useState(false)
+
+  const generateRandomCode = () => {
+    const prefix = CODE_PREFIXES[Math.floor(Math.random() * CODE_PREFIXES.length)]
+    const suffix = String(Math.floor(Math.random() * 100)).padStart(2, '0')
+    return `${prefix}-2026${suffix}`
+  }
+
+  useEffect(() => {
+    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    let timeoutId
+
+    const scheduleNextCycle = () => {
+      const delay = 4000 + Math.random() * 2500
+      timeoutId = setTimeout(() => {
+        const nextCode = generateRandomCode()
+        if (prefersReduced) {
+          setGroupCode(nextCode)
+          scheduleNextCycle()
+          return
+        }
+
+        setIsCodeFading(true)
+        setTimeout(() => {
+          setGroupCode(nextCode)
+          setIsCodeFading(false)
+          setIsCodeFlashing(true)
+          setTimeout(() => setIsCodeFlashing(false), 650)
+          scheduleNextCycle()
+        }, 260)
+      }, delay)
+    }
+
+    scheduleNextCycle()
+    return () => clearTimeout(timeoutId)
+  }, [])
+
+  // Partículas flotantes de ambientación
+  const particles = useMemo(() => {
+    return Array.from({ length: 14 }, (_, i) => ({
+      id: i,
+      size: 2 + Math.random() * 3,
+      left: Math.random() * 100,
+      bottom: Math.random() * 30,
+      duration: 6 + Math.random() * 8,
+      delay: Math.random() * 8,
+      opacity: 0.3 + Math.random() * 0.4,
+    }))
+  }, [])
+
+  // Acción real de autenticación con Supabase
+  const doLogin = async () => {
+    const cleanInput = usuario.trim().toLowerCase()
+    const loginEmail = cleanInput.includes('@') ? cleanInput : `${cleanInput}@gea.com`
+
+    try {
+      if (rememberMe) {
+        localStorage.setItem('gea_remember_user', 'true')
+        localStorage.setItem('gea_saved_user', cleanInput)
+      } else {
+        localStorage.removeItem('gea_remember_user')
+        localStorage.removeItem('gea_saved_user')
+      }
+    } catch {
+      // Ignorar errores en modo estricto
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: loginEmail,
+      password: contrasena,
+    })
+
+    if (error) throw error
+    return data
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setAuthError(null)
+
+    if (isResetMode) {
+      return handleResetPassword(e)
+    }
+
+    if (!usuario.trim()) {
+      setUserError(true)
+      userInputRef.current?.focus()
+      return
+    }
+
+    setUserError(false)
+
+    try {
+      await launch(doLogin)
     } catch (err) {
       console.error('Login error:', err)
-      setError(
+      setAuthError(
         err?.message === 'Invalid login credentials'
           ? 'Correo o contraseña incorrectos. Verifica tus datos.'
-          : err?.message || JSON.stringify(err) || 'Error inesperado al iniciar sesión.'
+          : err?.message || 'Error inesperado al iniciar sesión.'
       )
-    } finally {
-      setLoading(false)
     }
   }
 
   const handleResetPassword = async (e) => {
     e.preventDefault()
-    setLoading(true)
-    setError(null)
+    if (!usuario.trim()) {
+      setUserError(true)
+      userInputRef.current?.focus()
+      return
+    }
+
+    setIsResetLoading(true)
+    setAuthError(null)
     setResetSent(false)
+
     try {
-      const cleanEmail = email.trim().toLowerCase()
-      const { error: authErr } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      const cleanInput = usuario.trim().toLowerCase()
+      const resetEmail = cleanInput.includes('@') ? cleanInput : `${cleanInput}@gea.com`
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
         redirectTo: window.location.origin,
       })
-      if (authErr) throw authErr
+      if (error) throw error
       setResetSent(true)
     } catch (err) {
-      setError(err.message || 'Error al enviar el correo de recuperación.')
+      setAuthError(err.message || 'Error al enviar el correo de recuperación.')
     } finally {
-      setLoading(false)
+      setIsResetLoading(false)
     }
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center relative transition-colors duration-300"
-      style={{ backgroundColor: 'var(--bg-base)' }}
-    >
-      {/* ── Theme Switcher (top right) ── */}
-      <div className="absolute top-6 right-6 flex items-center gap-1 p-1 rounded-full border bg-[var(--bg-surface)] border-[var(--border-subtle)] shadow-sm">
-        {THEMES.map(t => {
-          const Icon = t.icon
-          const isActive = theme === t.id
-          return (
-            <button
-              key={t.id}
-              title={`${t.label} — ${t.desc}`}
-              onClick={() => setTheme(t.id)}
-              className={`p-2 rounded-full transition-all duration-200 ${
-                isActive
-                  ? 'bg-[var(--accent)] text-white shadow-sm'
-                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-muted)]'
-              }`}
-            >
-              <Icon size={14} />
-            </button>
-          )
-        })}
-      </div>
+    <div className="login-page-wrapper">
+      <div ref={cardRef} className="login-card card">
+        {/* ── Panel Izquierdo: Brand & Galaxy ────────────────────────────── */}
+        <aside className="login-brand brand">
+          {/* Canvas reactivo con estrellas, planetas 3D y parallax */}
+          <GalaxyCanvas />
 
-      {/* ── Login Container ── */}
-      <div
-        className="w-full max-w-[450px] mx-4 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-[28px] p-10 md:p-12 shadow-sm animate-fadeIn"
-      >
-        {/* Header Section */}
-        <div className="flex flex-col items-center text-center mb-8">
-          {/* Brand Logo */}
-          <div className="mb-5">
-            <GeaLogo size="large" showText={true} showTagline={true} />
+          {/* Partículas flotantes hacia arriba */}
+          {particles.map((p) => (
+            <span
+              key={p.id}
+              className="login-particle"
+              style={{
+                width: `${p.size}px`,
+                height: `${p.size}px`,
+                left: `${p.left}%`,
+                bottom: `${p.bottom}%`,
+                animationDuration: `${p.duration}s`,
+                animationDelay: `${p.delay}s`,
+                opacity: p.opacity,
+              }}
+            />
+          ))}
+
+          {/* Chips flotantes de mini-KPIs con conteo animado */}
+          <FloatingKpiChips />
+
+          {/* Barra superior de estado */}
+          <div className="login-brand__top">
+            <span>{formattedDate}</span>
+            <span>Sala RYC</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-            {isResetMode ? 'Recuperar contraseña' : 'Iniciar sesión'}
-          </h1>
-          <p className="text-sm text-[var(--text-secondary)] mt-2">
-            {isResetMode ? 'Ingresa tu correo o usuario para recibir un enlace de recuperación' : 'Ingresa tu Usuario ALIX o Correo para continuar'}
-          </p>
-        </div>
 
-        {/* Error Notification */}
-        {error && (
-          <div className="mb-6 p-4 rounded-xl flex items-start gap-3 text-sm font-medium border bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800/30 text-red-600 dark:text-red-400 animate-fadeIn">
-            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+          {/* Bloque de Grupo Actual transparente */}
+          <div className="login-brand__group">
+            <div className="login-brand__panel">
+              <p className="login-brand__label">Grupo actual</p>
+              <h1
+                className={`login-brand__code ${isCodeFlashing ? 'flash' : ''}`}
+                style={{ opacity: isCodeFading ? 0 : 1 }}
+              >
+                {groupCode}
+              </h1>
+              <p className="login-brand__day">Día 3 de 5 · Capacitación teórica</p>
 
-        {resetSent && (
-          <div className="mb-6 p-4 rounded-xl flex items-start gap-3 text-sm font-medium border bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800/30 text-green-600 dark:text-green-400 animate-fadeIn">
-            <span>Se ha enviado un enlace de recuperación a tu correo. Revisa tu bandeja de entrada o spam.</span>
-          </div>
-        )}
-
-        {/* Credentials Form */}
-        <form onSubmit={isResetMode ? handleResetPassword : handleLogin} className="space-y-6">
-          {/* Email Address Input */}
-          <div className="space-y-1">
-            <label className="block text-xs font-bold text-[var(--text-secondary)] mb-1.5 ml-1">
-              Usuario
-            </label>
-            <div className="relative group">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-[var(--text-muted)] group-focus-within:text-[var(--accent)] transition-colors">
-                <Mail size={18} />
+              <div
+                className="login-steps"
+                role="progressbar"
+                aria-valuemin={1}
+                aria-valuemax={5}
+                aria-valuenow={3}
+                aria-label="Progreso del grupo: día 3 de 5"
+              >
+                <div className="login-steps__track">
+                  <span className="login-steps__dot done" />
+                  <span className="login-steps__dot done" />
+                  <span className="login-steps__dot current" />
+                  <span className="login-steps__dot" />
+                  <span className="login-steps__dot" />
+                </div>
               </div>
-              <input
-                id="email"
-                type="text"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)] transition-all sm:text-sm shadow-sm"
-                placeholder="Ingresa tu usuario (ej. mlopez)"
-              />
             </div>
           </div>
 
-          {/* Password Input (Hidden in Reset Mode) */}
-          {!isResetMode && (
-            <div className="space-y-1">
-              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 ml-1">
-                Contraseña
-              </label>
-              <div className="relative group">
-                <Lock size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] group-focus-within:text-[var(--accent)] transition-colors" />
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  required={!isResetMode}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Ingresa tu contraseña"
-                  className="w-full pl-10 pr-12 py-3 bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl text-sm focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)] transition-all outline-none text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-muted)] transition-colors"
-                >
-                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
+          {/* Footer de Marca */}
+          <div className="login-brand__footer">
+            <GeaModernDeltaEmblem className="w-10 h-10" />
+            <div className="login-brand__org">
+              GEA Perú
+              <small>Reclutamiento y Capacitación</small>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Panel Derecho: Formulario de Acceso ────────────────────────── */}
+        <main className="login-form-container form">
+          {/* Logo Oficial Corporativo GEA PERÚ / Workforce Management con animación */}
+          <div className="flex items-center justify-center mb-6">
+            <GeaLogo
+              size="large"
+              showText={true}
+              showSubtitle={true}
+              showTagline={false}
+              subtitle="WORKFORCE MANAGEMENT"
+            />
+          </div>
+
+          <h2 className="login-form__title">
+            {isResetMode ? 'Recuperar contraseña' : 'Tu grupo te espera'}
+          </h2>
+          <p className="login-form__sub">
+            {isResetMode
+              ? 'Ingresa tu usuario para recibir un enlace de recuperación'
+              : 'Buenos días, equipo de formación'}
+          </p>
+
+          {/* Mensajes de error general o confirmación */}
+          {authError && (
+            <div className="mb-5 p-3.5 rounded-xl flex items-start gap-2.5 text-xs font-semibold bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400">
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v5M12 16.5v.5" />
+              </svg>
+              <span>{authError}</span>
             </div>
           )}
 
-          {/* Submit Actions */}
-          <div className="pt-2 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+          {resetSent && (
+            <div className="mb-5 p-3.5 rounded-xl flex items-start gap-2.5 text-xs font-semibold bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-900/40 text-green-600 dark:text-green-400">
+              <span>Se ha enviado un enlace de recuperación a tu correo. Revisa tu bandeja de entrada o spam.</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} noValidate>
+            {/* Campo Usuario */}
+            <div className={`login-field ${userError ? 'has-error' : ''}`}>
+              <label htmlFor="usuario">Usuario</label>
+              <div className="login-field__wrap">
+                <span className="login-field__icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
+                  </svg>
+                </span>
+                <input
+                  ref={userInputRef}
+                  id="usuario"
+                  name="usuario"
+                  type="text"
+                  placeholder="Documento o código"
+                  autoComplete="username"
+                  autoFocus
+                  required
+                  value={usuario}
+                  onChange={(e) => {
+                    setUsuario(e.target.value)
+                    if (userError) setUserError(false)
+                  }}
+                />
+              </div>
+              {userError && (
+                <p className="login-field__error">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 8v5M12 16.5v.5" />
+                  </svg>
+                  Ingresa tu documento o código.
+                </p>
+              )}
+            </div>
+
+            {/* Campo Contraseña (Oculto en recuperación) */}
+            {!isResetMode && (
+              <div className="login-field">
+                <label htmlFor="contrasena">Contraseña</label>
+                <div className="login-field__wrap">
+                  <span className="login-field__icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="4" y="11" width="16" height="10" rx="2" />
+                      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                    </svg>
+                  </span>
+                  <input
+                    id="contrasena"
+                    name="contrasena"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Tu contraseña"
+                    autoComplete="current-password"
+                    required
+                    value={contrasena}
+                    onChange={(e) => setContrasena(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="login-field__toggle"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Fila de opciones: Recordar usuario y Olvidaste contraseña */}
+            <div className="login-form__row">
               {isResetMode ? (
                 <button
                   type="button"
-                  onClick={() => { setIsResetMode(false); setError(null); setResetSent(false); }}
-                  className="text-xs text-[var(--accent)] hover:underline"
+                  onClick={() => {
+                    setIsResetMode(false)
+                    setAuthError(null)
+                    setResetSent(false)
+                  }}
+                  className="login-link"
                 >
-                  Volver al inicio de sesión
+                  ← Volver al inicio de sesión
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => { setIsResetMode(true); setError(null); }}
-                  className="text-xs text-[var(--accent)] hover:underline"
-                >
-                  ¿Olvidaste tu contraseña?
-                </button>
+                <>
+                  <label className="login-check">
+                    <input
+                      type="checkbox"
+                      id="recordar"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                    />
+                    Recordar mi usuario en este equipo
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsResetMode(true)
+                      setAuthError(null)
+                      setResetSent(false)
+                    }}
+                    className="login-link"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </>
               )}
-              
-              <button
-                type="submit"
-                disabled={loading || !email || (!isResetMode && !password)}
-                className="btn-primary flex items-center gap-2 rounded-full px-6"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    <span>{isResetMode ? 'Enviando...' : 'Siguiente...'}</span>
-                  </>
-                ) : (
-                  <span>{isResetMode ? 'Enviar enlace' : 'Siguiente'}</span>
-                )}
-              </button>
             </div>
-          </div>
-        </form>
 
-        {/* Footer Info */}
-        <p className="mt-8 text-center text-xs text-[var(--text-muted)]">
-          ¿No tienes acceso? Solicita una cuenta al administrador del sistema.
-        </p>
+            {/* Botón con efecto de cohete despegando */}
+            <button
+              ref={btnRef}
+              className={`login-btn btn ${isLaunching ? 'launching' : ''} ${isResetLoading ? 'loading' : ''}`}
+              type="submit"
+              id="submitBtn"
+              disabled={isLaunching || isResetLoading || (!isResetMode && !contrasena)}
+            >
+              <span className="spinner" aria-hidden="true" />
+              <svg className="login-btn__rocket btn__rocket" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2c3 2 4.5 5.5 4.5 9 0 2-.5 3.7-1.2 5l-3.3 1.7-3.3-1.7C7.5 14.7 7 13 7 11c0-3.5 1.5-7 5-9z" fill="#fff" />
+                <circle cx="12" cy="9.6" r="1.8" fill="#2F6BFF" />
+                <path d="M7.3 13.5 4.5 15l1-3.2M16.7 13.5l2.8 1.5-1-3.2" stroke="#ffd166" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M10.3 17.2 9.6 21l2.4-1.6 2.4 1.6-.7-3.8" fill="#ff7a45" />
+              </svg>
+              <span className="login-btn__label btn__label">
+                {isResetMode ? 'Enviar enlace' : 'Ingresar al portal'}
+              </span>
+              <svg className="login-btn__arrow btn__arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
+            </button>
+
+            <p className="login-form__help">
+              ¿Problemas para acceder?{' '}
+              <a
+                className="login-link"
+                href="mailto:soporte@gea.com?subject=Soporte%20Acceso%20Portal%20GEA"
+                onClick={(e) => {
+                  e.preventDefault()
+                  alert('Para soporte técnico o desbloqueo de cuenta, contacta a tu supervisor o escribe a mesa de ayuda interna.')
+                }}
+              >
+                Contacta a soporte
+              </a>
+            </p>
+          </form>
+        </main>
       </div>
     </div>
   )
 }
-

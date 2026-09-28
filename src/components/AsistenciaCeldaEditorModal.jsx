@@ -189,7 +189,12 @@ export default function AsistenciaCeldaEditorModal({
         fechas: fechasArray,
         sigla: selectedSigla,
         motivo_baja: finalMotivo,
-        postulanteInfo: cellData.rowInfo || {},
+        postulanteInfo: {
+          ...(cellData.rowInfo || {}),
+          celular: cellData.celular || cellData.rowInfo?.celular || '',
+          documento_formador: cellData.documento_formador || cellData.rowInfo?.documento_formador || '',
+          nombre_formador: cellData.nombre_formador || cellData.rowInfo?.nombre_formador || ''
+        },
         usuarioRegistro: 'ADMINISTRADOR'
       })
 

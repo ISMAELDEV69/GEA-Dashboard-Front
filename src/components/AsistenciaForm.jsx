@@ -129,6 +129,7 @@ const AttendanceRow = React.memo(function AttendanceRow({
           item.tipoReclutado === 'AGREGADO' || item.tipoReclutado === 'AGREGADO CAP' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
           item.tipoReclutado === 'RECUPERADO' || item.tipoReclutado === 'RECUPERADO CAP' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30' :
           item.tipoReclutado === 'OBSERVADO' ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30' :
+          item.tipoReclutado === 'CESE' || item.tipoReclutado === 'CESADO' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30' :
           'text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]'
         }`}>
           {item.tipoReclutado}
@@ -222,14 +223,19 @@ function resolveFormadorDisplayName(formadoresList = [], doc = '', fallback = ''
 export default function AsistenciaForm({
   grupos = [],
   postulantes = [],
-  asistencias = [],
+  asistencias: initialAsistencias = [],
   formadores = [],
   motivosBaja = [],
   userProfile = null,
   userRole = 'admin',
   onSave,
+  onRefresh,
 }) {
   const toast = useToast()
+  const [asistencias, setAsistencias] = useState(initialAsistencias)
+  useEffect(() => {
+    setAsistencias(initialAsistencias)
+  }, [initialAsistencias])
   const [selectedPeriodo, setSelectedPeriodo] = useState(() => localStorage.getItem('wfm_asis_periodo') || '')
   const [selectedSemana, setSelectedSemana] = useState(() => localStorage.getItem('wfm_asis_semana') || '')
   const [selectedSegmento, setSelectedSegmento] = useState(() => localStorage.getItem('wfm_asis_segmento') || '')
@@ -623,7 +629,7 @@ export default function AsistenciaForm({
             q1,
             qNom,
             qCap,
-            fetchDescuentosAprobadosSet(targetGrupoCodigo)
+            fetchDescuentosAprobadosSet(targetGrupoCodigo, targetCampana)
           ]).catch(err => {
             console.error('Error al cargar postulantes del grupo:', err);
             return [{ data: [] }, { data: [] }, { data: [] }, new Set()];
@@ -798,13 +804,24 @@ export default function AsistenciaForm({
     const candidateDocs = new Set();
     const mergedCandidates = [];
 
+    // Identificar postulantes con asistencia confirmada (A o I-OP) en este grupo
+    const activeAttendeeDocs = new Set();
+    for (const a of groupRecordsAll) {
+      const s = String(a.sigla_asistencia || a.sigla || '').trim().toUpperCase();
+      if (s === 'A' || s === 'I-OP') {
+        activeAttendeeDocs.add(String(a.postulante_documento || '').trim());
+      }
+    }
+
     for (const p of effectivePostulantes) {
       const doc = String(p.documento || '').trim();
-      const isDesc = descuentosAprobadosSet.has(doc) || 
+      const hasActiveInGroup = activeAttendeeDocs.has(doc);
+      const isDesc = !hasActiveInGroup && (
+                     descuentosAprobadosSet.has(doc) || 
                      descuentosAprobadosSet.has(`DNI:${doc}`) ||
                      isDescuentoAprobado(p) || 
                      String(p.estado || '').toUpperCase() === 'DESCUENTO' ||
-                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO'));
       if (!isDesc) {
         candidateDocs.add(p.documento);
         mergedCandidates.push(p);
@@ -813,11 +830,13 @@ export default function AsistenciaForm({
 
     for (const a of groupRecordsAll) {
       const doc = String(a.postulante_documento || '').trim();
-      const isDesc = descuentosAprobadosSet.has(doc) || 
+      const hasActiveInGroup = activeAttendeeDocs.has(doc);
+      const isDesc = !hasActiveInGroup && (
+                     descuentosAprobadosSet.has(doc) || 
                      descuentosAprobadosSet.has(`DNI:${doc}`) ||
                      isDescuentoAprobado(a) || 
                      String(a.estado || '').toUpperCase() === 'DESCUENTO' ||
-                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO');
+                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO'));
       if (isDesc) continue;
 
       if (!candidateDocs.has(a.postulante_documento)) {
@@ -847,6 +866,14 @@ export default function AsistenciaForm({
     const filteredPostulantes = mergedCandidates.filter(p => {
       if (!p.documento) return false
       const doc = String(p.documento || '').trim();
+      const hasHistoryInGroup = mappedDocs.has(p.documento);
+      const hasActiveInGroup = activeAttendeeDocs.has(doc);
+
+      // Si ya tiene registros de asistencia en el grupo, siempre debe aparecer en el grupo
+      if (hasHistoryInGroup || hasActiveInGroup) {
+        return true;
+      }
+
       const isDesc = descuentosAprobadosSet.has(doc) || 
                      descuentosAprobadosSet.has(`DNI:${doc}`) ||
                      isDescuentoAprobado(p) || 
@@ -857,15 +884,9 @@ export default function AsistenciaForm({
       if (String(p.estado || '').toUpperCase() === 'DESASIGNADO') return false
 
       const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
-      const hasHistoryInGroup = mappedDocs.has(p.documento)
 
       if (!isGrupoMatch && !hasHistoryInGroup) {
         return false
-      }
-
-      // Si ya tiene registros de asistencia en el grupo, siempre debe aparecer en el grupo
-      if (hasHistoryInGroup) {
-        return true
       }
 
       // Validar coincidencia estricta de semana para nuevos postulantes sin historial previo
@@ -952,7 +973,7 @@ export default function AsistenciaForm({
       const isLateInclusion = false
       const existing = recordsByDocOnDate.get(p.documento)
       
-      let rawTipo = (p.tipo_reclutado || p.status_dia_1 || p.tipo || '').toString().toUpperCase().trim() || 'APTO'
+      let rawTipo = (existing?.tipo_reclutado || p.tipo_reclutado || p.status_dia_1 || p.tipo || '').toString().toUpperCase().trim() || 'APTO'
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
       if ((dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || !dia0Val) && dia1Val === 'ASISTIO' && rawTipo === 'APTO') {
@@ -961,14 +982,20 @@ export default function AsistenciaForm({
       if (String(p.estado || '').toUpperCase().includes('OBSERVAD') || String(p.condicion || '').toUpperCase().includes('OBSERVAD') || String(p.status_dia_1 || '').toUpperCase().includes('OBSERVAD')) {
         if (rawTipo === 'APTO') rawTipo = 'OBSERVADO'
       }
-      const tipoReclutado = rawTipo
 
-      const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
-      
       const prevList = previousRecordsByDoc.get(p.documento) || []
       const pastBajaRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
       const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
       const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
+
+      if ((existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || pastBajaRecord || p.estado === 'CESADO' || p.estado === 'BAJA') {
+        if (rawTipo === 'APTO' || !rawTipo || rawTipo === 'CESADO') {
+          rawTipo = 'CESE'
+        }
+      }
+      const tipoReclutado = rawTipo
+
+      const isIngresoEspecial = tipoReclutado === 'AGREGADO' || tipoReclutado === 'RECUPERADO' || tipoReclutado === 'OBSERVADO' || String(p.estado || '').toUpperCase().includes('OBSERVAD')
 
       const profileRow = {
         tipo_reclutado: tipoReclutado,
@@ -1165,19 +1192,52 @@ export default function AsistenciaForm({
   }, [])
 
   const handleRegularizacionSaved = useCallback(({ documento, updatedRecords }) => {
-    // Si entre los registros actualizados está la fecha actualmente activa en pantalla, sincronizar
-    const currentRec = (updatedRecords || []).find(r => r.fecha === fecha)
-    if (currentRec) {
-      setAttendanceList(prev => prev.map(item => {
-        if (item.documento !== documento) return item
-        return {
-          ...item,
-          sigla: currentRec.sigla,
-          motivo_baja: currentRec.motivo_baja
-        }
+    const cleanDoc = String(documento || '').trim()
+    const newDates = new Set((updatedRecords || []).map(r => r.fecha))
+    const isBajaFinal = updatedRecords && updatedRecords.length > 0 && updatedRecords[updatedRecords.length - 1].sigla === 'B'
+
+    // 1. Inmediatamente actualizar asistencias en memoria (evita que al reabrir el modal o recalcular se vuelva al estado anterior)
+    setAsistencias(prev => {
+      const filtered = prev.filter(a => {
+        const aDoc = String(a.postulante_documento || a.documento || '').trim()
+        const aFecha = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha)
+        return !(aDoc === cleanDoc && newDates.has(aFecha))
+      })
+      const mappedNew = (updatedRecords || []).map(r => ({
+        documento: cleanDoc,
+        postulante_documento: cleanDoc,
+        codigo_grupo: activeGrupoObj?.codigo || selectedGrupo,
+        grupo_codigo: activeGrupoObj?.codigo || selectedGrupo,
+        campana: activeGrupoObj?.campana || selectedCampana,
+        fecha_asistencia: r.fecha,
+        fecha_registro_asistencia: r.fecha,
+        sigla: r.sigla,
+        sigla_asistencia: r.sigla,
+        motivo_baja: r.motivo_baja || '',
+        estado: r.sigla === 'B' ? 'CESADO' : 'ACTIVO',
+        tipo_reclutado: r.sigla === 'B' ? 'CESE' : 'APTO'
       }))
+      return [...mappedNew, ...filtered]
+    })
+
+    // 2. Si entre los registros actualizados está la fecha actualmente activa en pantalla, sincronizar attendanceList
+    const currentRec = (updatedRecords || []).find(r => r.fecha === fecha)
+    setAttendanceList(prev => prev.map(item => {
+      if (item.documento !== cleanDoc) return item
+      return {
+        ...item,
+        sigla: currentRec ? currentRec.sigla : item.sigla,
+        motivo_baja: currentRec ? currentRec.motivo_baja : item.motivo_baja,
+        tipoReclutado: isBajaFinal ? 'CESE' : item.tipoReclutado,
+        isHistoricalBaja: isBajaFinal
+      }
+    }))
+
+    // 3. Notificar recarga en segundo plano a nivel global si está disponible
+    if (onRefresh) {
+      onRefresh({ silent: true })
     }
-  }, [fecha])
+  }, [fecha, activeGrupoObj, selectedGrupo, selectedCampana, onRefresh])
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();

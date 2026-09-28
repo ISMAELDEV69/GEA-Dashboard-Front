@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
-import { checkCalibracionDia1, fetchReclutadoresFull, invalidateCache } from '../../lib/dataService'
+import { AREAS_BOLSA_CAPA, checkCalibracionDia1, fetchReclutadoresFull, invalidateCache, isAreaBolsaCapa } from '../../lib/dataService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
 import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock, MessageSquare, Copy, Check, Sparkles, FileSpreadsheet, FileWarning, CheckCheck, Send, Filter } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
+
+export function isRowBolsaCapa(row) {
+  if (!row) return false
+  const rec = String(row.reclutador || '').trim().toUpperCase()
+  const fuente = String(row.fuente_oferta || '').trim().toUpperCase()
+  const obs = String(row.observacion_reclutamiento || '').trim().toUpperCase()
+  const area = String(row.area_traslado || '').trim().toUpperCase()
+
+  if (isAreaBolsaCapa(rec) || isAreaBolsaCapa(fuente) || isAreaBolsaCapa(area)) return true
+  if (obs.includes('BOLSA_CAPA') || obs.includes('RECUPERADO') || obs.includes('TRASLADO')) return true
+  if (rec.includes('RECUPERADO') || rec.includes('TRASLADO') || rec.includes('CAPACITAC')) return true
+  if (fuente.includes('RECUPERADO') || fuente.includes('TRASLADO') || fuente.includes('CAPACITAC')) return true
+  return false
+}
 
 function getHeaderColor(key, isSelected = false) {
   const group1 = ['celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
@@ -138,10 +152,19 @@ export default function NominaGridEditor({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
 
-  // ── Role Permissions & Read-Only Mode (Solo Reclutamiento y Administrador pueden editar) ──
+  // ── Role Permissions & Read-Only Mode (Solo Reclutamiento y Administrador editan todo; Capacitación edita solo Bolsa de Capa) ──
   const isRecruitmentRole = ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'].includes(currentRole)
   const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion'].includes(currentRole)
-  const isReadOnly = !isRecruitmentRole
+
+  // Can the current user edit this specific row?
+  const canEditRow = useCallback((row) => {
+    if (isRecruitmentRole) return true
+    if (isCapacitacionRole && isRowBolsaCapa(row)) return true
+    return false
+  }, [isRecruitmentRole, isCapacitacionRole])
+
+  const hasAnyEditPermission = isRecruitmentRole || isCapacitacionRole
+  const isReadOnly = !hasAnyEditPermission
 
   // ── Duplicate Detection & Delete Management ─────────────────────
   const [onlyDuplicatesFilter, setOnlyDuplicatesFilter] = useState(false)
@@ -176,7 +199,7 @@ export default function NominaGridEditor({
   const [candidateSaveFeedback, setCandidateSaveFeedback] = useState(null)
 
   const handleOpenEditCandidate = (row) => {
-    if (isReadOnly) return
+    if (!canEditRow(row)) return
     setCandidateToEdit(row)
     setEditFormData({
       documento: row.documento || '',
@@ -190,7 +213,7 @@ export default function NominaGridEditor({
 
   const handleSaveCandidate = async (e) => {
     if (e) e.preventDefault()
-    if (!candidateToEdit || isReadOnly) return
+    if (!candidateToEdit || !canEditRow(candidateToEdit)) return
 
     const newDoc = String(editFormData.documento || '').trim()
     const newApePat = String(editFormData.apellido_paterno || '').trim().toUpperCase()
@@ -365,7 +388,7 @@ export default function NominaGridEditor({
   }, [data, duplicateDocsSet])
 
   const handleDeleteRow = async () => {
-    if (!rowToDelete || isReadOnly) return
+    if (!rowToDelete || !canEditRow(rowToDelete)) return
     setIsDeleting(true)
     try {
       const { error: delErr } = await supabase
@@ -617,7 +640,8 @@ export default function NominaGridEditor({
 
   // Handle cell edit with 1.2s debounce and row-level batching
   const handleCellChange = (rowId, key, value, immediate = false) => {
-    if (isReadOnly || key === 'reclutador') return
+    const targetRow = data.find((r) => r.id === rowId)
+    if (!canEditRow(targetRow) || key === 'reclutador') return
     const updateObj = { [key]: value || null }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
@@ -650,8 +674,10 @@ export default function NominaGridEditor({
 
   // Handle bulk replication of a column to all filtered rows
   const handleBulkUpdate = async () => {
-    if (isReadOnly || !selectedColumn || selectedColumn === 'reclutador' || filteredData.length < 2) return
-    const firstRow = filteredData[0]
+    if (!selectedColumn || selectedColumn === 'reclutador' || filteredData.length < 2) return
+    const editableRows = filteredData.filter(r => canEditRow(r))
+    if (editableRows.length === 0) return
+    const firstRow = editableRows[0]
     const updateObj = { [selectedColumn]: firstRow[selectedColumn] || null }
     if (selectedColumn === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (firstRow[selectedColumn] || '').trim().toUpperCase())
@@ -659,7 +685,7 @@ export default function NominaGridEditor({
     }
 
     const updatedData = data.map(row => {
-      const inFilter = filteredData.some(f => f.id === row.id)
+      const inFilter = editableRows.some(f => f.id === row.id)
       if (inFilter && row.id !== firstRow.id) {
         return { ...row, ...updateObj }
       }
@@ -670,13 +696,15 @@ export default function NominaGridEditor({
     setSavingStatus('saving')
 
     try {
-      const targetIds = filteredData.filter(f => f.id !== firstRow.id).map(f => f.id)
-      const { error: err } = await supabase
-        .from('nominas')
-        .update(updateObj)
-        .in('id', targetIds)
+      const targetIds = editableRows.filter(f => f.id !== firstRow.id).map(f => f.id)
+      if (targetIds.length > 0) {
+        const { error: err } = await supabase
+          .from('nominas')
+          .update(updateObj)
+          .in('id', targetIds)
 
-      if (err) throw err
+        if (err) throw err
+      }
 
       if (selectedColumn === 'dia_1') {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
@@ -700,7 +728,8 @@ export default function NominaGridEditor({
 
   // Handle 1-click mark all 6 documents + status_final OK for a single candidate
   const handleMarkAllDocsOk = async (rowId) => {
-    if (isReadOnly) return
+    const targetRow = data.find((r) => r.id === rowId)
+    if (!canEditRow(targetRow)) return
     const docsUpdate = {
       doc_cv: 'OK',
       doc_dni_adjunto: 'OK',
@@ -732,8 +761,9 @@ export default function NominaGridEditor({
 
   // Handle bulk mark all 6 documents OK for all currently filtered candidates
   const handleBulkMarkAllFilteredDocsOk = async () => {
-    if (isReadOnly || filteredData.length === 0) return
-    if (!window.confirm(`¿Deseas marcar todos los documentos como 'OK' para los ${filteredData.length} postulantes en la vista actual?`)) return
+    const editableRows = filteredData.filter(r => canEditRow(r))
+    if (editableRows.length === 0) return
+    if (!window.confirm(`¿Deseas marcar todos los documentos como 'OK' para los ${editableRows.length} postulantes editables en la vista actual?`)) return
 
     const docsUpdate = {
       doc_cv: 'OK',
@@ -745,7 +775,7 @@ export default function NominaGridEditor({
       status_final: 'COMPLETO'
     }
 
-    const targetIds = filteredData.map(f => f.id)
+    const targetIds = editableRows.map(f => f.id)
     setData(prev => prev.map(r => targetIds.includes(r.id) ? { ...r, ...docsUpdate } : r))
     setSavingStatus('saving')
 
@@ -1371,7 +1401,15 @@ export default function NominaGridEditor({
               <tr>
                 <th className="p-2.5 font-bold text-[var(--text-secondary)] border-r border-[var(--border-subtle)] sticky left-0 bg-[var(--table-head-bg)] z-20 shadow-sm align-middle uppercase tracking-wider text-[10px]">
                   <div className="flex items-center justify-between gap-2">
-                    <span>CANDIDATO {isReadOnly ? '(Solo Lectura)' : ''}</span>
+                    <span>
+                      CANDIDATO {
+                        !hasAnyEditPermission
+                          ? '(Solo Lectura)'
+                          : isCapacitacionRole && !isRecruitmentRole
+                            ? '(Edición Bolsa Capa)'
+                            : ''
+                      }
+                    </span>
                     <ColumnFilter 
                       columnKey="candidato"
                       label="Candidato"
@@ -1413,6 +1451,8 @@ export default function NominaGridEditor({
                 const docClean = String(row.documento || '').trim()
                 const isDuplicate = docClean && duplicateDocsSet.has(docClean)
                 const fullName = [row.apellido_paterno, row.apellido_materno, row.nombres].filter(Boolean).join(' ') || row.nombre_completo || 'SIN NOMBRE'
+                const rowEditable = canEditRow(row)
+                const isBolsa = isRowBolsaCapa(row)
 
                 return (
                   <tr 
@@ -1430,7 +1470,7 @@ export default function NominaGridEditor({
                         <span className="font-bold text-[var(--text-primary)] uppercase truncate max-w-[200px]" title={fullName}>
                           {fullName}
                         </span>
-                        {!isReadOnly && (
+                        {rowEditable && (
                           <button
                             type="button"
                             onClick={() => handleOpenEditCandidate(row)}
@@ -1449,7 +1489,12 @@ export default function NominaGridEditor({
                               Repetido
                             </span>
                           )}
-                          {!isReadOnly && (columnTab === 'DOCUMENTOS' || columnTab === 'TODO') && (
+                          {isBolsa && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider" title="Candidato originado en Bolsa de Capa">
+                              {row.reclutador || row.fuente_oferta || 'BOLSA CAPA'}
+                            </span>
+                          )}
+                          {rowEditable && (columnTab === 'DOCUMENTOS' || columnTab === 'TODO') && (
                             <button
                               type="button"
                               onClick={() => handleMarkAllDocsOk(row.id)}
@@ -1460,7 +1505,7 @@ export default function NominaGridEditor({
                             </button>
                           )}
                         </div>
-                        {!isReadOnly && (
+                        {rowEditable && (
                           <button
                             type="button"
                             onClick={() => setRowToDelete({
@@ -1501,7 +1546,7 @@ export default function NominaGridEditor({
                               <Lock size={11} className="text-amber-400/80 shrink-0" />
                               <span className="truncate">{val || '—'}</span>
                             </div>
-                          ) : isReadOnly ? (
+                          ) : !rowEditable ? (
                             <div className="w-full h-full p-2 text-xs font-semibold select-none truncate flex items-center">
                               {val || '—'}
                             </div>

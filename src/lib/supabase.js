@@ -113,18 +113,43 @@ const customFetch = async (url, options = {}) => {
   return response
 }
 
+// Limpieza proactiva de tokens persistidos previos en localStorage para obligar reautenticación
+if (typeof window !== 'undefined') {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k && (k.startsWith('sb-') || k.includes('supabase.auth.token'))) {
+        localStorage.removeItem(k)
+      }
+    }
+  } catch {}
+}
+
 export const supabase = createClient(finalUrl, finalKey, {
   auth: {
-    persistSession: true,
+    persistSession: false, // La sesión vive solo en memoria; al dar F5 / Ctrl+R se pierde y pide credenciales
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
   global: {
     headers: { 'x-application-name': 'gea-dashboard-v2' },
     fetch: customFetch
   }
 })
+
+// Detección directa de recarga de página (F5 o Ctrl+R) para garantizar cierre de sesión local
+if (typeof window !== 'undefined') {
+  const isReload =
+    (performance.getEntriesByType &&
+      performance.getEntriesByType('navigation')[0]?.type === 'reload') ||
+    performance.navigation?.type === 1
+
+  if (isReload) {
+    try {
+      supabase.auth.signOut({ scope: 'local' }).catch(() => {})
+    } catch {}
+  }
+}
 
 // ── Listener para recuperar la sesión al volver a la pestaña o reactivar la pantalla ─
 if (typeof window !== 'undefined') {

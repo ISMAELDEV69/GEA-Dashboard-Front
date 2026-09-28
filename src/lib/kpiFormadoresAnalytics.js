@@ -264,7 +264,8 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
     const records = recordsFor(aIndex, doc, code, camp)
     const formador = formadorName(grupo, records)
     const periodo = resolvePeriodoIngreso(grupo) || normalize2026Period(p.periodo_ingreso_op || p.periodo_reclutado) || ''
-    if (!isPeriodoFormadorActivo(periodo)) continue
+    const periodoReclutado = normalize2026Period(grupo.periodo || grupo.periodo_rys || p.periodo_reclutado || p.periodo) || ''
+    if (!isPeriodoFormadorActivo(periodo) && !isPeriodoFormadorActivo(periodoReclutado)) continue
     const semana = Number(grupo.semana_trabajo || String(grupo.semana_label || p.semana_trabajo || '').replace(/\D/g, '') || 0) || null
     const fechaOjt = parseFechaAsistencia(grupo.fecha_inicio_ojt || p.fecha_conexion_ojt)
     const cond = cleanCond(p.condicion || p.condicion_laboral || records[0]?.condicion_laboral)
@@ -278,7 +279,12 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
     })
     const last = sorted[sorted.length - 1]
     const descuento = isDescuento(p) || isDescuento(last)
-    const bajaD1 = !descuento && (
+    const hasAttendedAny = hasSiglaA(records) || sorted.some(r => {
+      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'A' || s === 'I-OP'
+    })
+
+    const bajaD1 = !descuento && !hasAttendedAny && (
       isBajaDia1(p.dia_1_obs || p.motivo_baja, p.status_dia_1 || p.sigla, p) ||
       (last && isBajaDia1(last.motivo_baja, last.sigla || last.sigla_asistencia, last))
     )
@@ -326,6 +332,7 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
       documento: doc,
       formador: formador || 'Sin formador',
       periodo,
+      periodoReclutado,
       semana,
       segmento,
       campana,
@@ -371,6 +378,7 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
 export function filterFormadorRows(rows, filters = {}) {
   const {
     periodo = 'ALL',
+    periodoReclutado = 'ALL',
     semana = 'ALL',
     segmento = 'ALL',
     campana = 'ALL',
@@ -380,48 +388,114 @@ export function filterFormadorRows(rows, filters = {}) {
     condicion = 'ALL',
   } = filters
 
+  const isAll = (v) => !v || v === 'ALL' || (Array.isArray(v) && (v.length === 0 || v.includes('ALL')))
+  const toArray = (v) => Array.isArray(v) ? v : [v]
+
   return (rows || []).filter((row) => {
-    if (!isPeriodoFormadorActivo(row.periodo)) return false
-    if (periodo !== 'ALL' && String(row.periodo) !== String(periodo)) return false
-    if (semana !== 'ALL' && Number(row.semana) !== Number(semana)) return false
-    if (segmento !== 'ALL' && normKpi(row.segmento) !== normKpi(segmento)) return false
-    if (campana !== 'ALL' && normKpi(row.campana) !== normKpi(campana)) return false
-    if (grupo !== 'ALL' && normKpi(row.grupo) !== normKpi(grupo)) return false
-    if (formador !== 'ALL' && !matchName(row.formador, formador)) return false
-    if (modalidad !== 'ALL' && cleanMod(row.modalidad) !== cleanMod(modalidad)) return false
-    if (condicion !== 'ALL' && cleanCond(row.condicion) !== cleanCond(condicion)) return false
+    if (!isPeriodoFormadorActivo(row.periodo) && !isPeriodoFormadorActivo(row.periodoReclutado)) return false
+
+    if (!isAll(periodo)) {
+      const arr = toArray(periodo).map(String)
+      if (!arr.includes(String(row.periodo))) return false
+    }
+
+    if (!isAll(periodoReclutado)) {
+      const arr = toArray(periodoReclutado).map(String)
+      if (!arr.includes(String(row.periodoReclutado))) return false
+    }
+
+    if (!isAll(semana)) {
+      const arr = toArray(semana).map(Number)
+      if (!arr.includes(Number(row.semana))) return false
+    }
+
+    if (!isAll(segmento)) {
+      const arr = toArray(segmento).map(normKpi)
+      if (!arr.includes(normKpi(row.segmento))) return false
+    }
+
+    if (!isAll(campana)) {
+      const arr = toArray(campana).map(normKpi)
+      if (!arr.includes(normKpi(row.campana))) return false
+    }
+
+    if (!isAll(grupo)) {
+      const arr = toArray(grupo).map(normKpi)
+      if (!arr.includes(normKpi(row.grupo))) return false
+    }
+
+    if (!isAll(formador)) {
+      const arr = toArray(formador)
+      if (!arr.some((f) => matchName(row.formador, f))) return false
+    }
+
+    if (!isAll(modalidad)) {
+      const arr = toArray(modalidad).map(cleanMod)
+      if (!arr.includes(cleanMod(row.modalidad))) return false
+    }
+
+    if (!isAll(condicion)) {
+      const arr = toArray(condicion).map(cleanCond)
+      if (!arr.includes(cleanCond(row.condicion))) return false
+    }
+
     return true
   })
 }
 
 export function buildFilterOptions(rows) {
   const periodos = new Set()
+  const periodosReclutado = new Set()
   const semanas = new Set()
-  const segmentos = new Set()
-  const campanas = new Set()
-  const grupos = new Set()
-  const formadores = new Set()
+  const segmentos = new Map()
+  const campanas = new Map()
+  const grupos = new Map()
+  const formadores = new Map()
   const modalidades = new Set()
   const condiciones = new Set()
 
   ;(rows || []).forEach((row) => {
-    if (row.periodo) periodos.add(String(row.periodo))
-    if (row.semana != null) semanas.add(Number(row.semana))
-    if (row.segmento) segmentos.add(String(row.segmento).trim())
-    if (row.campana) campanas.add(String(row.campana).trim())
-    if (row.grupo) grupos.add(String(row.grupo).trim())
-    if (row.formador && !isJunkFormador(row.formador)) formadores.add(String(row.formador).trim())
-    if (row.modalidad) modalidades.add(cleanMod(row.modalidad))
-    if (row.condicion) condiciones.add(cleanCond(row.condicion))
+    if (row.periodo) periodos.add(String(row.periodo).trim())
+    if (row.periodoReclutado) periodosReclutado.add(String(row.periodoReclutado).trim())
+    if (row.semana != null && String(row.semana).trim() !== '') semanas.add(Number(row.semana))
+    if (row.segmento) {
+      const clean = String(row.segmento).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !segmentos.has(norm)) segmentos.set(norm, clean)
+    }
+    if (row.campana) {
+      const clean = String(row.campana).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !campanas.has(norm)) campanas.set(norm, clean)
+    }
+    if (row.grupo) {
+      const clean = String(row.grupo).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !grupos.has(norm)) grupos.set(norm, clean)
+    }
+    if (row.formador && !isJunkFormador(row.formador)) {
+      const clean = String(row.formador).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !formadores.has(norm)) formadores.set(norm, clean)
+    }
+    if (row.modalidad) {
+      const mod = cleanMod(row.modalidad)
+      if (mod) modalidades.add(mod)
+    }
+    if (row.condicion) {
+      const cond = cleanCond(row.condicion)
+      if (cond) condiciones.add(cond)
+    }
   })
 
   return {
     periodos: Array.from(periodos).sort((a, b) => b.localeCompare(a)),
+    periodosReclutado: Array.from(periodosReclutado).sort((a, b) => b.localeCompare(a)),
     semanas: Array.from(semanas).sort((a, b) => a - b),
-    segmentos: Array.from(segmentos).sort((a, b) => a.localeCompare(b)),
-    campanas: Array.from(campanas).sort((a, b) => a.localeCompare(b)),
-    grupos: Array.from(grupos).sort((a, b) => a.localeCompare(b)),
-    formadores: Array.from(formadores).sort((a, b) => a.localeCompare(b)),
+    segmentos: Array.from(segmentos.values()).sort((a, b) => a.localeCompare(b)),
+    campanas: Array.from(campanas.values()).sort((a, b) => a.localeCompare(b)),
+    grupos: Array.from(grupos.values()).sort((a, b) => a.localeCompare(b)),
+    formadores: Array.from(formadores.values()).sort((a, b) => a.localeCompare(b)),
     modalidades: Array.from(modalidades).filter(Boolean).sort(),
     condiciones: Array.from(condiciones).filter(Boolean).sort(),
   }

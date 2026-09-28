@@ -959,9 +959,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
   // ── Mapa de último estado y Set de Descuentos autorizados por documento ──
   const { lastStateMap, descuentosDocSet } = useMemo(() => {
     const latestDocMap = new Map();
+    const docRowsMap = new Map();
+    const approvedGroupDescSet = new Set();
     const descSet = new Set();
 
-    // 1. Añadir únicamente los DNIs con descuento efectivamente aprobado por RyS (o vencido)
+    // 1. Añadir únicamente los descuentos efectivamente aprobados por RyS (o vencidos) acotados a su grupo/campaña
     (descuentos || []).forEach(d => {
       const procedeStr = String(d.procede || '').trim().toUpperCase();
       const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
@@ -971,7 +973,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const regTime = d.fecha_registro || d.created_at || d.fecha_baja;
       const isVencido = regTime && isDescuentoVencido48h(regTime) && procedeStr !== 'NO' && procedeStr !== 'NO PROCEDE' && rysStr !== 'NO';
 
-      // Si está PENDIENTE y dentro de plazo, o si fue rechazado por RyS, DEBE SEGUIR APARECIENDO
       if (!isAprobadoRyS && !isVencido) {
         return;
       }
@@ -985,11 +986,26 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         }
       }
 
+      // Si hay filtro de campaña activo en la vista, asegurar que corresponda a la campaña
+      if (filters.campana && filters.campana !== 'Todas' && d.campana) {
+        const cleanFiltroCamp = normalizeCampana(filters.campana);
+        const cleanRowCamp = normalizeCampana(d.campana);
+        if (cleanRowCamp && cleanFiltroCamp && cleanRowCamp !== cleanFiltroCamp && !cleanRowCamp.includes(cleanFiltroCamp) && !cleanFiltroCamp.includes(cleanRowCamp)) {
+          return;
+        }
+      }
+
       const dni = normalizeText(d.dni_ce);
       if (dni) {
-        descSet.add(dni);
-        descSet.add(dni.toLowerCase());
-        descSet.add(dni.toUpperCase());
+        const gpeNorm = normalizeGpe(d.grupo_cap);
+        const campNorm = normalizeCampana(d.campana);
+        if (gpeNorm && gpeNorm !== 'Sin GPE') {
+          approvedGroupDescSet.add(`${dni}|${gpeNorm}`);
+          approvedGroupDescSet.add(`${dni}|${cleanCodeKey(gpeNorm)}`);
+        }
+        if (campNorm && campNorm !== 'SIN CAMPAÑA') {
+          approvedGroupDescSet.add(`${dni}|${campNorm}`);
+        }
       }
     });
 
@@ -997,10 +1013,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const row = kpiFilteredData[i];
       const doc = normalizeText(row.documento);
       if (!doc) continue;
-      
-      if (row.isDescuento) {
-        descSet.add(doc);
+
+      if (!docRowsMap.has(doc)) {
+        docRowsMap.set(doc, []);
       }
+      docRowsMap.get(doc).push(row);
 
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
@@ -1013,29 +1030,58 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
     const stateMap = new Map();
     for (const [doc, { row }] of latestDocMap.entries()) {
+      const rows = docRowsMap.get(doc) || [];
       const motivo = row?.motivo_baja || row?.motivo;
       const sigla = normalizeSigla(row?.sigla);
-      const isDesc = descSet.has(doc) || Boolean(row?.isDescuento) || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO');
-      if (isDesc) {
+
+      // Si el postulante llegó a Ingreso a Operación (I-OP) en cualquier fecha o su último registro es I-OP,
+      // NUNCA es descuento ni baja: es un Ingreso Efectivo (ACTIVO).
+      const hasAnyIop = sigla === 'I-OP' || rows.some(r => normalizeSigla(r.sigla) === 'I-OP');
+      const hasLaterAttendance = rows.some(r => {
+        const s = normalizeSigla(r.sigla);
+        return s === 'A' || s === 'I-OP';
+      });
+
+      // Si el postulante asistió en alguna fecha (Día 1, Día 2, etc.), inició capacitación
+      // y si cesa con posterioridad, es una BAJA EN FORMACIÓN (CESADO), NUNCA Baja Día 1.
+      const hasAttendedTraining = rows.some(r => {
+        const s = normalizeSigla(r.sigla);
+        return s === 'A' || s === 'I-OP';
+      });
+
+      const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+      const rowCamp = normalizeCampana(row._campana || row.campana);
+      const isDiscountInThisGroup = approvedGroupDescSet.has(`${doc}|${rowGpe}`) || 
+                                   (rowGpe && approvedGroupDescSet.has(`${doc}|${cleanCodeKey(rowGpe)}`)) ||
+                                   approvedGroupDescSet.has(`${doc}|${rowCamp}`);
+
+      const isExplicitDescLatest = (String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || isDiscountInThisGroup);
+
+      if (hasAnyIop) {
+        stateMap.set(doc, 'ACTIVO');
+      } else if (isExplicitDescLatest && !hasLaterAttendance) {
+        descSet.add(doc);
         stateMap.set(doc, 'DESCUENTO');
-      } else if (isBajaDia1(motivo, sigla, row)) {
+      } else if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) {
         stateMap.set(doc, 'BAJA DIA 1');
-      } else if (isBajaCapacitacion(row) || sigla === 'B') {
+      } else if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') {
         stateMap.set(doc, 'CESADO');
+      } else if (isBajaDia1(motivo, sigla, row) && !hasAttendedTraining) {
+        stateMap.set(doc, 'BAJA DIA 1');
       } else {
         stateMap.set(doc, 'ACTIVO');
       }
     }
 
     return { lastStateMap: stateMap, descuentosDocSet: descSet };
-  }, [kpiFilteredData, descuentos]);
+  }, [kpiFilteredData, descuentos, filters]);
 
   // ── Datos filtrados para la Tabla (Excluyendo Descuentos de la vista de Control de Asistencia) ──
   const filteredData = useMemo(() => {
     const nonDiscountData = kpiFilteredData.filter(row => {
       const doc = normalizeText(row.documento);
       const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
-      return lastState !== 'DESCUENTO' && !descuentosDocSet.has(doc) && !row.isDescuento;
+      return lastState !== 'DESCUENTO';
     });
 
     if (filters.estado === 'Todas') return nonDiscountData;
@@ -1045,7 +1091,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
       return lastState === filters.estado;
     });
-  }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
+  }, [kpiFilteredData, filters.estado, lastStateMap]);
 
   const uniqueDates = useMemo(() => {
     const datesMap = new Map();
@@ -1081,12 +1127,20 @@ export default function ConsolidadoPowerBI({ userProfile }) {
           documento: doc,
           latestTime: time,
           lastRow: row,
+          celular: row.celular || '',
+          documento_formador: row.documento_formador || '',
+          nombre_formador: row.nombre_formador || '',
           fechas: {},
         };
         map.set(doc, entry);
-      } else if (time >= entry.latestTime) {
-        entry.latestTime = time;
-        entry.lastRow = row;
+      } else {
+        if (time >= entry.latestTime) {
+          entry.latestTime = time;
+          entry.lastRow = row;
+        }
+        if (row.celular && !entry.celular) entry.celular = row.celular;
+        if (row.documento_formador && !entry.documento_formador) entry.documento_formador = row.documento_formador;
+        if (row.nombre_formador && !entry.nombre_formador) entry.nombre_formador = row.nombre_formador;
       }
       
       if (row.fecha_registro_asistencia) {
@@ -1104,10 +1158,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const gpe = lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
-      const hasDescuento = descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
+      const hasDescuento = docState === 'DESCUENTO';
 
-      // Los postulantes con descuento ya no deben aparecer en la tabla de Control de Asistencia
-      if (hasDescuento || docState === 'DESCUENTO') {
+      // Los postulantes con descuento resuelto para este grupo ya no deben aparecer en la tabla
+      if (hasDescuento) {
         continue;
       }
 
@@ -1120,8 +1174,12 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         gpe: gpe || '—',
         condicion_laboral: normalizeText(lastRow.condicion_laboral, '—'),
         tipo_reclutado: normalizeText(lastRow.tipo_reclutado, '—'),
+        celular: entry.celular || lastRow.celular || '',
+        documento_formador: entry.documento_formador || cap?.formador_documento || lastRow.documento_formador || '',
+        nombre_formador: entry.nombre_formador || cap?.formador || lastRow.nombre_formador || '',
         fechas: entry.fechas,
         lastRow: lastRow,
+        capInfo: cap,
       });
     }
 
@@ -1175,7 +1233,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
     docMap.forEach((rows, doc) => {
       const docState = lastStateMap.get(doc) || 'SIN ESTADO';
-      const hasDescuento = descuentosDocSet.has(doc) || docState === 'DESCUENTO';
+      const hasDescuento = docState === 'DESCUENTO';
       if (hasDescuento) descuentosAprobados += 1;
 
       const isActivo = docState === 'ACTIVO';
@@ -1615,11 +1673,18 @@ export default function ConsolidadoPowerBI({ userProfile }) {
                         <div
                           onClick={() => {
                             if (!isAdmin) return;
+                            const camp = row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : '');
+                            const gpeVal = row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : '');
+                            const cap = row.capInfo || getCapInfo(camp, gpeVal);
+                            const docForm = row.documento_formador || cap?.formador_documento || row.lastRow?.documento_formador || '';
+                            const nomForm = row.nombre_formador || cap?.formador || row.lastRow?.nombre_formador || '';
+                            const cel = row.celular || row.lastRow?.celular || '';
+
                             setCeldaEditando({
                               documento: row.documento,
                               nombre_completo: row.nombre_completo,
-                              gpe: row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : ''),
-                              campana: row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : ''),
+                              gpe: gpeVal,
+                              campana: camp,
                               semana: row.lastRow?._semana || row.lastRow?.semana || (filters.semana !== 'Todas' ? filters.semana : ''),
                               periodo: row.lastRow?._periodo || row.lastRow?.periodo || (filters.periodo !== 'Todas' ? filters.periodo : ''),
                               segmento: row.lastRow?._segmento || row.lastRow?.segmento || (filters.segmento !== 'Todas' ? filters.segmento : ''),
@@ -1627,7 +1692,16 @@ export default function ConsolidadoPowerBI({ userProfile }) {
                               siglaActual: sigla,
                               allCohortDates: uniqueDates,
                               personFechas: row.fechas,
-                              rowInfo: row.lastRow || row
+                              documento_formador: docForm,
+                              nombre_formador: nomForm,
+                              celular: cel,
+                              rowInfo: {
+                                ...(row.lastRow || {}),
+                                ...(row || {}),
+                                documento_formador: docForm,
+                                nombre_formador: nomForm,
+                                celular: cel,
+                              }
                             });
                           }}
                           className={`heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${
@@ -1794,6 +1868,9 @@ export default function ConsolidadoPowerBI({ userProfile }) {
                   nombres: celdaEditando?.rowInfo?.nombres || '',
                   apellido_paterno: celdaEditando?.rowInfo?.apellido_paterno || '',
                   apellido_materno: celdaEditando?.rowInfo?.apellido_materno || '',
+                  celular: celdaEditando?.celular || celdaEditando?.rowInfo?.celular || '',
+                  documento_formador: celdaEditando?.documento_formador || celdaEditando?.rowInfo?.documento_formador || '',
+                  nombre_formador: celdaEditando?.nombre_formador || celdaEditando?.rowInfo?.nombre_formador || '',
                   condicion_laboral: celdaEditando?.rowInfo?.condicion_laboral || '',
                   tipo_reclutado: celdaEditando?.rowInfo?.tipo_reclutado || 'APTO'
                 });

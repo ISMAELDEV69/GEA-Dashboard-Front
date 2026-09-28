@@ -22,11 +22,14 @@ import {
   Radio,
   Award,
   BanknoteIcon,
-  PieChart
+  PieChart,
+  MapPin
 } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
-import GeaLogo from '../GeaLogo'
+import GeaLogo, { SidebarEyes } from '../GeaLogo'
+import FlappyPenguinGame from '../penguin/FlappyPenguinGame'
+
 
 // Estructura de navegación agrupada semánticamente
 export const NAV_SECTIONS = [
@@ -36,6 +39,7 @@ export const NAV_SECTIONS = [
       { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador', icon: Award, description: 'Rendimiento 360°, rankings y metas', badge: 'Nuevo' },
       { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', badge: 'Live' },
       { id: 'cobertura_dotacion', label: 'Cobertura de Dotación', icon: PieChart, description: 'RQ vs ingresos efectivos I-OP', badge: 'Nuevo' },
+      { id: 'ubicacion', label: 'Ubicación & Mapa', icon: MapPin, description: 'Análisis geográfico y deserción', badge: 'Nuevo' },
       { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real' },
       { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias' },
       { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción' },
@@ -53,6 +57,7 @@ export const NAV_SECTIONS = [
       { id: 'asistencia', label: 'Marcación Asistencia', icon: ClipboardCheck, description: 'Registro diario A / F / B' },
       { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos' },
       { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro' },
+      { id: 'bolsa_capa', label: 'Bolsa de Capa', icon: GraduationCap, description: 'Recuperados y traslados de capacitación' },
       { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos' },
       { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días, bonos y permanencia' },
       { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos' },
@@ -73,7 +78,7 @@ export const NAV_SECTIONS = [
   }
 ]
 
-export default function AppSidebar({
+function AppSidebar({
   activeView,
   setActiveView,
   navItems = [],
@@ -82,6 +87,7 @@ export default function AppSidebar({
   onOpenProfile
 }) {
   const [, startTransition] = useTransition()
+  const [isFlappyOpen, setIsFlappyOpen] = useState(() => false)
 
   const handleSelectView = (id) => {
     startTransition(() => {
@@ -133,7 +139,8 @@ export default function AppSidebar({
           onClick={() => setActiveView && setActiveView('portal')}
           title="Volver al Selector de Módulos (Inicio)"
         >
-          <GeaLogo collapsed={collapsed} />
+          {/* 🎧 Headset Call Center LIVE & Operaciones */}
+          <SidebarEyes collapsed={collapsed} onDoubleClick={() => setIsFlappyOpen(true)} />
         </div>
 
         {/* Toggle Collapse Button */}
@@ -145,6 +152,12 @@ export default function AppSidebar({
           {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </button>
       </div>
+
+      {/* Mini-juego Flappy (se abre al doble clic en los ojos) */}
+      <FlappyPenguinGame
+        isOpen={isFlappyOpen}
+        onClose={() => setIsFlappyOpen(false)}
+      />
 
       {/* ─────────────────────────────────────────────────────────────
           2. NAVEGACIÓN AGRUPADA: CON SCROLL INTERNO INDEPENDIENTE
@@ -294,3 +307,5 @@ export default function AppSidebar({
     </aside>
   )
 }
+
+export default React.memo(AppSidebar)

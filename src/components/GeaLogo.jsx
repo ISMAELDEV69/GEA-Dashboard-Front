@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 
 /**
  * GeaModernDeltaEmblem - Isotipo Oficial Corporativo GEA (Delta con 3 franjas de color: Verde, Azul y Rojo/Naranja)
@@ -338,9 +338,437 @@ export function GeaPolygonalHead({ className = 'w-9 h-9' }) {
   )
 }
 
-/**
- * GeaLogo - Logotipo Oficial Corporativo GEA PERÚ / Workforce Management
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// RiseWord — Animación moderna: letras que suben con fade escalonado
+// Estilo Apple / Vercel / Linear — limpio, preciso, sin parpadeos
+// IN:  izquierda → derecha  |  OUT: derecha → izquierda (reverso)
+// ─────────────────────────────────────────────────────────────────────────────
+function RiseWord({ text, color, fontSize, fontWeight, letterSpacing, holdMs = 2800, pauseMs = 600, riseDelay = 0 }) {
+  const [visible, setVisible] = useState(false)
+  const timerRef = useRef([])
+
+  const chars = text.split('')
+  const n = chars.length
+  const IN_STEP  = 38   // ms entre letras (entrada)
+  const OUT_STEP = 28   // ms entre letras (salida, un poco más rápido)
+  const IN_DUR   = 320  // duración transición entrada
+  const OUT_DUR  = 220  // duración transición salida
+
+  // Tiempo que tarda la última letra en terminar su transición
+  const totalInMs  = (n - 1) * IN_STEP  + IN_DUR  + 40
+  const totalOutMs = (n - 1) * OUT_STEP + OUT_DUR + 40
+
+  const clearAll = () => { timerRef.current.forEach(clearTimeout); timerRef.current = [] }
+
+  useEffect(() => {
+    const cycle = () => {
+      clearAll()
+      // — Fase IN —
+      timerRef.current.push(setTimeout(() => {
+        setVisible(true)
+        // — Fase HOLD → OUT —
+        timerRef.current.push(setTimeout(() => {
+          setVisible(false)
+          // — Pausa → siguiente ciclo —
+          timerRef.current.push(setTimeout(cycle, totalOutMs + pauseMs))
+        }, totalInMs + holdMs))
+      }, riseDelay))
+    }
+    cycle()
+    return clearAll
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <span
+      aria-label={text}
+      style={{
+        display: 'inline-flex',
+        letterSpacing,
+        fontSize,
+        fontWeight,
+        lineHeight: 1.1,
+        userSelect: 'none',
+        // Reserva espacio fijo para evitar layout shifts
+        minWidth: '1ch',
+        overflow: 'hidden',
+        paddingBottom: '0.1em',
+      }}
+    >
+      {chars.map((ch, i) => {
+        // Para IN: i=0 primero (izquierda → derecha)
+        // Para OUT: i=(n-1) primero (derecha → izquierda)
+        const inDelay  = i * IN_STEP
+        const outDelay = (n - 1 - i) * OUT_STEP
+
+        return (
+          <span
+            key={i}
+            aria-hidden="true"
+            style={{
+              display: 'inline-block',
+              color,
+              willChange: 'transform, opacity',
+              opacity: visible ? 1 : 0,
+              transform: visible
+                ? 'translateY(0) skewX(0deg)'
+                : 'translateY(60%) skewX(-4deg)',
+              transition: visible
+                ? `opacity ${IN_DUR}ms cubic-bezier(0.22,1,0.36,1) ${inDelay}ms, transform ${IN_DUR}ms cubic-bezier(0.22,1,0.36,1) ${inDelay}ms`
+                : `opacity ${OUT_DUR}ms ease-in ${outDelay}ms, transform ${OUT_DUR}ms ease-in ${outDelay}ms`,
+              // Espacio no-colapsable
+              whiteSpace: ch === ' ' ? 'pre' : 'normal',
+            }}
+          >
+            {ch}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SidebarHeadset / SidebarEyes — Call Center Live & Operations Widget
+// Headset dinámico de teleoperador con LED activo, ecualizador de voz y
+// badge 'LIVE' interactivo para Operaciones, Formación, Reclutamiento y Jefatura.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CALL_CENTER_MODES = [
+  {
+    id: 'live',
+    label: 'LIVE',
+    role: 'Operaciones',
+    desc: 'Operaciones · Línea Activa',
+    primary: '#10B981', // Verde esmeralda / neon
+    glow: 'rgba(16, 185, 129, 0.65)',
+    bg: 'rgba(16, 185, 129, 0.12)',
+    border: 'rgba(16, 185, 129, 0.35)',
+  },
+  {
+    id: 'training',
+    label: 'TRAIN',
+    role: 'Formación',
+    desc: 'Formadores · En Capacitación',
+    primary: '#06B6D4', // Cyan eléctrico
+    glow: 'rgba(6, 182, 212, 0.65)',
+    bg: 'rgba(6, 182, 212, 0.12)',
+    border: 'rgba(6, 182, 212, 0.35)',
+  },
+  {
+    id: 'recruiting',
+    label: 'RECRUIT',
+    role: 'Reclutamiento',
+    desc: 'Reclutadores · Entrevistas',
+    primary: '#F59E0B', // Ámbar / Naranja
+    glow: 'rgba(245, 158, 11, 0.65)',
+    bg: 'rgba(245, 158, 11, 0.12)',
+    border: 'rgba(245, 158, 11, 0.35)',
+  },
+  {
+    id: 'chief',
+    label: 'CHIEF',
+    role: 'Jefatura',
+    desc: 'Jefatura · Monitoreo y QC',
+    primary: '#A855F7', // Violeta / Púrpura VIP
+    glow: 'rgba(168, 85, 247, 0.65)',
+    bg: 'rgba(168, 85, 247, 0.12)',
+    border: 'rgba(168, 85, 247, 0.35)',
+  },
+]
+
+export function SidebarHeadset({ collapsed = false, onDoubleClick }) {
+  const [modeIdx, setModeIdx] = useState(0)
+  const [isClicking, setIsClicking] = useState(false)
+  const mode = CALL_CENTER_MODES[modeIdx]
+
+  const handleClick = (e) => {
+    e.stopPropagation()
+    setIsClicking(true)
+    setModeIdx((prev) => (prev + 1) % CALL_CENTER_MODES.length)
+    setTimeout(() => setIsClicking(false), 260)
+  }
+
+  return (
+    <div
+      onClick={handleClick}
+      onDoubleClick={onDoubleClick}
+      title={`Call Center GEA · ${mode.desc}\n• Clic: Cambiar rol (Operaciones / Formación / Reclutamiento / Jefatura)\n• Doble clic: Easter egg`}
+      style={{
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
+      className={`group relative flex items-center transition-all duration-300 ${
+        collapsed
+          ? 'justify-center p-1 rounded-xl'
+          : 'gap-2 px-2.5 py-1.5 rounded-xl border'
+      }`}
+    >
+      {/* Estilos CSS embebidos para animaciones de ecualizador y pulso */}
+      <style>{`
+        @keyframes geaEqBar1 {
+          0%, 100% { height: 5px; opacity: 0.6; }
+          50% { height: 16px; opacity: 1; }
+        }
+        @keyframes geaEqBar2 {
+          0%, 100% { height: 14px; opacity: 0.9; }
+          35% { height: 6px; opacity: 0.5; }
+          70% { height: 18px; opacity: 1; }
+        }
+        @keyframes geaEqBar3 {
+          0%, 100% { height: 9px; opacity: 0.7; }
+          45% { height: 19px; opacity: 1; }
+          80% { height: 8px; opacity: 0.6; }
+        }
+        @keyframes geaEqBar4 {
+          0%, 100% { height: 16px; opacity: 1; }
+          50% { height: 6px; opacity: 0.5; }
+        }
+        @keyframes geaBeaconPing {
+          0% { transform: scale(1); opacity: 0.8; }
+          80%, 100% { transform: scale(2.4); opacity: 0; }
+        }
+        @keyframes geaMicGlow {
+          0%, 100% { filter: drop-shadow(0 0 2px var(--mic-glow)); }
+          50% { filter: drop-shadow(0 0 7px var(--mic-glow)); }
+        }
+      `}</style>
+
+      {/* Contenedor dinámico según esté colapsado o expandido */}
+      <div
+        style={{
+          '--mic-glow': mode.primary,
+          background: collapsed ? 'transparent' : mode.bg,
+          borderColor: collapsed ? 'transparent' : mode.border,
+          boxShadow: isClicking ? `0 0 16px ${mode.glow}` : 'none',
+          transform: isClicking ? 'scale(0.96)' : 'scale(1)',
+          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        }}
+        className={`flex items-center gap-2 ${
+          collapsed
+            ? 'p-1 rounded-lg hover:bg-white/10'
+            : 'px-2 py-1 rounded-lg border border-opacity-40 backdrop-blur-sm'
+        }`}
+      >
+        {/* 🎧 SVG Headset Call Center */}
+        <div className="relative shrink-0 flex items-center justify-center">
+          <svg
+            width={collapsed ? "26" : "28"}
+            height={collapsed ? "26" : "28"}
+            viewBox="0 0 32 32"
+            fill="none"
+            className="overflow-visible"
+            style={{
+              animation: 'geaMicGlow 2.5s ease-in-out infinite',
+              filter: `drop-shadow(0 0 4px ${mode.glow})`,
+            }}
+          >
+            {/* Diadema superior (arco con grosor) */}
+            <path
+              d="M 6 17 A 10 10 0 0 1 26 17"
+              stroke={mode.primary}
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              fill="none"
+            />
+            {/* Almohadilla superior central */}
+            <path
+              d="M 11 8 A 12 12 0 0 1 21 8"
+              stroke="#FFFFFF"
+              strokeWidth="2.8"
+              strokeLinecap="round"
+              fill="none"
+              opacity="0.35"
+            />
+
+            {/* Auricular izquierdo (earpad) */}
+            <rect
+              x="3.5"
+              y="13.5"
+              width="4.5"
+              height="9"
+              rx="2.2"
+              fill={mode.primary}
+              opacity="0.95"
+            />
+            <rect
+              x="4.5"
+              y="15"
+              width="2.5"
+              height="6"
+              rx="1.2"
+              fill="#FFFFFF"
+              opacity="0.5"
+            />
+
+            {/* Auricular derecho (earpad) */}
+            <rect
+              x="24"
+              y="13.5"
+              width="4.5"
+              height="9"
+              rx="2.2"
+              fill={mode.primary}
+              opacity="0.95"
+            />
+            <rect
+              x="25"
+              y="15"
+              width="2.5"
+              height="6"
+              rx="1.2"
+              fill="#FFFFFF"
+              opacity="0.5"
+            />
+
+            {/* Brazo de micrófono flexible que baja hacia adelante */}
+            <path
+              d="M 25 21 C 24 26.5 17 28 12.5 26.5"
+              stroke={mode.primary}
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              fill="none"
+            />
+
+            {/* Cápsula del micrófono */}
+            <rect
+              x="8.5"
+              y="24.5"
+              width="4.5"
+              height="3"
+              rx="1.4"
+              fill="#1E293B"
+              stroke={mode.primary}
+              strokeWidth="1"
+            />
+
+            {/* LED de micrófono activo (punto brillante + halo de pulso) */}
+            <circle
+              cx="9.5"
+              cy="26"
+              r="1.4"
+              fill="#FFFFFF"
+            />
+            <circle
+              cx="9.5"
+              cy="26"
+              r="1.4"
+              fill={mode.primary}
+              opacity="0.75"
+            />
+          </svg>
+
+          {/* Halo de pulso del headset */}
+          <span
+            className="absolute rounded-full pointer-events-none"
+            style={{
+              width: '10px',
+              height: '10px',
+              left: '4px',
+              bottom: '1px',
+              background: mode.primary,
+              animation: 'geaBeaconPing 2s cubic-bezier(0, 0, 0.2, 1) infinite',
+            }}
+          />
+        </div>
+
+        {/* 📊 Ecualizador de Audio + Badge LIVE (visible cuando la barra está expandida) */}
+        {!collapsed && (
+          <div className="flex items-center gap-2 pl-0.5">
+            {/* Barras de onda de voz / ecualizador */}
+            <div
+              className="flex items-center gap-[2.5px] h-5 px-1 py-0.5 rounded"
+              title="Tráfico de Voz Activo"
+            >
+              <span
+                className="w-[2.5px] rounded-full"
+                style={{
+                  background: mode.primary,
+                  boxShadow: `0 0 4px ${mode.glow}`,
+                  animation: 'geaEqBar1 0.75s ease-in-out infinite',
+                }}
+              />
+              <span
+                className="w-[2.5px] rounded-full"
+                style={{
+                  background: mode.primary,
+                  boxShadow: `0 0 4px ${mode.glow}`,
+                  animation: 'geaEqBar2 0.65s ease-in-out infinite',
+                }}
+              />
+              <span
+                className="w-[2.5px] rounded-full"
+                style={{
+                  background: mode.primary,
+                  boxShadow: `0 0 4px ${mode.glow}`,
+                  animation: 'geaEqBar3 0.85s ease-in-out infinite',
+                }}
+              />
+              <span
+                className="w-[2.5px] rounded-full"
+                style={{
+                  background: mode.primary,
+                  boxShadow: `0 0 4px ${mode.glow}`,
+                  animation: 'geaEqBar4 0.7s ease-in-out infinite',
+                }}
+              />
+            </div>
+
+            {/* Separador sutil */}
+            <span
+              className="w-[1px] h-3.5 opacity-30"
+              style={{ background: mode.primary }}
+            />
+
+            {/* Badge de Rol y Estado */}
+            <div className="flex flex-col leading-none">
+              <div className="flex items-center gap-1">
+                {/* Punto emisor beacon */}
+                <span className="relative flex h-1.5 w-1.5">
+                  <span
+                    className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                    style={{ background: mode.primary }}
+                  />
+                  <span
+                    className="relative inline-flex rounded-full h-1.5 w-1.5"
+                    style={{ background: mode.primary }}
+                  />
+                </span>
+
+                <span
+                  className="font-black text-[10px] tracking-wider"
+                  style={{
+                    color: mode.primary,
+                    textShadow: `0 0 8px ${mode.glow}`,
+                    fontFamily: 'system-ui, -apple-system, sans-serif',
+                  }}
+                >
+                  {mode.label}
+                </span>
+              </div>
+
+              <span
+                className="text-[8.5px] font-semibold tracking-tight text-slate-400 group-hover:text-slate-200 transition-colors"
+                style={{ marginTop: '1px' }}
+              >
+                {mode.role}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Alias de retrocompatibilidad para no romper importaciones existentes
+export const SidebarEyes = SidebarHeadset
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GeaLogo - Logotipo Oficial Corporativo GEA PERÚ / Workforce Management
+// ─────────────────────────────────────────────────────────────────────────────
 export default function GeaLogo({ 
   collapsed = false, 
   size = 'medium',
@@ -365,6 +793,8 @@ export default function GeaLogo({
       ? GeaPyramidEmblem 
       : GeaModernDeltaEmblem
 
+  const isLarge = size === 'large'
+
   if (collapsed) {
     return (
       <div className={`flex items-center justify-center p-1 ${className}`} title="GEA PERÚ - Workforce Management">
@@ -380,36 +810,62 @@ export default function GeaLogo({
         <EmblemComponent className={iconSizeClass} />
       </div>
 
-      {/* Tipografía Oficial */}
+      {/* Tipografía con animación rise staggered */}
       {showText && (
-        <div className="flex flex-col min-w-0 leading-tight">
-          <div className="flex items-baseline gap-1.5">
-            <span className={`font-black tracking-tight font-sans text-[#0A2558] ${
-              size === 'large' ? 'text-2xl' : 'text-xl'
-            }`}>
-              GEA
-            </span>
-            <span className={`font-extrabold tracking-wider font-sans text-[#1D4ED8] uppercase ${
-              size === 'large' ? 'text-base' : 'text-[12.5px]'
-            }`}>
-              PERÚ
-            </span>
+        <div className="flex flex-col min-w-0 leading-tight" style={{ gap: '1px' }}>
+
+          {/* ── Línea 1: "GEA PERÚ" ── */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '5px', overflow: 'hidden' }}>
+            {/* GEA: blanco puro en dark, azul marino en light */}
+            <RiseWord
+              text="GEA"
+              color="var(--logo-primary, #FFFFFF)"
+              fontSize={isLarge ? '1.5rem' : '1.25rem'}
+              fontWeight={900}
+              letterSpacing="-0.02em"
+              holdMs={2800}
+              pauseMs={500}
+              riseDelay={0}
+            />
+            {/* PERÚ: sky accent en dark, azul en light */}
+            <RiseWord
+              text="PERÚ"
+              color="var(--logo-accent, #38BDF8)"
+              fontSize={isLarge ? '1rem' : '0.8rem'}
+              fontWeight={800}
+              letterSpacing="0.06em"
+              holdMs={2800}
+              pauseMs={500}
+              riseDelay={120}
+            />
           </div>
 
+          {/* ── Línea 2: Subtítulo ── */}
           {showSubtitle && subtitle && (
-            <span className={`font-black tracking-wider text-[#005BAC] uppercase mt-0.5 ${
-              size === 'large' ? 'text-[10px]' : 'text-[8.5px]'
-            }`}>
-              {subtitle}
-            </span>
+            <RiseWord
+              text={subtitle}
+              color="var(--logo-subtitle, #CBD5E1)"
+              fontSize={isLarge ? '0.625rem' : '0.53rem'}
+              fontWeight={900}
+              letterSpacing="0.1em"
+              holdMs={3000}
+              pauseMs={600}
+              riseDelay={260}
+            />
           )}
 
+          {/* ── Línea 3: Tagline ── */}
           {showTagline && (
-            <span className={`font-bold tracking-widest text-[#64748B] uppercase mt-0.5 truncate ${
-              size === 'large' ? 'text-[8.5px]' : 'text-[7.5px]'
-            }`}>
-              GEA PIENSA EN TI
-            </span>
+            <RiseWord
+              text="GEA PIENSA EN TI"
+              color="var(--logo-tagline, #64748B)"
+              fontSize={isLarge ? '0.53rem' : '0.47rem'}
+              fontWeight={700}
+              letterSpacing="0.12em"
+              holdMs={3500}
+              pauseMs={800}
+              riseDelay={380}
+            />
           )}
         </div>
       )}

@@ -921,18 +921,11 @@ export function normalize2026Period(val) {
 
 export function getGrupoPeriodo(g) {
   if (!g) return null
-  // 1. Prioridad: periodo_ingreso_op explícito (Periodo de Ingreso a Operación)
-  let per = normalize2026Period(g.periodo_ingreso_op)
+  const ingreso = resolvePeriodoIngreso(g)
+  if (ingreso) return ingreso
+  // Último recurso: periodo de capa / fechas de curso (no es periodo de ingreso)
+  let per = normalize2026Period(g.periodo)
   if (per) return per
-  // 2. Prioridad: fecha operativa de ingreso a operaciones
-  if (g.fecha_ingreso_op) {
-    per = normalize2026Period(g.fecha_ingreso_op)
-    if (per) return per
-  }
-  // 3. Prioridad: periodo declarado de cohorte / RyS
-  per = normalize2026Period(g.periodo)
-  if (per) return per
-  // 4. Prioridad: fecha de inicio de OJT o inicio de curso
   const opDate = g.fecha_inicio_ojt || g.fecha_inicio || g.fecha_registro
   if (opDate) {
     per = normalize2026Period(opDate)
@@ -981,6 +974,18 @@ export function getMaxAutoPeriodo() {
   const curMonth = now.getMonth() + 1
   const calc = `${curYear}${String(curMonth).padStart(2, '0')}`
   return calc < '202609' ? '202609' : calc
+}
+
+/** Periodo de ingreso OP: campo explícito, si no el mes de fecha_ingreso_op. No usa periodo de capa. */
+export function resolvePeriodoIngreso(g) {
+  if (!g) return null
+  const direct = normalize2026Period(g.periodo_ingreso_op || g.periodo_ingreso || g.periodo_efectivo)
+  if (direct) return direct
+  if (g.fecha_ingreso_op) {
+    const fromFecha = normalize2026Period(g.fecha_ingreso_op)
+    if (fromFecha) return fromFecha
+  }
+  return null
 }
 
 

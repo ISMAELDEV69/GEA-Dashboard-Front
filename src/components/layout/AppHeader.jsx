@@ -17,11 +17,14 @@ import {
 } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { Badge } from '../ui/badge'
+import GeaLogo from '../GeaLogo'
+
 
 const BREADCRUMB_MAP = {
   scorecard_individual: { section: 'Analítica & BI', label: 'KPIS - Reclutador / Formador' },
   resumen_capacitacion: { section: 'Analítica & BI', label: 'Resumen Capacitación' },
   cobertura_dotacion: { section: 'Analítica & BI', label: 'Cobertura de Dotación' },
+  ubicacion: { section: 'Analítica & BI', label: 'Ubicación & Mapa de Movilidad' },
   consolidado: { section: 'Analítica & BI', label: 'Control de Asistencia' },
   descuentos_bi: { section: 'Analítica & BI', label: 'Descuentos BI' },
   motivos_bajas_bi: { section: 'Analítica & BI', label: 'Motivos de Bajas' },
@@ -34,6 +37,7 @@ const BREADCRUMB_MAP = {
   cartera_reclutador: { section: 'Reclutamiento', label: 'Mi Cartera (Métricas & Requerimientos)' },
   nominas_completar: { section: 'Operaciones', label: 'Nóminas' },
   nomina: { section: 'Operaciones', label: 'Bolsa de Postulantes' },
+  bolsa_capa: { section: 'Operaciones', label: 'Bolsa de Capa' },
   propuestas: { section: 'Operaciones', label: 'Propuestas' },
   pagos_capacitacion: { section: 'Operaciones', label: 'Pagos de Capacitación' },
   descuentos_auth: { section: 'Operaciones', label: 'Autorización RYS' },
@@ -73,9 +77,11 @@ export default function AppHeader({
   realRole = 'admin',
   currentRole = 'admin',
   onSelectViewRole,
-  onGoToPortal
+  onGoToPortal,
+  onOpenOreoResumen
 }) {
   const breadcrumb = BREADCRUMB_MAP[activeView] || { section: 'GEA DataCenter', label: 'Plataforma' }
+
 
   return (
     <header className="h-14 bg-[var(--bg-surface)] border-b border-[var(--border-normal)] px-4 flex items-center justify-between shrink-0 z-20">
@@ -107,26 +113,52 @@ export default function AppHeader({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. COMMAND BAR (Buscador central con atajo Ctrl+K)
+          2. LOGO GEA CON PIXEL-DISSOLVE (donde estaba el pingüino)
           ───────────────────────────────────────────────────────────── */}
-      <button
-        onClick={onOpenCommandPalette}
-        className="hidden md:flex items-center gap-2.5 h-8.5 px-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-muted)] hover:border-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer w-64 lg:w-80 shadow-2xs group"
-      >
-        <Search className="h-3.5 w-3.5 text-[var(--text-muted)] group-hover:text-[var(--accent)] transition-colors" />
-        <span className="text-xs font-normal truncate flex-1 text-left">
-          Buscar por DNI, nombre, grupo, campaña...
-        </span>
-        <kbd className="inline-flex items-center gap-0.5 rounded border border-[var(--border-normal)] bg-[var(--bg-surface)] px-1.5 py-0.5 text-[9px] font-mono font-bold text-[var(--text-muted)]">
-          <Command className="h-2.5 w-2.5" /> K
-        </kbd>
-      </button>
+      <div className="hidden md:flex items-center justify-center">
+        <div
+          onClick={() => onGoToPortal && onGoToPortal()}
+          title="GEA PERÚ – Workforce Management"
+          className="cursor-pointer hover:scale-105 transition-transform duration-200"
+        >
+          <GeaLogo
+            size="medium"
+            showTagline={true}
+            showSubtitle={true}
+          />
+        </div>
+      </div>
+
 
       {/* ─────────────────────────────────────────────────────────────
-          3. ACCIONES: VISTA ROLES + TEMA + REFRESH + PERFIL
+          3. ACCIONES: RESUMEN OREO + VISTA ROLES + TEMA + REFRESH + PERFIL
           ───────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
         
+        {/* Identificación de Usuario y Rol (Estilo GEA ATC) */}
+        {userProfile && (
+          <div className="hidden lg:flex items-center gap-2 pr-2 border-r border-[var(--border-subtle)] text-xs">
+            <span className="font-bold tracking-wide text-[var(--text-primary)]">
+              {(userProfile.nombre || 'USUARIO').toUpperCase()}
+            </span>
+            <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-black text-[10px] tracking-wider uppercase">
+              {currentRole}
+            </span>
+          </div>
+        )}
+
+        {/* Botón Resumen GEITO (Asistente Ejecutivo GEA) */}
+        {onOpenOreoResumen && (
+          <button
+            onClick={onOpenOreoResumen}
+            title="Abrir Resumen Diario GEITO con KPIs 3D"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:text-white hover:bg-amber-500/25 hover:border-amber-400 transition-all cursor-pointer text-xs font-bold shadow-[0_0_12px_rgba(245,158,11,0.25)] group"
+          >
+            <span className="text-sm">🦁</span>
+            <span>Resumen</span>
+          </button>
+        )}
+
         {/* Modos de Vista por Rol (Simulación para Administrador) */}
         {realRole === 'admin' && onSelectViewRole && (
           <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-xs select-none shadow-2xs">

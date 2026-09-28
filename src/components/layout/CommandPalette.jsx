@@ -29,12 +29,14 @@ import {
   Copy,
   Check,
   Lock,
-  UserCheck2
+  UserCheck2,
+  MapPin
 } from 'lucide-react'
 import { fetchPostulantes, fetchPostulantesReclutador } from '../../lib/dataService'
 import { filterPostulantesReclutador, filterGruposFormador, resolveFormadorDocumento, resolveReclutadorId } from '../../lib/flujoOperativo'
 
 const QUICK_COMMANDS = [
+  { id: 'ubicacion', title: 'Ubicación & Mapa Geoespacial (Asesores a Sedes GEA)', section: 'Analítica & BI', icon: MapPin },
   { id: 'resumen_capacitacion', title: 'Resumen Capacitación (Looker Studio)', section: 'Analítica & BI', icon: BarChart3 },
   { id: 'cobertura_dotacion', title: 'Cobertura de Dotación (WFM Gerencial)', section: 'Analítica & BI', icon: Target },
   { id: 'reportedia1', title: 'Reporte de Calibración — Día 1', section: 'Analítica & BI', icon: Target },
@@ -44,6 +46,7 @@ const QUICK_COMMANDS = [
   { id: 'asistencia', title: 'Control y Marcación de Asistencia', section: 'Operaciones', icon: ClipboardCheck },
   { id: 'cartera_reclutador', title: 'Mi Cartera de Postulantes & Reclutamiento', section: 'Reclutamiento', icon: Target },
   { id: 'nomina', title: 'Bolsa General de Postulantes', section: 'Operaciones', icon: UserPlus },
+  { id: 'bolsa_capa', title: 'Bolsa de Capa (Recuperados y Traslados)', section: 'Operaciones', icon: GraduationCap },
   { id: 'nominas_completar', title: 'Completar Nóminas Operativas', section: 'Operaciones', icon: Users },
   { id: 'asignacion_formador', title: 'Asignar Formador a Grupo', section: 'Operaciones', icon: GraduationCap },
   { id: 'capacidad', title: 'Capacidad y Dimensionamiento RYS', section: 'Operaciones', icon: UserCheck },

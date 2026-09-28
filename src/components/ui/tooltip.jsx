@@ -6,11 +6,9 @@ const TooltipProvider = TooltipPrimitive.Provider
 
 function Tooltip({ children, ...props }) {
   return (
-    <TooltipProvider delayDuration={150}>
-      <TooltipPrimitive.Root {...props}>
-        {children}
-      </TooltipPrimitive.Root>
-    </TooltipProvider>
+    <TooltipPrimitive.Root {...props}>
+      {children}
+    </TooltipPrimitive.Root>
   )
 }
 

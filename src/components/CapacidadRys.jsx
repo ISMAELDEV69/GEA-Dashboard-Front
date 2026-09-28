@@ -287,6 +287,7 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
       let msg = `Importación: ${result.ok} grupos con código importados.`
       if (result.ignored > 0) msg += ` Se omitieron ${result.ignored} grupos sin código.`
       if (result.fail > 0) msg += ` (${result.fail} con error).`
+      if (result.warnings?.length) msg += ` Aviso: ${result.warnings[0]}${result.warnings.length > 1 ? ` (+${result.warnings.length - 1})` : ''}`
       msg += ` Total procesados: ${result.total}.`
       setMessage(msg)
       if (result.errors?.length) console.warn('Import errors:', result.errors)
@@ -356,13 +357,18 @@ export default function CapacidadRys({ grupos = [], campanas = [], postulantes =
                       onProgress: (ev) => setSyncProgress(ev),
                     })
                     if (result.errors && result.errors.length > 0) {
-                      setMessage(`Sincronización Drive: ${result.ok} grupos actualizados. (${result.fail} con error). Error: ${result.errors[0]?.message}`)
+                      if (result.ok === 0) {
+                        setError(`Error al guardar en Supabase: ${result.errors[0]?.message} (${result.fail} grupos rechazados)`)
+                      } else {
+                        setMessage(`Sincronización parcial: ${result.ok} grupos actualizados. (${result.fail} con error: ${result.errors[0]?.message})`)
+                      }
                     } else {
                       let msg = `Sincronización Drive: ${result.ok} grupos actualizados.`
+                      if (result.warnings?.length) msg += ` Aviso: ${result.warnings[0]}${result.warnings.length > 1 ? ` (+${result.warnings.length - 1})` : ''}`
                       setMessage(msg)
                     }
                     if (result.errors?.length) console.warn('Sync errors:', result.errors)
-                    onRefresh?.()
+                    await onRefresh?.()
                   } catch (err) {
                     setError(err.message || 'Error al sincronizar desde Drive.')
                   } finally {

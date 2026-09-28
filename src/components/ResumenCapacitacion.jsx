@@ -10,8 +10,8 @@ import {
   isCampanaProyectada, 
   isGrupoActivo, 
   isGrupoCerrado, 
-  getMaxAutoPeriodo,
   getGrupoPeriodo,
+  resolvePeriodoIngreso,
   normalize2026Period
 } from '../lib/dashboardAnalytics';
 import { 
@@ -34,6 +34,7 @@ import {
   Award,
   Search,
   X,
+  ChevronDown,
   Table as TableIcon,
   PieChart as PieIcon,
   Compass,
@@ -152,6 +153,129 @@ const getGrupoRq = (g) => {
   return rawVal > 0 ? Math.max(0, rawVal) : 0;
 };
 
+const EMPTY_FILTERS = {
+  periodo: [],
+  semana: [],
+  segmento: [],
+  modalidad: [],
+  campana: [],
+  grupo: [],
+  estado: [],
+};
+
+const MODALIDAD_ORDER = ['PRESENCIAL', 'REMOTO', 'HIBRIDO'];
+
+function isFilterAll(values) {
+  return !Array.isArray(values) || values.length === 0;
+}
+
+function normModalidad(val) {
+  const v = String(val || 'PRESENCIAL').toUpperCase().trim();
+  if (v.includes('REMOT')) return 'REMOTO';
+  if (v.includes('HIBR') || v.includes('HYBR')) return 'HIBRIDO';
+  return 'PRESENCIAL';
+}
+
+function MultiSelectFilter({
+  label,
+  allLabel,
+  options = [],
+  values = [],
+  onChange,
+  extraHeader,
+  formatOption,
+}) {
+  const boxRef = useRef(null);
+  const selected = Array.isArray(values) ? values : [];
+  const all = selected.length === 0;
+
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (boxRef.current && !boxRef.current.contains(e.target)) {
+        boxRef.current.querySelectorAll('details').forEach((d) => { d.open = false; });
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const toggle = (opt) => {
+    if (selected.includes(opt)) onChange(selected.filter((v) => v !== opt));
+    else onChange([...selected, opt]);
+  };
+
+  const summary = all
+    ? allLabel
+    : selected.length === 1
+      ? (formatOption ? formatOption(selected[0]) : selected[0])
+      : `${selected.length} seleccionados`;
+
+  return (
+    <div ref={boxRef} className="flex-1 min-w-[150px] relative">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase">{label}</label>
+        {extraHeader}
+      </div>
+      <details
+        className="group relative"
+        onToggle={(e) => {
+          if (!e.currentTarget.open) return;
+          const bar = boxRef.current?.closest('[data-filter-bar]');
+          bar?.querySelectorAll('details').forEach((d) => {
+            if (d !== e.currentTarget) d.open = false;
+          });
+        }}
+      >
+        <summary className={`list-none cursor-pointer w-full bg-[var(--surface-elevated)] border rounded-xl px-3 py-1.5 text-xs text-left flex items-center gap-1.5 outline-none focus:border-cyan-500 [&::-webkit-details-marker]:hidden ${
+          all ? 'border-[var(--border-subtle)] text-[var(--text-primary)]' : 'border-cyan-500/40 text-[var(--text-primary)]'
+        }`}>
+          <span className="truncate flex-1">{summary}</span>
+          {!all && (
+            <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300">
+              {selected.length}
+            </span>
+          )}
+          <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)] transition-transform group-open:rotate-180" />
+        </summary>
+        <div
+          className="absolute z-50 mt-1 w-full min-w-[200px] max-h-60 overflow-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] shadow-xl"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className={`w-full text-left px-3 py-2 text-[11px] font-bold border-b border-[var(--border-subtle)] ${
+              all ? 'text-cyan-400' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            {allLabel}
+          </button>
+          {options.map((opt) => {
+            const checked = selected.includes(opt);
+            return (
+              <label
+                key={opt}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-elevated)] cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(opt)}
+                  className="accent-cyan-500"
+                />
+                <span className="truncate">{formatOption ? formatOption(opt) : opt}</span>
+              </label>
+            );
+          })}
+          {options.length === 0 && (
+            <p className="px-3 py-2 text-[11px] text-[var(--text-muted)]">Sin opciones en este corte</p>
+          )}
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export default function ResumenCapacitacion({
   grupos = [],
   campanasMetas = [],
@@ -166,6 +290,8 @@ export default function ResumenCapacitacion({
 
   // Estado para modal de asesor
   const [selectedAsesor, setSelectedAsesor] = useState(null);
+  // Estado para modal de asesores activos al último corte
+  const [selectedActivosModal, setSelectedActivosModal] = useState(null);
 
   // Estados visuales de interfaz
   const [activeTab, setActiveTab] = useState('DASHBOARD'); // 'DASHBOARD' | 'MATRIZ_TABLA'
@@ -175,16 +301,7 @@ export default function ResumenCapacitacion({
   const [showRiskModal, setShowRiskModal] = useState(false);
   const [showAllPeriodos, setShowAllPeriodos] = useState(false);
 
-  const maxAutoPeriodo = useMemo(() => getMaxAutoPeriodo(), []);
-
-  const [filters, setFilters] = useState({
-    periodo: '202608',
-    semana: 'Todas',
-    segmento: 'Todos',
-    campana: 'Todas',
-    grupo: 'Todos',
-    estado: 'Todos'
-  });
+  const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
 
   // Helpers de normalización robusta
   const norm = (val) => String(val || '').trim().toUpperCase();
@@ -248,24 +365,18 @@ export default function ResumenCapacitacion({
 
   // Filtros activos
   const hasActiveFilters = useMemo(() => {
-    return filters.periodo !== 'Todos' ||
-      filters.semana !== 'Todas' ||
-      filters.segmento !== 'Todos' ||
-      (filters.campana !== 'Todas' && filters.campana !== 'Todos') ||
-      filters.grupo !== 'Todos' ||
-      filters.estado !== 'Todos' ||
+    return !isFilterAll(filters.periodo) ||
+      !isFilterAll(filters.semana) ||
+      !isFilterAll(filters.segmento) ||
+      !isFilterAll(filters.modalidad) ||
+      !isFilterAll(filters.campana) ||
+      !isFilterAll(filters.grupo) ||
+      !isFilterAll(filters.estado) ||
       Boolean(searchQuery);
   }, [filters, searchQuery]);
 
   const handleResetFilters = () => {
-    setFilters({
-      periodo: '202608',
-      semana: 'Todas',
-      segmento: 'Todos',
-      campana: 'Todas',
-      grupo: 'Todos',
-      estado: 'Todos'
-    });
+    setFilters({ ...EMPTY_FILTERS });
     setSearchQuery('');
     setShowAllPeriodos(false);
   };
@@ -274,29 +385,32 @@ export default function ResumenCapacitacion({
   const filterOptions = useMemo(() => {
     const rawDataset = data.length > 0 ? data : (campanasMetas.length > 0 ? campanasMetas : (capacidadRys.length > 0 ? capacidadRys : grupos));
     const dataset = (rawDataset || []).filter(g => {
-      if (isCampanaProyectada(g) || g.is_cancelado) return false;
+      if (g.is_cancelado) return false;
       const st = norm(g.estado);
       if (st.includes('CANCEL') || st.includes('ANULAD') || st.includes('INACT')) return false;
       return true;
     });
     
-    // 1. Periodos (Periodo de Ingreso a Operación >= MIN_PERIODO_CORTE)
-    const periodos = new Set();
+    // 1. Periodos = PERIODO INGRESO. Operativos siempre visibles; proyectados solo con + Proyectados.
+    const periodosOperativos = new Set();
+    const periodosProyectados = new Set();
     dataset.forEach(g => {
-      const cleanP = getGrupoPeriodo(g) || normalize2026Period(g.periodo_ingreso_op || g.periodo || g.periodo_rys);
+      const cleanP = resolvePeriodoIngreso(g) || getGrupoPeriodo(g);
       if (!cleanP || cleanP < MIN_PERIODO_CORTE) return;
-
-      if (showAllPeriodos || cleanP <= maxAutoPeriodo) {
-        periodos.add(cleanP);
-      }
+      if (isCampanaProyectada(g)) periodosProyectados.add(cleanP);
+      else periodosOperativos.add(cleanP);
     });
+    const periodos = new Set(periodosOperativos);
+    if (showAllPeriodos) {
+      periodosProyectados.forEach((p) => periodos.add(p));
+    }
     
     // Subfiltro por periodo activo
     const subPeriodo = dataset.filter(g => {
-      const cleanP = getGrupoPeriodo(g) || normalize2026Period(g.periodo_ingreso_op || g.periodo || g.periodo_rys);
+      const cleanP = resolvePeriodoIngreso(g) || getGrupoPeriodo(g);
       if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
-      if (!showAllPeriodos && cleanP && cleanP > maxAutoPeriodo) return false;
-      return filters.periodo === 'Todos' || cleanP === String(filters.periodo || '').trim();
+      if (isCampanaProyectada(g) && !showAllPeriodos) return false;
+      return isFilterAll(filters.periodo) || filters.periodo.includes(String(cleanP || '').trim());
     });
 
     // 2. Semanas (filtradas por periodo activo)
@@ -313,26 +427,32 @@ export default function ResumenCapacitacion({
 
     // Subfiltro por semana activa
     const subSemana = subPeriodo.filter(g => {
-      if (filters.semana === 'Todas') return true;
-      return normSem(g.semana || g.semana_label || g.semana_trabajo) === normSem(filters.semana);
+      if (isFilterAll(filters.semana)) return true;
+      const sem = normSem(g.semana || g.semana_label || g.semana_trabajo);
+      return filters.semana.some((s) => normSem(s) === sem);
     });
 
     // 3. Segmentos Oficiales (filtrados por periodo y semana activos)
     const segmentos = new Set(subSemana.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean));
-    
-    // 4. Campañas (filtradas por periodo, semana, segmento y reactivas al filtro de estado)
-    const subCampanas = subSemana.filter(g => {
-      if (filters.segmento !== 'Todos' && normalizeSegmento(g.segmento, g.campana) !== filters.segmento) return false;
 
-      if (filters.estado !== 'Todos') {
-        const filEstadoNorm = norm(filters.estado);
-        if (filEstadoNorm === 'EN CURSO' || filEstadoNorm === 'ACTIVO') {
-          return isGrupoActivo(g);
-        } else if (filEstadoNorm === 'CERRADO') {
-          return isGrupoCerrado(g);
-        } else {
-          return norm(g.estado) === filEstadoNorm;
-        }
+    const subSegmento = subSemana.filter((g) => {
+      if (!isFilterAll(filters.segmento) && !filters.segmento.includes(normalizeSegmento(g.segmento, g.campana))) return false;
+      return true;
+    });
+
+    const modalidades = new Set(subSegmento.map((g) => normModalidad(g.modalidad)));
+
+    // 4. Campañas (filtradas por periodo, semana, segmento, modalidad y estado)
+    const subCampanas = subSegmento.filter(g => {
+      if (!isFilterAll(filters.modalidad) && !filters.modalidad.includes(normModalidad(g.modalidad))) return false;
+
+      if (!isFilterAll(filters.estado)) {
+        const wantsActivo = filters.estado.some((e) => ['EN CURSO', 'ACTIVO'].includes(norm(e)));
+        const wantsCerrado = filters.estado.some((e) => norm(e) === 'CERRADO');
+        if (wantsActivo && wantsCerrado) return isGrupoActivo(g) || isGrupoCerrado(g);
+        if (wantsActivo) return isGrupoActivo(g);
+        if (wantsCerrado) return isGrupoCerrado(g);
+        return filters.estado.some((e) => norm(g.estado) === norm(e));
       }
       return true;
     });
@@ -347,9 +467,9 @@ export default function ResumenCapacitacion({
     const estados = ['EN CURSO', 'CERRADO'];
 
     // 6. Grupos (filtrados por campaña activa y estado)
-    const isCampanaFiltered = filters.campana !== 'Todas' && filters.campana !== 'Todos' && Boolean(filters.campana);
+    const isCampanaFiltered = !isFilterAll(filters.campana);
     const subGrupos = subCampanas.filter(g => {
-      if (isCampanaFiltered && norm(g.campana) !== norm(filters.campana)) return false;
+      if (isCampanaFiltered && !filters.campana.some((c) => norm(c) === norm(g.campana))) return false;
       return true;
     });
     const gruposSet = new Set(subGrupos.map(g => g.codigo || g.grupo_codigo ? String(g.codigo || g.grupo_codigo).trim() : null).filter(Boolean));
@@ -358,48 +478,42 @@ export default function ResumenCapacitacion({
       periodos: Array.from(periodos).sort().reverse(),
       semanas,
       segmentos: Array.from(segmentos).sort(),
+      modalidades: Array.from(modalidades).sort((a, b) => {
+        const ia = MODALIDAD_ORDER.indexOf(a);
+        const ib = MODALIDAD_ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+      }),
       campanas: Array.from(campanas).sort((a, b) => a.localeCompare(b)),
       estados,
       grupos: Array.from(gruposSet).sort()
     };
-  }, [data, capacidadRys, campanasMetas, grupos, filters, showAllPeriodos, maxAutoPeriodo]);
+  }, [data, capacidadRys, campanasMetas, grupos, filters, showAllPeriodos]);
 
-  // Sincronización reactiva de filtros en cascada completa
+  // Sincronización reactiva: quita valores que ya no existen en el corte
   useEffect(() => {
-    if (filters.semana !== 'Todas') {
-      if (filterOptions.semanas && !filterOptions.semanas.includes(filters.semana)) {
-        setFilters(f => ({ ...f, semana: 'Todas', campana: 'Todas', grupo: 'Todos' }));
-      }
-    }
-  }, [filterOptions.semanas, filters.semana]);
-
-  useEffect(() => {
-    if (filters.segmento !== 'Todos') {
-      if (filterOptions.segmentos && !filterOptions.segmentos.includes(filters.segmento)) {
-        setFilters(f => ({ ...f, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }));
-      }
-    }
-  }, [filterOptions.segmentos, filters.segmento]);
-
-  useEffect(() => {
-    if (filters.campana !== 'Todas' && filters.campana !== 'Todos') {
-      if (filterOptions.campanas && !filterOptions.campanas.includes(filters.campana)) {
-        setFilters(f => ({ ...f, campana: 'Todas', grupo: 'Todos' }));
-      }
-    }
-  }, [filterOptions.campanas, filters.campana]);
-
-  useEffect(() => {
-    if (filters.grupo !== 'Todos') {
-      if (filterOptions.grupos && !filterOptions.grupos.includes(filters.grupo)) {
-        setFilters(f => ({ ...f, grupo: 'Todos' }));
-      }
-    }
-  }, [filterOptions.grupos, filters.grupo]);
+    setFilters((f) => {
+      const next = {
+        ...f,
+        semana: f.semana.filter((s) => filterOptions.semanas.includes(s)),
+        segmento: f.segmento.filter((s) => filterOptions.segmentos.includes(s)),
+        modalidad: f.modalidad.filter((m) => filterOptions.modalidades.includes(m)),
+        campana: f.campana.filter((c) => filterOptions.campanas.includes(c)),
+        grupo: f.grupo.filter((g) => filterOptions.grupos.includes(g)),
+      };
+      if (
+        next.semana.length === f.semana.length
+        && next.segmento.length === f.segmento.length
+        && next.modalidad.length === f.modalidad.length
+        && next.campana.length === f.campana.length
+        && next.grupo.length === f.grupo.length
+      ) return f;
+      return next;
+    });
+  }, [filterOptions.semanas.join('|'), filterOptions.segmentos.join('|'), filterOptions.modalidades.join('|'), filterOptions.campanas.join('|'), filterOptions.grupos.join('|')]);
 
   // Datos filtrados en caliente con normalización exacta
   const filteredData = useMemo(() => {
-    const isCampanaFiltered = filters.campana !== 'Todas' && filters.campana !== 'Todos' && Boolean(filters.campana);
+    const isCampanaFiltered = !isFilterAll(filters.campana);
 
     return data.filter(d => {
       // Excluir grupos proyectados fuera de operación
@@ -410,52 +524,53 @@ export default function ResumenCapacitacion({
       const stNorm = norm(d.estado);
       if (stNorm.includes('CANCEL') || stNorm.includes('ANULAD') || stNorm.includes('INACT')) return false;
 
-      // Filtro Periodo (Periodo de Ingreso a Operación)
-      const cleanP = getGrupoPeriodo(d) || normalize2026Period(d.periodo_ingreso_op || d.periodo);
+      // Filtro Periodo (PERIODO INGRESO OP)
+      const cleanP = resolvePeriodoIngreso(d) || getGrupoPeriodo(d);
       if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
 
-      // Desbloqueo dinámico: solo hasta maxAutoPeriodo cuando showAllPeriodos es false
-      if (!showAllPeriodos && cleanP && cleanP > maxAutoPeriodo) {
-        return false;
-      }
-
-      if (filters.periodo !== 'Todos' && cleanP !== String(filters.periodo || '').trim()) {
+      if (!isFilterAll(filters.periodo) && !filters.periodo.includes(String(cleanP || '').trim())) {
         return false;
       }
       // Filtro Semana (Normalización estricta numérica / SEM XX)
-      if (filters.semana !== 'Todas') {
+      if (!isFilterAll(filters.semana)) {
         const semNorm = normSem(d.semana);
-        if (semNorm !== normSem(filters.semana)) {
+        if (!filters.semana.some((s) => normSem(s) === semNorm)) {
           return false;
         }
       }
       // Filtro Segmento (Normalizado robusto)
       const segNorm = normalizeSegmento(d.segmento, d.campana);
-      if (filters.segmento !== 'Todos' && norm(segNorm) !== norm(filters.segmento)) {
+      if (!isFilterAll(filters.segmento) && !filters.segmento.some((s) => norm(segNorm) === norm(s))) {
+        return false;
+      }
+      if (!isFilterAll(filters.modalidad) && !filters.modalidad.includes(normModalidad(d.modalidad))) {
         return false;
       }
       // Filtro Estado del Grupo (EN CURSO vs CERRADO reactivo)
-      if (filters.estado !== 'Todos') {
-        const filNorm = norm(filters.estado);
-        if (filNorm === 'CERRADO') {
+      if (!isFilterAll(filters.estado)) {
+        const wantsActivo = filters.estado.some((e) => ['EN CURSO', 'ACTIVO'].includes(norm(e)));
+        const wantsCerrado = filters.estado.some((e) => norm(e) === 'CERRADO');
+        if (wantsActivo && wantsCerrado) {
+          if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
+        } else if (wantsCerrado) {
           if (!isGrupoCerrado(d)) return false;
-        } else if (filNorm === 'EN CURSO' || filNorm === 'ACTIVO') {
+        } else if (wantsActivo) {
           if (!isGrupoActivo(d)) return false;
-        } else {
-          if (norm(d.estado) !== filNorm) return false;
+        } else if (!filters.estado.some((e) => norm(d.estado) === norm(e))) {
+          return false;
         }
       } else {
         // En 'Todos', asegurar que no se incluyan grupos cancelados o inactivos fantasma
         if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
       }
       // Filtro Campaña
-      if (isCampanaFiltered && norm(d.campana) !== norm(filters.campana)) {
+      if (isCampanaFiltered && !filters.campana.some((c) => norm(c) === norm(d.campana))) {
         return false;
       }
       // Filtro Grupo / GPE — verifica contra ambas claves posibles
-      if (filters.grupo !== 'Todos') {
+      if (!isFilterAll(filters.grupo)) {
         const grupoNorm = norm(d.grupo_codigo || d.codigo);
-        if (grupoNorm !== norm(filters.grupo)) {
+        if (!filters.grupo.some((g) => grupoNorm === norm(g))) {
           return false;
         }
       }
@@ -471,7 +586,7 @@ export default function ResumenCapacitacion({
       }
       return true;
     });
-  }, [data, filters, searchQuery, showAllPeriodos, maxAutoPeriodo]);
+  }, [data, filters, searchQuery, showAllPeriodos]);
 
   // Totales Scorecard
   // Totales Scorecard
@@ -702,11 +817,11 @@ export default function ResumenCapacitacion({
     const rqTotal = kpis.rq_solicitado || 0;
 
     // Detectar si el filtro es granular (Semana puntual, Campaña puntual, Grupo puntual o Estado Cerrado)
-    const isGranularFilter = filters.semana !== 'Todas' || filters.grupo !== 'Todos' || (filters.campana !== 'Todas' && filters.campana !== 'Todos') || filters.estado === 'CERRADO';
+    const isGranularFilter = !isFilterAll(filters.semana) || !isFilterAll(filters.grupo) || !isFilterAll(filters.campana) || !isFilterAll(filters.modalidad) || filters.estado.some((e) => norm(e) === 'CERRADO');
     const allClosed = filteredData.length > 0 && filteredData.every(d => d.is_cerrado);
 
     // Detectar si el periodo seleccionado es un mes pasado/cerrado
-    const pStr = String(filters.periodo || '').trim();
+    const pStr = filters.periodo.length === 1 ? String(filters.periodo[0] || '').trim() : '';
     const pMatch = pStr.match(/(\d{4})[-_/\s]?(\d{2})/);
     const filterYear = pMatch ? parseInt(pMatch[1], 10) : null;
     const filterMonth = pMatch ? parseInt(pMatch[2], 10) - 1 : null; // 0-indexed
@@ -738,7 +853,7 @@ export default function ResumenCapacitacion({
     const currentPeriodoDigits = `${currentYear}${String(currentMonth + 1).padStart(2, '0')}`;
 
     let docsMesActual = [];
-    if (filters.periodo === 'Todos') {
+    if (isFilterAll(filters.periodo)) {
       docsMesActual = uniqueDocsList.filter(item => {
         if (item.fecha_iop) {
           return item.fecha_iop.startsWith(currentYearMonthPrefix);
@@ -793,7 +908,7 @@ export default function ResumenCapacitacion({
       isGranularFilter: isGranularFilter || allClosed,
       isCloseToTarget: parseFloat(pctProyeccion) >= 80
     };
-  }, [kpis, filters.periodo, filters.semana, filters.grupo, filters.campana, filters.estado, filteredData]);
+  }, [kpis, filters.periodo, filters.semana, filters.grupo, filters.campana, filters.modalidad, filters.estado, filteredData]);
 
   // ── 3. KPI SUPERIOR: RIESGO DE COBERTURA (BRECHA FTE REAL vs RQ) ──
   const kpiAlertas = useMemo(() => {
@@ -1139,6 +1254,7 @@ export default function ResumenCapacitacion({
         'RQ Solicitado': req,
         'Total Nómina': d.total_nomina,
         'Asistió Día 1 (Efectivo)': d.asistio_dia1,
+        'Activos (Últ. Corte)': d.activos_actuales !== undefined ? d.activos_actuales : 0,
         'Activos en OJT': d.activos_ojt,
         'Pases I-OP (Personas)': d.ingresos_iop,
         'Pases I-OP (FTEs)': d.ingresos_iop_ftes !== undefined ? d.ingresos_iop_ftes : d.ingresos_iop,
@@ -1222,13 +1338,16 @@ export default function ResumenCapacitacion({
         </div>
       </div>
 
-      {/* ── BARRA DE FILTROS CRUZADOS: PERIODO → SEMANA → SEGMENTO → CAMPAÑA → GRUPO ── */}
-      <div className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
+      {/* ── BARRA DE FILTROS CRUZADOS MULTISELECT: PERIODO → SEMANA → SEGMENTO → CAMPAÑA → GRUPO ── */}
+      <div data-filter-bar className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
 
-        {/* 1. PERIODO */}
-        <div className="flex-1 min-w-[140px]">
-          <div className="flex items-center justify-between mb-1">
-            <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase">Periodo</label>
+        <MultiSelectFilter
+          label="Periodo ingreso"
+          allLabel="Todos los Periodos"
+          options={filterOptions.periodos}
+          values={filters.periodo}
+          onChange={(periodo) => setFilters((f) => ({ ...f, periodo }))}
+          extraHeader={
             <button
               type="button"
               onClick={() => setShowAllPeriodos(v => !v)}
@@ -1241,87 +1360,57 @@ export default function ResumenCapacitacion({
             >
               {showAllPeriodos ? '★ Todos' : '+ Proyectados'}
             </button>
-          </div>
-          <select
-            value={filters.periodo}
-            onChange={(e) => setFilters(f => ({ ...f, periodo: e.target.value, semana: 'Todas', segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todos">Todos los Periodos</option>
-            {filterOptions.periodos.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
+          }
+        />
 
-        {/* 2. SEMANA */}
-        <div className="flex-1 min-w-[120px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Semana</label>
-          <select
-            value={filters.semana}
-            onChange={(e) => setFilters(f => ({ ...f, semana: e.target.value, segmento: 'Todos', campana: 'Todas', grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todas">Todas las Semanas</option>
-            {filterOptions.semanas.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+        <MultiSelectFilter
+          label="Semana"
+          allLabel="Todas las Semanas"
+          options={filterOptions.semanas}
+          values={filters.semana}
+          onChange={(semana) => setFilters((f) => ({ ...f, semana }))}
+        />
 
-        {/* 3. SEGMENTO */}
-        <div className="flex-1 min-w-[170px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Segmento</label>
-          <select
-            value={filters.segmento}
-            onChange={(e) => setFilters(f => ({ ...f, segmento: e.target.value, campana: 'Todas', grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todos">Todos los Segmentos</option>
-            {filterOptions.segmentos.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+        <MultiSelectFilter
+          label="Segmento"
+          allLabel="Todos los Segmentos"
+          options={filterOptions.segmentos}
+          values={filters.segmento}
+          onChange={(segmento) => setFilters((f) => ({ ...f, segmento }))}
+        />
 
-        {/* 4. CAMPAÑA */}
-        <div className="flex-1 min-w-[160px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">
-            Campaña
-          </label>
-          <select
-            value={filters.campana}
-            onChange={(e) => setFilters(f => ({ ...f, campana: e.target.value, grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todas">Todas las Campañas</option>
-            {filterOptions.campanas.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
+        <MultiSelectFilter
+          label="Modalidad"
+          allLabel="Todas las Modalidades"
+          options={filterOptions.modalidades}
+          values={filters.modalidad}
+          onChange={(modalidad) => setFilters((f) => ({ ...f, modalidad }))}
+        />
 
-        {/* 5. GRUPO (GPE) */}
-        <div className="flex-1 min-w-[150px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Grupo</label>
-          <select
-            value={filters.grupo}
-            onChange={(e) => setFilters(f => ({ ...f, grupo: e.target.value }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todos">Todos los Grupos</option>
-            {filterOptions.grupos.map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
-        </div>
+        <MultiSelectFilter
+          label="Campaña"
+          allLabel="Todas las Campañas"
+          options={filterOptions.campanas}
+          values={filters.campana}
+          onChange={(campana) => setFilters((f) => ({ ...f, campana }))}
+        />
 
-        {/* 6. ESTADO */}
-        <div className="flex-1 min-w-[140px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Estado</label>
-          <select
-            value={filters.estado}
-            onChange={(e) => setFilters(f => ({ ...f, estado: e.target.value, campana: 'Todas', grupo: 'Todos' }))}
-            className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl px-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-          >
-            <option value="Todos">Todos (Activos y Cerrados)</option>
-            {filterOptions.estados.map(e => (
-              <option key={e} value={e}>
-                {e === 'EN CURSO' ? '🟢 EN CURSO (Activos)' : e === 'CERRADO' ? '⚪ CERRADO' : e}
-              </option>
-            ))}
-          </select>
-        </div>
+        <MultiSelectFilter
+          label="Grupo"
+          allLabel="Todos los Grupos"
+          options={filterOptions.grupos}
+          values={filters.grupo}
+          onChange={(grupo) => setFilters((f) => ({ ...f, grupo }))}
+        />
+
+        <MultiSelectFilter
+          label="Estado"
+          allLabel="Todos (Activos y Cerrados)"
+          options={filterOptions.estados}
+          values={filters.estado}
+          onChange={(estado) => setFilters((f) => ({ ...f, estado }))}
+          formatOption={(e) => (e === 'EN CURSO' ? '🟢 EN CURSO (Activos)' : e === 'CERRADO' ? '⚪ CERRADO' : e)}
+        />
 
         {/* 7. BÚSQUEDA RÁPIDA */}
         <div className="flex-1 min-w-[180px]">
@@ -1609,6 +1698,9 @@ export default function ResumenCapacitacion({
               <div className="mt-4 pt-3 border-t border-[var(--border-normal)] flex flex-wrap items-center justify-between text-xs text-[var(--text-secondary)] gap-2">
                 <span>Total Evaluados: <strong className="text-[var(--text-primary)]">{kpis.total_nomina.toLocaleString()}</strong></span>
                 <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-[var(--text-muted)] font-mono">
+                    Activos al Corte: <strong className="text-cyan-400">{kpis.activos_actuales.toLocaleString()}</strong>
+                  </span>
                   <span className="text-[11px] text-[var(--text-muted)] font-mono">
                     En OJT: <strong className="text-teal-400">{kpis.activos_ojt.toLocaleString()}</strong>
                   </span>
@@ -1943,12 +2035,13 @@ export default function ResumenCapacitacion({
                   <th className="py-3 px-2 text-right">RQ</th>
                   <th className="py-3 px-2 text-right">Nómina</th>
                   <th className="py-3 px-2 text-right">Día 1</th>
+                  <th className="py-3 px-2 text-right text-cyan-400 font-bold" title="Asesores activos al último corte de asistencia sin pase I-OP">Activos (Últ. Corte)</th>
                   <th className="py-3 px-2 text-right">OJT</th>
                   <th className="py-3 px-2 text-right">I-OP</th>
                   <th className="py-3 px-2 text-right text-emerald-400">I-OP (FTE)</th>
                 </tr>
               </thead>
-              <tbody key={`matrix_${filters.periodo}_${filters.semana}_${filters.segmento}_${filters.campana}_${filters.grupo}_${filters.estado}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
+              <tbody key={`matrix_${filters.periodo.join('|')}_${filters.semana.join('|')}_${filters.segmento.join('|')}_${filters.modalidad.join('|')}_${filters.campana.join('|')}_${filters.grupo.join('|')}_${filters.estado.join('|')}_${searchQuery}`} className="divide-y divide-[var(--border-subtle)]">
                 {filteredData.map((d, i) => {
                   const areaNorm = String(d.area_traslado || '').trim().toUpperCase();
                   const req = getGrupoRq(d);
@@ -2006,6 +2099,21 @@ export default function ResumenCapacitacion({
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--text-secondary)]">{req}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold">{d.total_nomina}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold">{d.asistio_dia1}</td>
+                      <td className="py-2.5 px-2 text-right font-mono">
+                        {(d.activos_actuales || 0) > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedActivosModal(d)}
+                            className="px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 font-bold transition-all cursor-pointer hover:scale-105 inline-flex items-center gap-1"
+                            title="Ver detalle de asesores activos al último corte sin I-OP"
+                          >
+                            <span>{d.activos_actuales}</span>
+                            <Users className="w-3 h-3 opacity-80" />
+                          </button>
+                        ) : (
+                          <span className="text-[var(--text-muted)] font-semibold">0</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-2 text-right font-mono text-teal-400 font-bold">{d.activos_ojt}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-amber-400 font-black">{d.ingresos_iop}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-emerald-400 font-black">
@@ -2018,7 +2126,7 @@ export default function ResumenCapacitacion({
                 })}
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">
+                    <td colSpan={16} className="py-12 text-center text-[var(--text-muted)]">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-40 text-cyan-400" />
                       <p className="font-bold text-xs">No hay cohortes que coincidan con los filtros seleccionados.</p>
                     </td>
@@ -2121,6 +2229,110 @@ export default function ResumenCapacitacion({
               <button
                 type="button"
                 onClick={() => setShowRiskModal(false)}
+                className="px-4 py-1.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-bold transition-all cursor-pointer text-xs"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DETALLE DE ASESORES ACTIVOS AL ÚLTIMO CORTE (PENDIENTES DE I-OP) */}
+      {selectedActivosModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-3xl bg-[var(--surface-elevated)] border border-[var(--border-strong)] rounded-2xl shadow-2xl p-6 overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-black text-[var(--text-primary)]">
+                      Asesores Activos al Último Corte
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 font-mono text-xs font-bold border border-cyan-500/30">
+                      {selectedActivosModal.grupo_codigo}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                    Campaña: <strong className="text-[var(--text-primary)]">{selectedActivosModal.campana}</strong> · Formador: <strong className="text-[var(--text-primary)]">{selectedActivosModal.formador || 'Sin Asignar'}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedActivosModal(null)}
+                className="w-8 h-8 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-200 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
+              <span>
+                Estos asesores registran asistencia activa en la cohorte sin marca de baja, pero <strong>aún no tienen pase formal registrado a Operación (I-OP)</strong>. Permite verificar quiénes faltan por graduar o a quiénes no se les dio ingreso.
+              </span>
+            </div>
+
+            <div className="mt-4 flex-1 overflow-y-auto pr-1 border border-[var(--border-subtle)] rounded-xl">
+              {(!selectedActivosModal.asesores_activos_detalle || selectedActivosModal.asesores_activos_detalle.length === 0) ? (
+                <div className="py-12 text-center text-[var(--text-muted)]">
+                  <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-400 opacity-60" />
+                  <p className="font-bold text-xs text-[var(--text-primary)]">No hay asesores pendientes</p>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                    Todos los alumnos de esta cohorte ya tienen I-OP o fueron procesados como baja.
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--surface)] sticky top-0 z-10 border-b border-[var(--border-subtle)] text-[10px] uppercase font-black text-[var(--text-muted)] tracking-wider">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Documento (DNI)</th>
+                      <th className="py-2.5 px-3">Apellidos y Nombres</th>
+                      <th className="py-2.5 px-3">Celular / Teléfono</th>
+                      <th className="py-2.5 px-3 text-center">Etapa Actual</th>
+                      <th className="py-2.5 px-3 text-center">Últ. Asistencia</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {selectedActivosModal.asesores_activos_detalle.map((a, idx) => (
+                      <tr key={a.documento || idx} className="hover:bg-[var(--surface-hover)] transition-colors">
+                        <td className="py-2.5 px-3 text-[var(--text-muted)] font-mono text-[11px]">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-cyan-400 whitespace-nowrap">{a.documento}</td>
+                        <td className="py-2.5 px-3 font-semibold text-[var(--text-primary)]">{a.nombres}</td>
+                        <td className="py-2.5 px-3 font-mono text-[var(--text-secondary)] whitespace-nowrap">
+                          {a.celular || '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            a.etapa === 'OJT'
+                              ? 'bg-teal-500/15 text-teal-300 border border-teal-500/30'
+                              : 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
+                          }`}>
+                            {a.etapa}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
+                          {a.ultima_asistencia || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-xs text-[var(--text-muted)]">
+              <span>
+                Total activos sin I-OP: <strong className="text-cyan-400 font-mono text-sm font-bold">{selectedActivosModal.asesores_activos_detalle?.length || selectedActivosModal.activos_actuales || 0}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedActivosModal(null)}
                 className="px-4 py-1.5 rounded-lg bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-bold transition-all cursor-pointer text-xs"
               >
                 Cerrar

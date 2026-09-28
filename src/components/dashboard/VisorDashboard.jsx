@@ -14,6 +14,7 @@ import { DashboardHeader, KpiCard, StorySection, EmptyDataHint, CHART_COLORS, ch
 import PageLayout from '../ui/PageLayout'
 import PageHeader from '../ui/PageHeader'
 import Card, { CardHeader } from '../ui/Card'
+import OreoResumenCard from './OreoResumenCard'
 
 export default function VisorDashboard({ postulantes = [], asistencias = [], grupos = [], campanasMetas = [] }) {
   const [financialKpis, setFinancialKpis] = useState(null)
@@ -82,6 +83,9 @@ export default function VisorDashboard({ postulantes = [], asistencias = [], gru
         subtitle="Análisis estratégico del consolidado: reclutamiento → capacitación → operaciones → costo laboral"
         badge="Storytelling ejecutivo"
       />
+
+      {/* ── ASISTENTE NARRATIVO IA "OREO" (RESUMEN DIARIO EJECUTIVO) ── */}
+      <OreoResumenCard kpis={metrics} userRole="visor" className="mb-2" />
 
       <StorySection
         title="Narrativa ejecutiva"

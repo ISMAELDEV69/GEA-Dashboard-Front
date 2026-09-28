@@ -1,6 +1,5 @@
 import React, { useState, useRef } from 'react'
 import { GeaModernDeltaEmblem } from './GeaLogo'
-import GeaMascotCompanion from './GeaMascotCompanion'
 import '../styles/homeSelector.css'
 
 /**
@@ -648,8 +647,6 @@ export default function HomeSelector({
         </div>
       </footer>
 
-      {/* Asistente Virtual Flotante GEA (Fijo en pantalla, WhatsApp directo) */}
-      <GeaMascotCompanion userName={firstName} adminPhone="51980690494" />
     </div>
   )
 }

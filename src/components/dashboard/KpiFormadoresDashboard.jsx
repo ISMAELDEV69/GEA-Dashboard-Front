@@ -20,6 +20,7 @@ import {
 } from '../../lib/kpiFormadoresAnalytics'
 import { ChartTooltipContent } from '../ui/chart-tooltip'
 import Card, { CardHeader, CardTitle, CardContent } from '../ui/Card'
+import KpiMultiSelect from './KpiMultiSelect'
 
 const OPTION_CLASS = 'bg-[var(--bg-surface)] text-[var(--text-primary)]'
 const MINI_SELECT =
@@ -99,8 +100,8 @@ function useAppPresentation() {
   return useMemo(() => buildPresentation(mode), [mode])
 }
 
-function MiniSelect({ value, onChange, children, wide = false, mono = false }) {
-  return (
+function MiniSelect({ value, onChange, children, wide = false, mono = false, label }) {
+  const select = (
     <select
       value={value}
       onChange={onChange}
@@ -108,6 +109,13 @@ function MiniSelect({ value, onChange, children, wide = false, mono = false }) {
     >
       {children}
     </select>
+  )
+  if (!label) return select
+  return (
+    <label className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-[9px] font-black uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+      {select}
+    </label>
   )
 }
 
@@ -214,7 +222,8 @@ function FormadorMatrix({ matrix, metric = 'all', selected = null, onSelect }) {
       semaforo: 'ingresoOp',
     },
   }
-  const metrics = metric === 'all' ? Object.values(specs) : [specs[metric] || specs.pctDotacion]
+  const defaultMetrics = [specs.pctDotacion, specs.pctDesercion]
+  const metrics = metric === 'all' ? defaultMetrics : [specs[metric] || specs.pctDotacion]
 
   const nameWidth = 136
   const aulasWidth = 44
@@ -473,17 +482,18 @@ export default function KpiFormadoresDashboard({
   const canSeeKpiFormadores = userRole !== 'formador' && userRole !== 'reclutador'
   const theme = useAppPresentation()
 
-  const [periodo, setPeriodo] = useState(() => currentOperativePeriodo())
-  const [semana, setSemana] = useState('ALL')
-  const [segmento, setSegmento] = useState('ALL')
-  const [campana, setCampana] = useState('ALL')
-  const [grupo, setGrupo] = useState('ALL')
-  const [formador, setFormador] = useState('ALL')
-  const [modalidad, setModalidad] = useState('ALL')
-  const [condicion, setCondicion] = useState('ALL')
+  const [periodo, setPeriodo] = useState(() => [currentOperativePeriodo()])
+  const [periodoReclutado, setPeriodoReclutado] = useState([])
+  const [semana, setSemana] = useState([])
+  const [segmento, setSegmento] = useState([])
+  const [campana, setCampana] = useState([])
+  const [grupo, setGrupo] = useState([])
+  const [formador, setFormador] = useState([])
+  const [modalidad, setModalidad] = useState([])
+  const [condicion, setCondicion] = useState([])
   const [vista, setVista] = useState('resumen')
   const [ejeFlujo, setEjeFlujo] = useState('periodo')
-  const [ejeTiempo, setEjeTiempo] = useState('semana')
+  const [ejeTiempo, setEjeTiempo] = useState('periodo')
   const [etapaMotivo, setEtapaMotivo] = useState('ct')
   const [gaugeMetric, setGaugeMetric] = useState(null)
   const [selectedFormador, setSelectedFormador] = useState(null)
@@ -503,25 +513,109 @@ export default function KpiFormadoresDashboard({
     if (!canSeeKpiFormadores && vista !== 'resumen') setVista('resumen')
   }, [canSeeKpiFormadores, vista])
 
+  useEffect(() => {
+    if (vista === 'kpi') setEjeTiempo('periodo')
+  }, [vista])
+
   const options = useMemo(() => {
-    const byPeriodo = filterFormadorRows(people, { periodo, formador: effectiveFormador })
-    const bySeg = filterFormadorRows(byPeriodo, { periodo, segmento, formador: effectiveFormador })
-    const byCamp = filterFormadorRows(bySeg, { periodo, segmento, campana, formador: effectiveFormador })
+    const forPeriodosReclutado = filterFormadorRows(people, {
+      periodo,
+      formador: effectiveFormador,
+    })
+
+    const forSemanas = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      segmento,
+      campana,
+      grupo,
+      formador: effectiveFormador,
+      modalidad,
+      condicion,
+    })
+
+    const forSegmentos = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      campana,
+      grupo,
+      formador: effectiveFormador,
+      modalidad,
+      condicion,
+    })
+
+    const forCampanas = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      grupo,
+      formador: effectiveFormador,
+      modalidad,
+      condicion,
+    })
+
+    const forGrupos = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      formador: effectiveFormador,
+      modalidad,
+      condicion,
+    })
+
+    const forFormadores = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      grupo,
+      modalidad,
+      condicion,
+    })
+
+    const forModalidades = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      grupo,
+      formador: effectiveFormador,
+      condicion,
+    })
+
+    const forCondiciones = filterFormadorRows(people, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      grupo,
+      formador: effectiveFormador,
+      modalidad,
+    })
+
     return {
       all: buildFilterOptions(people),
-      semanas: buildFilterOptions(byPeriodo).semanas,
-      segmentos: buildFilterOptions(byPeriodo).segmentos,
-      campanas: buildFilterOptions(bySeg).campanas,
-      grupos: buildFilterOptions(byCamp).grupos,
-      formadores: buildFilterOptions(people).formadores,
-      modalidades: buildFilterOptions(people).modalidades,
-      condiciones: buildFilterOptions(people).condiciones,
+      periodosReclutado: buildFilterOptions(forPeriodosReclutado).periodosReclutado,
+      semanas: buildFilterOptions(forSemanas).semanas,
+      segmentos: buildFilterOptions(forSegmentos).segmentos,
+      campanas: buildFilterOptions(forCampanas).campanas,
+      grupos: buildFilterOptions(forGrupos).grupos,
+      formadores: buildFilterOptions(forFormadores).formadores,
+      modalidades: buildFilterOptions(forModalidades).modalidades,
+      condiciones: buildFilterOptions(forCondiciones).condiciones,
     }
-  }, [people, periodo, segmento, campana, effectiveFormador])
+  }, [people, periodo, periodoReclutado, semana, segmento, campana, grupo, effectiveFormador, modalidad, condicion])
 
   const filtered = useMemo(() => filterFormadorRows(people, {
-    periodo, semana, segmento, campana, grupo, formador: effectiveFormador, modalidad, condicion,
-  }), [people, periodo, semana, segmento, campana, grupo, effectiveFormador, modalidad, condicion])
+    periodo, periodoReclutado, semana, segmento, campana, grupo, formador: effectiveFormador, modalidad, condicion,
+  }), [people, periodo, periodoReclutado, semana, segmento, campana, grupo, effectiveFormador, modalidad, condicion])
 
   const model = useMemo(() => buildFormadorModel(filtered), [filtered])
   const t = model.totals
@@ -558,8 +652,18 @@ export default function KpiFormadoresDashboard({
       ))}
     </div>
   )
-  const activeFilters = [periodo, semana, segmento, campana, grupo, modalidad, condicion, !isLocked && formador !== 'ALL' ? formador : null]
-    .filter((v) => v && v !== 'ALL').length
+  const isAll = (v) => !v || v.length === 0 || v === 'ALL'
+  const activeFilters = [
+    !isAll(periodo) && (periodo.length > 1 || !periodo.includes(currentOperativePeriodo())) ? periodo : null,
+    !isAll(periodoReclutado) ? periodoReclutado : null,
+    !isAll(semana) ? semana : null,
+    !isAll(segmento) ? segmento : null,
+    !isAll(campana) ? campana : null,
+    !isAll(grupo) ? grupo : null,
+    !isAll(modalidad) ? modalidad : null,
+    !isAll(condicion) ? condicion : null,
+    !isLocked && !isAll(formador) ? formador : null,
+  ].filter(Boolean).length
 
   const periodoOptions = useMemo(() => {
     const seeded = recentOperativePeriodos(4)
@@ -568,55 +672,104 @@ export default function KpiFormadoresDashboard({
   }, [options.all.periodos])
 
   const resetFilters = () => {
-    setPeriodo(currentOperativePeriodo()); setSemana('ALL'); setSegmento('ALL'); setCampana('ALL')
-    setGrupo('ALL'); setModalidad('ALL'); setCondicion('ALL')
-    if (!isLocked) setFormador('ALL')
+    setPeriodo([currentOperativePeriodo()])
+    setPeriodoReclutado([])
+    setSemana([])
+    setSegmento([])
+    setCampana([])
+    setGrupo([])
+    setModalidad([])
+    setCondicion([])
+    if (!isLocked) setFormador([])
   }
 
   return (
     <KpiThemeContext.Provider value={theme}>
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
-          <MiniSelect value={periodo} onChange={(e) => { setPeriodo(e.target.value); setGrupo('ALL') }}>
-            <option value="ALL" className={OPTION_CLASS}>Todos los periodos (más lento)</option>
-            {periodoOptions.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
-          </MiniSelect>
-          <MiniSelect value={semana} onChange={(e) => setSemana(e.target.value)}>
-            <option value="ALL" className={OPTION_CLASS}>Semana</option>
-            {options.semanas.map((s) => <option key={s} value={s} className={OPTION_CLASS}>Sem {s}</option>)}
-          </MiniSelect>
-          <MiniSelect value={segmento} onChange={(e) => { setSegmento(e.target.value); setCampana('ALL'); setGrupo('ALL') }} wide>
-            <option value="ALL" className={OPTION_CLASS}>Segmento</option>
-            {options.segmentos.map((s) => <option key={s} value={s} className={OPTION_CLASS}>{s}</option>)}
-          </MiniSelect>
-          <MiniSelect value={campana} onChange={(e) => { setCampana(e.target.value); setGrupo('ALL') }} wide>
-            <option value="ALL" className={OPTION_CLASS}>Campaña</option>
-            {options.campanas.map((c) => <option key={c} value={c} className={OPTION_CLASS}>{c}</option>)}
-          </MiniSelect>
-          <MiniSelect value={grupo} onChange={(e) => setGrupo(e.target.value)} mono>
-            <option value="ALL" className={OPTION_CLASS}>Grupo</option>
-            {options.grupos.map((g) => <option key={g} value={g} className={OPTION_CLASS}>{g}</option>)}
-          </MiniSelect>
+          <KpiMultiSelect
+            label="Periodo ingreso"
+            allLabel="Todos (más lento)"
+            placeholder="Periodo ingreso"
+            options={periodoOptions}
+            values={periodo}
+            onChange={(vals) => { setPeriodo(vals); setGrupo([]) }}
+          />
+          <KpiMultiSelect
+            label="Periodo inicio"
+            allLabel="Todos"
+            placeholder="Periodo inicio"
+            options={options.periodosReclutado || options.all.periodosReclutado || []}
+            values={periodoReclutado}
+            onChange={(vals) => { setPeriodoReclutado(vals); setGrupo([]) }}
+          />
+          <KpiMultiSelect
+            placeholder="Semana"
+            allLabel="Semana"
+            options={options.semanas}
+            values={semana}
+            onChange={setSemana}
+            formatOption={(s) => `Sem ${s}`}
+          />
+          <KpiMultiSelect
+            placeholder="Segmento"
+            allLabel="Segmento"
+            options={options.segmentos}
+            values={segmento}
+            onChange={(vals) => { setSegmento(vals); setCampana([]); setGrupo([]) }}
+            wide
+          />
+          <KpiMultiSelect
+            placeholder="Campaña"
+            allLabel="Campaña"
+            options={options.campanas}
+            values={campana}
+            onChange={(vals) => { setCampana(vals); setGrupo([]) }}
+            wide
+          />
+          <KpiMultiSelect
+            placeholder="Grupo"
+            allLabel="Grupo"
+            options={options.grupos}
+            values={grupo}
+            onChange={setGrupo}
+            mono
+          />
           {isLocked ? (
             <span className="h-7 inline-flex items-center text-[11px] text-[var(--text-secondary)] truncate max-w-[160px]">
               {lockedName || 'Mi perfil'}
             </span>
           ) : (
-            <MiniSelect value={formador} onChange={(e) => setFormador(e.target.value)} wide>
-              <option value="ALL" className={OPTION_CLASS}>Formador</option>
-              {options.formadores.map((r) => <option key={r} value={r} className={OPTION_CLASS}>{r}</option>)}
-            </MiniSelect>
+            <KpiMultiSelect
+              placeholder="Formador"
+              allLabel="Formador"
+              options={options.formadores}
+              values={formador}
+              onChange={setFormador}
+              wide
+            />
           )}
-          <MiniSelect value={modalidad} onChange={(e) => setModalidad(e.target.value)}>
-            <option value="ALL" className={OPTION_CLASS}>Modalidad</option>
-            {options.modalidades.map((m) => <option key={m} value={m} className={OPTION_CLASS}>{m}</option>)}
-          </MiniSelect>
-          <MiniSelect value={condicion} onChange={(e) => setCondicion(e.target.value)}>
-            <option value="ALL" className={OPTION_CLASS}>Jornada</option>
-            {options.condiciones.map((c) => <option key={c} value={c} className={OPTION_CLASS}>{c}</option>)}
-          </MiniSelect>
+          <KpiMultiSelect
+            placeholder="Modalidad"
+            allLabel="Modalidad"
+            options={options.modalidades}
+            values={modalidad}
+            onChange={setModalidad}
+          />
+          <KpiMultiSelect
+            placeholder="Jornada"
+            allLabel="Jornada"
+            options={options.condiciones}
+            values={condicion}
+            onChange={setCondicion}
+          />
           {activeFilters > 0 && (
-            <button type="button" onClick={resetFilters} className="h-7 px-1.5 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--neon-red)] cursor-pointer">
+            <button
+              type="button"
+              onClick={resetFilters}
+              title="Limpiar filtros"
+              className="h-7 px-1.5 inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--neon-red)] cursor-pointer"
+            >
               <RotateCcw size={11} />
               {activeFilters}
             </button>
@@ -632,7 +785,10 @@ export default function KpiFormadoresDashboard({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setVista(tab.id)}
+              onClick={() => {
+                setVista(tab.id)
+                if (tab.id === 'kpi') setEjeTiempo('periodo')
+              }}
               className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${
                 vista === tab.id ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
@@ -790,7 +946,7 @@ export default function KpiFormadoresDashboard({
             <ChartFrame
               auto
               title={gaugeMetric && GAUGE_METRICS[gaugeMetric] ? `Matriz · ${GAUGE_METRICS[gaugeMetric].label}` : 'Matriz formador × tiempo'}
-              caption="Des = bajas CT+OJT / Día 1 (A), sin Baja Día 1 ni descuentos. Verde <38,4%, ámbar 38,4–40%, rojo >40%. Dot = I-OP FTE / RQ FTES: verde ≥95%, ámbar 80–95%, rojo <80%. OP = I-OP pers. / RQ Q: verde ≥90%, ámbar 80–90%, rojo <80%."
+              caption="Des = bajas CT+OJT / Día 1 (A), sin Baja Día 1 ni descuentos. Verde <38,4%, ámbar 38,4–40%, rojo >40%. Dot = I-OP FTE / RQ FTES: verde ≥95%, ámbar 80–95%, rojo <80%."
               extra={(
                 <div className="flex flex-wrap items-center gap-1">
                   {Object.values(GAUGE_METRICS).map((btn) => (
@@ -807,8 +963,8 @@ export default function KpiFormadoresDashboard({
                   ))}
                   <span className="w-px h-4 bg-[var(--border-subtle)] mx-1" />
                   {[
-                    { id: 'semana', label: 'Por semana' },
                     { id: 'periodo', label: 'Por periodo' },
+                    { id: 'semana', label: 'Por semana' },
                   ].map((tab) => (
                     <button
                       key={tab.id}

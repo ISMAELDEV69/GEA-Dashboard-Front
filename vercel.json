@@ -1,7 +1,13 @@
 {
+  "crons": [
+    {
+      "path": "/api/resumen-diario?force=true",
+      "schedule": "0 11 * * *"
+    }
+  ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ],

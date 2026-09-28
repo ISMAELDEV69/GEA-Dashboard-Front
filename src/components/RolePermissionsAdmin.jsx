@@ -25,6 +25,7 @@ export const AVAILABLE_MODULES = [
   { id: 'descuentos_form', label: 'Cargar Descuentos' },
   { id: 'descuentos_auth', label: 'Autorizar RYS' },
   { id: 'nomina', label: 'Bolsa de Postulantes' },
+  { id: 'bolsa_capa', label: 'Bolsa de Capa' },
   { id: 'nominas_completar', label: 'Nóminas' },
   { id: 'reportedia1', label: 'Reporte Día 1' },
   { id: 'asistencia', label: 'Asistencias' },

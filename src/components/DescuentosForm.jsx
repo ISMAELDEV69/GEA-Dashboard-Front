@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Save, AlertTriangle, CheckCircle, Trash2, Plus, RefreshCw, Send } from 'lucide-react'
+import { Save, AlertTriangle, CheckCircle, Trash2, Plus, RefreshCw, Send, Copy } from 'lucide-react'
 import { insertDescuentosBulk } from '../lib/dataService'
 import { isDescuentoVencido48h } from '../lib/businessHoursUtils'
 import PageLayout from './ui/PageLayout'
@@ -26,13 +26,26 @@ const getEmptyRow = () => ({
   comentarios: ''
 })
 
-export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [] }) {
+export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [], postulantes = [] }) {
   const todayPeruStr = useMemo(() => getTodayPeruString(), [])
   const [dataRows, setDataRows] = useState([getEmptyRow()])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
   const [validationErrors, setValidationErrors] = useState([])
+
+  // Búsqueda de postulantes por DNI para autocompletar nombres
+  const postulantesByDoc = useMemo(() => {
+    const map = new Map()
+    ;(postulantes || []).forEach(p => {
+      const doc = String(p.documento || p.dni || '').trim()
+      if (doc) {
+        const fullName = `${p.apellido_paterno || ''} ${p.apellido_materno || ''} ${p.nombres || ''}`.replace(/\s+/g, ' ').trim()
+        map.set(doc, fullName || p.postulante || '')
+      }
+    })
+    return map
+  }, [postulantes])
 
   // Extraer opciones únicas de Sede combinando Homologadas y Capacidad RYS
   const sedesUnicas = useMemo(() => {
@@ -75,6 +88,55 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     setDataRows([...dataRows, getEmptyRow()])
   }
 
+  // Replicar encabezados de la Fila 1 a todas las filas
+  const replicateFirstRowToAll = () => {
+    if (dataRows.length === 0) return
+    const source = dataRows[0]
+
+    const hasData = source.sede || source.segmento || source.campana || source.supervisor || source.grupo_cap || source.formador || source.motivo
+
+    if (!hasData) {
+      setErrorMsg("Primero completa los datos (Sede, Campaña, Supervisor, etc.) en la Fila #1 para poder replicarlos.")
+      setTimeout(() => setErrorMsg(null), 4000)
+      return
+    }
+
+    // Si solo hay 1 fila, agregar una segunda fila con los mismos encabezados
+    if (dataRows.length === 1) {
+      const newRow = {
+        ...source,
+        dni_ce: '',
+        postulante: '',
+        fecha_baja: todayPeruStr,
+      }
+      setDataRows([source, newRow])
+      setSuccess("Se agregó una nueva fila con los mismos encabezados de la Fila #1.")
+      setTimeout(() => setSuccess(false), 3500)
+      return
+    }
+
+    // Si ya hay varias filas, replicar los datos de encabezado de la Fila 1 a todas
+    const updated = dataRows.map((row, idx) => {
+      if (idx === 0) return row
+      return {
+        ...row,
+        sede: source.sede || row.sede,
+        segmento: source.segmento || row.segmento,
+        campana: source.campana || row.campana,
+        supervisor: source.supervisor || row.supervisor,
+        grupo_cap: source.grupo_cap || row.grupo_cap,
+        formador: source.formador || row.formador,
+        motivo: source.motivo || row.motivo,
+        comentarios: source.comentarios || row.comentarios,
+        fecha_baja: source.fecha_baja || row.fecha_baja || todayPeruStr,
+      }
+    })
+
+    setDataRows(updated)
+    setSuccess(`¡Encabezados replicados! Se copiaron los datos de la Fila #1 a las ${updated.length} filas.`)
+    setTimeout(() => setSuccess(false), 3500)
+  }
+
   const removeRow = (idx) => {
     const newRows = [...dataRows]
     newRows.splice(idx, 1)
@@ -85,6 +147,14 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
   const updateRow = (idx, field, value) => {
     const newRows = [...dataRows]
     newRows[idx][field] = value
+    
+    // Auto-completar nombre si se ingresa DNI y figura en postulantes
+    if (field === 'dni_ce' && value) {
+      const cleanDoc = String(value).trim()
+      if (cleanDoc && !newRows[idx].postulante && postulantesByDoc.has(cleanDoc)) {
+        newRows[idx].postulante = postulantesByDoc.get(cleanDoc)
+      }
+    }
     
     // Filtros en cascada inteligentes
     if (field === 'segmento') {
@@ -242,7 +312,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
           >
             <Plus size={16} /> Agregar Fila
           </button>
-          
+
           <button 
             onClick={handleSave}
             disabled={loading}
@@ -284,9 +354,18 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
       <Card noPadding className="flex-1 flex flex-col min-h-[400px]">
         <div className="overflow-x-auto overflow-y-auto flex-1 table-scroll p-1">
           <table className="w-full text-left text-xs whitespace-nowrap table-auto">
-            <thead className="bg-[var(--table-head-bg)] text-[var(--text-secondary)] sticky top-0 z-10 shadow-sm">
+            <thead className="bg-[var(--table-head-bg)] text-[var(--text-secondary)] sticky top-0 z-20 shadow-sm">
               <tr>
-                <th className="p-3 border-b border-[var(--border-subtle)] text-center font-bold uppercase">#</th>
+                <th className="p-2 border-b border-[var(--border-subtle)] text-center font-bold uppercase min-w-[105px] sticky left-0 z-30 bg-[var(--table-head-bg)] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">
+                  <button
+                    type="button"
+                    onClick={replicateFirstRowToAll}
+                    className="w-full py-1.5 px-2 text-xs font-bold rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95 cursor-pointer"
+                    title="Replicar datos de la Fila #1 (Sede, Campaña, Supervisor, Grupo, Motivo) a todas las demás filas"
+                  >
+                    <Copy size={13} /> Replicar
+                  </button>
+                </th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">SEDE <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">SEGMENTO <span className="text-red-500">*</span></th>
                 <th className="p-3 border-b border-[var(--border-subtle)] font-bold uppercase tracking-wider">CAMPAÑA <span className="text-red-500">*</span></th>
@@ -345,7 +424,9 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
 
                 return (
                   <tr key={idx} className="border-b border-[var(--border-subtle)] hover:bg-[var(--bg-muted)] focus-within:bg-[var(--accent)]/5 transition-colors">
-                    <td className="p-2 text-center text-[var(--text-muted)] font-medium">{idx + 1}</td>
+                    <td className="p-2 text-center text-[var(--text-muted)] font-bold sticky left-0 z-10 bg-[var(--bg-card)] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">
+                      {idx + 1}
+                    </td>
                     
                     <td className="p-1 min-w-[120px]">
                       <select className="w-full form-input py-2 px-3 text-xs rounded-lg" value={row.sede} onChange={e => updateRow(idx, 'sede', e.target.value)}>
@@ -440,7 +521,11 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
                     </td>
                     
                     <td className="p-1 text-center">
-                      <button onClick={() => removeRow(idx)} className="text-[var(--text-muted)] hover:text-red-500 p-2 transition-colors rounded-lg hover:bg-red-500/10" title="Eliminar fila">
+                      <button 
+                        onClick={() => removeRow(idx)} 
+                        className="text-[var(--text-muted)] hover:text-red-500 p-2 transition-colors rounded-lg hover:bg-red-500/10" 
+                        title="Eliminar fila"
+                      >
                         <Trash2 size={16} />
                       </button>
                     </td>

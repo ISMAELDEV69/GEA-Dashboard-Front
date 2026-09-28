@@ -110,26 +110,74 @@ export function invalidateCache(keyPrefix) {
     clearPersistentCache().catch(() => {});
     return;
   }
-  for (const key of apiCache.keys()) {
-    if (key.startsWith(keyPrefix)) {
-      apiCache.delete(key);
+  const prefixStr = String(keyPrefix).toLowerCase();
+  const prefixes = (prefixStr.includes('consolidado') || prefixStr.includes('asistencia'))
+    ? ['all_consolidado', 'consolidado', 'consolidado_', 'consolidado_asistencias', 'asistencias', 'all_asistencias_bajas', 'all_motivos_bajas']
+    : (prefixStr.includes('postulante') || prefixStr.includes('nomina'))
+    ? ['postulantes', 'postulantes_', 'nominas', 'nominas_']
+    : [keyPrefix];
+
+  for (const p of prefixes) {
+    for (const key of apiCache.keys()) {
+      if (key.startsWith(p)) {
+        apiCache.delete(key);
+      }
     }
+    deletePersistentByPrefix(p).catch(() => {});
   }
-  deletePersistentByPrefix(keyPrefix).catch(() => {});
 }
 
 export function isBajaDia1(motivo, sigla, row) {
+  if (!motivo && !sigla && !row) return false;
   if (row?.isDescuento || row?.is_descuento || String(row?.estado || '').toUpperCase().trim() === 'DESCUENTO') return false;
-  const m = String(motivo || '').toUpperCase().trim();
+
+  const m = String(motivo || row?.motivo_baja || row?.motivo || '').toUpperCase().trim();
   if (m.includes('DESCUENTO')) return false;
-  const s = String(sigla || '').toUpperCase().trim();
+
+  const s = String(sigla || row?.sigla || row?.sigla_asistencia || '').toUpperCase().trim();
   const t = String(row?.tipo_baja || row?.tipo || row?.tipo_reclutado || '').toUpperCase().trim();
   const stD1 = String(row?.status_dia_1 || '').toUpperCase().trim();
+  const dia1 = String(row?.dia_1 || '').toUpperCase().trim();
+
   if (t.includes('DESCUENTO') || stD1.includes('DESCUENTO')) return false;
-  
-  if (t === 'CESE' || t.includes('CESE') || stD1 === 'CESE' || stD1.includes('CESE')) return true;
-  if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1')) return true;
-  if (s === 'BD1' || s === 'D1') return true;
+
+  // Si la persona ya asistió (ej. dia_1 === 'ASISTIO' o tiene registro confirmado de asistencia), NUNCA es Baja Día 1
+  if (dia1 === 'ASISTIO' || dia1 === 'A' || row?.hasAttendance === true || row?.hasPriorAttendance === true) {
+    if (!m.includes('BAJA DIA 1') && !m.includes('BAJA D1')) {
+      return false;
+    }
+  }
+
+  // Si tiene un motivo concreto de deserción en formación (ej. ESTUDIOS, SALUD, DISTANCIA, etc.)
+  // y NO menciona expresamente Día 1, es BAJA EN FORMACIÓN, NUNCA Baja Día 1
+  if (
+    m &&
+    !m.includes('DIA 1') &&
+    !m.includes('DÍA 1') &&
+    !m.includes('D1') &&
+    !m.includes('NO SHOW') &&
+    !m.includes('PERIODO GRACIA') &&
+    !m.includes('PERIODO DE GRACIA')
+  ) {
+    if (
+      m === 'ESTUDIOS' || m.includes('ESTUDIO') ||
+      m === 'SALUD' || m.includes('SALUD') ||
+      m === 'DISTANCIA' || m.includes('DISTANCIA') ||
+      m.includes('OFERTA') || m.includes('FAMILIAR') ||
+      m.includes('TRABAJO') || m.includes('DISPONIBILIDAD') ||
+      m.includes('HORARIO') || m.includes('INCOMPATIBILIDAD') ||
+      m.includes('DESISTIMIENTO') || m.includes('FALTA DOCUMENTACION') ||
+      m.includes('FALTA DOCUMENTACIÓN') || m.includes('ACTITUD') ||
+      m.includes('DESAPROBADO') || m.includes('FALTAS')
+    ) {
+      return false;
+    }
+  }
+
+  // Detección positiva de Baja Día 1 (marcas explícitas de No Show o Deserción en Día 1)
+  if (t.includes('DIA_1') || t.includes('DIA 1') || t.includes('D1') || t.includes('NO SHOW')) return true;
+  if (stD1.includes('DIA_1') || stD1.includes('DIA 1') || stD1.includes('D1') || stD1.includes('NO SHOW') || stD1 === 'NO_SHOW') return true;
+  if (s === 'BD1' || s === 'D1' || s === 'NS') return true;
   if (
     m === 'BAJA DIA 1' || 
     m === 'BAJA DÍA 1' || 
@@ -140,8 +188,12 @@ export function isBajaDia1(motivo, sigla, row) {
     m.includes('BAJA DÍA 1') || 
     m.includes('BAJA D1') ||
     m.includes('(BAJA DIA 1)') ||
-    m.includes('(BAJA DÍA 1)')
+    m.includes('(BAJA DÍA 1)') ||
+    m.includes('PERIODO GRACIA') ||
+    m.includes('PERIODO DE GRACIA') ||
+    m.includes('NO SHOW')
   ) return true;
+
   return false;
 }
 
@@ -1106,7 +1158,7 @@ function buildNominaPayload(payload, ids) {
   }
 }
 
-export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, usuario_whatsapp, correo, genero, edad, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, grupo_codigo, modalidad, condicion, horario_gestion, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_ingreso, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, created_at';
+export const POSTULANTES_COLUMNS = 'nomina_id, documento, tipo_documento, apellido_paterno, apellido_materno, nombres, celular, celular_referencia, usuario_whatsapp, correo, genero, edad, lugar_residencia, distrito_residencia, direccion_domicilio, periodo_reclutado, semana_trabajo, reclutador, sede, campana, segmento, reclutador_id, fuente_oferta, observacion_reclutamiento, grupo_codigo, modalidad, condicion, horario_gestion, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, fecha_ingreso, dia_0, dia_0_obs, status_dia_1, dia_1, dia_1_obs, estado, activo, created_at';
 
 /**
  * QW-2: Limita la descarga inicial de postulantes a 5000 registros para evitar transferencias
@@ -1570,10 +1622,14 @@ const KPI_RECLUTADORES_SELECT = [
   'updated_at',
 ].join(',')
 
-export async function fetchKpiReclutadoresConsolidado({ periodo = null } = {}) {
+export async function fetchKpiReclutadoresConsolidado({ periodo = null, periodoReclutado = null } = {}) {
   if (DB_MODE !== 'supabase') return []
-  const periodoKey = periodo && periodo !== 'ALL' ? String(periodo).replace(/\D/g, '').slice(0, 6) : 'min'
-  return withCache(`kpi_reclutadores_consolidado_v4_${periodoKey}`, 120000, async () => {
+  const toKeys = (v) => (!v || v === 'ALL' ? [] : (Array.isArray(v) ? v : [v]).map(x => String(x).replace(/\D/g, '').slice(0, 6)).filter(Boolean))
+  const ingresoKeys = toKeys(periodo)
+  const reclutaKeys = toKeys(periodoReclutado)
+  const periodKeys = [...new Set([...ingresoKeys, ...reclutaKeys])]
+  const cacheKey = `kpi_reclutadores_consolidado_v6_${periodKeys.sort().join('_') || 'min'}`
+  return withCache(cacheKey, 120000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
@@ -1584,8 +1640,9 @@ export async function fetchKpiReclutadoresConsolidado({ periodo = null } = {}) {
         .gte('semana', 31)
         .order('id', { ascending: true })
         .range(from, from + pageSize - 1)
-      if (periodoKey !== 'min') {
-        query = query.or(`periodo_efectivo.eq.${periodoKey},periodo_reclutado.eq.${periodoKey}`)
+      if (periodKeys.length) {
+        const ors = periodKeys.flatMap((k) => [`periodo_efectivo.eq.${k}`, `periodo_reclutado.eq.${k}`])
+        query = query.or(ors.join(','))
       } else {
         query = query.or('periodo_efectivo.gte.202608,periodo_reclutado.gte.202608')
       }
@@ -1601,10 +1658,14 @@ export async function fetchKpiReclutadoresConsolidado({ periodo = null } = {}) {
   })
 }
 
-export async function fetchNominasAuditoria({ periodo = null } = {}) {
+export async function fetchNominasAuditoria({ periodo = null, periodoReclutado = null } = {}) {
   if (DB_MODE !== 'supabase') return []
-  const periodoKey = periodo && periodo !== 'ALL' ? String(periodo).replace(/\D/g, '').slice(0, 6) : 'min'
-  return withCache(`nominas_auditoria_v2_${periodoKey}`, 180000, async () => {
+  const toKeys = (v) => (!v || v === 'ALL' ? [] : (Array.isArray(v) ? v : [v]).map(x => String(x).replace(/\D/g, '').slice(0, 6)).filter(Boolean))
+  const ingresoKeys = toKeys(periodo)
+  const reclutaKeys = toKeys(periodoReclutado)
+  const allKeys = [...new Set([...reclutaKeys, ...ingresoKeys])]
+  const fetchKey = allKeys.sort().join('_') || 'min'
+  return withCache(`nominas_auditoria_v4_${fetchKey}`, 180000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
@@ -1616,8 +1677,10 @@ export async function fetchNominasAuditoria({ periodo = null } = {}) {
         .eq('activo', true)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1)
-      if (periodoKey !== 'min') {
-        query = query.eq('periodo_reclutado', periodoKey)
+      if (allKeys.length === 1) {
+        query = query.eq('periodo_reclutado', allKeys[0])
+      } else if (allKeys.length > 1) {
+        query = query.in('periodo_reclutado', allKeys)
       } else {
         query = query.gte('periodo_reclutado', '202608')
       }
@@ -1786,11 +1849,12 @@ export async function saveGrupoCapacitacion({
   }
 
   if (DB_MODE === 'supabase') {
-    const { data: existing } = await supabase
+    let existingQuery = supabase
       .from('capacidad_rys')
       .select('*')
       .eq('codigo', cleanCodigo)
-      .maybeSingle()
+    if (campanaClean) existingQuery = existingQuery.eq('campana', campanaClean)
+    const { data: existing } = await existingQuery.maybeSingle()
 
     let hasChanges = false
 
@@ -1806,16 +1870,15 @@ export async function saveGrupoCapacitacion({
       }
 
       if (hasChanges) {
-        const { error } = await supabase
-          .from('capacidad_rys')
-          .update(grupoRow)
-          .eq('codigo', cleanCodigo)
+        let upd = supabase.from('capacidad_rys').update(grupoRow).eq('codigo', cleanCodigo)
+        if (campanaClean) upd = upd.eq('campana', campanaClean)
+        const { error } = await upd
         if (error) throw error
       }
     } else {
       const { error } = await supabase
         .from('capacidad_rys')
-        .insert(grupoRow)
+        .upsert(grupoRow, { onConflict: 'campana,codigo' })
       if (error) throw error
       hasChanges = true
     }
@@ -1847,9 +1910,69 @@ export async function saveGrupoCapacitacion({
   return grupoRow
 }
 
+export const AREAS_BOLSA_CAPA = ['RECUPERADO', 'CAPACITACION TRASLADO', 'TRASLADO OP']
+export const TIPOS_RECLUTADOR_CAPA = ['CAPACITACION', 'RECUPERADO', 'TRASLADO']
+
+export function isAreaBolsaCapa(area) {
+  return AREAS_BOLSA_CAPA.includes(String(area || '').trim().toUpperCase())
+}
+
+export function tipoReclutadoFromAreaCapa(area) {
+  const a = String(area || '').trim().toUpperCase()
+  if (a === 'RECUPERADO') return 'RECUPERADO'
+  if (a === 'CAPACITACION TRASLADO') return 'TRASLADO'
+  if (a === 'TRASLADO OP') return 'TRASLADO OP'
+  return a || 'RECUPERADO'
+}
+
+export function tipoReclutadorFromAreaCapa(area) {
+  const tipo = tipoReclutadoFromAreaCapa(area)
+  if (tipo === 'RECUPERADO') return 'RECUPERADO'
+  if (tipo === 'TRASLADO' || tipo === 'TRASLADO OP') return 'TRASLADO'
+  return 'CAPACITACION'
+}
+
+/** Nómina activa de un GPE en el consolidado (v_nominas_consolidado). */
+export async function fetchNominasGrupoCapa({ codigo, campana } = {}) {
+  const cleanCodigo = String(codigo || '').trim().toUpperCase()
+  const cleanCampana = String(campana || '').trim().toUpperCase()
+  if (!cleanCodigo || DB_MODE !== 'supabase') return []
+
+  let query = supabase
+    .from('v_nominas_consolidado')
+    .select('documento, nombres, apellido_paterno, apellido_materno, celular, reclutador, status_dia_1, fuente_oferta, grupo_codigo, campana, periodo_reclutado, created_at')
+    .eq('grupo_codigo', cleanCodigo)
+    .eq('activo', true)
+    .order('created_at', { ascending: false })
+  if (cleanCampana) query = query.eq('campana', cleanCampana)
+
+  const { data, error } = await query
+  if (error) throw error
+  return data || []
+}
+
+/** Busca grupo en capacidad_rys por código (y campaña si viene) para evitar duplicados. */
+export async function findGrupoCapacidad({ codigo, campana } = {}) {
+  const cleanCodigo = String(codigo || '').trim().toUpperCase()
+  if (!cleanCodigo) return { exact: null, byCodigo: [] }
+  if (DB_MODE !== 'supabase') return { exact: null, byCodigo: [] }
+
+  const { data, error } = await supabase
+    .from('capacidad_rys')
+    .select('codigo, campana, segmento, area_traslado, semana_label, semana_trabajo, periodo, periodo_ingreso_op, modalidad, estado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
+    .eq('codigo', cleanCodigo)
+  if (error) throw error
+  const rows = data || []
+  const camp = String(campana || '').trim().toUpperCase()
+  const exact = camp
+    ? (rows.find((r) => String(r.campana || '').trim().toUpperCase() === camp) || null)
+    : (rows[0] || null)
+  return { exact, byCodigo: rows }
+}
+
 /** Importa filas CAPACIDAD_RYS (CSV/Excel export) en lote optimizado */
 export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
-  const results = { ok: 0, fail: 0, deleted: 0, ignored: 0, total: payloads.length, errors: [] }
+  const results = { ok: 0, fail: 0, deleted: 0, ignored: 0, total: payloads.length, errors: [], warnings: [] }
   if (!payloads.length) return results
   
   // Filtrar solo los que tienen código y que no sean generados automáticamente por el frontend (S/C-FILA)
@@ -1875,26 +1998,27 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
     return results
   }
 
-  // 2. Rescatar datos manuales antes de borrar
+  // Upsert por campana+codigo. No se borra la tabla: los grupos creados en Bolsa de Capa
+  // se conservan si aún no están en el sheet.
   try {
-    const { data: existingData } = await supabase.from('capacidad_rys').select('codigo, campana, formador_documento')
+    const { data: existingData } = await supabase
+      .from('capacidad_rys')
+      .select('codigo, campana, formador_documento, area_traslado')
     const existingMap = new Map()
     if (existingData) {
       for (const g of existingData) {
-        existingMap.set(g.campana + '_' + g.codigo, g.formador_documento)
+        existingMap.set(`${String(g.campana || '').trim().toUpperCase()}_${String(g.codigo || '').trim().toUpperCase()}`, g)
       }
     }
 
-    const { error: errDel } = await supabase.from('capacidad_rys').delete().neq('codigo', 'xxxx_impossible_xxxx')
-    if (errDel) throw errDel
+    results.deleted = 0
 
-    results.deleted = 0 // Optional: count existing before deleting si lo necesitas, pero no es crítico
-
-    // 3. Preparar filas para inserción masiva en capacidad_rys
     const rowsToUpsert = validPayloads.map(p => {
-      const campana = (p.campana_nombre || 'SIN CAMPAÑA').toUpperCase()
-      const codigo = p.codigo || null
-      
+      const campana = String(p.campana_nombre || 'SIN CAMPAÑA').trim().toUpperCase()
+      const codigo = String(p.codigo || '').trim().toUpperCase() || null
+      const prev = existingMap.get(`${campana}_${codigo}`)
+      const incomingArea = p.area_traslado ? String(p.area_traslado).trim().toUpperCase() : ''
+
       return {
         codigo,
         campana,
@@ -1915,10 +2039,10 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
         meta_dia_1: p.meta_dia_1 === '' ? null : p.meta_dia_1,
         periodo_ingreso_op: p.periodo_ingreso_op || null,
         periodo_rys: p.periodo_rys || null,
-        area_traslado: p.area_traslado || null,
+        area_traslado: incomingArea || prev?.area_traslado || null,
         segmento: p.segmento ? String(p.segmento).trim() : inferSegmento(campana),
         estado: p.estado || 'PLANIFICADO',
-        formador_documento: existingMap.get(campana + '_' + codigo) || null,
+        formador_documento: prev?.formador_documento || null,
       }
     })
 
@@ -1932,6 +2056,23 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
       }
     }
     const finalRowsToUpsert = Array.from(uniqueRowsMap.values())
+
+    const existingByCodigo = new Map()
+    if (existingData) {
+      for (const g of existingData) {
+        const code = String(g.codigo || '').trim().toUpperCase()
+        if (!code) continue
+        const camp = String(g.campana || '').trim().toUpperCase()
+        if (!existingByCodigo.has(code)) existingByCodigo.set(code, [])
+        existingByCodigo.get(code).push(camp)
+      }
+    }
+    for (const r of finalRowsToUpsert) {
+      const others = (existingByCodigo.get(r.codigo) || []).filter((c) => c && c !== r.campana)
+      if (others.length) {
+        results.warnings.push(`Este código ya existe en otra campaña (${others.join(', ')}): ${r.codigo}`)
+      }
+    }
 
     // 4. Inserción masiva
     const BATCH_SIZE = 500
@@ -1949,6 +2090,7 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
       onProgress?.(Math.min(i + BATCH_SIZE, finalRowsToUpsert.length), finalRowsToUpsert.length)
     }
     await invalidateCache('grupos_capacidad');
+    await invalidateCache('grupos_con_metas');
   } catch (err) {
     console.error('Bulk upload error:', err)
     results.fail = validPayloads.length
@@ -2810,26 +2952,64 @@ export async function regularizarAsistenciaPostulante({
   const nowStr = new Date().toLocaleString('es-PE');
 
   if (DB_MODE === 'supabase') {
+    let finalCelular = String(postulanteInfo.celular || '').trim();
+    let finalDocFormador = String(formadorDoc || postulanteInfo.documento_formador || postulanteInfo.formador_documento || '').trim();
+    let finalNomFormador = String(formadorNombre || postulanteInfo.nombre_formador || postulanteInfo.formador || '').trim();
+
+    if (!finalCelular) {
+      try {
+        const { data: nomData } = await supabase
+          .from('nominas')
+          .select('celular, celular_referencia')
+          .eq('documento', cleanDoc)
+          .limit(1);
+        if (nomData && nomData[0]) {
+          finalCelular = String(nomData[0].celular || nomData[0].celular_referencia || '').trim();
+        }
+      } catch (errNom) {
+        console.warn('Aviso buscando celular en nominas:', errNom);
+      }
+    }
+
+    if (!finalDocFormador || !finalNomFormador) {
+      try {
+        const { data: formRows } = await supabase
+          .from('consolidado_asistencias')
+          .select('documento_formador, nombre_formador')
+          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
+          .not('documento_formador', 'is', null)
+          .neq('documento_formador', '')
+          .limit(1);
+        if (formRows && formRows[0]) {
+          if (!finalDocFormador && formRows[0].documento_formador) finalDocFormador = String(formRows[0].documento_formador).trim();
+          if (!finalNomFormador && formRows[0].nombre_formador) finalNomFormador = String(formRows[0].nombre_formador).trim();
+        }
+      } catch (errF) {
+        console.warn('Aviso buscando formador:', errF);
+      }
+    }
+
     for (const r of records) {
       const isoDate = r.fecha;
       if (!isoDate) continue;
       const [year, month, day] = isoDate.split('-');
-      const spreadsheetDate = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
+      const spreadsheetDate1 = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
+      const spreadsheetDate2 = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
       const isBaja = r.sigla === 'B';
 
-      // 1. Limpiar SOLO el registro previo de ESTE postulante en esta fecha y grupo en consolidado_asistencias
+      // 1. Limpiar registro previo de ESTE postulante en esta fecha y grupo en consolidado_asistencias
       try {
         await supabase
           .from('consolidado_asistencias')
           .delete()
-          .eq('codigo_grupo', targetGroup)
           .eq('documento', cleanDoc)
-          .or(`fecha_registro_asistencia.eq.${spreadsheetDate},fecha_registro_asistencia.eq.${isoDate}`);
+          .in('fecha_registro_asistencia', [spreadsheetDate1, spreadsheetDate2, isoDate])
+          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`);
       } catch (errCleanConsolidado) {
         console.warn('Aviso limpiando consolidado para regularización:', errCleanConsolidado);
       }
 
-      // 2. Limpiar SOLO el registro de ESTE postulante en asistencias_capacitacion
+      // 2. Limpiar registro de ESTE postulante en asistencias_capacitacion
       try {
         await supabase
           .from('asistencias_capacitacion')
@@ -2848,15 +3028,15 @@ export async function regularizarAsistenciaPostulante({
         apellido_materno: postulanteInfo.apellido_materno || '',
         apellido_paterno: postulanteInfo.apellido_paterno || '',
         nombres: postulanteInfo.nombres || '',
-        celular: postulanteInfo.celular || '',
+        celular: finalCelular,
         condicion_laboral: postulanteInfo.condicion_laboral || '',
         campana: campana || postulanteInfo.campana || '',
         grupo: targetGroup,
         codigo_grupo: targetGroup,
-        documento_formador: formadorDoc || '',
-        nombre_formador: formadorNombre || '',
-        fecha_registro_asistencia: spreadsheetDate,
-        tipo_reclutado: postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO',
+        documento_formador: finalDocFormador,
+        nombre_formador: finalNomFormador,
+        fecha_registro_asistencia: spreadsheetDate1,
+        tipo_reclutado: isBaja ? 'CESE' : (postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO'),
         estado: isBaja ? 'CESADO' : 'ACTIVO',
         sigla: r.sigla,
         motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : '',
@@ -2888,12 +3068,34 @@ export async function regularizarAsistenciaPostulante({
       }
     }
 
+    // 5. Sincronizar estado en nóminas si fue reactivado o quedó como baja
+    const hasActiveAttendance = records.some(r => r.sigla === 'A' || r.sigla === 'I-OP');
+    const lastRecord = records.length > 0 ? records[records.length - 1] : null;
+    const isLatestBaja = Boolean(lastRecord && lastRecord.sigla === 'B');
+    const latestMotive = isLatestBaja ? (lastRecord.motivo_baja || 'DESERCIÓN') : null;
+
+    try {
+      if (hasActiveAttendance && !isLatestBaja) {
+        await supabase
+          .from('nominas')
+          .update({ estado: 'ACTIVO', activo: true, tipo_reclutado: 'APTO', motivo_baja: null, updated_at: new Date().toISOString() })
+          .eq('documento', cleanDoc);
+      } else if (isLatestBaja) {
+        await supabase
+          .from('nominas')
+          .update({ estado: 'CESADO', activo: false, tipo_reclutado: 'CESE', motivo_baja: latestMotive, updated_at: new Date().toISOString() })
+          .eq('documento', cleanDoc);
+      }
+    } catch (errNomSync) {
+      console.warn('Aviso sincronizando estado en nómina:', errNomSync);
+    }
+
     // Invalidar cachés
-    invalidateCache('all_consolidado');
-    invalidateCache('all_asistencias_bajas');
-    invalidateCache('all_motivos_bajas');
-    invalidateCache('grupos_dia1');
+    invalidateCache('consolidado');
     invalidateCache('asistencias');
+    invalidateCache('postulantes');
+    invalidateCache('nominas');
+    invalidateCache('grupos_dia1');
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: targetGroup, documento: cleanDoc } }));
@@ -3057,6 +3259,111 @@ export async function guardarAsistenciaLoteFechas({
   const weekStr = semana ? `SEM${String(semana).replace(/\D/g, '')}` : (postulanteInfo.semana ? `SEM${String(postulanteInfo.semana).replace(/\D/g, '')}` : '');
   const nowStr = new Date().toLocaleString('es-PE');
 
+  // ── Resolución inteligente de celular y formador si faltan en postulanteInfo ──
+  let finalCelular = String(postulanteInfo.celular || '').trim();
+  let finalDocFormador = String(postulanteInfo.documento_formador || postulanteInfo.formador_documento || '').trim();
+  let finalNomFormador = String(postulanteInfo.nombre_formador || postulanteInfo.formador || '').trim();
+
+  if (DB_MODE === 'supabase') {
+    // 1. Resolver celular desde nominas o consolidado
+    if (!finalCelular) {
+      try {
+        const { data: nomData } = await supabase
+          .from('nominas')
+          .select('celular, celular_referencia')
+          .eq('documento', cleanDoc)
+          .limit(1);
+        if (nomData && nomData[0]) {
+          finalCelular = String(nomData[0].celular || nomData[0].celular_referencia || '').trim();
+        }
+      } catch (errNom) {
+        console.warn('Aviso buscando celular en nominas:', errNom);
+      }
+    }
+    if (!finalCelular) {
+      try {
+        const { data: celData } = await supabase
+          .from('consolidado_asistencias')
+          .select('celular')
+          .eq('documento', cleanDoc)
+          .not('celular', 'is', null)
+          .neq('celular', '')
+          .limit(1);
+        if (celData && celData[0]?.celular) {
+          finalCelular = String(celData[0].celular).trim();
+        }
+      } catch (errCel) {
+        console.warn('Aviso buscando celular en consolidado:', errCel);
+      }
+    }
+
+    // 2. Resolver formador (documento y nombre)
+    if (!finalDocFormador || !finalNomFormador) {
+      try {
+        // A) Buscar en consolidado_asistencias para este grupo
+        const { data: formRows } = await supabase
+          .from('consolidado_asistencias')
+          .select('documento_formador, nombre_formador')
+          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
+          .not('documento_formador', 'is', null)
+          .neq('documento_formador', '')
+          .limit(1);
+        if (formRows && formRows[0]) {
+          if (!finalDocFormador && formRows[0].documento_formador) {
+            finalDocFormador = String(formRows[0].documento_formador).trim();
+          }
+          if (!finalNomFormador && formRows[0].nombre_formador) {
+            finalNomFormador = String(formRows[0].nombre_formador).trim();
+          }
+        }
+      } catch (errForm) {
+        console.warn('Aviso buscando formador en consolidado:', errForm);
+      }
+    }
+
+    if (!finalDocFormador && finalNomFormador) {
+      try {
+        // B) Si tenemos el nombre del formador, buscar su documento en equipo_formacion
+        const firstName = finalNomFormador.split(' ')[0] || '';
+        const { data: eqRows } = await supabase
+          .from('equipo_formacion')
+          .select('documento, datos_completos, nombres_completos, apellido_paterno')
+          .ilike('datos_completos', `%${firstName}%`)
+          .limit(10);
+        if (eqRows && eqRows.length > 0) {
+          const normTarget = finalNomFormador.toUpperCase();
+          const match = eqRows.find(r => {
+            const full = String(r.datos_completos || `${r.nombres_completos} ${r.apellido_paterno}`).toUpperCase();
+            return full.includes(normTarget) || normTarget.includes(full);
+          });
+          if (match?.documento) {
+            finalDocFormador = String(match.documento).trim();
+          } else if (eqRows[0]?.documento) {
+            finalDocFormador = String(eqRows[0].documento).trim();
+          }
+        }
+      } catch (errEq) {
+        console.warn('Aviso buscando documento en equipo_formacion:', errEq);
+      }
+    }
+
+    if (!finalDocFormador || !finalNomFormador) {
+      try {
+        // C) Buscar en capacidad_rys por código de grupo
+        const { data: capRows } = await supabase
+          .from('capacidad_rys')
+          .select('codigo, formador_documento')
+          .eq('codigo', targetGroup)
+          .limit(1);
+        if (capRows && capRows[0]?.formador_documento && !finalDocFormador) {
+          finalDocFormador = String(capRows[0].formador_documento).trim();
+        }
+      } catch (errCap) {
+        console.warn('Aviso buscando en capacidad_rys:', errCap);
+      }
+    }
+  }
+
   const consolidadoRows = [];
   const asistenciasRows = [];
 
@@ -3086,13 +3393,13 @@ export async function guardarAsistenciaLoteFechas({
       apellido_materno: postulanteInfo.apellido_materno || '',
       apellido_paterno: postulanteInfo.apellido_paterno || '',
       nombres: postulanteInfo.nombres || '',
-      celular: postulanteInfo.celular || '',
+      celular: finalCelular,
       condicion_laboral: postulanteInfo.condicion_laboral || '',
       campana: cleanCampana,
       grupo: targetGroup,
       codigo_grupo: targetGroup,
-      documento_formador: postulanteInfo.documento_formador || '',
-      nombre_formador: postulanteInfo.nombre_formador || '',
+      documento_formador: finalDocFormador,
+      nombre_formador: finalNomFormador,
       fecha_registro_asistencia: spreadsheet,
       tipo_reclutado: postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO',
       estado: isBaja ? 'CESADO' : 'ACTIVO',
@@ -3867,12 +4174,39 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       continue
     }
 
-    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+    const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
+    const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
+    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1'));
+
+    const hasLaterAttendance = studentRecords.some(r => {
+      if (!fecha_dia1_ref || r.fecha_asistencia <= fecha_dia1_ref) return false;
+      const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
+      return s === 'A' || s === 'I-OP';
+    });
+
     const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
-    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+    let isBajaForm = false;
+    let isFormAsistencia = false;
+
+    if (exactD1Record) {
+      if (droppedD1InSala && !hasLaterAttendance) {
+        isFormAsistencia = false;
+        isBajaForm = true;
+      } else {
+        // Regla Oficial: En Día 1 tanto la asistencia (A, I-OP) como las faltas (FI, FJ)
+        // de alumnos matriculados cuentan en sala/cohorte de Formación para conciliar con Reclutamiento.
+        isFormAsistencia = true;
+        isBajaForm = false;
+      }
+    } else {
+      const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+      const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B');
+      isBajaForm = Boolean((isBajaRecord || isBajaDia1Rec || isCeseRec) && !hasLaterAttendance);
+      isFormAsistencia = Boolean(formRecord && !isBajaForm);
+    }
+
+    const isBajaDia1Direct = Boolean(isBajaForm || isBajaDia1Rec);
 
     // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
     // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
@@ -3893,10 +4227,6 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       // Descuento acordado y autorizado: no genera discrepancia entre áreas
       continue;
     }
-    
-    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
-    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
-    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
@@ -3904,12 +4234,15 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       let displayFormSigla = 'SIN REGISTRO';
       if (isBajaForm) {
         displayFormSigla = 'CESADO (BAJA DÍA 1)';
-      } else if (formRecord) {
-        const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
+      } else if (exactD1Record || formRecord) {
+        const targetRec = exactD1Record || formRecord;
+        const fs = String(targetRec.sigla_asistencia || targetRec.sigla || '').toUpperCase().trim();
         if (isFormadorAsistio(fs) || isFormAsistencia) {
           displayFormSigla = 'ACTIVO';
         } else if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
           displayFormSigla = 'FALTA (FI)';
+        } else if (fs === 'FJ') {
+          displayFormSigla = 'FALTA (FJ)';
         } else {
           displayFormSigla = fs || 'FALTA';
         }
@@ -6151,12 +6484,39 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           continue;
         }
 
-        const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+        const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
+        const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
+        const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1'));
+
+        const hasLaterAttendance = studentRecords.some(r => {
+          if (!fecha_dia1_ref || r.fecha_asistencia <= fecha_dia1_ref) return false;
+          const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
+          return s === 'A' || s === 'I-OP';
+        });
+
         const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
-        const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                           studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-        const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
-        const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+
+        let isBajaForm = false;
+        let isFormAsistencia = false;
+
+        if (exactD1Record) {
+          if (droppedD1InSala && !hasLaterAttendance) {
+            isFormAsistencia = false;
+            isBajaForm = true;
+          } else {
+            // Regla Oficial: En Día 1 tanto la asistencia (A, I-OP) como las faltas (FI, FJ)
+            // de alumnos matriculados cuentan en sala/cohorte de Formación para conciliar con Reclutamiento.
+            isFormAsistencia = true;
+            isBajaForm = false;
+          }
+        } else {
+          const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
+          const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B');
+          isBajaForm = Boolean((isBajaRecord || isBajaDia1Rec || isCeseRec) && !hasLaterAttendance);
+          isFormAsistencia = Boolean(formRecord && !isBajaForm);
+        }
+
+        const isBajaDia1Direct = Boolean(isBajaForm || isBajaDia1Rec);
 
         // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
         // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
@@ -6187,10 +6547,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           });
           continue;
         }
-        
-        // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos en sala
-        const isFormAsistencia = Boolean(formRecord && !isBajaForm);
-        
+
         const effectiveAuxSigla = recAsisItem ? (recAsisItem.sigla_final || recAsisItem.sigla_inicial) : null;
         const isAuxAsistencia = effectiveAuxSigla === 'A' || effectiveAuxSigla === 'I-OP';
         const isRecAsistencia = (recCandidate ? isCandidateActiveRec(recCandidate) : false) || isAuxAsistencia;
@@ -6210,12 +6567,15 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           let displayFormSigla = 'SIN REGISTRO';
           if (isBajaForm) {
             displayFormSigla = 'CESADO (BAJA DÍA 1)';
-          } else if (formRecord) {
-            const fs = String(formRecord.sigla_asistencia || '').toUpperCase().trim();
+          } else if (exactD1Record || formRecord) {
+            const targetRec = exactD1Record || formRecord;
+            const fs = String(targetRec.sigla_asistencia || targetRec.sigla || '').toUpperCase().trim();
             if (isFormadorAsistio(fs) || isFormAsistencia) {
               displayFormSigla = 'ACTIVO';
             } else if (fs === 'FI' || fs === 'F' || fs === 'FALTA') {
               displayFormSigla = 'FALTA (FI)';
+            } else if (fs === 'FJ') {
+              displayFormSigla = 'FALTA (FJ)';
             } else {
               displayFormSigla = fs || 'FALTA';
             }
@@ -6730,6 +7090,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     let ingresos_iop_ftes = 0;
     const docs_iop_detalle = [];
     const asesores_ojt_detalle = [];
+    const asesores_activos_detalle = [];
 
     const estadoGrupo = String(grupoInfo.estado || '').toUpperCase().trim();
     const periodoRys = String(grupoInfo.periodo_rys || '').toUpperCase().trim();
@@ -6920,9 +7281,32 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         desertores_ct++;
       }
 
-      // Activo Actual en Aula (sigue en aula de teoría, no ha pasado a OJT ni es baja, y grupo sigue abierto)
-      if (!isGrupoCerrado && dia1Asistio && !isBajaGeneral && !tieneIngreso && !isOjtActive) {
+      // Activo Actual al Último Corte (sigue activo en teoría o en OJT, no es baja y aún no tiene I-OP)
+      const isActivoAlCorte = (dia1Asistio || attendedInOjt) && !isBajaGeneral && !isBajaDia1 && !isDescuentoDoc && !tieneIngreso;
+      if (isActivoAlCorte) {
         activos_actuales++;
+        const sortedRecords = records && records.length > 0
+          ? [...records].sort((a, b) => {
+              const da = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || a.fecha) || '';
+              const db = parseFechaAsistencia(b.fecha_registro_asistencia || b.fecha_asistencia || b.fecha) || '';
+              return da.localeCompare(db);
+            })
+          : [];
+        const lastRec = sortedRecords.length > 0 ? sortedRecords[sortedRecords.length - 1] : null;
+        const ultimaFecha = lastRec ? (lastRec.fecha_registro_asistencia || lastRec.fecha_asistencia || lastRec.fecha || '') : '';
+        const grupoYaEnOjt = Boolean(fechaOjtTarget && sortedRecords.some(r => {
+          const rDate = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha);
+          return rDate && rDate >= fechaOjtTarget;
+        }));
+        const etapaCalculada = (isOjtActive || attendedInOjt || grupoYaEnOjt) ? 'OJT' : 'AULA / TEORÍA';
+        asesores_activos_detalle.push({
+          documento: doc,
+          nombres: `${n.nombres || ''} ${n.apellido_paterno || ''} ${n.apellido_materno || ''}`.trim() || n.nombre_completo || doc,
+          celular: n.celular || n.telefono || '',
+          etapa: etapaCalculada,
+          is_ojt: isOjtActive || grupoYaEnOjt,
+          ultima_asistencia: ultimaFecha
+        });
       }
 
       // Registro de métrica individual por asesor en OJT / Tránsito
@@ -7120,6 +7504,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       asistio_dia0,
       asistio_dia1,
       activos_actuales,
+      asesores_activos_detalle,
       activos_ojt,
       desertores_ct,
       desertores_ojt,

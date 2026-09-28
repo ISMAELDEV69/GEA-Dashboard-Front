@@ -10,6 +10,7 @@ import {
 } from '../../lib/dashboardAnalytics'
 import ResumenMensualCapacitacion from './ResumenMensualCapacitacion'
 import GraficoPersonalizadoBI from './GraficoPersonalizadoBI'
+import OreoResumenCard from './OreoResumenCard'
 import { DashboardHeader, KpiCard } from './StoryComponents'
 import PageLayout from '../ui/PageLayout'
 import PageHeader from '../ui/PageHeader'
@@ -348,7 +349,7 @@ function AdminDashboard({
 
       // 1. Excluir si pertenece a una campaña/grupo proyectado o con periodo previo a 202608
       if (g && isCampanaProyectada(g)) return false
-      const perVal = normalize2026Period(p.periodo_reclutado) || (g ? getGrupoPeriodo(g) : null) || normalize2026Period(p.periodo)
+      const perVal = (g ? getGrupoPeriodo(g) : null) || normalize2026Period(p.periodo_reclutado) || normalize2026Period(p.periodo)
       if (perVal && perVal < MIN_PERIODO_CORTE) return false
 
       if (excludeKey !== 'segmento' && segmento !== 'ALL') {
@@ -798,6 +799,9 @@ function AdminDashboard({
           </div>
         </div>
       </div>
+
+      {/* ── ASISTENTE NARRATIVO IA "OREO" (RESUMEN DIARIO EJECUTIVO) ── */}
+      <OreoResumenCard kpis={metrics} userRole="admin" className="shrink-0" />
 
       {/* KPI Widgets Grid Compacto con Varianza */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-2 shrink-0">

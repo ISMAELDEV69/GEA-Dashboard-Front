@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, useTransition } from 'react'
 import {
   LayoutDashboard, UserPlus, ClipboardCheck, History,
-  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award, BanknoteIcon, PieChart
+  Activity, Loader2, Target, GraduationCap, Layers, BarChart3, Users, UserCheck, Shield, Eye, Radio, Award, BanknoteIcon, PieChart, MapPin
 } from 'lucide-react'
 
 // ── Vistas Críticas / Modales Síncronos ──────────────────────────────────────────
@@ -18,6 +18,8 @@ import KeepAliveView from './components/KeepAliveView'
 import ViewLoadingSkeleton from './components/ui/ViewLoadingSkeleton'
 import GlobalTaskBar from './components/GlobalTaskBar'
 import { BackgroundTasksProvider } from './context/BackgroundTasksContext'
+import OreoExecutiveModal from './components/dashboard/OreoExecutiveModal'
+import GeaMascotCompanion from './components/GeaMascotCompanion'
 import { supabase } from './lib/supabase'
 import {
   DB_MODE,
@@ -70,6 +72,7 @@ const UserManagement = lazyWithRetry(() => import('./components/UserManagement')
 const EquipoReclutamiento = lazyWithRetry(() => import('./pages/EquipoReclutamiento'))
 const EquipoFormacion = lazyWithRetry(() => import('./pages/EquipoFormacion'))
 const AsignacionFormador = lazyWithRetry(() => import('./pages/AsignacionFormador'))
+const BolsaCapa = lazyWithRetry(() => import('./pages/BolsaCapa'))
 const MotivosBajaAdmin = lazyWithRetry(() => import('./components/MotivosBajaAdmin'))
 const PerfilConfig = lazyWithRetry(() => import('./components/PerfilConfig'))
 const LegacyDashboards = lazyWithRetry(() => import('./components/LegacyDashboards'))
@@ -78,6 +81,7 @@ const RolePermissionsAdmin = lazyWithRetry(() => import('./components/RolePermis
 const PostulantesTable = lazyWithRetry(() => import('./components/PostulantesTable'))
 const PerformanceScorecardIndividual = lazyWithRetry(() => import('./components/dashboard/PerformanceScorecardIndividual'))
 const HomeSelector = lazyWithRetry(() => import('./components/HomeSelector'))
+const UbicacionView = lazyWithRetry(() => import('./pages/UbicacionView'))
 
 // ── RBAC: Navegación de Vistas por Rol ──────────────────────────────────────────
 export const ALL_NAV = [
@@ -87,6 +91,7 @@ export const ALL_NAV = [
   { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'ubicacion', label: 'Ubicación', icon: MapPin, description: 'Análisis geográfico y deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'attendancebi', label: 'Dispersión BI', icon: Activity, description: 'Métricas de retención diaria', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'dashboard', label: 'Dashboard General', icon: LayoutDashboard, description: 'Control Operativo y SLAs', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
   { id: 'reportedia1', label: 'Reporte Día 1', icon: Radio, description: 'Calibración inicial de grupos', roles: ['admin', 'visor', 'reclutador', 'formador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
@@ -94,8 +99,9 @@ export const ALL_NAV = [
   { id: 'capacidad', label: 'Capacidad RYS', icon: Layers, description: 'Planificación de grupos y metas', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asignacion_formador', label: 'Asignar Formador', icon: UserCheck, description: 'Distribución de formadores', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asistencia', label: 'Marcación Asistencia', icon: ClipboardCheck, description: 'Registro diario A / F / B', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
+  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor', 'calidad'] },
+  { id: 'bolsa_capa', label: 'Bolsa de Capa', icon: GraduationCap, description: 'Grupos recuperados y traslados de capacitación', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'visor', 'reclutador'] },
   { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días asistidos, bonos y permanencia', roles: ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys'] },
   { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos', roles: ['admin', 'jefe_rys', 'coordinador_rys', 'jefe_capacitacion'] },
@@ -211,6 +217,22 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  const [isOreoModalOpen, setIsOreoModalOpen] = useState(false)
+
+  // Auto-mostrar Resumen Diario OREO al iniciar sesión o ingresar a la web por primera vez en la sesión
+  useEffect(() => {
+    if (effectiveSession && !loading) {
+      const welcomeShown = sessionStorage.getItem('gea-oreo-welcome-shown')
+      if (!welcomeShown) {
+        setIsOreoModalOpen(true)
+      }
+    }
+  }, [effectiveSession, loading])
+
+  const handleCloseOreoModal = useCallback(() => {
+    setIsOreoModalOpen(false)
+    sessionStorage.setItem('gea-oreo-welcome-shown', 'true')
+  }, [])
 
   const handleNavigate = useCallback((viewId) => {
     startTransition(() => {
@@ -277,7 +299,11 @@ export default function App() {
       setSedes(s || [])
       setCampanas(c || [])
       setMotivosBaja(mb || [])
-      setNavPermissions(mp || [])
+      setNavPermissions((prev) => {
+        const next = mp || []
+        if (prev.length === next.length && JSON.stringify(prev) === JSON.stringify(next)) return prev
+        return next
+      })
       setAppRoles(ar || [])
       setOpcionesHomologadas(h || [])
       if (fInit?.length) setFormadores(fInit)
@@ -495,11 +521,11 @@ export default function App() {
     setFormadores(f)
   }
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     await signOut()
     setSession(null)
     setUserProfile(null)
-  }
+  }, [])
 
   const isSupabase = DB_MODE === 'supabase'
 
@@ -579,6 +605,7 @@ export default function App() {
                   viewAsRole={viewAsRole}
                   onSelectViewRole={setViewAsRole}
                   onGoToPortal={() => handleNavigate('portal')}
+                  onOpenOreoResumen={() => setIsOreoModalOpen(true)}
                 />
 
                 {/* Banner de Advertencia en Modo Local / Offline */}
@@ -715,6 +742,19 @@ export default function App() {
                         )}
                       </KeepAliveView>
 
+                      {/* 8b. Ubicación & Deserción Geoespacial */}
+                      <KeepAliveView viewId="ubicacion" activeView={activeView}>
+                        {navItems.some(i => i.id === 'ubicacion') && (
+                          <UbicacionView
+                            postulantes={postulantes}
+                            sedes={sedes}
+                            grupos={grupos}
+                            asistencias={asistencias}
+                            userProfile={effectiveProfile}
+                          />
+                        )}
+                      </KeepAliveView>
+
                       {/* 9. Descuentos BI */}
                       <KeepAliveView viewId="descuentos_bi" activeView={activeView}>
                         {navItems.some(i => i.id === 'descuentos_bi') && (
@@ -725,7 +765,7 @@ export default function App() {
                       {/* 10. Descuentos Form */}
                       <KeepAliveView viewId="descuentos_form" activeView={activeView}>
                         {navItems.some(i => i.id === 'descuentos_form') && (
-                          <DescuentosForm userProfile={effectiveProfile} grupos={grupos} opcionesHomologadas={opcionesHomologadas} campanas={campanas} />
+                          <DescuentosForm userProfile={effectiveProfile} grupos={grupos} opcionesHomologadas={opcionesHomologadas} campanas={campanas} postulantes={postulantes} />
                         )}
                       </KeepAliveView>
 
@@ -767,6 +807,18 @@ export default function App() {
                         )}
                       </KeepAliveView>
 
+                      <KeepAliveView viewId="bolsa_capa" activeView={activeView}>
+                        {navItems.some(i => i.id === 'bolsa_capa') && (
+                          <BolsaCapa
+                            grupos={campanasMetas.length > 0 ? campanasMetas : grupos}
+                            campanas={campanas}
+                            postulantes={postulantes}
+                            userProfile={effectiveProfile}
+                            onRefresh={loadAllData}
+                          />
+                        )}
+                      </KeepAliveView>
+
                       {/* 14. Nóminas por Completar */}
                       <KeepAliveView viewId="nominas_completar" activeView={activeView}>
                         {navItems.some(i => i.id === 'nominas_completar') && (
@@ -783,7 +835,7 @@ export default function App() {
                       {/* 15. Marcación Asistencia */}
                       <KeepAliveView viewId="asistencia" activeView={activeView}>
                         {navItems.some(i => i.id === 'asistencia') && (
-                          <AsistenciaForm grupos={grupos} postulantes={postulantes} asistencias={asistencias} formadores={formadores} campanasMetas={campanasMetas} motivosBaja={motivosBaja} userProfile={effectiveProfile} userRole={currentRole} onSave={handleSaveAsistencia} />
+                          <AsistenciaForm grupos={grupos} postulantes={postulantes} asistencias={asistencias} formadores={formadores} campanasMetas={campanasMetas} motivosBaja={motivosBaja} userProfile={effectiveProfile} userRole={currentRole} onSave={handleSaveAsistencia} onRefresh={loadAllData} />
                         )}
                       </KeepAliveView>
 
@@ -889,8 +941,37 @@ export default function App() {
                 theme={theme}
                 setTheme={setTheme}
               />
+
+              {/* Pantalla Completa de Bienvenida Ejecutiva GEITO (Resumen Diario 3D) */}
+              <OreoExecutiveModal
+                isOpen={isOreoModalOpen}
+                onClose={handleCloseOreoModal}
+                userProfile={effectiveProfile}
+                postulantes={postulantes}
+                asistencias={asistencias}
+                campanasMetas={campanasMetas}
+                reclutadores={reclutadores}
+                formadores={formadores}
+                motivosBaja={motivosBaja}
+                grupos={grupos}
+              />
+
+              {/* Asistente Flotante GEÍTO (Vuelo Elíptico + Chat IA Consultivo) - Exclusivo del Panel de Resumen */}
+              {activeView === 'resumen_capacitacion' && (
+                <GeaMascotCompanion
+                  userName={effectiveProfile?.nombre || 'Usuario'}
+                  adminPhone="51980690494"
+                  currentView={activeView}
+                  postulantes={postulantes}
+                  grupos={grupos}
+                  asistencias={asistencias}
+                  campanasMetas={campanasMetas}
+                  sedes={sedes}
+                />
+              )}
             </div>
             )}
+
           </TooltipProvider>
         </BackgroundTasksProvider>
       </ToastProvider>

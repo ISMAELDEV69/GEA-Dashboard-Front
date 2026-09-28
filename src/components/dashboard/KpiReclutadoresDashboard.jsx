@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import {
   RefreshCw, RotateCcw, AlertTriangle, CheckCircle2, Download,
+  ArrowUpDown, ArrowUp, ArrowDown,
 } from 'lucide-react'
 import {
   fetchKpiReclutadoresConsolidado,
@@ -23,6 +24,7 @@ import {
 } from '../../lib/kpiReclutadoresAnalytics'
 import { ChartTooltipContent } from '../ui/chart-tooltip'
 import Card, { CardHeader, CardTitle, CardContent } from '../ui/Card'
+import KpiMultiSelect from './KpiMultiSelect'
 
 const OPTION_CLASS = 'bg-[var(--bg-surface)] text-[var(--text-primary)]'
 const MINI_SELECT =
@@ -106,8 +108,8 @@ function useAppPresentation() {
   return useMemo(() => buildPresentation(mode), [mode])
 }
 
-function MiniSelect({ value, onChange, children, wide = false, mono = false }) {
-  return (
+function MiniSelect({ value, onChange, children, wide = false, mono = false, label }) {
+  const select = (
     <select
       value={value}
       onChange={onChange}
@@ -116,21 +118,15 @@ function MiniSelect({ value, onChange, children, wide = false, mono = false }) {
       {children}
     </select>
   )
-}
-
-function MiniToggle({ checked, onChange, label }) {
+  if (!label) return select
   return (
-    <label className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] cursor-pointer select-none hover:text-[var(--text-primary)]">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="size-3 rounded-sm accent-[var(--accent)]"
-      />
-      {label}
+    <label className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-[9px] font-black uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+      {select}
     </label>
   )
 }
+
 
 function shortName(name) {
   return String(name || '').trim().split(/\s+/).slice(0, 2).join(' ')
@@ -378,48 +374,126 @@ function ResultadosAulaMatrix({ groups, useTope = false }) {
 
 function RecruiterMatrix({ rows, useTope = false }) {
   const theme = useKpiTheme()
-  const data = rows || []
-  if (!data.length) {
+  const rawData = rows || []
+
+  // Estado para ordenamiento de columnas (por defecto mayor a menor en Dotación)
+  const [sortKey, setSortKey] = useState('iopShow')
+  const [sortDir, setSortDir] = useState('desc')
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(prev => (prev === 'desc' ? 'asc' : 'desc'))
+    } else {
+      setSortKey(key)
+      setSortDir('desc') // De mayor a menor por defecto
+    }
+  }
+
+  const sortedData = useMemo(() => {
+    if (!rawData.length) return []
+    const list = [...rawData]
+    if (!sortKey) return list
+
+    return list.sort((a, b) => {
+      let valA = a[sortKey]
+      let valB = b[sortKey]
+
+      if (sortKey === 'nombre') {
+        const sA = String(valA || '').trim().toLowerCase()
+        const sB = String(valB || '').trim().toLowerCase()
+        return sortDir === 'asc' ? sA.localeCompare(sB) : sB.localeCompare(sA)
+      }
+
+      valA = numSafe(valA)
+      valB = numSafe(valB)
+
+      return sortDir === 'asc' ? valA - valB : valB - valA
+    })
+  }, [rawData, sortKey, sortDir])
+
+  if (!rawData.length) {
     return <p className="text-xs text-[var(--text-muted)] py-8 text-center">Sin reclutadores en el corte.</p>
   }
-  const totGrupos = data.reduce((acc, row) => acc + numSafe(row.grupos), 0)
-  const totDot = data.reduce((acc, row) => acc + numSafe(row.iopShow), 0)
-  const totDes = data.reduce((acc, row) => acc + numSafe(row.desercion), 0)
-  const totD1 = data.reduce((acc, row) => acc + numSafe(row.d1Show), 0)
-  const totPct = totD1 ? Math.round((totDes / totD1) * 1000) / 10 : 0
+
+  const totGruposRemoto = rawData.reduce((acc, row) => acc + numSafe(row.gruposRemoto), 0)
+  const totGruposPresencial = rawData.reduce((acc, row) => acc + numSafe(row.gruposPresencial), 0)
+  const totGrupos = rawData.reduce((acc, row) => acc + numSafe(row.grupos), 0)
+  const totNomina = rawData.reduce((acc, row) => acc + numSafe(row.nomina), 0)
+  const totD1 = rawData.reduce((acc, row) => acc + numSafe(row.d1Show), 0)
+  const totPresencial = rawData.reduce((acc, row) => acc + numSafe(row.iopPresencialShow), 0)
+  const totRemoto = rawData.reduce((acc, row) => acc + numSafe(row.iopRemotoShow), 0)
+  const totDot = rawData.reduce((acc, row) => acc + numSafe(row.iopShow), 0)
+
+  const renderSortTh = (colKey, label, align = 'right') => {
+    const isActive = sortKey === colKey
+    return (
+      <th 
+        className={`py-2 px-2 cursor-pointer select-none group transition-colors hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]/60 ${align === 'right' ? 'text-right' : 'text-left'}`}
+        onClick={() => handleSort(colKey)}
+        title={`Ordenar por ${label} (${isActive && sortDir === 'desc' ? 'menor a mayor' : 'mayor a menor'})`}
+      >
+        <div className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+          <span className={isActive ? 'text-cyan-400 font-bold' : ''}>{label}</span>
+          <span className="inline-flex shrink-0">
+            {isActive ? (
+              sortDir === 'desc' ? (
+                <ArrowDown size={12} className="text-cyan-400" />
+              ) : (
+                <ArrowUp size={12} className="text-cyan-400" />
+              )
+            ) : (
+              <ArrowUpDown size={11} className="opacity-0 group-hover:opacity-60 transition-opacity" />
+            )}
+          </span>
+        </div>
+      </th>
+    )
+  }
 
   return (
     <div className="overflow-x-auto max-h-[480px] custom-scrollbar">
       <table className="w-full text-left text-xs border-collapse">
-        <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)]">
+        <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)] z-10 shadow-sm">
           <tr>
-            <th className="py-2 px-2">Reclutador</th>
-            <th className="py-2 px-2 text-right">Grupos</th>
-            <th className="py-2 px-2 text-right">Dotación</th>
-            <th className="py-2 px-2 text-right">Deserción</th>
-            <th className="py-2 px-2 text-right">% Des.</th>
+            {renderSortTh('nombre', 'Reclutador', 'left')}
+            {renderSortTh('gruposRemoto', 'G. Remoto', 'right')}
+            {renderSortTh('gruposPresencial', 'G. Presencial', 'right')}
+            {renderSortTh('grupos', 'Grupos', 'right')}
+            {renderSortTh('nomina', 'Nómina', 'right')}
+            {renderSortTh('d1Show', 'Día 1', 'right')}
+            {renderSortTh('iopPresencialShow', 'Presencial', 'right')}
+            {renderSortTh('iopRemotoShow', 'Remoto', 'right')}
+            {renderSortTh('iopShow', 'Dotación', 'right')}
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
-          {data.map((row) => (
+          {sortedData.map((row) => (
             <tr key={row.nombre} className="hover:bg-[var(--surface-hover)]">
               <td className="py-2 px-2 font-sans text-[var(--text-primary)] truncate max-w-[240px]" title={row.nombre}>
                 {row.nombre}
               </td>
-              <td className="py-2 px-2 text-right">{row.grupos}</td>
-              <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(row.iopShow, useTope ? 1 : 0)}</td>
-              <td className="py-2 px-2 text-right" style={{ color: theme.red }}>{fmtNum(row.desercion, useTope ? 1 : 0)}</td>
-              <td className="py-2 px-2 text-right">{row.pctDesercion}%</td>
+              <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{row.gruposRemoto || 0}</td>
+              <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{row.gruposPresencial || 0}</td>
+              <td className="py-2 px-2 text-right font-semibold">{row.grupos || 0}</td>
+              <td className="py-2 px-2 text-right" style={{ color: theme.nomina }}>{fmtNum(row.nomina)}</td>
+              <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(row.d1Show, useTope ? 1 : 0)}</td>
+              <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{fmtNum(row.iopPresencialShow, useTope ? 1 : 0)}</td>
+              <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{fmtNum(row.iopRemotoShow, useTope ? 1 : 0)}</td>
+              <td className="py-2 px-2 text-right font-bold" style={{ color: theme.iop }}>{fmtNum(row.iopShow, useTope ? 1 : 0)}</td>
             </tr>
           ))}
         </tbody>
         <tfoot>
           <tr className="border-t border-[var(--border-normal)] font-mono font-semibold">
             <td className="py-2 px-2 font-sans">Total</td>
-            <td className="py-2 px-2 text-right">{totGrupos}</td>
-            <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(totDot, useTope ? 1 : 0)}</td>
-            <td className="py-2 px-2 text-right" style={{ color: theme.red }}>{fmtNum(totDes, useTope ? 1 : 0)}</td>
-            <td className="py-2 px-2 text-right">{totPct}%</td>
+            <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{totGruposRemoto}</td>
+            <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{totGruposPresencial}</td>
+            <td className="py-2 px-2 text-right font-semibold">{totGrupos}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.nomina }}>{fmtNum(totNomina)}</td>
+            <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(totD1, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{fmtNum(totPresencial, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right text-[var(--text-secondary)]">{fmtNum(totRemoto, useTope ? 1 : 0)}</td>
+            <td className="py-2 px-2 text-right font-bold" style={{ color: theme.iop }}>{fmtNum(totDot, useTope ? 1 : 0)}</td>
           </tr>
         </tfoot>
       </table>
@@ -547,14 +621,13 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const [refreshing, setRefreshing] = useState(false)
   const [updatedAt, setUpdatedAt] = useState(null)
 
-  const [periodo, setPeriodo] = useState(() => currentOperativePeriodo())
-  const [semana, setSemana] = useState('ALL')
-  const [segmento, setSegmento] = useState('ALL')
-  const [campana, setCampana] = useState('ALL')
-  const [grupo, setGrupo] = useState('ALL')
-  const [responsable, setResponsable] = useState('ALL')
-  const [useTope, setUseTope] = useState(false)
-  const [includeEmptyGroups, setIncludeEmptyGroups] = useState(false)
+  const [periodo, setPeriodo] = useState(() => [currentOperativePeriodo()])
+  const [periodoReclutado, setPeriodoReclutado] = useState([])
+  const [semana, setSemana] = useState([])
+  const [segmento, setSegmento] = useState([])
+  const [campana, setCampana] = useState([])
+  const [grupo, setGrupo] = useState([])
+  const [responsable, setResponsable] = useState([])
   const [selectedGrupo, setSelectedGrupo] = useState(null)
   const [vista, setVista] = useState('resumen')
   const theme = useAppPresentation()
@@ -566,8 +639,8 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     else setRefreshing(true)
     try {
       const [data, nominaRows] = await Promise.all([
-        fetchKpiReclutadoresConsolidado({ periodo }),
-        fetchNominasAuditoria({ periodo }).catch(() => []),
+        fetchKpiReclutadoresConsolidado({ periodo, periodoReclutado }),
+        fetchNominasAuditoria({ periodo, periodoReclutado }).catch(() => []),
       ])
       const nextRows = data || []
       setRows(nextRows)
@@ -578,9 +651,10 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
       }, null)
       setUpdatedAt(stamp)
       hasLoadedRef.current = true
-      if (periodo === currentOperativePeriodo() && nextRows.length === 0) {
+      const isDefaultSingle = Array.isArray(periodo) ? (periodo.length === 1 && periodo[0] === currentOperativePeriodo()) : (periodo === currentOperativePeriodo())
+      if (isDefaultSingle && nextRows.length === 0) {
         const prevPeriod = recentOperativePeriodos(2)[1]
-        if (prevPeriod && prevPeriod !== periodo) setPeriodo(prevPeriod)
+        if (prevPeriod) setPeriodo([prevPeriod])
       }
     } catch (err) {
       setError(err?.message || 'No se pudo cargar kpi_reclutadores_consolidado')
@@ -588,7 +662,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [periodo])
+  }, [periodo, periodoReclutado])
 
   useEffect(() => {
     loadRows()
@@ -608,6 +682,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const cascadeRows = useMemo(() => {
     return filterKpiRows(rows, {
       periodo,
+      periodoReclutado,
       semana,
       segmento,
       campana,
@@ -615,11 +690,12 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
       responsable: effectiveResponsable,
       includeEmptyGroups: true,
     })
-  }, [rows, periodo, semana, segmento, campana, effectiveResponsable])
+  }, [rows, periodo, periodoReclutado, semana, segmento, campana, effectiveResponsable])
 
   const options = useMemo(() => {
     const base = filterKpiRows(rows, {
       periodo,
+      periodoReclutado,
       semana: 'ALL',
       segmento: 'ALL',
       campana: 'ALL',
@@ -627,37 +703,92 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
       responsable: effectiveResponsable,
       includeEmptyGroups: true,
     })
-    const byPeriodo = filterKpiRows(base, { periodo, includeEmptyGroups: true, responsable: effectiveResponsable })
-    const bySeg = filterKpiRows(byPeriodo, { periodo, segmento, includeEmptyGroups: true, responsable: effectiveResponsable })
-    const byCamp = filterKpiRows(bySeg, { periodo, segmento, campana, includeEmptyGroups: true, responsable: effectiveResponsable })
+    const forPeriodosReclutado = filterKpiRows(base, {
+      periodo,
+      includeEmptyGroups: true,
+      responsable: effectiveResponsable,
+    })
+
+    const forSemanas = filterKpiRows(base, {
+      periodo,
+      periodoReclutado,
+      segmento,
+      campana,
+      grupo,
+      responsable: effectiveResponsable,
+      includeEmptyGroups: true,
+    })
+
+    const forSegmentos = filterKpiRows(base, {
+      periodo,
+      periodoReclutado,
+      semana,
+      campana,
+      grupo,
+      responsable: effectiveResponsable,
+      includeEmptyGroups: true,
+    })
+
+    const forCampanas = filterKpiRows(base, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      grupo,
+      responsable: effectiveResponsable,
+      includeEmptyGroups: true,
+    })
+
+    const forGrupos = filterKpiRows(base, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      responsable: effectiveResponsable,
+      includeEmptyGroups: true,
+    })
+
+    const forResponsables = filterKpiRows(base, {
+      periodo,
+      periodoReclutado,
+      semana,
+      segmento,
+      campana,
+      grupo,
+      includeEmptyGroups: true,
+    })
+
     return {
       all: buildFilterOptions(rows),
-      semanas: buildFilterOptions(byPeriodo).semanas,
-      segmentos: buildFilterOptions(byPeriodo).segmentos,
-      campanas: buildFilterOptions(bySeg).campanas,
-      grupos: buildFilterOptions(byCamp).grupos,
-      responsables: buildFilterOptions(rows).responsables,
+      periodosReclutado: buildFilterOptions(forPeriodosReclutado).periodosReclutado,
+      semanas: buildFilterOptions(forSemanas).semanas,
+      segmentos: buildFilterOptions(forSegmentos).segmentos,
+      campanas: buildFilterOptions(forCampanas).campanas,
+      grupos: buildFilterOptions(forGrupos).grupos,
+      responsables: buildFilterOptions(forResponsables).responsables,
     }
-  }, [rows, periodo, segmento, campana, effectiveResponsable])
+  }, [rows, periodo, periodoReclutado, semana, segmento, campana, grupo, effectiveResponsable])
 
   const filtered = useMemo(() => {
     return filterKpiRows(rows, {
       periodo,
+      periodoReclutado,
       semana,
       segmento,
       campana,
       grupo,
       responsable: effectiveResponsable,
-      includeEmptyGroups,
+      includeEmptyGroups: false,
     })
-  }, [rows, periodo, semana, segmento, campana, grupo, effectiveResponsable, includeEmptyGroups])
+  }, [rows, periodo, periodoReclutado, semana, segmento, campana, grupo, effectiveResponsable])
 
   const model = useMemo(
     () => buildKpiModel(filtered, {
-      useTope,
+      useTope: false,
       singleRecruiter: effectiveResponsable !== 'ALL',
     }),
-    [filtered, useTope, effectiveResponsable]
+    [filtered, effectiveResponsable]
   )
 
   const auditoria = useMemo(
@@ -667,15 +798,15 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     [nominas, filtered, isLocked, effectiveResponsable]
   )
 
+  const isAll = (v) => !v || v.length === 0 || v === 'ALL'
   const activeFilters = [
-    periodo !== 'ALL',
-    semana !== 'ALL',
-    segmento !== 'ALL',
-    campana !== 'ALL',
-    grupo !== 'ALL',
-    !isLocked && responsable !== 'ALL',
-    useTope,
-    includeEmptyGroups,
+    !isAll(periodo) && (periodo.length > 1 || !periodo.includes(currentOperativePeriodo())),
+    !isAll(periodoReclutado),
+    !isAll(semana),
+    !isAll(segmento),
+    !isAll(campana),
+    !isAll(grupo),
+    !isLocked && !isAll(responsable),
   ].filter(Boolean).length
 
   const periodoOptions = useMemo(() => {
@@ -685,14 +816,13 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   }, [options.all.periodos])
 
   const resetFilters = () => {
-    setPeriodo(currentOperativePeriodo())
-    setSemana('ALL')
-    setSegmento('ALL')
-    setCampana('ALL')
-    setGrupo('ALL')
-    if (!isLocked) setResponsable('ALL')
-    setUseTope(false)
-    setIncludeEmptyGroups(false)
+    setPeriodo([currentOperativePeriodo()])
+    setPeriodoReclutado([])
+    setSemana([])
+    setSegmento([])
+    setCampana([])
+    setGrupo([])
+    if (!isLocked) setResponsable([])
     setSelectedGrupo(null)
   }
 
@@ -765,42 +895,67 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     <KpiThemeContext.Provider value={theme}>
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
-        <MiniSelect value={periodo} onChange={(e) => { setPeriodo(e.target.value); setGrupo('ALL') }}>
-          <option value="ALL" className={OPTION_CLASS}>Todos los periodos (más lento)</option>
-          {periodoOptions.map((p) => <option key={p} value={p} className={OPTION_CLASS}>{p}</option>)}
-        </MiniSelect>
-        <MiniSelect value={semana} onChange={(e) => setSemana(e.target.value)}>
-          <option value="ALL" className={OPTION_CLASS}>Semana</option>
-          {options.semanas.map((s) => <option key={s} value={s} className={OPTION_CLASS}>Sem {s}</option>)}
-        </MiniSelect>
-        <MiniSelect value={segmento} onChange={(e) => { setSegmento(e.target.value); setCampana('ALL'); setGrupo('ALL') }} wide>
-          <option value="ALL" className={OPTION_CLASS}>Segmento</option>
-          {options.segmentos.map((s) => <option key={s} value={s} className={OPTION_CLASS}>{s}</option>)}
-        </MiniSelect>
-        <MiniSelect value={campana} onChange={(e) => { setCampana(e.target.value); setGrupo('ALL') }} wide>
-          <option value="ALL" className={OPTION_CLASS}>Campaña</option>
-          {options.campanas.map((c) => <option key={c} value={c} className={OPTION_CLASS}>{c}</option>)}
-        </MiniSelect>
-        <MiniSelect value={grupo} onChange={(e) => setGrupo(e.target.value)} mono>
-          <option value="ALL" className={OPTION_CLASS}>Grupo</option>
-          {options.grupos.map((g) => <option key={g} value={g} className={OPTION_CLASS}>{g}</option>)}
-        </MiniSelect>
+        <KpiMultiSelect
+          label="Periodo ingreso"
+          allLabel="Todos (más lento)"
+          placeholder="Periodo ingreso"
+          options={periodoOptions}
+          values={periodo}
+          onChange={(vals) => { setPeriodo(vals); setGrupo([]) }}
+        />
+        <KpiMultiSelect
+          label="Periodo inicio"
+          allLabel="Todos"
+          placeholder="Periodo inicio"
+          options={options.periodosReclutado || options.all.periodosReclutado || []}
+          values={periodoReclutado}
+          onChange={(vals) => { setPeriodoReclutado(vals); setGrupo([]) }}
+        />
+        <KpiMultiSelect
+          placeholder="Semana"
+          allLabel="Semana"
+          options={options.semanas}
+          values={semana}
+          onChange={setSemana}
+          formatOption={(s) => `Sem ${s}`}
+        />
+        <KpiMultiSelect
+          placeholder="Segmento"
+          allLabel="Segmento"
+          options={options.segmentos}
+          values={segmento}
+          onChange={(vals) => { setSegmento(vals); setCampana([]); setGrupo([]) }}
+          wide
+        />
+        <KpiMultiSelect
+          placeholder="Campaña"
+          allLabel="Campaña"
+          options={options.campanas}
+          values={campana}
+          onChange={(vals) => { setCampana(vals); setGrupo([]) }}
+          wide
+        />
+        <KpiMultiSelect
+          placeholder="Grupo"
+          allLabel="Grupo"
+          options={options.grupos}
+          values={grupo}
+          onChange={setGrupo}
+          mono
+        />
         {isLocked ? (
           <span className="h-7 inline-flex items-center text-[11px] text-[var(--text-secondary)] truncate max-w-[160px]">
             {lockedName || 'Mi perfil'}
           </span>
         ) : (
-          <MiniSelect value={responsable} onChange={(e) => setResponsable(e.target.value)} wide>
-            <option value="ALL" className={OPTION_CLASS}>Reclutador</option>
-            {options.responsables.map((r) => <option key={r} value={r} className={OPTION_CLASS}>{r}</option>)}
-          </MiniSelect>
-        )}
-
-        <span className="hidden sm:block h-4 w-px bg-[var(--border-normal)]" />
-
-        <MiniToggle checked={useTope} onChange={(e) => setUseTope(e.target.checked)} label="Tope" />
-        {!isLocked && (
-          <MiniToggle checked={includeEmptyGroups} onChange={(e) => setIncludeEmptyGroups(e.target.checked)} label="Sin nómina" />
+          <KpiMultiSelect
+            placeholder="Reclutador"
+            allLabel="Reclutador"
+            options={options.responsables}
+            values={responsable}
+            onChange={setResponsable}
+            wide
+          />
         )}
 
         <span className="ml-auto flex items-center gap-1">
@@ -876,14 +1031,14 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
             <FlowArrow />
             <KpiTile
               label="3. Día 1"
-              value={fmtNum(useTope ? t.dia1Tope : t.dia1, useTope ? 1 : 0)}
+              value={fmtNum(t.dia1)}
               sub={`${t.pctD1D0}% del Día 0`}
               tone="amber"
             />
             <FlowArrow />
             <KpiTile
               label="4. Operación"
-              value={fmtNum(useTope ? t.iopTope : t.iop, useTope ? 1 : 0)}
+              value={fmtNum(t.iop)}
               sub={`${t.pctOpD1}% del Día 1 · ${fmtNum(t.iopFtes, 1)} FTE`}
               tone="emerald"
             />
@@ -964,7 +1119,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
             title="Matriz de resultados"
             caption="Una fila por reclutador y grupo. RQ individual, nómina, Día 0, Día 1 e ingreso a operación del corte."
           >
-            <ResultadosAulaMatrix groups={model.groups} useTope={useTope} />
+            <ResultadosAulaMatrix groups={model.groups} />
           </ChartFrame>
         </>
       )}
@@ -972,25 +1127,17 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
       {canSeeRanking && vista === 'ranking' && (
         <>
         <ChartFrame
-          tall
-          title="Top reclutadores"
-          caption="Eje X: personas que llegaron a Día 1. Eje Y: reclutador. Ranking del filtro actual, sin ADMIN."
-        >
-          <RankBarChart data={model.recruiters.slice(0, 8)} valueKey="d1Show" />
-        </ChartFrame>
-
-        <ChartFrame
           auto
           title="Matriz por reclutador"
-          caption="Dotación = ingreso a operación. Deserción = Día 1 que no llegó a operación. Grupos = aulas del corte en las que reclutó."
+          caption="Embudo: Grupos = Remoto + Presencial. Nómina = lo que trajo. Día 1 = quién llegó. Dotación = Presencial + Remoto (ingreso a operación)."
         >
-          <RecruiterMatrix rows={model.recruiters} useTope={useTope} />
+          <RecruiterMatrix rows={model.recruiters} />
         </ChartFrame>
 
         <ChartFrame
           auto
           title="Semana × segmento"
-          caption="Eje X: semana. Eje Y: segmento. El número es Día 1 (mismas personas que el ranking). El ámbar es más intenso si hubo más Día 1."
+          caption="Eje X: semana. Eje Y: segmento. El número es Día 1. El ámbar es más intenso si hubo más Día 1."
         >
           <HeatmapGrid rows={model.heatmap} weeks={model.weeks} />
         </ChartFrame>
@@ -1037,8 +1184,8 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
                     <td className="py-2 px-2 text-right">{fmtNum(g.rq, 1)}</td>
                     {!isLocked && <td className="py-2 px-2 text-right">{g.nReclutadores}</td>}
                     <td className="py-2 px-2 text-right" style={{ color: theme.nomina }}>{g.nomina}</td>
-                    <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(g.d1Show, useTope ? 1 : 0)}</td>
-                    <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(g.iopShow, useTope ? 1 : 0)}</td>
+                    <td className="py-2 px-2 text-right" style={{ color: theme.dia1 }}>{fmtNum(g.d1Show)}</td>
+                    <td className="py-2 px-2 text-right" style={{ color: theme.iop }}>{fmtNum(g.iopShow)}</td>
                     <td className="py-2 px-2 text-right">{g.pctD1Rq}%</td>
                     <td className="py-2 px-2"><SemaforoBadge value={g.semaforo} /></td>
                   </tr>
@@ -1074,8 +1221,8 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
                         <td className="py-1.5 px-2 text-right">{fmtNum(rec.rqIndividual, 2)}</td>
                         <td className="py-1.5 px-2 text-right">{rec.nomina}</td>
                         <td className="py-1.5 px-2 text-right">{rec.dia0}</td>
-                        <td className="py-1.5 px-2 text-right">{useTope ? fmtNum(rec.dia1Tope, 2) : rec.dia1}</td>
-                        <td className="py-1.5 px-2 text-right">{useTope ? fmtNum(rec.iopTope, 2) : rec.iop}</td>
+                        <td className="py-1.5 px-2 text-right">{rec.dia1}</td>
+                        <td className="py-1.5 px-2 text-right">{rec.iop}</td>
                       </tr>
                     ))}
                     {selectedAlert.reclutadores.length === 0 && (

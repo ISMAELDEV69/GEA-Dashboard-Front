@@ -67,6 +67,15 @@ function PerformanceScorecardIndividual({
   const isTrainerUser = userRole === 'formador'
   const isSelfLocked = isRecruiterUser || isTrainerUser
 
+  // ── Restricciones de pestaña por rol ─────────────────────────────────────
+  // Roles que solo pueden ver RECLUTADORES (nunca ven Formadores)
+  const ROLES_SOLO_RECLUTADORES = ['reclutador', 'supervisor_capacitacion', 'jefe_rys']
+  // Roles que solo pueden ver FORMADORES (nunca ven Reclutadores)
+  const ROLES_SOLO_FORMADORES = ['formador']
+
+  const canSeeReclutadores = !ROLES_SOLO_FORMADORES.includes(userRole)
+  const canSeeFormadores   = !ROLES_SOLO_RECLUTADORES.includes(userRole)
+
   const selfIdentifier = useMemo(() => {
     if (isRecruiterUser) {
       return userProfile?.nombre_completo || userProfile?.nombre || userProfile?.documento || userProfile?.dni || userProfile?.usuario || userProfile?.alias || ''
@@ -78,7 +87,10 @@ function PerformanceScorecardIndividual({
   }, [userProfile, isRecruiterUser, isTrainerUser])
 
   // ── Estados de Control y Filtros ────────────────────────────────────────
-  const [activeRole, setActiveRole] = useState(isTrainerUser ? 'FORMADOR' : 'RECLUTADOR')
+  // El tab inicial depende de qué puede ver el usuario:
+  // - Si solo puede ver Formadores → empieza en FORMADOR
+  // - En cualquier otro caso → empieza en RECLUTADOR
+  const [activeRole, setActiveRole] = useState(!canSeeReclutadores ? 'FORMADOR' : 'RECLUTADOR')
   const [filterPeriodo, setFilterPeriodo] = useState('Todos')
   const [filterSegmento, setFilterSegmento] = useState('Todos Segmentos')
   const [filterCampana, setFilterCampana] = useState('Todas Campañas')
@@ -601,38 +613,44 @@ function PerformanceScorecardIndividual({
             </span>
           ) : (
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveRole('RECLUTADOR')
-                setSelectedIdentifier('')
-                setSearchQuery('')
-              }}
-              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
-                activeRole === 'RECLUTADOR'
-                  ? 'text-[var(--accent)]'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <Users size={12} />
-              <span>Reclutadores</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveRole('FORMADOR')
-                setSelectedIdentifier('')
-                setSearchQuery('')
-              }}
-              className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
-                activeRole === 'FORMADOR'
-                  ? 'text-[var(--accent)]'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <GraduationCap size={12} />
-              <span>Formadores</span>
-            </button>
+            {/* Pestaña Reclutadores: oculta para roles SOLO_FORMADORES */}
+            {canSeeReclutadores && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveRole('RECLUTADOR')
+                  setSelectedIdentifier('')
+                  setSearchQuery('')
+                }}
+                className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
+                  activeRole === 'RECLUTADOR'
+                    ? 'text-[var(--accent)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <Users size={12} />
+                <span>Reclutadores</span>
+              </button>
+            )}
+            {/* Pestaña Formadores: oculta para roles SOLO_RECLUTADORES */}
+            {canSeeFormadores && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveRole('FORMADOR')
+                  setSelectedIdentifier('')
+                  setSearchQuery('')
+                }}
+                className={`flex items-center gap-1 rounded-md font-semibold transition-all cursor-pointer select-none text-[11px] px-2 py-1 ${
+                  activeRole === 'FORMADOR'
+                    ? 'text-[var(--accent)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <GraduationCap size={12} />
+                <span>Formadores</span>
+              </button>
+            )}
           </div>
           )}
 

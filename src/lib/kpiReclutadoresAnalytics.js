@@ -71,6 +71,10 @@ export function periodoIngreso(row) {
   return String(row?.periodo_reclutado || '').replace(/\D/g, '').slice(0, 6)
 }
 
+export function periodoReclutamiento(row) {
+  return String(row?.periodo_reclutado || row?.periodo_capa || '').replace(/\D/g, '').slice(0, 6)
+}
+
 export function groupKey(row) {
   return [
     row.periodo_reclutado || '',
@@ -118,6 +122,7 @@ export function matchName(candidate, target) {
 export function filterKpiRows(rows, filters = {}) {
   const {
     periodo = 'ALL',
+    periodoReclutado = 'ALL',
     semana = 'ALL',
     segmento = 'ALL',
     campana = 'ALL',
@@ -126,44 +131,97 @@ export function filterKpiRows(rows, filters = {}) {
     includeEmptyGroups = false,
   } = filters
 
+  const isAll = (v) => !v || v === 'ALL' || (Array.isArray(v) && (v.length === 0 || v.includes('ALL')))
+  const toArray = (v) => Array.isArray(v) ? v : [v]
+
   return (rows || []).filter((row) => {
-    if (!isPeriodoReclutadorActivo(periodoIngreso(row))) return false
+    if (!isPeriodoReclutadorActivo(periodoIngreso(row)) && !isPeriodoReclutadorActivo(periodoReclutamiento(row))) return false
     if (!includeEmptyGroups && isSinNomina(row)) return false
-    if (periodo !== 'ALL' && periodoIngreso(row) !== String(periodo)) return false
-    if (semana !== 'ALL' && Number(row.semana) !== Number(semana)) return false
-    if (segmento !== 'ALL' && normKpi(row.segmento) !== normKpi(segmento)) return false
-    if (campana !== 'ALL' && normKpi(row.campana) !== normKpi(campana)) return false
-    if (grupo !== 'ALL' && normKpi(row.grupo_g) !== normKpi(grupo)) return false
-    if (responsable !== 'ALL' && !matchName(row.responsable, responsable)) return false
+
+    if (!isAll(periodo)) {
+      const arr = toArray(periodo).map(String)
+      if (!arr.includes(String(periodoIngreso(row)))) return false
+    }
+
+    if (!isAll(periodoReclutado)) {
+      const arr = toArray(periodoReclutado).map(String)
+      if (!arr.includes(String(periodoReclutamiento(row)))) return false
+    }
+
+    if (!isAll(semana)) {
+      const arr = toArray(semana).map(Number)
+      if (!arr.includes(Number(row.semana))) return false
+    }
+
+    if (!isAll(segmento)) {
+      const arr = toArray(segmento).map(normKpi)
+      if (!arr.includes(normKpi(row.segmento))) return false
+    }
+
+    if (!isAll(campana)) {
+      const arr = toArray(campana).map(normKpi)
+      if (!arr.includes(normKpi(row.campana))) return false
+    }
+
+    if (!isAll(grupo)) {
+      const arr = toArray(grupo).map(normKpi)
+      if (!arr.includes(normKpi(row.grupo_g))) return false
+    }
+
+    if (!isAll(responsable)) {
+      const arr = toArray(responsable)
+      if (!arr.some((r) => matchName(row.responsable, r))) return false
+    }
+
     return true
   })
 }
 
 export function buildFilterOptions(rows) {
   const periodos = new Set()
+  const periodosReclutado = new Set()
   const semanas = new Set()
-  const segmentos = new Set()
-  const campanas = new Set()
-  const grupos = new Set()
-  const responsables = new Set()
+  const segmentos = new Map()
+  const campanas = new Map()
+  const grupos = new Map()
+  const responsables = new Map()
 
   ;(rows || []).forEach((row) => {
     const perIngreso = periodoIngreso(row)
+    const perRecluta = periodoReclutamiento(row)
     if (isPeriodoReclutadorActivo(perIngreso)) periodos.add(perIngreso)
-    if (row.semana != null) semanas.add(Number(row.semana))
-    if (row.segmento) segmentos.add(String(row.segmento).trim())
-    if (row.campana) campanas.add(String(row.campana).trim())
-    if (row.grupo_g) grupos.add(String(row.grupo_g).trim())
-    if (row.responsable && !isSinNomina(row)) responsables.add(String(row.responsable).trim())
+    if (isPeriodoReclutadorActivo(perRecluta)) periodosReclutado.add(perRecluta)
+    if (row.semana != null && String(row.semana).trim() !== '') semanas.add(Number(row.semana))
+    if (row.segmento) {
+      const clean = String(row.segmento).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !segmentos.has(norm)) segmentos.set(norm, clean)
+    }
+    if (row.campana) {
+      const clean = String(row.campana).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !campanas.has(norm)) campanas.set(norm, clean)
+    }
+    if (row.grupo_g) {
+      const clean = String(row.grupo_g).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !grupos.has(norm)) grupos.set(norm, clean)
+    }
+    if (row.responsable && !isSinNomina(row)) {
+      const clean = String(row.responsable).trim().replace(/\s+/g, ' ')
+      const norm = normKpi(clean)
+      if (norm && !responsables.has(norm)) responsables.set(norm, clean)
+    }
   })
 
   return {
     periodos: Array.from(periodos).sort((a, b) => b.localeCompare(a)),
+    periodosReclutado: Array.from(periodosReclutado).sort((a, b) => b.localeCompare(a)),
     semanas: Array.from(semanas).sort((a, b) => a - b),
-    segmentos: Array.from(segmentos).sort((a, b) => a.localeCompare(b)),
-    campanas: Array.from(campanas).sort((a, b) => a.localeCompare(b)),
-    grupos: Array.from(grupos).sort((a, b) => a.localeCompare(b)),
-    responsables: Array.from(responsables).sort((a, b) => a.localeCompare(b)),
+    segmentos: Array.from(segmentos.values()).sort((a, b) => a.localeCompare(b)),
+    campanas: Array.from(campanas.values()).sort((a, b) => a.localeCompare(b)),
+    grupos: Array.from(grupos.values()).sort((a, b) => a.localeCompare(b)),
+    responsables: Array.from(responsables.values()).sort((a, b) => a.localeCompare(b)),
   }
 }
 
@@ -252,9 +310,15 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
         dia1Tope: 0,
         iop: 0,
         iopTope: 0,
+        iopPresencial: 0,
+        iopPresencialTope: 0,
+        iopRemoto: 0,
+        iopRemotoTope: 0,
         iopFtes: 0,
         iopFtesTope: 0,
         grupos: 0,
+        gruposRemoto: 0,
+        gruposPresencial: 0,
       })
     }
     const rec = recruiterMap.get(name)
@@ -267,16 +331,32 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
     rec.iopTope += num(row.dotacion_q_tope)
     rec.iopFtes += num(row.dotacion_ftes)
     rec.iopFtesTope += num(row.dotacion_ftes_tope)
-    rec.grupos += 1
+
+    const mod = String(row.modalidad || '').toUpperCase().trim()
+    const isRemoto = mod.includes('REM') || mod.includes('HOME')
+    if (isRemoto) {
+      rec.gruposRemoto += 1
+      rec.iopRemoto += num(row.dotacion_q)
+      rec.iopRemotoTope += num(row.dotacion_q_tope)
+    } else {
+      rec.gruposPresencial += 1
+      rec.iopPresencial += num(row.dotacion_q)
+      rec.iopPresencialTope += num(row.dotacion_q_tope)
+    }
+    rec.grupos = rec.gruposRemoto + rec.gruposPresencial
   })
 
   const recruiters = Array.from(recruiterMap.values()).map((rec) => {
     const d1 = useTope ? rec.dia1Tope : rec.dia1
-    const iop = useTope ? rec.iopTope : rec.iop
+    const iopPresencial = useTope ? rec.iopPresencialTope : rec.iopPresencial
+    const iopRemoto = useTope ? rec.iopRemotoTope : rec.iopRemoto
+    const iop = iopPresencial + iopRemoto
     const desercion = Math.max(0, d1 - iop)
     return {
       ...rec,
       d1Show: d1,
+      iopPresencialShow: iopPresencial,
+      iopRemotoShow: iopRemoto,
       iopShow: iop,
       desercion,
       pctDesercion: pct(desercion, d1),
@@ -293,8 +373,16 @@ export function buildKpiModel(rows, { useTope = false, singleRecruiter = false }
     ? rows.reduce((acc, row) => acc + (num(row.n_reclutadores) > 0 ? num(row.rq_ftes) / num(row.n_reclutadores) : 0), 0)
     : groups.reduce((acc, g) => acc + g.rqFtes, 0)
 
+  const gruposRemoto = groups.filter(g => {
+    const mod = String(g.modalidad || '').toUpperCase()
+    return mod.includes('REM') || mod.includes('HOME')
+  }).length
+  const gruposPresencial = groups.length - gruposRemoto
+
   const totals = {
     grupos: groups.length,
+    gruposRemoto,
+    gruposPresencial,
     reclutadores: recruiters.length,
     rq,
     rqFtes,

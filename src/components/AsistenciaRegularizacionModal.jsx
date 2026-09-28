@@ -371,34 +371,44 @@ export default function AsistenciaRegularizacionModal({
   }, [recordsState])
 
   const handleStatusSelect = (fecha, newSigla) => {
-    setRecordsState(prev => prev.map(r => {
-      if (r.fecha !== fecha) return r
-      let newMotivo = r.motivo_baja
-      if (newSigla !== 'B') {
-        newMotivo = ''
-      } else if (!newMotivo) {
-        newMotivo = defaultBajaMotivo({
-          trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
-          row: profileRow,
-          existingMotivo: '',
-        })
-      }
-      return { ...r, sigla: newSigla, motivo_baja: newMotivo }
-    }))
+    setRecordsState(prev => {
+      const targetIndex = prev.findIndex(r => r.fecha === fecha)
+      return prev.map((r, idx) => {
+        if (r.fecha === fecha) {
+          let newMotivo = r.motivo_baja
+          if (newSigla !== 'B') {
+            newMotivo = ''
+          } else if (!newMotivo) {
+            newMotivo = defaultBajaMotivo({
+              trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
+              row: profileRow,
+              existingMotivo: '',
+            })
+          }
+          return { ...r, sigla: newSigla, motivo_baja: newMotivo }
+        }
+
+        // Si estamos poniendo Asistencia ('A' o 'I-OP') y un día anterior tenía 'B' (Baja),
+        // convertimos la baja anterior a 'FJ' (Falta Justificada) para reactivar al alumno sin conflicto de cese
+        if ((newSigla === 'A' || newSigla === 'I-OP') && targetIndex !== -1 && idx < targetIndex && r.sigla === 'B') {
+          return { ...r, sigla: 'FJ', motivo_baja: '' }
+        }
+
+        // Si marcamos 'B' en un día, los días posteriores no pueden quedar como asistentes ('A' o 'I-OP')
+        if (newSigla === 'B' && targetIndex !== -1 && idx > targetIndex && (r.sigla === 'A' || r.sigla === 'I-OP')) {
+          return { ...r, sigla: 'B', motivo_baja: r.motivo_baja || 'DESERCIÓN' }
+        }
+
+        return r
+      })
+    })
     setActiveDropdownDate(null)
   }
 
   const handleMotiveChange = (fecha, newMotivo) => {
     setRecordsState(prev => prev.map(r => {
       if (r.fecha !== fecha) return r
-      const previous = originalRecordsMap.get(r.fecha)?.motivo_baja || r.motivo_baja
-      const nextMotivo = sanitizeBajaDia1Motivo({
-        trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
-        row: profileRow,
-        motivo: newMotivo,
-        previousMotivo: previous,
-      })
-      return { ...r, motivo_baja: nextMotivo }
+      return { ...r, motivo_baja: newMotivo }
     }))
   }
 
@@ -448,24 +458,6 @@ export default function AsistenciaRegularizacionModal({
     const missingMotive = recordsState.find(r => r.sigla === 'B' && !r.motivo_baja)
     if (missingMotive) {
       toast.warning('Motivo requerido', `Selecciona un motivo de baja para el día ${formatSpreadsheetDate(missingMotive.fecha)}.`)
-      return
-    }
-
-    const blocked = recordsState.find((r) => {
-      if (r.sigla !== 'B' || !isBajaDia1Motivo(r.motivo_baja)) return false
-      const previous = originalRecordsMap.get(r.fecha)?.motivo_baja || ''
-      const allowed = canAssignBajaDia1({
-        trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
-        row: profileRow,
-        existingMotivo: previous,
-      })
-      return !allowed
-    })
-    if (blocked) {
-      toast.warning(
-        'Baja Día 1 no permitida',
-        `En ${formatSpreadsheetDate(blocked.fecha)} ya no se puede marcar Baja Día 1. Usa otro motivo de formación.`
-      )
       return
     }
 
@@ -782,13 +774,7 @@ export default function AsistenciaRegularizacionModal({
                                     title="Motivo de Baja"
                                   >
                                     <option value="">-- Motivo --</option>
-                                    {canAssignBajaDia1({
-                                      trainingDayIndex: rec.dayIndex || (isDia1 ? 1 : 99),
-                                      row: profileRow,
-                                      existingMotivo: rec.motivo_baja,
-                                    }) ? (
-                                      <option value="BAJA DIA 1">BAJA DIA 1</option>
-                                    ) : null}
+                                    <option value="BAJA DIA 1">BAJA DIA 1</option>
                                     <option value="OBSERVADO">OBSERVADO</option>
                                     <option value="SOBREDOTACIÓN">SOBREDOTACIÓN</option>
                                     <option value="DESERCIÓN">DESERCIÓN</option>
@@ -799,6 +785,11 @@ export default function AsistenciaRegularizacionModal({
                                           {m.motivo}
                                         </option>
                                       ))}
+                                    {rec.motivo_baja && 
+                                      !['BAJA DIA 1', 'OBSERVADO', 'SOBREDOTACIÓN', 'DESERCIÓN'].includes(rec.motivo_baja) && 
+                                      !motivosBaja.some(m => m.motivo === rec.motivo_baja) && (
+                                        <option value={rec.motivo_baja}>{rec.motivo_baja}</option>
+                                      )}
                                   </select>
                                 </div>
                               ) : (

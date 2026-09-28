@@ -58,11 +58,16 @@ export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMoti
   if (isRecuperadoCapProfile(row)) return false
   const day = Number(trainingDayIndex) || 0
   if (day < 1) return false
-  if (isAgregadoObservadoProfile(row)) return day <= 2
-  return day === 1
+  // Día 1 y Día 2 siempre permitidos para Baja Día 1 (agregados extemporáneos, Día 2 directo y período de gracia)
+  if (day <= 2) return true
+  if (isAgregadoObservadoProfile(row)) return day <= 3
+  return false
 }
 
-export function defaultBajaMotivo(params) {
+export function defaultBajaMotivo(params = {}) {
+  const day = Number(params?.trainingDayIndex) || 0
+  if (day === 1) return 'BAJA DIA 1'
+  if (day === 2 && isAgregadoObservadoProfile(params?.row)) return 'BAJA DIA 1'
   return canAssignBajaDia1(params) ? 'BAJA DIA 1' : 'DESERCIÓN'
 }
 

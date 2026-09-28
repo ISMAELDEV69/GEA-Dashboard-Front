@@ -309,7 +309,7 @@ export function buildCapacidadIndex(capacidadRows = []) {
     const campana = normalizeCampanaKey(g.campana || g.campana_nombre)
     const segmento = normalizeCampanaKey(g.segmento)
     const week = normalizeWeekKey(g.semana_label || g.semana_trabajo || g.semana)
-    const periodoOp = normalize2026Period(g.periodo_ingreso_op) || ''
+    const periodoOp = normalize2026Period(g.periodo_ingreso_op) || normalize2026Period(g.fecha_ingreso_op) || ''
     const periodo = normalize2026Period(g.periodo) || ''
     if (!grupo || !campana) continue
 
@@ -444,17 +444,16 @@ function uniqueSorted(values, locale = false) {
 
 function defaultPeriodoFromRows(rows, getActivity) {
   const periodos = uniqueSorted(rows.map((r) => r.periodo))
-  const currentYm = currentYearMonth()
   const activity = new Map()
   for (const r of rows) {
     const slot = activity.get(r.periodo) || { active: false }
     if (getActivity(r)) slot.active = true
     activity.set(r.periodo, slot)
   }
-  const withData = periodos.filter((p) => activity.get(p)?.active && p <= currentYm)
+  const withData = periodos.filter((p) => activity.get(p)?.active)
   return withData.length
     ? withData[withData.length - 1]
-    : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
+    : (periodos[periodos.length - 1] || '')
 }
 
 export function buildCoberturaDotacionModelFromTable(tableRows = [], capacidadRows = []) {
@@ -570,8 +569,6 @@ export function buildCoberturaDotacionModel(grupos = [], asistencias = [], postu
   const segmentos = [...new Set(rows.map(r => r.segmento))].sort((a, b) => a.localeCompare(b, 'es'))
   const campanas = [...new Set(rows.map(r => r.campana))].sort((a, b) => a.localeCompare(b, 'es'))
 
-  const now = new Date()
-  const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
   const activity = new Map()
   for (const r of rows) {
     const slot = activity.get(r.periodo) || { rq: 0, ing: 0 }
@@ -581,11 +578,11 @@ export function buildCoberturaDotacionModel(grupos = [], asistencias = [], postu
   }
   const withData = periodos.filter((p) => {
     const s = activity.get(p)
-    return s && p <= currentYm && (s.rq > 0 || s.ing > 0)
+    return s && (s.rq > 0 || s.ing > 0)
   })
   const defaultPeriodo = withData.length
     ? withData[withData.length - 1]
-    : (periodos.filter((p) => p <= currentYm).pop() || periodos[periodos.length - 1] || '')
+    : (periodos[periodos.length - 1] || '')
 
   return {
     rows,
@@ -699,7 +696,7 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
         selected: Boolean(filters.semana) && s.semana === filters.semana,
       }))
   } else {
-    const axisEnd = currentYearMonth()
+    const axisEnd = [currentYearMonth(), ...dimFiltered.map((r) => r.periodo)].filter(Boolean).sort().pop()
     const byPeriodo = new Map()
     for (const p of listYearMonths('202601', axisEnd)) {
       byPeriodo.set(p, { axisKey: p, periodo: p, ...emptyTotals() })
