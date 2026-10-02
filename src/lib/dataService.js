@@ -1920,7 +1920,7 @@ export async function saveGrupoCapacitacion({
   return grupoRow
 }
 
-export const AREAS_BOLSA_CAPA = ['RECUPERADO', 'CAPACITACION TRASLADO', 'TRASLADO OP']
+export const AREAS_BOLSA_CAPA = ['CAPACITACION', 'RECUPERADO', 'CAPACITACION TRASLADO', 'TRASLADO OP']
 export const TIPOS_RECLUTADOR_CAPA = ['CAPACITACION', 'RECUPERADO', 'TRASLADO']
 
 export function isAreaBolsaCapa(area) {
@@ -1929,10 +1929,11 @@ export function isAreaBolsaCapa(area) {
 
 export function tipoReclutadoFromAreaCapa(area) {
   const a = String(area || '').trim().toUpperCase()
+  if (a === 'CAPACITACION') return 'CAPACITACION'
   if (a === 'RECUPERADO') return 'RECUPERADO'
   if (a === 'CAPACITACION TRASLADO') return 'TRASLADO'
   if (a === 'TRASLADO OP') return 'TRASLADO OP'
-  return a || 'RECUPERADO'
+  return a || 'CAPACITACION'
 }
 
 export function tipoReclutadorFromAreaCapa(area) {

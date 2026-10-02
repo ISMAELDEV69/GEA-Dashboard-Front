@@ -426,17 +426,8 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         setDuplicate(found.exact)
         applyGrupoFilters(found.exact)
         setMessage({
-          tone: 'warn',
-          text: `El grupo ${found.exact.codigo} / ${found.exact.campana} ya existe. Úsalo para agregar más asesores; no se creó otro.`,
-        })
-        return
-      }
-      if (found.byCodigo.length) {
-        const others = found.byCodigo.map((g) => g.campana).join(', ')
-        setDuplicate(found.byCodigo[0])
-        setMessage({
-          tone: 'warn',
-          text: `Ese GPE ya existe en otra campaña (${others}). Confirma el código antes de crear uno nuevo o elige el grupo existente.`,
+          tone: 'ok',
+          text: `Grupo ${found.exact.codigo} (${found.exact.campana}) listo. Ya puedes cargar o agregar más asesores en el panel de la derecha.`,
         })
         return
       }
@@ -456,7 +447,13 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         fecha_ingreso_op: form.fecha_ingreso_op || null,
         rq_solicitado: 0,
         rq_ftes_solicitado: 0,
+        creado_por_email: userProfile?.email || null,
+        creado_por_nombre: userProfile?.nombre || null,
       })
+
+      // Refrescar catálogo global para reflejarlo en Nóminas, Asignación de Formador, etc.
+      await onRefresh?.()
+
       applyGrupoFilters({
         ...created,
         campana,
@@ -469,8 +466,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         semana_trabajo: semanaNum,
       })
       setForm({ ...EMPTY_FORM, area_traslado: form.area_traslado })
-      setMessage({ tone: 'ok', text: `Grupo ${codigo} creado. Ahora puedes cargar o agregar más asesores a este GPE.` })
-      await onRefresh?.()
+      setMessage({ tone: 'ok', text: `Grupo ${codigo} creado con éxito. Ya quedó seleccionado a la derecha para subir tu Excel de nómina.` })
     } catch (err) {
       setMessage({ tone: 'error', text: err?.message || 'No se pudo crear el grupo.' })
     } finally {
@@ -732,9 +728,9 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
                   <button
                     type="submit"
                     disabled={savingGrupo}
-                    className="h-9 px-4 rounded-lg bg-[var(--accent)] text-[var(--text-on-accent)] text-xs font-bold disabled:opacity-60 cursor-pointer hover:brightness-110 transition-all"
+                    className="h-9 px-4 rounded-lg bg-[var(--accent)] text-[var(--text-on-accent)] text-xs font-bold disabled:opacity-60 cursor-pointer hover:brightness-110 transition-all flex items-center justify-center gap-1.5"
                   >
-                    {savingGrupo ? 'Guardando…' : 'Crear / validar grupo'}
+                    {savingGrupo ? 'Creando grupo…' : 'Crear grupo'}
                   </button>
                 </div>
               </form>

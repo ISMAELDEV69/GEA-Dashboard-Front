@@ -152,18 +152,52 @@ export default function NominaGridEditor({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
   const [showMissingDetails, setShowMissingDetails] = useState(false)
 
-  // ── Role Permissions & Read-Only Mode (Solo Reclutamiento y Administrador editan todo; Capacitación edita solo Bolsa de Capa) ──
+  // ── Role Permissions & Read-Only Mode ──
+  // Reclutamiento y Administrador editan todo; Capacitación edita grupos de capacitación pero SOLO DE SU CAMPAÑA
   const isRecruitmentRole = ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'].includes(currentRole)
   const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion'].includes(currentRole)
+
+  // Campaña asignada al usuario (en caso tenga restricción)
+  const userCampana = useMemo(() => {
+    return String(userProfile?.campana || userProfile?.subcampana || '').trim().toUpperCase()
+  }, [userProfile])
+
+  // Valida si la campaña del grupo coincide con la campaña asignada a Capacitación
+  const isCampanaAllowed = useMemo(() => {
+    if (isRecruitmentRole || currentRole === 'admin') return true
+    if (!userCampana) return true // sin restricción específica, permite su gestión
+    const currentCamp = String(campana || '').trim().toUpperCase()
+    if (!currentCamp) return true
+    return currentCamp.includes(userCampana) || userCampana.includes(currentCamp)
+  }, [isRecruitmentRole, currentRole, userCampana, campana])
+
+  // ¿El grupo o nómina corresponde a un grupo de capacitación?
+  const isGrupoCapa = useMemo(() => {
+    return (data || []).some(r => isRowBolsaCapa(r) || isAreaBolsaCapa(r?.area_traslado) || isAreaBolsaCapa(r?.fuente_oferta))
+  }, [data])
 
   // Can the current user edit this specific row?
   const canEditRow = useCallback((row) => {
     if (isRecruitmentRole) return true
-    if (isCapacitacionRole && isRowBolsaCapa(row)) return true
+    if (isCapacitacionRole) {
+      if (!isCampanaAllowed) return false
+      // Si el grupo es de capacitación o la fila es de capacitación, tiene permisos para editar asistencia y datos
+      if (isGrupoCapa || isRowBolsaCapa(row)) return true
+      const area = String(row?.area_traslado || '').trim().toUpperCase()
+      if (isAreaBolsaCapa(area)) return true
+      return false
+    }
     return false
-  }, [isRecruitmentRole, isCapacitacionRole])
+  }, [isRecruitmentRole, isCapacitacionRole, isCampanaAllowed, isGrupoCapa])
 
-  const hasAnyEditPermission = isRecruitmentRole || isCapacitacionRole
+  const hasAnyEditPermission = useMemo(() => {
+    if (isRecruitmentRole) return true
+    if (isCapacitacionRole) {
+      return isCampanaAllowed && (isGrupoCapa || (data || []).some(r => canEditRow(r)))
+    }
+    return false
+  }, [isRecruitmentRole, isCapacitacionRole, isCampanaAllowed, isGrupoCapa, data, canEditRow])
+
   const isReadOnly = !hasAnyEditPermission
 
   // ── Duplicate Detection & Delete Management ─────────────────────
@@ -1037,9 +1071,13 @@ export default function NominaGridEditor({
             <span className="font-mono text-xs font-black px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
               {grupoCodigo}
             </span>
-            {isReadOnly && (
+            {isReadOnly ? (
               <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                <Eye size={12} /> Solo Lectura (Capacitación)
+                <Eye size={12} /> {isCapacitacionRole && !isCampanaAllowed ? `Solo Lectura (Restringido a campaña ${userCampana})` : 'Solo Lectura'}
+              </span>
+            ) : isCapacitacionRole && (
+              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                <CheckCircle2 size={12} /> Edición Habilitada (Capacitación · {campana || 'Tu Campaña'})
               </span>
             )}
           </div>
