@@ -5870,16 +5870,34 @@ export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana,
       invalidateCache('nominas_dataset')
       return data
     }
+    if (error) {
+      console.warn("RPC adjudicar_postulantes_pool arrojó error, probando fallback:", error)
+      if (error.message?.includes('kpi_reclutadores_llave') || error.details?.includes('kpi_reclutadores_llave')) {
+        await new Promise(r => setTimeout(r, 600))
+      }
+    }
   } catch (rpcErr) {
     console.warn("RPC adjudicar_postulantes_pool no disponible, usando fallback cliente:", rpcErr)
   }
 
   // 2. Inserción directa de nuevos registros en cliente (preservando historial previo de otros grupos)
-  const { data: insData, error: insErr } = await supabase
+  let { data: insData, error: insErr } = await supabase
     .from('nominas')
     .insert(postulantes)
 
-  if (insErr) throw insErr
+  if (insErr && (insErr.message?.includes('kpi_reclutadores_llave') || insErr.details?.includes('kpi_reclutadores_llave'))) {
+    // Reintento tras pausa breve si hubo colisión concurrente con el trigger de KPI
+    await new Promise(r => setTimeout(r, 800))
+    const retry = await supabase.from('nominas').insert(postulantes)
+    insErr = retry.error
+  }
+
+  if (insErr) {
+    if (insErr.message?.includes('kpi_reclutadores_llave') || insErr.details?.includes('kpi_reclutadores_llave')) {
+      throw new Error("Conflicto de clave en consolidado KPI de reclutadores. Por favor ejecuta el script de actualización en el Editor SQL de Supabase para activar 'ON CONFLICT DO UPDATE'.")
+    }
+    throw insErr
+  }
 
   invalidateCache('all_consolidado')
   invalidateCache('resumen_cap_')

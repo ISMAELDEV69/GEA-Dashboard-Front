@@ -71,6 +71,9 @@ AS $$
 DECLARE
   v_rows integer := 0;
 BEGIN
+  -- Evitar carreras concurrentes que choquen con la misma clave única
+  PERFORM pg_advisory_xact_lock(hashtext('refresh_kpi_reclutadores'));
+
   DELETE FROM public.kpi_reclutadores_consolidado
   WHERE semana >= p_semana_min;
 
@@ -225,7 +228,33 @@ BEGIN
   LEFT JOIN agg a
     ON a.grupo_g = c.grupo_g AND a.campana = c.campana
   LEFT JOIN ncnt k
-    ON k.grupo_g = c.grupo_g AND k.campana = c.campana;
+    ON k.grupo_g = c.grupo_g AND k.campana = c.campana
+  ON CONFLICT (periodo_reclutado, semana, segmento, campana, grupo_g, responsable)
+  DO UPDATE SET
+    anio = EXCLUDED.anio,
+    periodo_efectivo = EXCLUDED.periodo_efectivo,
+    modalidad = EXCLUDED.modalidad,
+    fecha_inicio = EXCLUDED.fecha_inicio,
+    fecha_ingreso_op = EXCLUDED.fecha_ingreso_op,
+    rq = EXCLUDED.rq,
+    rq_individual = EXCLUDED.rq_individual,
+    formato = EXCLUDED.formato,
+    estado_grupo = EXCLUDED.estado_grupo,
+    nomina = EXCLUDED.nomina,
+    meta_dia_1_individual = EXCLUDED.meta_dia_1_individual,
+    dia_0 = EXCLUDED.dia_0,
+    dia_1 = EXCLUDED.dia_1,
+    meta_dia_1_campana = EXCLUDED.meta_dia_1_campana,
+    dotacion_ftes = EXCLUDED.dotacion_ftes,
+    dotacion_q = EXCLUDED.dotacion_q,
+    rq_asignado = EXCLUDED.rq_asignado,
+    dia_1_tope = EXCLUDED.dia_1_tope,
+    dotacion_q_tope = EXCLUDED.dotacion_q_tope,
+    dotacion_ftes_tope = EXCLUDED.dotacion_ftes_tope,
+    rq_ftes = EXCLUDED.rq_ftes,
+    meta_dia_0_individual = EXCLUDED.meta_dia_0_individual,
+    n_reclutadores = EXCLUDED.n_reclutadores,
+    updated_at = now();
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN v_rows;
