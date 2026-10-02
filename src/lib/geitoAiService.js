@@ -4,11 +4,6 @@
  * Alimentado con CONTEXTO OPERATIVO DINÁMICO EN TIEMPO REAL (sin parámetros estáticos).
  */
 
-const GEMINI_MODELS = [
-  'gemini-1.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-pro'
-]
 
 /**
  * Extrae y sintetiza un snapshot dinámico en tiempo real del estado de la plataforma
@@ -127,6 +122,13 @@ PAUTAS DE RESPUESTA:
 `.trim()
 }
 
+const GEMINI_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro'
+]
+
 /**
  * Consulta la API de Gemini con fallback dinámico de modelos
  */
@@ -138,7 +140,14 @@ export async function consultarGeitoIA({
   const apiKey = (import.meta.env.VITE_GEITO_API_KEY || '').trim()
 
   if (!apiKey || apiKey === 'PEGA_AQUI') {
-    throw new Error('No se ha configurado la clave VITE_GEITO_API_KEY en el entorno.')
+    throw new Error('No se ha configurado la clave VITE_GEITO_API_KEY en el archivo .env.')
+  }
+
+  // Validación de formato de clave de Google AI Studio
+  if (!apiKey.startsWith('AIzaSy')) {
+    throw new Error(
+      `La API Key configurada ("${apiKey.substring(0, 6)}...") no parece ser una clave válida de Google AI Studio. Las claves oficiales de Gemini siempre empiezan con "AIzaSy". Puedes generar una clave gratuita en: https://aistudio.google.com/app/apikey`
+    )
   }
 
   // Formatear historial al formato de Gemini API

@@ -8,47 +8,47 @@
 export const GEA_SEDES = {
   ATE: {
     id: 'ATE',
-    nombre: 'Sede Ate (Puruchuco / Nicolás Ayllón)',
-    alias: ['ATE', 'PURUCHUCO', 'SEDE ATE', 'NICOLAS AYLLON', 'AV. NICOLAS AYLLON', 'SANTA CLARA'],
-    lat: -12.0464,
-    lng: -76.9422,
-    color: '#06B6D4', // Cian Neón
+    nombre: 'Sede Ate (Av. Los Frutales)',
+    alias: ['ATE', 'FRUTALES', 'LOS FRUTALES', 'SEDE ATE', 'PURUCHUCO', 'NICOLAS AYLLON', 'AV. NICOLAS AYLLON', 'SANTA CLARA', 'SEPARADORA INDUSTRIAL'],
+    lat: -12.0565,
+    lng: -76.9535,
+    color: '#10B981', // Verde Neón (según requerimiento de usuario)
     distrito: 'ATE',
-    direccion: 'Av. Nicolás Ayllón 2941, Ate (cerca a Real Plaza Puruchuco)'
+    direccion: 'Av. Los Frutales 451, Ate 15023, Lima, Perú'
   },
   JOCKEY: {
     id: 'JOCKEY',
-    nombre: 'Sede Jockey (Surco / Javier Prado)',
-    alias: ['JOCKEY', 'SURCO', 'SEDE JOCKEY', 'JAVIER PRADO', 'TREBOL', 'MONTERRICO', 'JOCKEY PLAZA'],
-    lat: -12.0864,
-    lng: -76.9748,
+    nombre: 'Sede Surco (Torre Omega / Manuel Olguín)',
+    alias: ['JOCKEY', 'SURCO', 'SEDE JOCKEY', 'SEDE SURCO', 'MANUEL OLGUIN', 'OLGUIN', 'TORRE OMEGA', 'OMEGA', 'JAVIER PRADO', 'TREBOL', 'MONTERRICO', 'JOCKEY PLAZA'],
+    lat: -12.0856,
+    lng: -76.9729,
     color: '#F59E0B', // Ámbar Neón
     distrito: 'SANTIAGO DE SURCO',
-    direccion: 'Av. Javier Prado Este 4200, Santiago de Surco (El Trébol / Jockey Plaza)'
+    direccion: 'Av. Manuel Olguín 211, Santiago de Surco 15023, Lima, Perú'
   },
   SAN_ISIDRO: {
     id: 'SAN_ISIDRO',
-    nombre: 'Sede San Isidro (Canaval y Moreyra)',
+    nombre: 'Sede San Isidro (República de Colombia)',
     alias: [
-      'SAN ISIDRO', 'SAN_ISIDRO', 'CANAVAL Y MOREYRA', 'CANAVAL', 'MOREYRA', 'CORPAC',
-      'FINANCIERO', 'SEDE SAN ISIDRO', 'PANAMA', 'REPUBLICA DE PANAMA',
-      'AV. CANAVAL Y MOREYRA', 'AV CANAVAL Y MOREYRA', 'S.I.', 'SI'
+      'SAN ISIDRO', 'SAN_ISIDRO', 'REPUBLICA DE COLOMBIA', 'COLOMBIA', 'CANAVAL Y MOREYRA', 'CANAVAL', 'MOREYRA', 'CORPAC',
+      'FINANCIERO', 'SEDE SAN ISIDRO', 'PANAMA', 'REPUBLICA DE PANAMA', 'EDIFICIO LAS NACIONES',
+      'AV. REPUBLICA DE COLOMBIA', 'AV REPUBLICA DE COLOMBIA', 'S.I.', 'SI'
     ],
-    lat: -12.0965,
-    lng: -77.0250,
-    color: '#06B6D4',
+    lat: -12.0977,
+    lng: -77.0232,
+    color: '#06B6D4', // Cian Neón
     distrito: 'SAN ISIDRO',
-    direccion: 'Av. Canaval y Moreyra / Corpac, San Isidro'
+    direccion: 'Av. República de Colombia 643, San Isidro 15046, Lima, Perú'
   },
   COMAS: {
     id: 'COMAS',
-    nombre: 'Sede Comas (Lima Norte)',
-    alias: ['COMAS', 'NORTE', 'LIMA NORTE', 'SEDE COMAS', 'UNIVERSITARIA', 'TUPAC AMARU'],
-    lat: -11.9350,
-    lng: -77.0580,
+    nombre: 'Sede Comas (Mallplaza / Av. Los Ángeles)',
+    alias: ['COMAS', 'ANGELES', 'LOS ANGELES', 'MALLPLAZA', 'NORTE', 'LIMA NORTE', 'SEDE COMAS', 'UNIVERSITARIA', 'TUPAC AMARU'],
+    lat: -11.9365,
+    lng: -77.0643,
     color: '#EC4899', // Rosa Neón
     distrito: 'COMAS',
-    direccion: 'Av. Universitaria / Av. Túpac Amaru, Comas'
+    direccion: 'Av. Los Ángeles 602, Comas 15314, Lima, Perú'
   }
 }
 

@@ -89,7 +89,7 @@ export default function GeaCommandMap({
   onSelectSede,
   onOpenReasignacionModal
 }) {
-  const [mapMode, setMapMode] = useState('flujo') // 'flujo' | 'calor' | 'reubicacion'
+  const [mapMode, setMapMode] = useState('puntos') // 'puntos' | 'trayectorias' | 'calor' | 'reubicacion'
   const [activeLayer, setActiveLayer] = useState('google_streets') // 'google_streets' | 'google_satellite' | 'dark_enterprise'
   const [hoveredAsesor, setHoveredAsesor] = useState(null)
   const [isLeafletReady, setIsLeafletReady] = useState(false)
@@ -243,8 +243,8 @@ export default function GeaCommandMap({
         `)
       })
 
-      // ── B. DIBUJAR ASESORES Y TRAYECTORIAS HOGAR ➔ SEDE ──
-      const displayList = filteredPostulantes.slice(0, 160)
+      // ── B. DIBUJAR ASESORES COMO PUNTOS DE COLOR SEGÚN LA SEDE A LA QUE POSTULAN ──
+      const displayList = filteredPostulantes.slice(0, 300)
 
       displayList.forEach(p => {
         if (!p.origenLat || !p.origenLng) return
@@ -254,30 +254,25 @@ export default function GeaCommandMap({
         const isBaja = p.esBaja
         const isCritical = !isRemoto && p.distanciaKm > 14
         const isReubicacion = mapMode === 'reubicacion' && Boolean(p.sedeSugerida)
-        const isCalor = mapMode === 'calor'
 
-        // Color según estado o modo
-        let lineColor = isCritical ? '#f43f5e' : p.distanciaKm > 7 ? '#f59e0b' : '#10b981'
-        let lineWeight = 2
-        let lineOpacity = 0.55
+        // ── CADA POSTULANTE TOMA EL MISMO COLOR DE LA SEDE A LA QUE POSTULA ──
+        // Ate -> Verde (#10B981)
+        // Surco -> Ámbar (#F59E0B)
+        // San Isidro -> Cian (#06B6D4)
+        // Comas -> Rosa (#EC4899)
+        // Remoto -> Violeta (#8B5CF6)
+        const sedeColor = isRemoto
+          ? '#8B5CF6'
+          : (p.sede?.color || (p.sede?.id && GEA_SEDES[p.sede.id]?.color) || '#10B981')
 
-        if (isReubicacion) {
-          lineColor = '#10b981'
-          lineWeight = 2.8
-          lineOpacity = 0.85
-        } else if (isCalor) {
-          lineOpacity = isBaja ? 0.8 : 0.15
-          lineColor = isBaja ? '#f43f5e' : '#64748b'
-        }
-
-        // Dibujar línea de trayectoria real SOLO para asesores presenciales
-        if (!isRemoto && p.destinoLat && p.destinoLng && (mapMode === 'flujo' || (mapMode === 'reubicacion' && p.sedeSugerida))) {
+        // Dibujar línea SOLO si el usuario activa explícitamente 'trayectorias' o está en modo 'reubicacion'
+        if (!isRemoto && p.destinoLat && p.destinoLng && (mapMode === 'trayectorias' || (mapMode === 'reubicacion' && p.sedeSugerida))) {
           const polyline = L.polyline(
             [[p.origenLat, p.origenLng], [p.destinoLat, p.destinoLng]],
             {
-              color: lineColor,
-              weight: lineWeight,
-              opacity: lineOpacity,
+              color: isReubicacion ? '#10B981' : sedeColor,
+              weight: isReubicacion ? 2.5 : 1.8,
+              opacity: isReubicacion ? 0.85 : 0.5,
               dashArray: isCritical ? '6, 6' : undefined
             }
           ).addTo(polylinesLayerRef.current)
@@ -286,19 +281,23 @@ export default function GeaCommandMap({
           polyline.on('mouseout', () => setHoveredAsesor(null))
         }
 
-        // Color del marcador de residencia:
-        // I-OP: Verde esmeralda (#10b981) | Baja: Rojo (#ef4444) | Remoto: Índigo (#818cf8) | Crítico: Rosa (#f43f5e) | Normal: Cian (#06b6d4)
-        const homeColor = isIOP ? '#10b981' : isBaja ? '#ef4444' : isRemoto ? '#818cf8' : isCritical ? '#f43f5e' : '#06b6d4'
+        // Marcador circular del postulante: color idéntico al de su sede
         const circleMarker = L.circleMarker([p.origenLat, p.origenLng], {
-          radius: isIOP ? 5.5 : isCritical ? 5 : isRemoto ? 4 : 3.8,
+          radius: isIOP ? 5.5 : 4.5,
           color: '#ffffff',
-          weight: 1.2,
-          fillColor: homeColor,
-          fillOpacity: 0.9
+          weight: 1.4,
+          fillColor: sedeColor,
+          fillOpacity: 0.95
         }).addTo(markersLayerRef.current)
 
-        circleMarker.on('mouseover', () => setHoveredAsesor(p))
-        circleMarker.on('mouseout', () => setHoveredAsesor(null))
+        circleMarker.on('mouseover', () => {
+          circleMarker.setRadius(7)
+          setHoveredAsesor(p)
+        })
+        circleMarker.on('mouseout', () => {
+          circleMarker.setRadius(isIOP ? 5.5 : 4.5)
+          setHoveredAsesor(null)
+        })
 
         const badgeEstado = isIOP
           ? '<span style="background:#10b981;color:#fff;padding:2px 6px;border-radius:4px;font-weight:bold;font-size:9px;">INGRESÓ A OP (I-OP)</span>'
@@ -311,7 +310,7 @@ export default function GeaCommandMap({
           : '<span style="background:#0f766e;color:#ccfbf1;padding:2px 6px;border-radius:4px;font-weight:bold;font-size:9px;">PRESENCIAL</span>'
 
         circleMarker.bindPopup(`
-          <div style="font-family: monospace; font-size: 11px; color: #0f172a; min-width: 200px;">
+          <div style="font-family: monospace; font-size: 11px; color: #0f172a; min-width: 210px;">
             <div style="margin-bottom:4px;">
               <strong style="font-size: 12px; color: #0284c7;">${p.nombre || p.candidato}</strong>
             </div>
@@ -321,7 +320,12 @@ export default function GeaCommandMap({
             ${p.documento ? `<div>📄 <strong>DNI:</strong> ${p.documento}</div>` : ''}
             <div>🏠 <strong>Domicilio:</strong> ${p.distrito}</div>
             ${p.direccion ? `<small style="color: #64748b;">${p.direccion}</small><br/>` : ''}
-            <div>🏢 <strong>Sede:</strong> ${p.sede?.nombre || 'GEA'}</div>
+            <div style="margin: 4px 0;">
+              🏢 <strong>Sede Postulada:</strong>
+              <span style="background:${sedeColor}; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:10px; margin-left:4px; display:inline-block;">
+                ${p.sede?.nombre || 'GEA'}
+              </span>
+            </div>
             ${!isRemoto ? `<div>📏 <strong>Distancia a Sede:</strong> ${p.distanciaKm} km (~${p.tiempoEstimadoMin} min)</div>` : '<div>💻 <strong>Modalidad:</strong> Sin desplazamiento físico a sede</div>'}
             ${p.esBaja && p.motivoBaja ? `<div style="margin-top: 4px; color: #dc2626; font-weight:bold;">⚠️ Motivo Baja: ${p.motivoBaja}</div>` : ''}
             ${p.sedeSugerida ? `<div style="margin-top: 4px; padding: 4px; background: #ecfdf5; border-radius: 4px; color: #059669; font-weight: bold;">⚡ Sugerencia de Sede: ${p.sedeSugerida} (Ahorra ${p.ahorroKm} km)</div>` : ''}
@@ -383,37 +387,37 @@ export default function GeaCommandMap({
           ))}
         </div>
 
-        {/* Derecha: Selector de Modo (Flujo / Bajas / Reubicación) */}
+        {/* Derecha: Selector de Modo (Puntos por Sede / Líneas / Reubicación) */}
         <div className="flex items-center p-0.5 rounded-lg bg-black/60 border border-white/15 text-[11px] font-mono">
           <button
-            onClick={() => setMapMode('flujo')}
-            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer font-bold ${
-              mapMode === 'flujo'
-                ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.6)]'
+            onClick={() => setMapMode('puntos')}
+            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
+              mapMode === 'puntos'
+                ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.7)]'
                 : 'text-slate-400 hover:text-white'
             }`}
-            title="Ver trayectorias reales desde el domicilio hasta la sede"
+            title="Ver solo puntos de color correspondientes a cada sede (sin líneas de enlace)"
           >
-            <Navigation size={11} />
-            <span>Trayectorias</span>
+            <MapPin size={11} />
+            <span>Puntos por Sede</span>
           </button>
           <button
-            onClick={() => setMapMode('calor')}
-            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer font-bold ${
-              mapMode === 'calor'
-                ? 'bg-rose-500 text-white shadow-[0_0_10px_rgba(244,63,94,0.6)]'
+            onClick={() => setMapMode('trayectorias')}
+            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
+              mapMode === 'trayectorias'
+                ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.7)]'
                 : 'text-slate-400 hover:text-white'
             }`}
-            title="Resaltar focos de bajas por lejanía geográfica"
+            title="Activar líneas de desplazamiento desde el domicilio hasta la sede"
           >
-            <TrendingDown size={11} />
-            <span>Focos Bajas</span>
+            <Navigation size={11} />
+            <span>Líneas de Viaje</span>
           </button>
           <button
             onClick={() => setMapMode('reubicacion')}
-            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer font-bold ${
+            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
               mapMode === 'reubicacion'
-                ? 'bg-emerald-500 text-slate-950 shadow-[0_0_10px_rgba(16,185,129,0.6)]'
+                ? 'bg-amber-500 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.7)]'
                 : 'text-slate-400 hover:text-white'
             }`}
             title="Oportunidades de cambio de sede para evitar deserciones"
@@ -429,6 +433,38 @@ export default function GeaCommandMap({
           ───────────────────────────────────────────────────────────── */}
       <div className="relative flex-1 w-full h-full min-h-[380px] overflow-hidden bg-[#070e1b]">
         
+        {/* Leyenda Visual Flotante: Código de Color de Cada Sede */}
+        <div className="absolute top-3 left-3 z-30 flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-slate-950/85 backdrop-blur-md border border-cyan-500/30 shadow-[0_4px_20px_rgba(0,0,0,0.5)] text-xs font-mono">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">Colores Sede:</span>
+          {Object.values(GEA_SEDES).map(s => {
+            const isSelected = selectedSedeId === s.id
+            const countSede = postulantesMapped.filter(p => p.sede?.id === s.id).length
+            return (
+              <button
+                key={s.id}
+                onClick={() => onSelectSede && onSelectSede(isSelected ? 'TODAS' : s.id)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all cursor-pointer text-[11px] font-bold ${
+                  isSelected
+                    ? 'bg-white/20 text-white shadow-md'
+                    : 'bg-black/50 text-slate-200 hover:bg-white/10'
+                }`}
+                style={{
+                  borderColor: s.color,
+                  boxShadow: isSelected ? `0 0 10px ${s.color}` : undefined
+                }}
+                title={`Filtrar por ${s.nombre} (${countSede} asesores)`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full inline-block shrink-0 shadow-sm"
+                  style={{ backgroundColor: s.color, boxShadow: `0 0 6px ${s.color}` }}
+                />
+                <span>{s.nombre.replace('Sede ', '').split(' (')[0]}</span>
+                <span className="opacity-60 text-[10px]">({countSede})</span>
+              </button>
+            )
+          })}
+        </div>
+
         {/* Contenedor Leaflet */}
         <div ref={mapContainerRef} className="w-full h-full z-10" />
 

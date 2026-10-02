@@ -1660,32 +1660,42 @@ export async function fetchKpiReclutadoresConsolidado({ periodo = null, periodoR
 
 export async function fetchNominasAuditoria({ periodo = null, periodoReclutado = null } = {}) {
   if (DB_MODE !== 'supabase') return []
-  const toKeys = (v) => (!v || v === 'ALL' ? [] : (Array.isArray(v) ? v : [v]).map(x => String(x).replace(/\D/g, '').slice(0, 6)).filter(Boolean))
-  const ingresoKeys = toKeys(periodo)
-  const reclutaKeys = toKeys(periodoReclutado)
-  const allKeys = [...new Set([...reclutaKeys, ...ingresoKeys])]
-  const fetchKey = allKeys.sort().join('_') || 'min'
-  return withCache(`nominas_auditoria_v4_${fetchKey}`, 180000, async () => {
+  return withCache('nominas_auditoria_v8_all', 180000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
-    const cols = 'documento, reclutador, campana, grupo_codigo, segmento, marca_temporal, created_at, fecha_ingreso, fecha_conexion_ojt, periodo_reclutado, semana_trabajo, activo'
+    const primaryCols = 'documento, reclutador, campana, grupo_codigo, segmento, marca_temporal, created_at, fecha_ingreso, fecha_inicio_capacitacion, fecha_conexion_ojt, periodo_reclutado, semana_trabajo, activo'
+    const fallbackCols = 'documento, reclutador, campana, grupo_codigo, segmento, created_at, fecha_ingreso, fecha_inicio_capacitacion, fecha_conexion_ojt, periodo_reclutado, semana_trabajo, activo'
+
+    let useCols = primaryCols
     while (true) {
       let query = supabase
         .from('v_nominas_consolidado')
-        .select(cols)
+        .select(useCols)
         .eq('activo', true)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1)
-      if (allKeys.length === 1) {
-        query = query.eq('periodo_reclutado', allKeys[0])
-      } else if (allKeys.length > 1) {
-        query = query.in('periodo_reclutado', allKeys)
-      } else {
-        query = query.gte('periodo_reclutado', '202608')
+
+      let { data, error } = await query
+      if (error && useCols === primaryCols) {
+        // Fallback without marca_temporal in case the view does not expose it
+        useCols = fallbackCols
+        const retry = await supabase
+          .from('v_nominas_consolidado')
+          .select(useCols)
+          .eq('activo', true)
+          .order('created_at', { ascending: false })
+          .range(from, from + pageSize - 1)
+        if (retry.error) {
+          console.error('[fetchNominasAuditoria] Error on fallback query:', retry.error)
+          throw retry.error
+        }
+        data = retry.data
+      } else if (error) {
+        console.error('[fetchNominasAuditoria] Error querying v_nominas_consolidado:', error)
+        throw error
       }
-      const { data, error } = await query
-      if (error) throw error
+
       const batch = data || []
       all.push(...batch)
       if (batch.length < pageSize) break

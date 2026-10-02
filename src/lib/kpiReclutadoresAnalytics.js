@@ -526,46 +526,59 @@ function toIsoDay(raw) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
   const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
   if (slash) return `${slash[3]}-${slash[2].padStart(2, '0')}-${slash[1].padStart(2, '0')}`
+  const parsed = new Date(raw)
+  if (!isNaN(parsed.getTime()) && parsed.getFullYear() >= 2020) {
+    return parsed.toISOString().slice(0, 10)
+  }
   return ''
 }
 
-export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null } = {}) {
-  const allowed = new Set()
-  const groupMeta = new Map()
+export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null, selectedRecruiter = null } = {}) {
+  const allowedGroups = new Map()
 
   ;(kpiRows || []).forEach((row) => {
-    if (isSinNomina(row) || isJunkResponsable(row.responsable)) return
-    if (lockedName && !matchName(row.responsable, lockedName)) return
+    if (isSinNomina(row)) return
     const grupo = normKpi(row.grupo_g)
-    const campana = normKpi(row.campana)
-    const responsable = String(row.responsable || '').trim()
-    allowed.add(`${grupo}|${campana}|${normKpi(responsable)}`)
-    groupMeta.set(`${grupo}|${campana}`, {
-      segmento: String(row.segmento || '').trim(),
-      semana: row.semana,
-    })
+    if (!grupo) return
+    if (!allowedGroups.has(grupo)) {
+      allowedGroups.set(grupo, {
+        campana: String(row.campana || '').trim(),
+        segmento: String(row.segmento || '').trim(),
+        semana: row.semana,
+      })
+    }
   })
+
+  const targetRecruiter = lockedName || selectedRecruiter
 
   const rowMap = new Map()
   ;(nominas || []).forEach((row) => {
     if (row.activo === false) return
+    const grupo = normKpi(row.grupo_codigo)
+    if (!grupo || !allowedGroups.has(grupo)) return
+
     const responsable = String(row.reclutador || '').trim()
     if (!responsable || isJunkResponsable(responsable)) return
-    if (lockedName && !matchName(responsable, lockedName)) return
-    const grupo = String(row.grupo_codigo || '').trim()
-    const campana = String(row.campana || '').trim()
-    const allowKey = `${normKpi(grupo)}|${normKpi(campana)}|${normKpi(responsable)}`
-    if (allowed.size && !allowed.has(allowKey)) return
-    const day = toIsoDay(row.marca_temporal || row.created_at || row.fecha_ingreso)
-    const meta = groupMeta.get(`${normKpi(grupo)}|${normKpi(campana)}`) || {}
-    const key = `${normKpi(responsable)}|${normKpi(row.segmento || meta.segmento)}|${normKpi(campana)}|${normKpi(grupo)}`
+    if (targetRecruiter) {
+      const targets = Array.isArray(targetRecruiter) ? targetRecruiter : [targetRecruiter]
+      if (targets.length && !targets.includes('ALL') && !targets.some((t) => matchName(responsable, t))) {
+        return
+      }
+    }
+
+    const gInfo = allowedGroups.get(grupo) || {}
+    const campana = String(row.campana || gInfo.campana || '—').trim()
+    const segmento = String(row.segmento || gInfo.segmento || 'SIN SEGMENTO').trim()
+
+    const day = toIsoDay(row.marca_temporal || row.created_at || row.fecha_ingreso || row.fecha_inicio_capacitacion) || 'S/F'
+    const key = `${normKpi(responsable)}|${normKpi(segmento)}|${normKpi(campana)}|${grupo}`
     if (!rowMap.has(key)) {
       rowMap.set(key, {
         key,
         reclutador: responsable,
-        segmento: String(row.segmento || meta.segmento || '').trim() || 'SIN SEGMENTO',
+        segmento,
         campana,
-        grupo,
+        grupo: String(row.grupo_codigo || '').trim() || grupo,
         byDate: new Map(),
         seen: new Set(),
       })
@@ -574,7 +587,6 @@ export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null } = {
     const personKey = String(row.documento || '').trim() || `${responsable}|${day}|${rec.seen.size}`
     if (rec.seen.has(personKey)) return
     rec.seen.add(personKey)
-    if (!day) return
     rec.byDate.set(day, (rec.byDate.get(day) || 0) + 1)
   })
 

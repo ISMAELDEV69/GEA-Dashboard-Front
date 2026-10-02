@@ -86,16 +86,16 @@ export default function UbicacionView({
       list = list.filter(a => {
         const sId = String(a.sede?.id || a.sede || '').toUpperCase()
         if (selectedSedeFilter === 'SAN_ISIDRO') {
-          return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('CANAVAL')
+          return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('COLOMBIA') || sId.includes('CANAVAL')
         }
         if (selectedSedeFilter === 'ATE') {
-          return sId === 'ATE' || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
+          return sId === 'ATE' || sId.includes('FRUTALES') || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
         }
         if (selectedSedeFilter === 'JOCKEY') {
-          return sId === 'JOCKEY' || sId.includes('SURCO') || sId.includes('PRADO')
+          return sId === 'JOCKEY' || sId === 'SURCO' || sId.includes('SURCO') || sId.includes('OLGUIN') || sId.includes('PRADO')
         }
         if (selectedSedeFilter === 'COMAS') {
-          return sId === 'COMAS' || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
+          return sId === 'COMAS' || sId.includes('ANGELES') || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
         }
         return sId === selectedSedeFilter
       })
@@ -189,16 +189,16 @@ export default function UbicacionView({
       const asesoresSede = filteredAsesores.filter(a => {
         const sId = String(a.sede?.id || a.sede || '').toUpperCase()
         if (s.id === 'SAN_ISIDRO') {
-          return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('CANAVAL')
+          return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('COLOMBIA') || sId.includes('CANAVAL')
         }
         if (s.id === 'ATE') {
-          return sId === 'ATE' || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
+          return sId === 'ATE' || sId.includes('FRUTALES') || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
         }
         if (s.id === 'JOCKEY') {
-          return sId === 'JOCKEY' || sId.includes('SURCO') || sId.includes('PRADO')
+          return sId === 'JOCKEY' || sId === 'SURCO' || sId.includes('SURCO') || sId.includes('OLGUIN') || sId.includes('PRADO')
         }
         if (s.id === 'COMAS') {
-          return sId === 'COMAS' || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
+          return sId === 'COMAS' || sId.includes('ANGELES') || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
         }
         return sId === s.id
       })
@@ -413,11 +413,11 @@ export default function UbicacionView({
               onChange={e => setSelectedSedeFilter(e.target.value)}
               className="bg-transparent text-white font-medium outline-none cursor-pointer text-xs"
             >
-              <option value="TODAS" className="bg-slate-900 text-white font-bold">Todas las Sedes</option>
-              <option value="SAN_ISIDRO" className="bg-slate-900 text-cyan-300">San Isidro (Canaval y Moreyra)</option>
-              <option value="ATE" className="bg-slate-900 text-cyan-300">Ate (Central Vitarte)</option>
-              <option value="JOCKEY" className="bg-slate-900 text-cyan-300">Jockey Plaza (Surco)</option>
-              <option value="COMAS" className="bg-slate-900 text-cyan-300">Comas (Lima Norte)</option>
+              <option value="TODAS" className="bg-slate-900 text-white font-bold">✦ Todas las Sedes</option>
+              <option value="ATE" className="bg-slate-900 text-emerald-400">🟢 Ate (Av. Los Frutales)</option>
+              <option value="JOCKEY" className="bg-slate-900 text-amber-300">🟡 Surco (Torre Omega / Manuel Olguín)</option>
+              <option value="SAN_ISIDRO" className="bg-slate-900 text-cyan-300">🔵 San Isidro (Rep. de Colombia)</option>
+              <option value="COMAS" className="bg-slate-900 text-pink-400">🔴 Comas (Mallplaza / Los Ángeles)</option>
             </select>
           </div>
 

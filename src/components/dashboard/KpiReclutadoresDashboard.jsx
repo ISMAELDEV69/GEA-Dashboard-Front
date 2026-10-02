@@ -640,7 +640,10 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     try {
       const [data, nominaRows] = await Promise.all([
         fetchKpiReclutadoresConsolidado({ periodo, periodoReclutado }),
-        fetchNominasAuditoria({ periodo, periodoReclutado }).catch(() => []),
+        fetchNominasAuditoria({ periodo, periodoReclutado }).catch((err) => {
+          console.warn('[Auditoria] Error al consultar nóminas diarias para auditoría:', err)
+          return []
+        }),
       ])
       const nextRows = data || []
       setRows(nextRows)
