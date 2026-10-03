@@ -534,14 +534,18 @@ function toIsoDay(raw) {
 }
 
 export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null, selectedRecruiter = null } = {}) {
-  const allowedGroups = new Map()
+  const allowedCombos = new Map()
 
   ;(kpiRows || []).forEach((row) => {
-    if (isSinNomina(row)) return
     const grupo = normKpi(row.grupo_g)
-    if (!grupo) return
-    if (!allowedGroups.has(grupo)) {
-      allowedGroups.set(grupo, {
+    const campana = normKpi(row.campana)
+    if (!grupo || !campana) return
+
+    // Llave canónica: GRUPO + CAMPAÑA (los códigos GPE pueden repetirse en diferentes campañas/segmentos)
+    const comboKey = `${grupo}|${campana}`
+    if (!allowedCombos.has(comboKey)) {
+      allowedCombos.set(comboKey, {
+        grupo: String(row.grupo_g || '').trim(),
         campana: String(row.campana || '').trim(),
         segmento: String(row.segmento || '').trim(),
         semana: row.semana,
@@ -555,7 +559,23 @@ export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null, sele
   ;(nominas || []).forEach((row) => {
     if (row.activo === false) return
     const grupo = normKpi(row.grupo_codigo)
-    if (!grupo || !allowedGroups.has(grupo)) return
+    const campana = normKpi(row.campana)
+    if (!grupo || !campana) return
+
+    // Validar coincidencia de código de grupo y campaña
+    const comboKey = `${grupo}|${campana}`
+    if (!allowedCombos.has(comboKey)) return
+
+    const gInfo = allowedCombos.get(comboKey) || {}
+
+    // Si ambos tienen segmento especificado, descartar si pertenecen a segmentos incompatibles
+    if (row.segmento && gInfo.segmento) {
+      const segNom = normKpi(row.segmento)
+      const segKpi = normKpi(gInfo.segmento)
+      if (segNom && segKpi && segNom !== segKpi && !segNom.includes(segKpi) && !segKpi.includes(segNom)) {
+        return
+      }
+    }
 
     const responsable = String(row.reclutador || '').trim()
     if (!responsable || isJunkResponsable(responsable)) return
@@ -566,18 +586,17 @@ export function buildAuditoriaMatrix(nominas, kpiRows, { lockedName = null, sele
       }
     }
 
-    const gInfo = allowedGroups.get(grupo) || {}
-    const campana = String(row.campana || gInfo.campana || '—').trim()
-    const segmento = String(row.segmento || gInfo.segmento || 'SIN SEGMENTO').trim()
+    const finalCampana = gInfo.campana || String(row.campana || '—').trim()
+    const finalSegmento = gInfo.segmento || String(row.segmento || 'SIN SEGMENTO').trim()
 
     const day = toIsoDay(row.marca_temporal || row.created_at || row.fecha_ingreso || row.fecha_inicio_capacitacion) || 'S/F'
-    const key = `${normKpi(responsable)}|${normKpi(segmento)}|${normKpi(campana)}|${grupo}`
+    const key = `${normKpi(responsable)}|${normKpi(finalSegmento)}|${normKpi(finalCampana)}|${grupo}`
     if (!rowMap.has(key)) {
       rowMap.set(key, {
         key,
         reclutador: responsable,
-        segmento,
-        campana,
+        segmento: finalSegmento,
+        campana: finalCampana,
         grupo: String(row.grupo_codigo || '').trim() || grupo,
         byDate: new Map(),
         seen: new Set(),
