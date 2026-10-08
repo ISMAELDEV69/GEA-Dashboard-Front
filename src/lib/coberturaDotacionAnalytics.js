@@ -793,7 +793,7 @@ export function aggregateCoberturaDotacion(model, filters = {}) {
 
   const jornadaSource = rows
     .filter((r) => matchesFilter(r, { ...filters, condicion: '' }))
-    .filter((r) => !periodo || r.periodo === periodo)
+    .filter((r) => selectedPeriodos.length === 0 || selectedPeriodos.includes(r.periodo))
   const byJornada = new Map(CONDICIONES.map((c) => [c, { condicion: c, ...emptyTotals() }]))
   for (const r of jornadaSource) {
     const cond = CONDICIONES.includes(r.condicion) ? r.condicion : 'FULL TIME'

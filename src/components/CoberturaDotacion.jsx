@@ -742,6 +742,7 @@ function RequerimientosReport({
   const effectivePeriodos = Array.isArray(periodos) && periodos.length
     ? periodos
     : (model.defaultPeriodo ? [model.defaultPeriodo] : [])
+  const effectivePeriodo = effectivePeriodos.join(', ')
   const filters = useMemo(
     () => ({
       semanas,
@@ -1106,6 +1107,7 @@ function CoberturaDotacion() {
   const effectivePeriodos = Array.isArray(periodos) && periodos.length
     ? periodos
     : (model.defaultPeriodo ? [model.defaultPeriodo] : [])
+  const effectivePeriodo = effectivePeriodos.join(', ')
   const decimals = metricDecimals(tipo)
   const fmt = (val) => formatPeNumber(val, decimals)
 
