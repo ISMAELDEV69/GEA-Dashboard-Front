@@ -90,11 +90,20 @@ function addInto(acc, row, tipo = 'ftes') {
   acc.dia1 += Number(row.dia1) || 0
 }
 
+function matchMulti(filterVal, rowVal) {
+  if (filterVal === undefined || filterVal === null || filterVal === '') return true
+  if (Array.isArray(filterVal)) {
+    if (filterVal.length === 0) return true
+    return filterVal.includes(rowVal)
+  }
+  return rowVal === filterVal
+}
+
 function matchesFilter(row, filters) {
-  if (filters.semana && row.semana !== filters.semana) return false
-  if (filters.segmento && row.segmento !== filters.segmento) return false
-  if (filters.campana && row.campana !== filters.campana) return false
-  if (filters.estado && row.estado !== filters.estado) return false
+  if (!matchMulti(filters.semanas ?? filters.semana, row.semana)) return false
+  if (!matchMulti(filters.segmentos ?? filters.segmento, row.segmento)) return false
+  if (!matchMulti(filters.campanas ?? filters.campana, row.campana)) return false
+  if (!matchMulti(filters.estados ?? filters.estado, row.estado)) return false
   const mods = filters.modalidades
   if (Array.isArray(mods) && mods.length > 0 && mods.length < MODALIDADES.length) {
     if (!mods.includes(row.modalidad)) return false
@@ -209,12 +218,23 @@ export function aggregateRequerimientos(model, filters = {}) {
   const tipo = normalizeMetricTipo(filters.tipo)
   const seguimientoAxis = filters.seguimientoAxis === 'semana' ? 'semana' : 'periodo'
   const dimFiltered = rows.filter((r) => matchesFilter(r, filters))
-  const dimNoSlice = rows.filter((r) => matchesFilter(r, { ...filters, segmento: '', campana: '' }))
-  const periodo = filters.periodo || model?.defaultPeriodo || ''
-  const periodFiltered = dimFiltered.filter((r) => !periodo || r.periodo === periodo)
-  const periodBase = dimNoSlice.filter((r) => !periodo || r.periodo === periodo)
-  const campanaSlice = filters.segmento
-    ? periodBase.filter((r) => r.segmento === filters.segmento)
+  const dimNoSlice = rows.filter((r) => matchesFilter(r, { ...filters, segmento: '', segmentos: [], campana: '', campanas: [] }))
+
+  const selectedPeriodos = Array.isArray(filters.periodos)
+    ? filters.periodos
+    : (filters.periodo ? [filters.periodo] : (model?.defaultPeriodo ? [model.defaultPeriodo] : []))
+
+  const periodFiltered = dimFiltered.filter((r) => {
+    if (selectedPeriodos.length === 0) return true
+    return selectedPeriodos.includes(r.periodo)
+  })
+  const periodBase = dimNoSlice.filter((r) => {
+    if (selectedPeriodos.length === 0) return true
+    return selectedPeriodos.includes(r.periodo)
+  })
+  const activeSegmentos = filters.segmentos?.length ? filters.segmentos : (filters.segmento ? [filters.segmento] : [])
+  const campanaSlice = activeSegmentos.length
+    ? periodBase.filter((r) => activeSegmentos.includes(r.segmento))
     : periodBase
 
   const kpis = withRates(periodFiltered.reduce((acc, r) => {
@@ -225,8 +245,8 @@ export function aggregateRequerimientos(model, filters = {}) {
   let seguimiento = []
   if (seguimientoAxis === 'semana') {
     const weekSource = rows
-      .filter((r) => matchesFilter(r, { ...filters, semana: '' }))
-      .filter((r) => !periodo || r.periodo === periodo)
+      .filter((r) => matchesFilter(r, { ...filters, semana: '', semanas: [] }))
+      .filter((r) => selectedPeriodos.length === 0 || selectedPeriodos.includes(r.periodo))
     const bySemana = new Map()
     for (const r of weekSource) {
       let slot = bySemana.get(r.semana)
@@ -236,6 +256,7 @@ export function aggregateRequerimientos(model, filters = {}) {
       }
       addInto(slot, r, tipo)
     }
+    const activeSemanas = filters.semanas?.length ? filters.semanas : (filters.semana ? [filters.semana] : [])
     seguimiento = [...bySemana.values()]
       .sort((a, b) => a.axisKey.localeCompare(b.axisKey))
       .map((s) => ({
@@ -243,7 +264,7 @@ export function aggregateRequerimientos(model, filters = {}) {
         axisKey: s.axisKey,
         semana: s.semana,
         periodo: s.periodo,
-        selected: Boolean(filters.semana) && s.semana === filters.semana,
+        selected: activeSemanas.includes(s.semana),
       }))
   } else {
     const axisEnd = currentYearMonth()
@@ -259,7 +280,7 @@ export function aggregateRequerimientos(model, filters = {}) {
       ...withRates(s),
       axisKey: s.axisKey,
       periodo: s.periodo,
-      selected: s.periodo === periodo,
+      selected: selectedPeriodos.length === 0 || selectedPeriodos.includes(s.periodo),
     }))
   }
 
@@ -329,13 +350,20 @@ export function aggregateRequerimientos(model, filters = {}) {
     }
   })
 
-  const inPeriodo = rows.filter((r) => !periodo || r.periodo === periodo)
-  const afterSemana = filters.semana ? inPeriodo.filter((r) => r.semana === filters.semana) : inPeriodo
-  const afterSegmento = filters.segmento ? afterSemana.filter((r) => r.segmento === filters.segmento) : afterSemana
-  const afterCampana = filters.campana ? afterSegmento.filter((r) => r.campana === filters.campana) : afterSegmento
+  const inPeriodo = rows.filter((r) => selectedPeriodos.length === 0 || selectedPeriodos.includes(r.periodo))
+  const selectedSemanas = filters.semanas?.length ? filters.semanas : (filters.semana ? [filters.semana] : [])
+  const afterSemana = selectedSemanas.length ? inPeriodo.filter((r) => selectedSemanas.includes(r.semana)) : inPeriodo
+
+  const selectedSegmentos = filters.segmentos?.length ? filters.segmentos : (filters.segmento ? [filters.segmento] : [])
+  const afterSegmento = selectedSegmentos.length ? afterSemana.filter((r) => selectedSegmentos.includes(r.segmento)) : afterSemana
+
+  const selectedCampanas = filters.campanas?.length ? filters.campanas : (filters.campana ? [filters.campana] : [])
+  const afterCampana = selectedCampanas.length ? afterSegmento.filter((r) => selectedCampanas.includes(r.campana)) : afterSegmento
+  const corteIso = corteIsoForWindow(rows, { periodo: selectedPeriodos[0] || '', semana: selectedSemanas[0] || '' }) || model?.corteIso || ''
 
   return {
-    periodo,
+    periodo: selectedPeriodos.join(','),
+    periodos: selectedPeriodos,
     tipo,
     seguimientoAxis,
     kpis,
@@ -353,6 +381,6 @@ export function aggregateRequerimientos(model, filters = {}) {
       campanas: uniqueSorted(afterSegmento.map((r) => r.campana), true),
       estados: uniqueSorted(afterCampana.map((r) => r.estado), true),
     },
-    corteLabel: formatCorteDate(corteIsoForWindow(rows, { periodo, semana: filters.semana }) || model?.corteIso),
+    corteLabel: formatCorteDate(corteIso),
   }
 }

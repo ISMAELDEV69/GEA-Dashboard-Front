@@ -548,7 +548,9 @@ function CoverageToggleChart({
             {data.map((row) => {
               const name = row[nameKey]
               const label = nameKey === 'campana' ? (row.campanaShort || name) : name
-              const active = !selected || selected === name
+              const active = Array.isArray(selected)
+                ? (selected.length === 0 || selected.includes(name))
+                : (!selected || selected === name)
               const fill = mode === 'cobertura'
                 ? coverageFill(row.coberturaPct, theme)
                 : (row.brecha >= 0 ? theme.ingresos : theme.danger)
@@ -616,7 +618,12 @@ function CampanasVolumeChart({
   const otras = (campanasChart || []).find((r) => r.isOtras)
   const rqGrad = `rqCamp-${gid}`
   const ingGrad = `ingCamp-${gid}`
-  const opacityFor = (row) => (!campana || campana === row.campana ? 1 : 0.35)
+  const opacityFor = (row) => {
+    if (Array.isArray(campana)) {
+      return campana.length === 0 || campana.includes(row.campana) ? 1 : 0.35
+    }
+    return !campana || campana === row.campana ? 1 : 0.35
+  }
   return (
     <ChartCard theme={theme} className="xl:col-span-2">
       <SectionTitle isDark={isDark}>Top campañas</SectionTitle>
@@ -706,16 +713,16 @@ function RequerimientosReport({
   isDark,
   gid,
   onBack,
-  semana,
-  setSemana,
-  segmento,
-  setSegmento,
-  campana,
-  setCampana,
-  periodo,
-  setPeriodo,
-  estado,
-  setEstado,
+  semanas = [],
+  setSemanas,
+  segmentos = [],
+  setSegmentos,
+  campanas = [],
+  setCampanas,
+  periodos = [],
+  setPeriodos,
+  estados = [],
+  setEstados,
   modalidades,
   toggleModalidad,
   tipo,
@@ -732,10 +739,21 @@ function RequerimientosReport({
   const modColor = { PRESENCIAL: theme.presencial, REMOTO: theme.remoto }
   const decimals = metricDecimals(tipo)
   const fmt = (val) => formatPeNumber(val, decimals)
-  const effectivePeriodo = periodo || model.defaultPeriodo
+  const effectivePeriodos = Array.isArray(periodos) && periodos.length
+    ? periodos
+    : (model.defaultPeriodo ? [model.defaultPeriodo] : [])
   const filters = useMemo(
-    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado, modalidades, tipo, seguimientoAxis }),
-    [semana, segmento, campana, effectivePeriodo, estado, modalidades, tipo, seguimientoAxis]
+    () => ({
+      semanas,
+      segmentos,
+      campanas,
+      periodos: effectivePeriodos,
+      estados,
+      modalidades,
+      tipo,
+      seguimientoAxis,
+    }),
+    [semanas, segmentos, campanas, effectivePeriodos, estados, modalidades, tipo, seguimientoAxis]
   )
   const view = useMemo(() => aggregateRequerimientos(model, filters), [model, filters])
   const kpis = view.kpis
@@ -756,8 +774,8 @@ function RequerimientosReport({
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Proyectados')
-    XLSX.writeFile(wb, `GEA_Proyectados_${effectivePeriodo || 'all'}.xlsx`)
-  }, [view.tabla, effectivePeriodo])
+    XLSX.writeFile(wb, `GEA_Proyectados_${effectivePeriodos.join('_') || 'all'}.xlsx`)
+  }, [view.tabla, effectivePeriodos])
 
   const reqLegend = [
     { label: 'Requerimiento', color: theme.rq },
@@ -773,20 +791,20 @@ function RequerimientosReport({
           isDark={isDark}
           headerBg={theme.headerBg}
           filterOptions={view.filterOptions}
-          periodo={effectivePeriodo}
+          periodos={effectivePeriodos}
           defaultPeriodo={model.defaultPeriodo}
-          semana={semana}
-          segmento={segmento}
-          campana={campana}
-          estado={estado}
+          semanas={semanas}
+          segmentos={segmentos}
+          campanas={campanas}
+          estados={estados}
           showEstado={true}
           modalidades={modalidades}
           tipo={tipo}
-          onPeriodoChange={(value) => { setPeriodo(value); setSemana(''); setSegmento(''); setCampana('') }}
-          onSemanaChange={(value) => { setSemana(value); setSegmento(''); setCampana('') }}
-          onSegmentoChange={(value) => { setSegmento(value); setCampana('') }}
-          onCampanaChange={setCampana}
-          onEstadoChange={setEstado}
+          onPeriodoChange={(values) => { setPeriodos(values); setSemanas([]); setSegmentos([]); setCampanas([]) }}
+          onSemanaChange={(values) => { setSemanas(values); setSegmentos([]); setCampanas([]) }}
+          onSegmentoChange={(values) => { setSegmentos(values); setCampanas([]) }}
+          onCampanaChange={setCampanas}
+          onEstadoChange={setEstados}
           onToggleModalidad={toggleModalidad}
           onTipoChange={setTipo}
           onClear={() => { clearFilters(); setActiveTableKey('') }}
@@ -897,13 +915,13 @@ function RequerimientosReport({
           </ChartCard>
           <CoverageToggleChart
             title="Cobertura por segmento"
-            hint={segmento ? `Seleccionado: ${segmento}` : 'Clic para filtrar'}
+            hint={segmentos.length ? `Seleccionados: ${segmentos.join(', ')}` : 'Clic para filtrar'}
             data={view.segmentos}
             nameKey="segmento"
-            selected={segmento}
+            selected={segmentos}
             onSelect={(name) => {
-              setSegmento((prev) => (prev === name ? '' : name))
-              setCampana('')
+              setSegmentos((prev) => (prev.includes(name) ? prev.filter((s) => s !== name) : [name]))
+              setCampanas([])
             }}
             theme={theme}
             isDark={isDark}
@@ -921,8 +939,8 @@ function RequerimientosReport({
             gid={`${gid}-rq`}
             decimals={decimals}
             fmt={fmt}
-            campana={campana}
-            onSelectCampana={(name) => setCampana((prev) => (prev === name ? '' : name))}
+            campana={campanas}
+            onSelectCampana={(name) => setCampanas((prev) => (prev.includes(name) ? prev.filter((c) => c !== name) : [name]))}
             volumeLegend={reqLegend.filter((item) => item.label !== 'Proyección')}
           />
           <ChartCard theme={theme}>
@@ -950,7 +968,7 @@ function RequerimientosReport({
         <ChartCard theme={theme}>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-[11px] font-black uppercase tracking-wide text-[var(--text-primary)]">
-              Detalle segmento × campaña × escuela · {effectivePeriodo}
+              Detalle segmento × campaña × escuela · {effectivePeriodos.join(', ')}
             </p>
             <button type="button" onClick={handleExport} className={`flex items-center gap-1 rounded-sm px-3 py-1.5 text-[10px] font-black uppercase tracking-wide ${isDark ? 'bg-cyan-500 text-slate-950' : 'bg-[#163A6B] text-white'}`}>
               <Download size={12} />
@@ -974,9 +992,9 @@ function RequerimientosReport({
                     <tr
                       key={key}
                       onClick={() => {
-                        setSegmento(r.segmento)
-                        setCampana(r.campana)
-                        setEstado(r.estado)
+                        setSegmentos([r.segmento])
+                        setCampanas([r.campana])
+                        setEstados(r.estado ? [r.estado] : [])
                         setActiveTableKey(key)
                       }}
                       className={`cursor-pointer border-b border-[var(--border-subtle)] ${
@@ -1030,11 +1048,11 @@ function CoberturaDotacion() {
   const [page, setPage] = useState('cobertura')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [semana, setSemana] = useState('')
-  const [segmento, setSegmento] = useState('')
-  const [campana, setCampana] = useState('')
-  const [periodo, setPeriodo] = useState('')
-  const [estado, setEstado] = useState('')
+  const [semanas, setSemanas] = useState([])
+  const [segmentos, setSegmentos] = useState([])
+  const [campanas, setCampanas] = useState([])
+  const [periodos, setPeriodos] = useState([])
+  const [estados, setEstados] = useState([])
   const [tipo, setTipo] = useState('ftes')
   const [condicion, setCondicion] = useState('')
   const [jornadaMode, setJornadaMode] = useState('volumen')
@@ -1066,22 +1084,45 @@ function CoberturaDotacion() {
     return () => { cancelled = true }
   }, [])
 
+  // Panel principal: exclusivamente grupos CERRADO
+  const closedTableRows = useMemo(() => {
+    return tableRows.filter((r) => {
+      const st = String(r.estado || r.ESTADO || '').trim().toUpperCase()
+      return st === 'CERRADO'
+    })
+  }, [tableRows])
+
   const model = useMemo(
-    () => buildCoberturaDotacionModelFromTable(tableRows, capacidadRows),
-    [tableRows, capacidadRows]
+    () => buildCoberturaDotacionModelFromTable(closedTableRows, capacidadRows),
+    [closedTableRows, capacidadRows]
   )
+
+  // Proyectados: considera tanto grupos EN CURSO como CERRADO
   const requerimientosModel = useMemo(
     () => buildRequerimientosModel(joinCoberturaConCapacidad(tableRows, capacidadRows)),
     [tableRows, capacidadRows]
   )
 
-  const effectivePeriodo = periodo || model.defaultPeriodo
+  const effectivePeriodos = Array.isArray(periodos) && periodos.length
+    ? periodos
+    : (model.defaultPeriodo ? [model.defaultPeriodo] : [])
   const decimals = metricDecimals(tipo)
   const fmt = (val) => formatPeNumber(val, decimals)
 
   const filters = useMemo(
-    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado: '', modalidades, tipo, seguimientoAxis, condicion }),
-    [semana, segmento, campana, effectivePeriodo, modalidades, tipo, seguimientoAxis, condicion]
+    () => ({
+      semanas,
+      segmentos,
+      campanas,
+      periodos: effectivePeriodos,
+      estado: '',
+      estados: [],
+      modalidades,
+      tipo,
+      seguimientoAxis,
+      condicion,
+    }),
+    [semanas, segmentos, campanas, effectivePeriodos, modalidades, tipo, seguimientoAxis, condicion]
   )
 
   const view = useMemo(
@@ -1090,12 +1131,12 @@ function CoberturaDotacion() {
   )
 
   const clearFilters = useCallback(() => {
-    setSemana('')
-    setSegmento('')
-    setCampana('')
-    setEstado('')
+    setSemanas([])
+    setSegmentos([])
+    setCampanas([])
+    setEstados([])
     setCondicion('')
-    setPeriodo(model.defaultPeriodo || '')
+    setPeriodos(model.defaultPeriodo ? [model.defaultPeriodo] : [])
     setModalidades([...MODALIDADES])
     setActiveTableKey('')
   }, [model.defaultPeriodo])
@@ -1115,14 +1156,14 @@ function CoberturaDotacion() {
     const key = state?.activeLabel
     if (!key) return
     if (seguimientoAxis === 'semana') {
-      setSemana((prev) => (prev === key ? '' : key))
-      setCampana('')
+      setSemanas((prev) => (prev.includes(key) ? prev.filter((s) => s !== key) : [key]))
+      setCampanas([])
       return
     }
-    setPeriodo(key)
-    setSemana('')
-    setSegmento('')
-    setCampana('')
+    setPeriodos((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [key]))
+    setSemanas([])
+    setSegmentos([])
+    setCampanas([])
   }, [seguimientoAxis])
 
   const kpis = view.kpis
@@ -1154,8 +1195,8 @@ function CoberturaDotacion() {
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Cobertura')
-    XLSX.writeFile(wb, `GEA_Cobertura_Dotacion_${effectivePeriodo || 'all'}.xlsx`)
-  }, [view.tabla, kpis, effectivePeriodo, tipo])
+    XLSX.writeFile(wb, `GEA_Cobertura_Dotacion_${effectivePeriodos.join('_') || 'all'}.xlsx`)
+  }, [view.tabla, kpis, effectivePeriodos, tipo])
 
   const pieData = view.modalidad.filter((m) => m.ingresos > 0)
   const campanasChart = (view.campanasChart || view.campanas || []).map((s) => ({
@@ -1211,16 +1252,16 @@ function CoberturaDotacion() {
         isDark={isDark}
         gid={gid}
         onBack={() => setPage('cobertura')}
-        semana={semana}
-        setSemana={setSemana}
-        segmento={segmento}
-        setSegmento={setSegmento}
-        campana={campana}
-        setCampana={setCampana}
-        periodo={periodo}
-        setPeriodo={setPeriodo}
-        estado={estado}
-        setEstado={setEstado}
+        semanas={semanas}
+        setSemanas={setSemanas}
+        segmentos={segmentos}
+        setSegmentos={setSegmentos}
+        campanas={campanas}
+        setCampanas={setCampanas}
+        periodos={periodos}
+        setPeriodos={setPeriodos}
+        estados={estados}
+        setEstados={setEstados}
         modalidades={modalidades}
         toggleModalidad={toggleModalidad}
         tipo={tipo}
@@ -1247,32 +1288,32 @@ function CoberturaDotacion() {
           isDark={isDark}
           headerBg={theme.headerBg}
           filterOptions={view.filterOptions}
-          periodo={effectivePeriodo}
+          periodos={effectivePeriodos}
           defaultPeriodo={model.defaultPeriodo}
-          semana={semana}
-          segmento={segmento}
-          campana={campana}
+          semanas={semanas}
+          segmentos={segmentos}
+          campanas={campanas}
           showEstado={false}
           condicion={condicion}
           modalidades={modalidades}
           tipo={tipo}
-          onPeriodoChange={(value) => {
-            setPeriodo(value)
-            setSemana('')
-            setSegmento('')
-            setCampana('')
+          onPeriodoChange={(values) => {
+            setPeriodos(values)
+            setSemanas([])
+            setSegmentos([])
+            setCampanas([])
           }}
-          onSemanaChange={(value) => {
-            setSemana(value)
-            setSegmento('')
-            setCampana('')
+          onSemanaChange={(values) => {
+            setSemanas(values)
+            setSegmentos([])
+            setCampanas([])
           }}
-          onSegmentoChange={(value) => {
-            setSegmento(value)
-            setCampana('')
+          onSegmentoChange={(values) => {
+            setSegmentos(values)
+            setCampanas([])
           }}
-          onCampanaChange={setCampana}
-          onEstadoChange={setEstado}
+          onCampanaChange={setCampanas}
+          onEstadoChange={setEstados}
           onToggleModalidad={toggleModalidad}
           onTipoChange={setTipo}
           onClear={clearFilters}
@@ -1415,8 +1456,8 @@ function CoberturaDotacion() {
                   onClick={(state) => {
                     const name = state?.activePayload?.[0]?.payload?.segmento
                     if (!name) return
-                    setSegmento((prev) => (prev === name ? '' : name))
-                    setCampana('')
+                    setSegmentos((prev) => (prev.includes(name) ? prev.filter((s) => s !== name) : [name]))
+                    setCampanas([])
                   }}
                 >
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.grid} />
@@ -1448,7 +1489,7 @@ function CoberturaDotacion() {
                       <Cell
                         key={row.segmento}
                         fill={segmentMode === 'cobertura' ? coverageFill(row.coberturaPct, theme) : (row.brecha >= 0 ? theme.ingresos : theme.danger)}
-                        fillOpacity={!segmento || segmento === row.segmento ? 1 : 0.35}
+                        fillOpacity={segmentos.length === 0 || segmentos.includes(row.segmento) ? 1 : 0.35}
                       />
                     ))}
                     <LabelList
@@ -1482,7 +1523,7 @@ function CoberturaDotacion() {
                   onClick={(state) => {
                     const row = state?.activePayload?.[0]?.payload
                     if (!row || row.isOtras) return
-                    if (row.campana) setCampana((prev) => (prev === row.campana ? '' : row.campana))
+                    if (row.campana) setCampanas((prev) => (prev.includes(row.campana) ? prev.filter((c) => c !== row.campana) : [row.campana]))
                   }}
                 >
                   <defs>
@@ -1510,12 +1551,12 @@ function CoberturaDotacion() {
                   <Tooltip content={<PairTooltip mode="cobertura" theme={theme} decimals={decimals} />} />
                   <Bar dataKey="requerimiento" fill={`url(#${rqGrad}-h)`} maxBarSize={28} cursor="pointer" radius={[6, 6, 0, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
-                      <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`crq-${row.campanaShort || row.campana}`} fill={`url(#${rqGrad}-h)`} fillOpacity={campanas.length === 0 || campanas.includes(row.campana) ? 1 : 0.35} />
                     ))}
                   </Bar>
                   <Bar dataKey="ingresos" fill={`url(#${ingGrad}-h)`} maxBarSize={28} cursor="pointer" radius={[6, 6, 0, 0]} animationDuration={320}>
                     {(campanasChart || []).map((row) => (
-                      <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={!campana || campana === row.campana ? 1 : 0.35} />
+                      <Cell key={`cing-${row.campanaShort || row.campana}`} fill={`url(#${ingGrad}-h)`} fillOpacity={campanas.length === 0 || campanas.includes(row.campana) ? 1 : 0.35} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -1593,8 +1634,8 @@ function CoberturaDotacion() {
                     <tr
                       key={key}
                       onClick={() => {
-                        setSemana(r.semana)
-                        setCampana(r.campana)
+                        setSemanas([r.semana])
+                        setCampanas([r.campana])
                         setActiveTableKey(key)
                       }}
                       className={`cursor-pointer border-b border-[var(--border-subtle)] ${

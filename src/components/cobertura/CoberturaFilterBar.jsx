@@ -1,4 +1,4 @@
-import React, { memo } from 'react'
+import React, { memo, useState, useRef, useEffect, useMemo } from 'react'
 import {
   Activity,
   ArrowLeft,
@@ -9,6 +9,9 @@ import {
   Layers,
   Megaphone,
   ChevronDown,
+  Search,
+  Check,
+  X,
 } from 'lucide-react'
 import { GeaModernDeltaEmblem } from '../GeaLogo'
 import { METRIC_TIPOS, MODALIDADES } from '../../lib/coberturaDotacionAnalytics'
@@ -18,32 +21,196 @@ const MODALIDAD_LABEL = {
   REMOTO: 'Remoto',
 }
 
-function FilterField({ label, icon: Icon, value, onChange, options = [], allLabel, wide = false, title }) {
-  const shown = value || allLabel || ''
+export function CoberturaMultiSelect({
+  label,
+  icon: Icon,
+  values = [],
+  onChange,
+  options = [],
+  allLabel = 'Todas',
+  wide = false,
+  isDark = true,
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const containerRef = useRef(null)
+
+  // Cerrar al hacer click fuera
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false)
+      }
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  // Normalizar values a array siempre
+  const safeValues = Array.isArray(values) ? values : (values ? [values] : [])
+
+  const filteredOptions = useMemo(() => {
+    if (!search.trim()) return options
+    const q = search.toLowerCase()
+    return options.filter((opt) => String(opt).toLowerCase().includes(q))
+  }, [options, search])
+
+  const toggleOption = (opt) => {
+    const isSelected = safeValues.includes(opt)
+    if (isSelected) {
+      onChange(safeValues.filter((v) => v !== opt))
+    } else {
+      onChange([...safeValues, opt])
+    }
+  }
+
+  const selectAll = () => {
+    onChange([])
+  }
+
+  // Etiqueta a mostrar en el trigger
+  const triggerText = useMemo(() => {
+    if (safeValues.length === 0) return allLabel
+    if (safeValues.length === 1) return safeValues[0]
+    return `${safeValues.length} seleccionados`
+  }, [safeValues, allLabel])
+
   return (
-    <label className={`flex shrink-0 flex-col gap-0.5 ${wide ? 'w-[168px] sm:w-[196px]' : 'w-[112px] sm:w-[128px]'}`}>
+    <div
+      ref={containerRef}
+      className={`relative flex shrink-0 flex-col gap-0.5 ${wide ? 'w-[168px] sm:w-[210px]' : 'w-[120px] sm:w-[140px]'}`}
+    >
       <span className="flex items-center gap-1 text-[10px] font-semibold tracking-wide text-[var(--text-muted)]">
         {Icon ? <Icon size={11} strokeWidth={2.25} /> : null}
         {label}
+        {safeValues.length > 0 && (
+          <span
+            className={`ml-auto flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[8px] font-bold ${
+              isDark ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-[#163A6B]/10 text-[#163A6B] border border-[#163A6B]/30'
+            }`}
+          >
+            {safeValues.length}
+          </span>
+        )}
       </span>
-      <span className="relative block">
-        <select
-          value={value}
-          title={title || shown}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-8 w-full appearance-none truncate rounded-lg border border-[var(--border-normal)] bg-[var(--input-bg)] py-0 pl-2 pr-6 text-[12px] font-semibold text-[var(--text-primary)] outline-none transition focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/20"
-        >
-          {allLabel != null ? <option value="">{allLabel}</option> : null}
-          {options.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
+
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`flex h-8 w-full items-center justify-between rounded-lg border px-2 text-[12px] font-semibold outline-none transition ${
+          safeValues.length > 0
+            ? (isDark
+              ? 'border-cyan-400/50 bg-[var(--input-bg)] text-cyan-300 ring-1 ring-cyan-400/20'
+              : 'border-[#163A6B]/40 bg-[var(--input-bg)] text-[#163A6B] ring-1 ring-[#163A6B]/15')
+            : 'border-[var(--border-normal)] bg-[var(--input-bg)] text-[var(--text-primary)] hover:border-slate-400/60'
+        }`}
+        title={safeValues.length > 0 ? safeValues.join(', ') : allLabel}
+      >
+        <span className="truncate pr-1 text-left">{triggerText}</span>
         <ChevronDown
           size={12}
-          className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+          className={`shrink-0 text-[var(--text-muted)] transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
         />
-      </span>
-    </label>
+      </button>
+
+      {/* Popover desplegable */}
+      {open && (
+        <div
+          className={`absolute left-0 top-[calc(100%+4px)] z-50 flex flex-col rounded-xl border p-1.5 shadow-xl backdrop-blur-md transition-all ${
+            wide ? 'w-[230px] sm:w-[260px]' : 'w-[180px] sm:w-[210px]'
+          } ${
+            isDark
+              ? 'border-slate-700/80 bg-slate-900/95 text-slate-100 shadow-black/60'
+              : 'border-slate-200 bg-white/95 text-slate-800 shadow-slate-300/60'
+          }`}
+        >
+          {/* Buscador si hay más de 5 opciones */}
+          {options.length > 5 && (
+            <div className="relative mb-1 px-0.5">
+              <Search size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar..."
+                className="h-7 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] pl-6 pr-2 text-[11px] outline-none transition focus:border-cyan-400/60"
+                autoFocus
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Acciones de selección rápida */}
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-1.5 py-1 text-[10px]">
+            <button
+              type="button"
+              onClick={selectAll}
+              className={`font-semibold hover:underline ${safeValues.length === 0 ? 'text-cyan-400 font-bold' : 'text-slate-400'}`}
+            >
+              {allLabel} (Todos)
+            </button>
+            {safeValues.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-red-400 hover:underline"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          {/* Lista de opciones con checkboxes */}
+          <div className="max-h-52 overflow-y-auto py-1 select-scrollbar">
+            {filteredOptions.length === 0 ? (
+              <div className="py-2 text-center text-[10px] text-slate-400">Sin coincidencias</div>
+            ) : (
+              filteredOptions.map((opt) => {
+                const checked = safeValues.includes(opt)
+                return (
+                  <label
+                    key={opt}
+                    onClick={() => toggleOption(opt)}
+                    className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-[11px] transition ${
+                      checked
+                        ? (isDark ? 'bg-cyan-500/15 text-cyan-200 font-medium' : 'bg-blue-50 text-[#163A6B] font-medium')
+                        : (isDark ? 'hover:bg-slate-800 text-slate-300' : 'hover:bg-slate-100 text-slate-700')
+                    }`}
+                  >
+                    <div
+                      className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition ${
+                        checked
+                          ? (isDark ? 'border-cyan-400 bg-cyan-500 text-slate-950' : 'border-[#163A6B] bg-[#163A6B] text-white')
+                          : 'border-slate-400/50 bg-transparent'
+                      }`}
+                    >
+                      {checked && <Check size={10} strokeWidth={3} />}
+                    </div>
+                    <span className="truncate">{opt}</span>
+                  </label>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -75,15 +242,19 @@ function SegmentedOption({ active, isDark, onClick, children }) {
   )
 }
 
-function countDirtyFilters({ semana, segmento, campana, estado, modalidades, periodo, defaultPeriodo, condicion }) {
+function countDirtyFilters({ semanas, segmentos, campanas, estados, modalidades, periodos, defaultPeriodo, condicion }) {
   let n = 0
-  if (semana) n += 1
-  if (segmento) n += 1
-  if (campana) n += 1
-  if (estado) n += 1
+  if (Array.isArray(semanas) ? semanas.length > 0 : Boolean(semanas)) n += 1
+  if (Array.isArray(segmentos) ? segmentos.length > 0 : Boolean(segmentos)) n += 1
+  if (Array.isArray(campanas) ? campanas.length > 0 : Boolean(campanas)) n += 1
+  if (Array.isArray(estados) ? estados.length > 0 : Boolean(estados)) n += 1
   if (condicion) n += 1
   if (Array.isArray(modalidades) && modalidades.length > 0 && modalidades.length < MODALIDADES.length) n += 1
-  if (periodo && defaultPeriodo && periodo !== defaultPeriodo) n += 1
+  if (Array.isArray(periodos)) {
+    if (periodos.length > 1 || (periodos.length === 1 && defaultPeriodo && periodos[0] !== defaultPeriodo)) n += 1
+  } else if (periodos && defaultPeriodo && periodos !== defaultPeriodo) {
+    n += 1
+  }
   return n
 }
 
@@ -112,11 +283,16 @@ export function CoberturaReportChrome({
   isDark,
   headerBg,
   filterOptions = {},
+  periodos = [],
   periodo,
   defaultPeriodo,
+  semanas = [],
   semana,
+  segmentos = [],
   segmento,
+  campanas = [],
   campana,
+  estados = [],
   estado,
   showEstado = false,
   condicion,
@@ -133,14 +309,40 @@ export function CoberturaReportChrome({
   onProyectados,
   onBack,
 }) {
+  // Manejar compatibilidad si vienen valores individuales o arrays
+  const activePeriodos = useMemo(() => {
+    if (Array.isArray(periodos) && periodos.length) return periodos
+    return periodo ? [periodo] : []
+  }, [periodos, periodo])
+
+  const activeSemanas = useMemo(() => {
+    if (Array.isArray(semanas) && semanas.length) return semanas
+    return semana ? [semana] : []
+  }, [semanas, semana])
+
+  const activeSegmentos = useMemo(() => {
+    if (Array.isArray(segmentos) && segmentos.length) return segmentos
+    return segmento ? [segmento] : []
+  }, [segmentos, segmento])
+
+  const activeCampanas = useMemo(() => {
+    if (Array.isArray(campanas) && campanas.length) return campanas
+    return campana ? [campana] : []
+  }, [campanas, campana])
+
+  const activeEstados = useMemo(() => {
+    if (Array.isArray(estados) && estados.length) return estados
+    return estado ? [estado] : []
+  }, [estados, estado])
+
   const dirty = countDirtyFilters({
-    semana,
-    segmento,
-    campana,
-    estado: showEstado ? estado : '',
+    semanas: activeSemanas,
+    segmentos: activeSegmentos,
+    campanas: activeCampanas,
+    estados: showEstado ? activeEstados : [],
     condicion,
     modalidades,
-    periodo,
+    periodos: activePeriodos,
     defaultPeriodo,
   })
 
@@ -174,46 +376,52 @@ export function CoberturaReportChrome({
       <section className="flex items-end gap-2 border-t border-[var(--border-subtle)] px-2 py-2 md:px-3">
         <div className="relative min-w-0 flex-1">
           <div className="flex items-end gap-2 overflow-x-auto overscroll-x-contain pb-0.5 select-scrollbar">
-            <FilterField
+            <CoberturaMultiSelect
               label="Periodo"
               icon={CalendarDays}
-              value={periodo}
+              values={activePeriodos}
               onChange={onPeriodoChange}
               options={filterOptions.periodos || []}
+              allLabel={defaultPeriodo || 'Todos'}
+              isDark={isDark}
             />
-            <FilterField
+            <CoberturaMultiSelect
               label="Semana"
               icon={Hash}
-              value={semana}
+              values={activeSemanas}
               onChange={onSemanaChange}
               options={filterOptions.semanas || []}
               allLabel="Todas"
+              isDark={isDark}
             />
-            <FilterField
+            <CoberturaMultiSelect
               label="Segmento"
               icon={Layers}
-              value={segmento}
+              values={activeSegmentos}
               onChange={onSegmentoChange}
               options={filterOptions.segmentos || []}
               allLabel="Todas"
+              isDark={isDark}
             />
-            <FilterField
+            <CoberturaMultiSelect
               label="Campaña"
               icon={Megaphone}
-              value={campana}
+              values={activeCampanas}
               onChange={onCampanaChange}
               options={filterOptions.campanas || []}
               allLabel="Todas"
               wide
+              isDark={isDark}
             />
             {showEstado ? (
-              <FilterField
+              <CoberturaMultiSelect
                 label="Estado"
                 icon={Activity}
-                value={estado}
+                values={activeEstados}
                 onChange={onEstadoChange}
                 options={filterOptions.estados || []}
                 allLabel="Todas"
+                isDark={isDark}
               />
             ) : null}
             <SegmentedTrack label="Modalidad">
