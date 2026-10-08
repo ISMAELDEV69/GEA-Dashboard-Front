@@ -142,7 +142,6 @@ export function CoberturaMultiSelect({
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar..."
                 className="h-7 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-base)] pl-6 pr-2 text-[11px] outline-none transition focus:border-cyan-400/60"
-                autoFocus
               />
               {search && (
                 <button
@@ -373,9 +372,8 @@ export function CoberturaReportChrome({
         </div>
       </header>
 
-      <section className="flex items-end gap-2 border-t border-[var(--border-subtle)] px-2 py-2 md:px-3">
-        <div className="relative min-w-0 flex-1">
-          <div className="flex items-end gap-2 overflow-x-auto overscroll-x-contain pb-0.5 select-scrollbar">
+      <section className="flex flex-wrap items-end justify-between gap-2 border-t border-[var(--border-subtle)] px-2 py-2 md:px-3">
+        <div className="flex flex-wrap items-end gap-2 flex-1 min-w-0">
             <CoberturaMultiSelect
               label="Periodo"
               icon={CalendarDays}
@@ -448,8 +446,6 @@ export function CoberturaReportChrome({
                 </SegmentedOption>
               ))}
             </SegmentedTrack>
-          </div>
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--bg-surface)] to-transparent md:hidden" />
         </div>
 
         <div className="flex shrink-0 items-end gap-1.5 border-l border-[var(--border-subtle)] pl-2">
