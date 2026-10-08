@@ -1562,29 +1562,22 @@ const COBERTURA_DOTACION_SELECT = [
 /** Snapshot WFM ya calculado: public.cobertura_dotacion */
 export async function fetchCoberturaDotacion() {
   if (DB_MODE !== 'supabase') return []
-  return withCache('cobertura_dotacion_v5', 180000, async () => {
+  return withCache('cobertura_dotacion_v7', 30000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
-    let selectList = COBERTURA_DOTACION_SELECT
     while (true) {
       const { data, error } = await supabase
         .from('cobertura_dotacion')
-        .select(selectList)
+        .select('*')
         .order('id', { ascending: true })
         .range(from, from + pageSize - 1)
-      if (error) {
-        if (selectList !== '*' && /CAMPAÑA|column/i.test(error.message || '')) {
-          selectList = '*'
-          continue
-        }
-        throw error
-      }
+      if (error) throw error
       const batch = data || []
       all.push(...batch)
       if (batch.length < pageSize) break
       from += pageSize
-      if (from > 20000) break
+      if (from > 25000) break
     }
     return all
   })

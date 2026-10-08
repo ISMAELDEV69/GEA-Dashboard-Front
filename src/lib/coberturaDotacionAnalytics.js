@@ -468,7 +468,7 @@ export function buildCoberturaDotacionModelFromTable(tableRows = [], capacidadRo
     const cap = matchCapacidad(index, n)
     rows.push({
       ...n,
-      estado: n.estado || (cap ? normalizeEstadoGrupo(cap.estado) : ''),
+      estado: n.estado || '',
     })
     if (n.fecha && n.fecha > corteIso) corteIso = n.fecha
   }

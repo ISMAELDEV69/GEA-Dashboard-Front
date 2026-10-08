@@ -54,7 +54,7 @@ export function joinCoberturaConCapacidad(tableRows = [], capacidadRows = []) {
     const cap = fact.gpe ? matchCapacidad(index, fact) : null
     out.push({
       ...fact,
-      estado: fact.estado || (cap ? (normalizeEstadoGrupo(cap.estado) || 'SIN ESTADO') : ''),
+      estado: fact.estado || '',
       gpe: fact.gpe || clean(cap?.codigo),
     })
   }
