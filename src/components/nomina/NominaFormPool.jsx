@@ -62,21 +62,78 @@ function getFechaInicioDisplay(assignment, gruposList = []) {
   return '—'
 }
 
-function getEstadoDisplay(assignment) {
-  if (!assignment) return 'ACTIVO'
-  
-  // 1. Si viene un campo explícito de ult_estado / ultimo_estado
-  if (assignment.ult_estado) {
-    const u = String(assignment.ult_estado).trim().toUpperCase()
-    if (u.includes('CES') || u.includes('BAJA') || u.includes('NO ACTIVO') || u === 'INACTIVO') return 'CESADO'
-    if (u.includes('ACT') || u.includes('CAPACIT') || u.includes('OJT') || u.includes('OPERAC')) return 'ACTIVO'
-    return u
+function isAsistioVal(val) {
+  const s = String(val || '').trim().toUpperCase()
+  return s === 'ASISTIO' || s === 'SI' || s === 'A' || s === 'PRESENTE'
+}
+
+export function evaluarHistorialPostulante(assignment) {
+  if (!assignment) {
+    return {
+      tipo: 'DISPONIBLE',
+      estadoLabel: 'DISPONIBLE',
+      isActivo: false,
+      isBloqueante: false,
+      motivoBaja: '',
+      descripcion: 'Candidato nuevo disponible'
+    }
   }
 
-  // 2. Si activo es boolean false
-  if (assignment.activo === false) return 'CESADO'
+  // 1. Validar Día 0 y Día 1 de Nómina:
+  // Si en la nómina previa NO asistió a Día 1 (ej: asistió a D0 pero faltó a D1, o faltó a ambos),
+  // significa que el asesor NUNCA llegó a la capacitación/control de asistencia del aula.
+  const asistioD1 = isAsistioVal(assignment.dia_1)
 
-  // 3. Revisar sigla, estado o motivo de baja en consolidado de asistencia y nómina
+  if (!asistioD1) {
+    return {
+      tipo: 'NO_LLEGO_CAPA',
+      estadoLabel: 'INGRESO APTO',
+      isActivo: false,
+      isBloqueante: false,
+      motivoBaja: 'NO ASISTIÓ A DÍA 1',
+      descripcion: `No asistió a Día 1 en ${assignment.grupo_codigo || 'grupo previo'}`
+    }
+  }
+
+  // 2. Si SÍ asistió a Día 1 en nómina, el asesor ingresó a la capacitación.
+  // Validamos su estado en el Control de Asistencia (consolidado_asistencias) y nómina:
+  if (assignment.activo === false) {
+    return {
+      tipo: 'REINGRESO',
+      estadoLabel: 'CESADO',
+      isActivo: false,
+      isBloqueante: false,
+      motivoBaja: assignment.asis_motivo_baja || assignment.motivo_baja || 'Baja en proceso previo',
+      descripcion: `Cesado en ${assignment.grupo_codigo || 'grupo previo'}`
+    }
+  }
+
+  // Si tiene campo explícito de ult_estado / ultimo_estado
+  if (assignment.ult_estado) {
+    const u = String(assignment.ult_estado).trim().toUpperCase()
+    if (u.includes('CES') || u.includes('BAJA') || u.includes('NO ACTIVO') || u === 'INACTIVO') {
+      return {
+        tipo: 'REINGRESO',
+        estadoLabel: 'CESADO',
+        isActivo: false,
+        isBloqueante: false,
+        motivoBaja: assignment.asis_motivo_baja || assignment.motivo_baja || 'Cesado en capacitación',
+        descripcion: `Cesado en ${assignment.grupo_codigo || 'grupo previo'}`
+      }
+    }
+    if (u.includes('ACT') || u.includes('CAPACIT') || u.includes('OJT') || u.includes('OPERAC')) {
+      return {
+        tipo: 'ACTIVO_OTRO_GRUPO',
+        estadoLabel: 'ACTIVO',
+        isActivo: true,
+        isBloqueante: true,
+        motivoBaja: '',
+        descripcion: `En capacitación activa en ${assignment.grupo_codigo || 'otro grupo'}`
+      }
+    }
+  }
+
+  // Revisar sigla, estado o motivo de baja en consolidado de asistencia y nómina
   const rawSigla = String(assignment.asis_sigla || assignment.sigla || '').trim().toUpperCase()
   const rawAsisEstado = String(assignment.asis_estado || '').trim().toUpperCase()
   const rawMotivo = String(assignment.asis_motivo_baja || assignment.motivo_baja || assignment.observacion_estado || '').trim().toUpperCase()
@@ -84,18 +141,38 @@ function getEstadoDisplay(assignment) {
   const rawStatusFinal = String(assignment.status_final || '').trim().toUpperCase()
   const rawStatusD1 = String(assignment.status_dia_1 || '').trim().toUpperCase()
 
-  if (
+  const hasBajaAsistencia = (
     rawSigla === 'B' || rawSigla === 'BD1' || rawSigla === 'D1' ||
     rawAsisEstado.includes('BAJA') || rawAsisEstado.includes('CESAD') || rawAsisEstado.includes('DESERC') ||
     rawEstado === 'CESADO' || rawEstado === 'BAJA' ||
     rawStatusFinal.includes('BAJA') || rawStatusFinal.includes('CESAD') ||
     rawStatusD1.includes('BAJA') || rawStatusD1.includes('DESERC') ||
     (rawMotivo && rawMotivo !== 'NULL' && rawMotivo !== 'UNDEFINED' && rawMotivo !== 'ASISTIO' && rawMotivo !== 'ACTIVO' && rawMotivo !== 'SIN ESPECIFICAR')
-  ) {
-    return 'CESADO'
+  )
+
+  if (hasBajaAsistencia) {
+    return {
+      tipo: 'REINGRESO',
+      estadoLabel: 'CESADO',
+      isActivo: false,
+      isBloqueante: false,
+      motivoBaja: assignment.asis_motivo_baja || assignment.motivo_baja || 'Baja registrada en asistencia',
+      descripcion: `Cesado en ${assignment.grupo_codigo || 'grupo previo'}`
+    }
   }
 
-  return 'ACTIVO'
+  return {
+    tipo: 'ACTIVO_OTRO_GRUPO',
+    estadoLabel: 'ACTIVO',
+    isActivo: true,
+    isBloqueante: true,
+    motivoBaja: '',
+    descripcion: `En capacitación activa en ${assignment.grupo_codigo || 'otro grupo'}`
+  }
+}
+
+function getEstadoDisplay(assignment) {
+  return evaluarHistorialPostulante(assignment).estadoLabel
 }
 
 function PoolStat({ label, value, color, icon: Icon }) {
@@ -608,17 +685,16 @@ export default function NominaFormPool({
     return availableData.slice(start, start + pageSize)
   }, [availableData, page, pageSize])
 
-  // Postulantes seleccionables: Nuevos disponibles, reingresos (cesados/inactivos en grupos anteriores) O ya asignados al grupo actual
+  // Postulantes seleccionables: Nuevos disponibles, no llegaron a capa, reingresos (cesados/inactivos en grupos anteriores) O ya asignados al grupo actual
   const selectableData = useMemo(() =>
     availableData.filter(d => {
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment) return true
       if (assignment.grupo_codigo === bulkGrupo) return true
-      const est = getEstadoDisplay(assignment)
-      const isActivo = assignment.activo !== false && est === 'ACTIVO'
-      // Si no está activo en otro grupo, es seleccionable (Reingreso)
-      return !isActivo
+      const evalRes = evaluarHistorialPostulante(assignment)
+      // Bloqueante solo si está en capacitación activa en otro grupo
+      return !evalRes.isBloqueante
     })
   , [availableData, latestAssignedDocs, bulkGrupo])
 
@@ -630,8 +706,8 @@ export default function NominaFormPool({
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment) return false
       if (assignment.grupo_codigo === bulkGrupo) return false
-      const est = getEstadoDisplay(assignment)
-      return assignment.activo !== false && est === 'ACTIVO'
+      const evalRes = evaluarHistorialPostulante(assignment)
+      return evalRes.isBloqueante
     }).length,
     seleccionados: selectedDocs.size,
   }), [poolData, selectableData, latestAssignedDocs, selectedDocs, bulkGrupo])
@@ -641,9 +717,8 @@ export default function NominaFormPool({
     const assignment = latestAssignedDocs.get(cleanDoc)
     // Bloquear solo si está actualmente ACTIVO en OTRO grupo diferente al destino seleccionado
     if (assignment && assignment.grupo_codigo !== bulkGrupo && bulkGrupo) {
-      const est = getEstadoDisplay(assignment)
-      const isActivo = assignment.activo !== false && est === 'ACTIVO'
-      if (isActivo) return
+      const evalRes = evaluarHistorialPostulante(assignment)
+      if (evalRes.isBloqueante) return
     }
     const key = `${cleanDoc}|${marca}`
     const next = new Set(selectedDocs)
@@ -665,9 +740,8 @@ export default function NominaFormPool({
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment || (bulkGrupo && assignment.grupo_codigo === bulkGrupo)) return true
-      const est = getEstadoDisplay(assignment)
-      const isActivo = assignment.activo !== false && est === 'ACTIVO'
-      return !isActivo
+      const evalRes = evaluarHistorialPostulante(assignment)
+      return !evalRes.isBloqueante
     })
     const next = new Set(selectedDocs)
     pageSelectable.forEach(d => next.add(`${String(d.documento || '').trim()}|${d.marca_temporal}`))
@@ -1181,13 +1255,12 @@ export default function NominaFormPool({
                 const latestAssignment = latestAssignedDocs.get(cleanDoc)
                 const isAssigned = Boolean(latestAssignment)
                 const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
-                const estadoAssignment = isAssigned ? getEstadoDisplay(latestAssignment) : null
-                const isAssignmentActivo = isAssigned && latestAssignment.activo !== false && estadoAssignment === 'ACTIVO'
-
-                // Bloqueante solo si está actualmente ACTIVO en otro grupo
-                const isOtherGroup = isAssigned && !isCurrentGroup && isAssignmentActivo
-                // Reingreso disponible si estuvo en un grupo anterior pero ya está inactivo/cesado
-                const isReingreso = isAssigned && !isCurrentGroup && !isAssignmentActivo
+                
+                const evalRes = isAssigned ? evaluarHistorialPostulante(latestAssignment) : null
+                const isOtherGroup = isAssigned && !isCurrentGroup && evalRes?.isBloqueante
+                const isReingreso = isAssigned && !isCurrentGroup && evalRes?.tipo === 'REINGRESO'
+                const isNoLlegoCapa = isAssigned && !isCurrentGroup && evalRes?.tipo === 'NO_LLEGO_CAPA'
+                const estadoAssignment = evalRes ? evalRes.estadoLabel : null
 
                 const isSelected = selectedDocs.has(key)
                 const strikeClass = isOtherGroup ? 'text-[var(--text-muted)] opacity-60' : 'text-[var(--text-secondary)]'
@@ -1207,11 +1280,13 @@ export default function NominaFormPool({
                         ? 'bg-cyan-500/10 cursor-pointer'
                         : isCurrentGroup
                           ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
-                          : isReingreso
-                            ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
-                            : isOtherGroup
-                              ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
-                              : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
+                          : isNoLlegoCapa
+                            ? 'bg-emerald-500/5 hover:bg-emerald-500/10 cursor-pointer'
+                            : isReingreso
+                              ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
+                              : isOtherGroup
+                                ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
+                                : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
                     }`}
                   >
                     {/* Selection Checkbox */}
@@ -1225,7 +1300,15 @@ export default function NominaFormPool({
                           }
                         }} 
                         className="cursor-pointer pt-1"
-                        title={isOtherGroup ? `Postulante asignado a ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` : 'Seleccionar'}
+                        title={
+                          isOtherGroup 
+                            ? `Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` 
+                            : isNoLlegoCapa 
+                              ? `Ingreso Apto (No asistió a Día 1 en ${latestAssignment.grupo_codigo})`
+                              : isReingreso
+                                ? `Reingreso disponible (Cesado en ${latestAssignment.grupo_codigo})`
+                                : 'Seleccionar'
+                        }
                       >
                         {isSelected 
                           ? <CheckSquare size={16} className="text-cyan-400" /> 
@@ -1247,14 +1330,26 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Si es un Reingreso disponible (estuvo en grupo anterior pero fue cesado/inactivo) */}
+                      {/* Caso 1: Estuvo en nómina previa pero NO llegó a Día 1 (Ingreso Apto) */}
+                      {isNoLlegoCapa && (
+                        <div className="mt-1 flex flex-col gap-0.5" onClick={e => e.stopPropagation()}>
+                          <span className="inline-flex items-center gap-1 text-[8.5px] font-black px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                            🟢 Ingreso Apto
+                          </span>
+                          <span className="text-[8px] text-[var(--text-muted)]" title={`Estuvo en la nómina de ${latestAssignment.grupo_codigo} pero no asistió a Día 1 (nunca inició capacitación)`}>
+                            Pre-nómina: <b className="font-mono">{latestAssignment.grupo_codigo}</b> (No llegó a Capa)
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Caso 2: Sí asistió a Día 1 pero fue cesado/baja en Asistencia (Reingreso disponible) */}
                       {isReingreso && (
                         <div className="mt-1 flex flex-col gap-0.5" onClick={e => e.stopPropagation()}>
                           <span className="inline-flex items-center gap-1 text-[8.5px] font-bold px-1.5 py-0.2 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25">
                             🔄 Reingreso disponible
                           </span>
-                          <span className="text-[8px] text-[var(--text-muted)]">
-                            Antiguo: <b className="font-mono">{latestAssignment.grupo_codigo}</b> ({estadoAssignment})
+                          <span className="text-[8px] text-[var(--text-muted)]" title={`Asistió a Día 1 y fue cesado posteriormente con motivo: ${evalRes?.motivoBaja || 'Baja en asistencia'}`}>
+                            Antiguo: <b className="font-mono">{latestAssignment.grupo_codigo}</b> ({evalRes?.motivoBaja || estadoAssignment})
                           </span>
                         </div>
                       )}
@@ -1266,7 +1361,7 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Si ya está registrado como ACTIVO en OTRO grupo diferente */}
+                      {/* Caso 3: Sigue registrado como ACTIVO en OTRO grupo diferente en Asistencia */}
                       {isOtherGroup && (
                         <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 text-amber-600 dark:text-amber-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
@@ -1294,19 +1389,9 @@ export default function NominaFormPool({
                             </div>
                             <div className="col-span-2 pt-0.5 border-t border-amber-500/20 flex items-center justify-between gap-1">
                               <span className="text-[var(--text-muted)] font-semibold">Ult. Estado: </span>
-                              {(() => {
-                                const est = getEstadoDisplay(latestAssignment)
-                                const isActivo = est === 'ACTIVO'
-                                return (
-                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-black uppercase ${
-                                    isActivo 
-                                      ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30' 
-                                      : 'bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-500/30'
-                                  }`}>
-                                    {est}
-                                  </span>
-                                )
-                              })()}
+                              <span className="px-1.5 py-0.2 rounded text-[8.5px] font-black uppercase bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
+                                ACTIVO EN CAPA
+                              </span>
                             </div>
                           </div>
                         </div>

@@ -416,6 +416,7 @@ export function normalizeCoberturaFact(raw) {
     actuales: round2(numCol(raw, 'ACTUALES', 'actuales')),
     fecha: clean(pickCol(raw, 'FECHA_INGRESO_OP', 'fecha_ingreso_op')).slice(0, 10),
     createdAt: clean(pickCol(raw, 'created_at')).slice(0, 10),
+    estado: cleanUpper(pickCol(raw, 'ESTADO', 'estado')),
     hasAmount,
   }
 }
@@ -467,7 +468,7 @@ export function buildCoberturaDotacionModelFromTable(tableRows = [], capacidadRo
     const cap = matchCapacidad(index, n)
     rows.push({
       ...n,
-      estado: cap ? normalizeEstadoGrupo(cap.estado) : '',
+      estado: n.estado || (cap ? normalizeEstadoGrupo(cap.estado) : ''),
     })
     if (n.fecha && n.fecha > corteIso) corteIso = n.fecha
   }

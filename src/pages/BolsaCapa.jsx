@@ -10,6 +10,7 @@ import {
   AREAS_BOLSA_CAPA,
   TIPOS_RECLUTADOR_CAPA,
   adjudicarPostulantesPoolBulk,
+  crearNotificacion,
   fetchNominasGrupoCapa,
   findGrupoCapacidad,
   invalidateCache,
@@ -454,6 +455,30 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       // Refrescar catálogo global para reflejarlo en Nóminas, Asignación de Formador, etc.
       await onRefresh?.()
 
+      // Enviar alerta automática a administradores para que puedan validarlo
+      try {
+        const creatorName = userProfile?.nombre || userProfile?.email || 'Usuario de Capacitación'
+        await crearNotificacion({
+          tipo: 'apertura_grupo_capa',
+          titulo: `Apertura de Grupo: ${codigo}`,
+          mensaje: `${creatorName} aperturó el grupo ${codigo} para la campaña ${campana} (${form.area_traslado}). Pendiente de validación en Bolsa de Capa / Capacidad.`,
+          datos: {
+            codigo,
+            campana,
+            segmento: form.segmento || inferSegmento(campana),
+            area_traslado: form.area_traslado,
+            semana: form.semana_label || (semanaNum ? `SEM ${semanaNum}` : ''),
+            periodo,
+            usuario: creatorName,
+            email: userProfile?.email || null,
+            target_view: 'bolsa_capa',
+          },
+          rol_destinatario: 'admin',
+        })
+      } catch (errNotif) {
+        console.warn('Error enviando alerta automática de apertura de grupo:', errNotif)
+      }
+
       applyGrupoFilters({
         ...created,
         campana,
@@ -466,7 +491,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         semana_trabajo: semanaNum,
       })
       setForm({ ...EMPTY_FORM, area_traslado: form.area_traslado })
-      setMessage({ tone: 'ok', text: `Grupo ${codigo} creado con éxito. Ya quedó seleccionado a la derecha para subir tu Excel de nómina.` })
+      setMessage({ tone: 'ok', text: `Grupo ${codigo} creado con éxito y alerta enviada a los administradores para su validación.` })
     } catch (err) {
       setMessage({ tone: 'error', text: err?.message || 'No se pudo crear el grupo.' })
     } finally {
@@ -568,6 +593,28 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         tone: 'ok',
         text: `${inserted} persona(s) nuevas en ${getCodigoVal(selectedGrupo)} (${tipo}).${skipped ? ` ${skipped} ya estaban y no se tocaron.` : ''} Quedaron en el consolidado de nóminas.`,
       })
+
+      // Enviar alerta a administradores sobre nómina cargada
+      try {
+        const creatorName = userProfile?.nombre || userProfile?.email || 'Capacitación'
+        await crearNotificacion({
+          tipo: 'carga_nomina_capa',
+          titulo: `Nómina registrada en ${getCodigoVal(selectedGrupo)}`,
+          mensaje: `Se cargaron ${inserted} asesores en el grupo ${getCodigoVal(selectedGrupo)} (${getCampanaVal(selectedGrupo)} · ${tipo}) por ${creatorName}.`,
+          datos: {
+            codigo: getCodigoVal(selectedGrupo),
+            campana: getCampanaVal(selectedGrupo),
+            area_traslado: selectedGrupo.area_traslado || tipo,
+            total_nuevos: inserted,
+            usuario: creatorName,
+            target_view: 'bolsa_capa',
+          },
+          rol_destinatario: 'admin',
+        })
+      } catch (errNotif) {
+        console.warn('Error enviando alerta de nómina:', errNotif)
+      }
+
       await loadRoster(selectedGrupo)
     } catch (err) {
       setMessage({ tone: 'error', text: err?.message || 'No se pudo adjudicar la nómina.' })

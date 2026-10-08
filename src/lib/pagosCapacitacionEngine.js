@@ -14,6 +14,8 @@
  * - Bono permanencia se fracciona en cuotas (N cuotas iguales)
  */
 
+import { toIsoDate } from './propuestaParser.js'
+
 const STATUS_CALIFICA = new Set(['COMPLETO', 'USUARIO CREADO'])
 const SIGLA_ASISTIO = 'A'
 const SIGLAS_FALTA = new Set(['FI', 'FJ'])
@@ -71,15 +73,34 @@ export function claveDesdeNomina(n = {}) {
 }
 
 function lookupPorClaves(map, n) {
+  // 1. Clave exacta completa: periodo + semana + segmento + campana + codigo
   const full = claveDesdeNomina(n)
   if (map.has(full)) return map.get(full)
-  const campanaCodigo = claveGrupoPago({
+
+  // 2. Sin segmento: periodo + semana + campana + codigo
+  const sinSegmento = claveGrupoPago({
     periodo: n.periodo_reclutado || n.periodo,
     semana: n.semana_trabajo || n.semana,
     campana: n.campana,
     codigo: n.grupo_codigo || n.codigo_grupo || n.grupo,
   })
-  if (map.has(campanaCodigo)) return map.get(campanaCodigo)
+  if (map.has(sinSegmento)) return map.get(sinSegmento)
+
+  // 3. Sin semana: periodo + campana + codigo
+  const sinSemana = claveGrupoPago({
+    periodo: n.periodo_reclutado || n.periodo,
+    campana: n.campana,
+    codigo: n.grupo_codigo || n.codigo_grupo || n.grupo,
+  })
+  if (map.has(sinSemana)) return map.get(sinSemana)
+
+  // 4. Solo campana + codigo
+  const soloCampCod = claveGrupoPago({
+    campana: n.campana,
+    codigo: n.grupo_codigo || n.codigo_grupo || n.grupo,
+  })
+  if (map.has(soloCampCod)) return map.get(soloCampCod)
+
   return null
 }
 
@@ -96,6 +117,7 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
   for (const c of configPagos) {
     const full = claveDesdeConfig(c)
     if (full.replace(/\|/g, '')) configPorGrupo.set(full, c)
+
     const sinSegmento = claveGrupoPago({
       periodo: c.periodoCapa || c.periodo,
       semana: c.semana || c.semana_trabajo,
@@ -103,6 +125,27 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       codigo: c.grupo || c.grupo_codigo,
     })
     if (!configPorGrupo.has(sinSegmento)) configPorGrupo.set(sinSegmento, c)
+
+    const sinSemana = claveGrupoPago({
+      periodo: c.periodoCapa || c.periodo,
+      campana: c.campana,
+      codigo: c.grupo || c.grupo_codigo,
+    })
+    if (!configPorGrupo.has(sinSemana)) configPorGrupo.set(sinSemana, c)
+
+    const soloCampCod = claveGrupoPago({
+      campana: c.campana,
+      codigo: c.grupo || c.grupo_codigo,
+    })
+    if (!configPorGrupo.has(soloCampCod)) configPorGrupo.set(soloCampCod, c)
+
+    if (c.cod) {
+      const conCod = claveGrupoPago({
+        campana: c.campana,
+        codigo: c.cod,
+      })
+      if (!configPorGrupo.has(conCod)) configPorGrupo.set(conCod, c)
+    }
   }
 
   const capacidadPorGrupo = new Map()
@@ -116,6 +159,19 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       codigo: cap.codigo || cap.grupo_capacitacion || cap.grupo,
     })
     if (!capacidadPorGrupo.has(sinSegmento)) capacidadPorGrupo.set(sinSegmento, cap)
+
+    const sinSemana = claveGrupoPago({
+      periodo: cap.periodo,
+      campana: cap.campana,
+      codigo: cap.codigo || cap.grupo_capacitacion || cap.grupo,
+    })
+    if (!capacidadPorGrupo.has(sinSemana)) capacidadPorGrupo.set(sinSemana, cap)
+
+    const soloCampCod = claveGrupoPago({
+      campana: cap.campana,
+      codigo: cap.codigo || cap.grupo_capacitacion || cap.grupo,
+    })
+    if (!capacidadPorGrupo.has(soloCampCod)) capacidadPorGrupo.set(soloCampCod, cap)
   }
 
   const getMesIndex = (periodo, mesAfectacionBonos, config) => {
@@ -152,65 +208,184 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
 
     const rawAsistencias = asistenciasPorDoc.get(doc) || []
 
-    // 1. Detectar si la persona tiene registro formal de I-OP (Ingreso a Operaciones / OJT)
+    // 1. Detectar si es Agregado
+    const statusDia1Str = String(n.status_dia_1 || '').toUpperCase().trim()
+    const tipoRecStr = String(n.tipo_reclutado || n.condicion || n.tipo || '').toUpperCase().trim()
+    const obsD1Str = String(n.dia_1_obs || n.observacion_dia_1 || '').toUpperCase().trim()
+    const obsD0Str = String(n.dia_0_obs || '').toUpperCase().trim()
+    const dia0Nomina = String(n.dia_0 || '').toUpperCase().trim()
+    const dia0ObsNomina = String(n.dia_0_obs || '').toUpperCase().trim()
+    const evalDia0 = String(n.evaluacion_dia_0 || '').toUpperCase().trim()
+
+    const esAgregado = statusDia1Str.includes('AGREGADO') || 
+                       tipoRecStr.includes('AGREGADO') || 
+                       obsD1Str.includes('AGREGADO') || 
+                       (obsD0Str.includes('AGREGADO') && dia0Nomina !== 'ASISTIO')
+
+    // 2. Detectar si la persona tiene registro formal de I-OP (Ingreso a Operaciones / OJT)
     let fIopDetectada = null
+    let fUltimoIop = null
+    const iopRecords = []
+
     for (const a of rawAsistencias) {
-      const s = String(a.sigla_asistencia || a.sigla || '').toUpperCase().trim()
-      if (s === 'I-OP' && a.fecha_asistencia) {
-        const dIso = String(a.fecha_asistencia).split('T')[0]
-        if (!fIopDetectada || dIso < fIopDetectada) {
-          fIopDetectada = dIso
+      const s = String(a.sigla_asistencia || a.sigla || a.estado || '').toUpperCase().trim()
+      const isIop = s === 'I-OP' || s === 'IOP' || s.includes('INGRESO A OPERACION') || s.includes('INGRESO OP')
+      if (isIop) {
+        iopRecords.push(a)
+        const dIso = toIsoDate(a.fecha_asistencia || a.fecha_original || a.fecha_hora_registro || a.created_at)
+        if (dIso) {
+          if (!fIopDetectada || dIso < fIopDetectada) fIopDetectada = dIso
+          if (!fUltimoIop || dIso > fUltimoIop) fUltimoIop = dIso
         }
       }
     }
 
-    // 2. Fechas límites para delimitar la capacitación
-    const fInicioCapacidad = capInfo?.fecha_registro ? String(capInfo.fecha_registro).split('T')[0] : null
-    const fInicioIso = n.fecha_inicio_capacitacion 
-      ? String(n.fecha_inicio_capacitacion).split('T')[0] 
-      : (config?.fechaInicioCapa ? String(config.fechaInicioCapa).split('T')[0] : (fInicioCapacidad || null))
+    const tieneIop = iopRecords.length > 0
+    const totalIop = iopRecords.length
 
-    // A partir de OJT, el pago corresponde a Operaciones (ya no al equipo de capacitación)
-    // Calibración: Tomar la fecha de inicio de OJT de capacidad_rys como corte
-    const fOjtCapacidad = capInfo?.fecha_inicio_ojt ? String(capInfo.fecha_inicio_ojt).split('T')[0] : null
+    // 3. Fechas límites para delimitar la capacitación
+    const fInicioCapacidad = toIsoDate(capInfo?.fecha_registro)
+    const fInicioIso = toIsoDate(n.fecha_inicio_capacitacion)
+      || toIsoDate(config?.fechaInicioCapa)
+      || fInicioCapacidad
+      || null
+
+    const fOjtCapacidad = toIsoDate(capInfo?.fecha_inicio_ojt)
     const fOjtIso = fOjtCapacidad 
-      || (n.fecha_conexion_ojt ? String(n.fecha_conexion_ojt).split('T')[0] : null)
+      || toIsoDate(n.fecha_conexion_ojt)
       || fIopDetectada 
-      || (config?.ingresoOperacion ? String(config.ingresoOperacion).split('T')[0] : null)
+      || toIsoDate(config?.ingresoOperacion)
+      || null
 
-    // 3. Deduplicación por fecha única tomando el ÚLTIMO corte del día
-    // rawAsistencias viene ordenado cronológicamente por created_at ASC
+    // 4. Detectar si asistió al Día 0 (Inducción)
+    const asistioDia0Nomina = dia0Nomina === 'ASISTIO' || 
+                              dia0Nomina === 'SI' || 
+                              dia0Nomina === 'A' || 
+                              dia0Nomina === 'PRESENTE' || 
+                              dia0ObsNomina.includes('ASIST') || 
+                              dia0ObsNomina.includes('CONECT') ||
+                              evalDia0.includes('ASIST') ||
+                              evalDia0.includes('APROB')
+
+    // Verificar en asistencia registros previos a fInicioIso (hasta 4 días antes, ej. inducción)
+    let asistioDia0Asistencia = false
+    for (const a of rawAsistencias) {
+      if (!a.fecha_asistencia) continue
+      const faIso = toIsoDate(a.fecha_asistencia)
+      if (!faIso) continue
+      if (fInicioIso && faIso < fInicioIso) {
+        const msDiff = new Date(fInicioIso).getTime() - new Date(faIso).getTime()
+        const daysDiff = msDiff / (1000 * 60 * 60 * 24)
+        if (daysDiff <= 4) {
+          const s = String(a.sigla_asistencia || a.sigla || a.estado || '').toUpperCase().trim()
+          if (s === 'A' || s === 'ASISTIO' || s === 'PRESENTE') {
+            asistioDia0Asistencia = true
+          }
+        }
+      }
+    }
+
+    const asistioDia0 = asistioDia0Nomina || asistioDia0Asistencia
+    const dia0StatusLabel = esAgregado && !asistioDia0 ? 'N/A' : (asistioDia0 ? 'ASISTIO' : (dia0Nomina ? dia0Nomina : 'FALTA'))
+
+    // 5. Deduplicación por fecha única tomando el ÚLTIMO corte del día
     const cortesPorFecha = new Map()
     for (const a of rawAsistencias) {
       if (!a.fecha_asistencia) continue
-      const faIso = String(a.fecha_asistencia).split('T')[0]
+      const faIso = toIsoDate(a.fecha_asistencia)
+      if (!faIso) continue
 
-      // Ignorar fechas fuera del rango de capacitación
-      if (fInicioIso && faIso < fInicioIso) continue
+      // Permitir inducción (hasta 4 días antes del inicio formal)
+      if (fInicioIso && faIso < fInicioIso) {
+        const msDiff = new Date(fInicioIso).getTime() - new Date(faIso).getTime()
+        const daysDiff = msDiff / (1000 * 60 * 60 * 24)
+        if (daysDiff > 4) continue
+      }
       if (fOjtIso && faIso >= fOjtIso) continue
 
-      // Como la lista está ordenada en orden cronológico, el último registro del día sobreescribe al anterior
       cortesPorFecha.set(faIso, a)
     }
 
     const asistenciasPersona = Array.from(cortesPorFecha.values())
 
-    // 4. Conteo de asistencias con el último corte del día
-    const diasAsistidos = asistenciasPersona.filter(a => {
+    // 6. Conteo de asistencias válidas
+    const asistenciasValidas = asistenciasPersona.filter(a => {
       const s = String(a.sigla_asistencia || '').toUpperCase().trim()
       return s === 'A' || s === 'ASISTIO' || s === 'PRESENTE'
-    }).length
+    })
 
-    const tuveFaltas = asistenciasPersona.some(a => {
+    const dia0YaEnAsistencia = fInicioIso && asistenciasValidas.some(a => toIsoDate(a.fecha_asistencia) < fInicioIso)
+
+    let diasAsistidos = asistenciasValidas.length
+    if (asistioDia0 && !dia0YaEnAsistencia) {
+      diasAsistidos += 1
+    }
+
+    // 7. Faltas y asistencia perfecta
+    const tuvoFaltasAsistencia = asistenciasPersona.some(a => {
       const s = String(a.sigla_asistencia || '').toUpperCase().trim()
       return s === 'FI' || s === 'FJ' || s === 'F' || s === 'FALTA' || s === 'INASISTENCIA'
     })
+    const dia1Nomina = String(n.dia_1 || '').toUpperCase().trim()
+    const faltoDia1Nomina = dia1Nomina === 'FALTA' || dia1Nomina === 'FI' || dia1Nomina === 'F'
+    const faltoDia0Nomina = !esAgregado && !asistioDia0 && dia0Nomina === 'FALTA'
+    const tuveFaltas = tuvoFaltasAsistencia || (!esAgregado && faltoDia1Nomina) || faltoDia0Nomina
 
-    // Si fue dada de baja dentro del rango de capacitación
-    const esBaja = asistenciasPersona.some(a => {
-      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
-      return s === 'B' || s === 'BAJA' || s === 'CESADO' || s === 'DESERTO'
+    // 8. Estatus final e inspección de TODO el historial global (sin corte OJT para bajas)
+    const sortedAsistenciasGlobal = [...rawAsistencias].sort((x, y) => {
+      const dx = toIsoDate(x.fecha_asistencia || x.fecha_original || x.created_at) || ''
+      const dy = toIsoDate(y.fecha_asistencia || y.fecha_original || y.created_at) || ''
+      if (dx !== dy) return dx.localeCompare(dy)
+      const tx = new Date(x.fecha_hora_registro || x.created_at || 0).getTime()
+      const ty = new Date(y.fecha_hora_registro || y.created_at || 0).getTime()
+      return tx - ty
     })
+
+    const ultimaAsisGlobal = sortedAsistenciasGlobal[sortedAsistenciasGlobal.length - 1]
+    const siglaUltimaGlobal = String(ultimaAsisGlobal?.sigla_asistencia || ultimaAsisGlobal?.sigla || ultimaAsisGlobal?.estado || '').toUpperCase().trim()
+    const estadoUltimoGlobal = String(ultimaAsisGlobal?.estado || '').toUpperCase().trim()
+
+    const esUltimaBaja = siglaUltimaGlobal === 'B' || 
+                         siglaUltimaGlobal === 'BAJA' || 
+                         siglaUltimaGlobal === 'CESADO' || 
+                         siglaUltimaGlobal === 'DESERTO' || 
+                         estadoUltimoGlobal === 'CESADO' || 
+                         estadoUltimoGlobal === 'BAJA' || 
+                         estadoUltimoGlobal === 'DESERTO' ||
+                         estadoUltimoGlobal.includes('BAJA')
+
+    const statusNominaStr = String(n.status_final || '').toUpperCase().trim()
+    const esBajaNomina = statusNominaStr.includes('BAJA') || 
+                         statusNominaStr.includes('CESE') || 
+                         statusNominaStr.includes('CESADO') || 
+                         statusNominaStr.includes('DESERT') || 
+                         statusNominaStr.includes('NO SHOW')
+
+    const tieneRegistroBaja = sortedAsistenciasGlobal.some(a => {
+      const s = String(a.sigla_asistencia || a.sigla || a.estado || '').toUpperCase().trim()
+      const e = String(a.estado || '').toUpperCase().trim()
+      return s === 'B' || s === 'BAJA' || s === 'CESADO' || s === 'DESERTO' || e === 'CESADO' || e === 'BAJA'
+    })
+
+    // REGLA FUNDAMENTAL DE NEGOCIO:
+    // Solo se paga capacitación hasta la fecha de OJT y SÍ O SÍ si llegaron a ingresar a la operación (I-OP).
+    // Si fueron baja en cualquier momento o no llegaron a I-OP, NO SE LES PAGA (S/. 0.00).
+    let statusFinalAsistencia = 'SIN ASISTENCIA'
+    let esBaja = false
+
+    if (tieneIop && !esUltimaBaja && !esBajaNomina) {
+      statusFinalAsistencia = 'I-OP'
+      esBaja = false
+    } else {
+      esBaja = true
+      if (esUltimaBaja || esBajaNomina || tieneRegistroBaja) {
+        statusFinalAsistencia = 'BAJA'
+      } else if (diasAsistidos === 0) {
+        statusFinalAsistencia = 'SIN ASISTENCIA'
+      } else {
+        statusFinalAsistencia = 'NO INGRESO A OP'
+      }
+    }
 
     if (esBaja) {
       resultado.push({
@@ -219,6 +394,7 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
         apellido_materno: n.apellido_materno || '',
         nombres: n.nombres || '',
         nombre_completo: [n.apellido_paterno, n.apellido_materno, n.nombres].filter(Boolean).join(' '),
+        reclutador: n.reclutador || '',
         grupo_codigo: n.grupo_codigo || '',
         campana: n.campana || '',
         semana_trabajo: n.semana_trabajo || '',
@@ -228,7 +404,17 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
         fecha_conexion_ojt: fOjtIso || n.fecha_conexion_ojt || null,
         fecha_ingreso_ojt: fOjtIso || null,
         fecha_conexion_op: n.fecha_conexion_op || null,
-        status_final: n.status_final || '',
+        status_final: statusFinalAsistencia,
+        status_asistencia: statusFinalAsistencia,
+        tiene_iop: tieneIop,
+        total_iop: totalIop,
+        fecha_primer_iop: fIopDetectada,
+        fecha_ultimo_iop: fUltimoIop,
+        asistio_dia_0: asistioDia0,
+        dia_0_status: dia0StatusLabel,
+        es_agregado: esAgregado,
+        status_dia_1: n.status_dia_1 || '',
+        tipo_reclutado: n.tipo_reclutado || '',
         es_baja: true,
         dias_asistidos: diasAsistidos,
         tuvo_faltas: tuveFaltas,
@@ -312,6 +498,7 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       apellido_materno: n.apellido_materno || '',
       nombres: n.nombres || '',
       nombre_completo: [n.apellido_paterno, n.apellido_materno, n.nombres].filter(Boolean).join(' '),
+      reclutador: n.reclutador || '',
       grupo_codigo: n.grupo_codigo || '',
       campana: n.campana || '',
       semana_trabajo: n.semana_trabajo || '',
@@ -321,7 +508,17 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       fecha_conexion_ojt: fOjtIso || n.fecha_conexion_ojt || null,
       fecha_ingreso_ojt: fOjtIso || null,
       fecha_conexion_op: n.fecha_conexion_op || null,
-      status_final: n.status_final || '',
+      status_final: statusFinalAsistencia,
+      status_asistencia: statusFinalAsistencia,
+      tiene_iop: tieneIop,
+      total_iop: totalIop,
+      fecha_primer_iop: fIopDetectada,
+      fecha_ultimo_iop: fUltimoIop,
+      asistio_dia_0: asistioDia0,
+      dia_0_status: dia0StatusLabel,
+      es_agregado: esAgregado,
+      status_dia_1: n.status_dia_1 || '',
+      tipo_reclutado: n.tipo_reclutado || '',
       es_baja: false,
       dias_asistidos: diasAsistidos,
       tuvo_faltas: tuveFaltas,
@@ -384,7 +581,8 @@ export function generarResumenPagos(filas = []) {
 export function exportarCSVPagos(filas = [], maxCuotas = 3) {
   const headers = [
     'DNI/CE', 'Apellido Paterno', 'Apellido Materno', 'Nombres',
-    'Grupo', 'Campana', 'Semana', 'Status Final',
+    'Reclutador',
+    'Grupo', 'Campana', 'Semana', 'Status Final', 'Ingreso OP (I-OP)', 'Total Reg. I-OP',
     'Baja', 'Propuesta',
     'Dias Asistidos', 'Asistencia Perfecta',
     'Monto Dias Capa (S/.)',
@@ -399,7 +597,10 @@ export function exportarCSVPagos(filas = [], maxCuotas = 3) {
     const cuotaVals = Array.from({ length: maxCuotas }, (_, i) => f.cuotas_permanencia[i]?.monto ?? 0)
     return [
       f.documento, f.apellido_paterno, f.apellido_materno, f.nombres,
+      f.reclutador || '',
       f.grupo_codigo, f.campana, f.semana_trabajo, f.status_final,
+      f.tiene_iop ? 'SI' : 'NO',
+      f.total_iop || 0,
       f.es_baja ? 'SI' : 'NO',
       f.es_baja ? 'EXCLUIDO POR BAJA' : (f.sin_propuesta ? 'SIN PROPUESTA' : 'CON PROPUESTA'),
       f.dias_asistidos, f.asistencia_perfecta ? 'SI' : 'NO',

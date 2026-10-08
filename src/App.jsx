@@ -102,8 +102,8 @@ export const ALL_NAV = [
   { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor', 'calidad'] },
   { id: 'bolsa_capa', label: 'Bolsa de Capa', icon: GraduationCap, description: 'Grupos recuperados y traslados de capacitación', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
-  { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'visor', 'reclutador'] },
-  { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días asistidos, bonos y permanencia', roles: ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys'] },
+  { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'visor'] },
+  { id: 'pagos_capacitacion', label: 'Pagos Capacitación', icon: BanknoteIcon, description: 'Días asistidos, bonos y permanencia', roles: ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'reclutador'] },
   { id: 'descuentos_auth', label: 'Autorizar RYS', icon: Shield, description: 'Aprobación de descuentos', roles: ['admin', 'jefe_rys', 'coordinador_rys', 'jefe_capacitacion'] },
   { id: 'descuentos_form', label: 'Cargar Descuentos', icon: Layers, description: 'Ingreso de incidencias', roles: ['admin', 'formador', 'reclutador'] },
   { id: 'metas', label: 'Metas y Equipos', icon: Target, description: 'Objetivos de campañas', roles: ['admin', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'] },
@@ -606,6 +606,7 @@ export default function App() {
                   onSelectViewRole={setViewAsRole}
                   onGoToPortal={() => handleNavigate('portal')}
                   onOpenOreoResumen={() => setIsOreoModalOpen(true)}
+                  onNavigate={handleNavigate}
                 />
 
                 {/* Banner de Advertencia en Modo Local / Offline */}
@@ -778,7 +779,7 @@ export default function App() {
 
                       {/* 12. Propuestas */}
                       <KeepAliveView viewId="propuestas" activeView={activeView}>
-                        <PropuestasModule />
+                        <PropuestasModule userProfile={effectiveProfile} />
                       </KeepAliveView>
 
                       {/* 12b. Pagos Capacitación */}

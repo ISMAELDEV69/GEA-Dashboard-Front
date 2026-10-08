@@ -26,6 +26,7 @@ import {
   claveDesdeCapacidad,
   claveDesdeConfig,
 } from '../lib/pagosCapacitacionEngine'
+import { formatFechaDDMMYYYY } from '../lib/propuestaParser'
 
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -293,8 +294,8 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       modalidad: (capInfo?.modalidad || 'REMOTO').toUpperCase(),
       condicionLaboral: (capInfo?.condicion || 'FULL TIME').toUpperCase(),
       cod: codSugerido,
-      fechaInicioCapa: capInfo?.fecha_registro || capInfo?.fecha_dia_1 || prev.fechaInicioCapa || '',
-      ingresoOperacion: capInfo?.fecha_ingreso_op || prev.ingresoOperacion || '',
+      fechaInicioCapa: formatFechaDDMMYYYY(capInfo?.fecha_registro || capInfo?.fecha_dia_1 || prev.fechaInicioCapa || ''),
+      ingresoOperacion: formatFechaDDMMYYYY(capInfo?.fecha_ingreso_op || prev.ingresoOperacion || ''),
       mesAfectacionCapa: prev.periodoCapa || capInfo?.periodo || '',
       mesAfectacionBonos: capInfo?.periodo_ingreso_op || prev.periodoCapa || '',
     }))
@@ -544,7 +545,8 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
               type="text"
               value={form.fechaInicioCapa}
               onChange={e => handleFieldChange('fechaInicioCapa', e.target.value)}
-              placeholder="Ej: 4/7/25 ó 2025-07-04"
+              onBlur={e => handleFieldChange('fechaInicioCapa', formatFechaDDMMYYYY(e.target.value))}
+              placeholder="DD/MM/YYYY"
               className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
             />
           </div>
@@ -555,7 +557,8 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
               type="text"
               value={form.ingresoOperacion}
               onChange={e => handleFieldChange('ingresoOperacion', e.target.value)}
-              placeholder="Ej: 19/07/2025 ó 2025-07-19"
+              onBlur={e => handleFieldChange('ingresoOperacion', formatFechaDDMMYYYY(e.target.value))}
+              placeholder="DD/MM/YYYY"
               className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
             />
           </div>
@@ -991,8 +994,8 @@ function TablaConfigs({ configs, onDelete, onEdit, onRefresh }) {
                     <td className="px-3 py-2 text-slate-400 font-mono text-[10px] border-r border-slate-700/60">{c.cod || '—'}</td>
 
                     {/* Fechas & Afectación */}
-                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{c.fechaInicioCapa || '—'}</td>
-                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{c.ingresoOperacion || '—'}</td>
+                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{formatFechaDDMMYYYY(c.fechaInicioCapa) || '—'}</td>
+                    <td className="px-2.5 py-2 font-mono text-center text-slate-300 text-[11px] border-r border-slate-800/60">{formatFechaDDMMYYYY(c.ingresoOperacion) || '—'}</td>
                     <td className="px-2.5 py-2 font-mono text-center font-bold text-cyan-400 border-r border-slate-800/60">{c.mesAfectacionCapa || '—'}</td>
                     <td className="px-2.5 py-2 font-mono text-center font-bold text-amber-400 border-r border-slate-700/60">{c.mesAfectacionBonos || '—'}</td>
 
@@ -1074,8 +1077,11 @@ function TablaPagos({ filas, maxCuotas }) {
       list = list.filter(f => 
         (f.documento || '').toLowerCase().includes(q) ||
         (f.nombre_completo || '').toLowerCase().includes(q) ||
+        (f.reclutador || '').toLowerCase().includes(q) ||
         (f.grupo_codigo || '').toLowerCase().includes(q) ||
-        (f.campana || '').toLowerCase().includes(q)
+        (f.campana || '').toLowerCase().includes(q) ||
+        (f.status_dia_1 || '').toLowerCase().includes(q) ||
+        (f.es_agregado ? 'agregado' : '').includes(q)
       )
     }
 
@@ -1097,7 +1103,7 @@ function TablaPagos({ filas, maxCuotas }) {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
-            placeholder="Buscar por DNI, postulante, grupo o campaña..."
+            placeholder="Buscar por DNI, postulante, reclutador, grupo o campaña..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
@@ -1118,14 +1124,20 @@ function TablaPagos({ filas, maxCuotas }) {
               <th onClick={() => handleSort('nombre_completo')} className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-white">
                 Apellidos y Nombres
               </th>
+              <th onClick={() => handleSort('reclutador')} className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-white text-emerald-400">
+                Reclutador
+              </th>
               <th onClick={() => handleSort('grupo_codigo')} className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-white">
                 Grupo
               </th>
               <th onClick={() => handleSort('campana')} className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-white">
                 Campaña
               </th>
-              <th className="px-3 py-2.5 text-center font-semibold">
-                Estado
+              <th onClick={() => handleSort('status_final')} className="px-3 py-2.5 text-center font-semibold cursor-pointer hover:text-white">
+                Estado / I-OP
+              </th>
+              <th onClick={() => handleSort('dia_0_status')} className="px-3 py-2.5 text-center font-semibold cursor-pointer hover:text-white text-cyan-300" title="Día 0 de Inducción (se computa y se paga si asistió)">
+                Día 0 (Inducción)
               </th>
               <th onClick={() => handleSort('dias_asistidos')} className="px-3 py-2.5 text-center font-semibold cursor-pointer hover:text-white">
                 Días Asist.
@@ -1153,7 +1165,7 @@ function TablaPagos({ filas, maxCuotas }) {
           <tbody className="divide-y divide-slate-800 bg-slate-900/40">
             {filasFiltradas.length === 0 ? (
               <tr>
-                <td colSpan={11} className="text-center py-8 text-slate-500">
+                <td colSpan={14} className="text-center py-8 text-slate-500">
                   No se encontraron registros de pago con los filtros seleccionados.
                 </td>
               </tr>
@@ -1166,7 +1178,17 @@ function TablaPagos({ filas, maxCuotas }) {
                   }`}
                 >
                   <td className="px-3 py-2 font-mono font-bold text-slate-300">{row.documento}</td>
-                  <td className="px-3 py-2 text-white font-medium uppercase">{row.nombre_completo}</td>
+                  <td className="px-3 py-2 text-white font-medium uppercase">
+                    {row.nombre_completo}
+                    {row.es_agregado && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        AGREGADO
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-slate-300 font-medium text-[11px] truncate max-w-[140px]" title={row.reclutador || '—'}>
+                    {row.reclutador || <span className="text-slate-600">—</span>}
+                  </td>
                   <td className="px-3 py-2 font-mono text-emerald-400 font-bold">{row.grupo_codigo}</td>
                   <td className="px-3 py-2 text-slate-300">{row.campana}</td>
                   <td className="px-3 py-2 text-center">
@@ -1178,17 +1200,45 @@ function TablaPagos({ filas, maxCuotas }) {
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
                         SIN PROP.
                       </span>
+                    ) : row.tiene_iop ? (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1"
+                        title={row.total_iop > 1 ? `${row.total_iop} registros I-OP registrados en asistencia` : 'Ingreso a Operación confirmado en asistencia'}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        I-OP {row.total_iop > 1 ? `(${row.total_iop})` : ''}
+                      </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        CALIFICA
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        {row.status_final || 'CALIFICA'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {row.asistio_dia_0 ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
+                        <span>✓</span> Asistió
+                      </span>
+                    ) : row.es_agregado ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20">
+                        {row.dia_0_status === 'FALTA' ? 'Falta' : 'N/A'}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20">
+                        Falta
                       </span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-center font-bold text-blue-400">
-                    {row.dias_asistidos}
-                    {row.fecha_ingreso_ojt && (
+                    <span className="text-sm font-black">{row.dias_asistidos}</span>
+                    {row.asistio_dia_0 && (
+                      <span className="block text-[9px] text-cyan-300 font-normal">
+                        (incluye Día 0)
+                      </span>
+                    )}
+                    {(row.fecha_primer_iop || row.fecha_ingreso_ojt) && (
                       <span className="block text-[9px] text-indigo-300 font-normal font-mono">
-                        OJT: {row.fecha_ingreso_ojt}
+                        {row.tiene_iop ? `I-OP: ${row.fecha_primer_iop}` : `OJT: ${row.fecha_ingreso_ojt}`}
                       </span>
                     )}
                   </td>
@@ -1206,7 +1256,7 @@ function TablaPagos({ filas, maxCuotas }) {
                   <td className="px-3 py-2 text-right text-rose-400 font-semibold">{soles(row.bono_asistencia_perfecta)}</td>
                   <td className="px-3 py-2 text-right text-violet-400 font-semibold">{soles(row.bono_permanencia_total)}</td>
                   <td className="px-3 py-2 text-right font-black bg-emerald-950/20 text-sm">
-                    {row.es_baja ? (
+                    {row.es_baja && row.total_general <= 0 ? (
                       <span className="text-rose-500 text-[10px] font-bold">EXCLUIDA - BAJA</span>
                     ) : (
                       <span className="text-emerald-300">{soles(row.total_general)}</span>
@@ -1236,19 +1286,21 @@ export default function PagosCapacitacion({ userProfile }) {
   const [asistencias, setAsistencias] = useState([])
   const [editingPropuesta, setEditingPropuesta] = useState(null)
 
-  // ── 5 FILTROS EN CASCADA ──────────────────────────────────────────────
-  // 1. Periodo -> 2. Semana -> 3. Segmento -> 4. Campaña -> 5. Código de Grupo
+  // ── 6 FILTROS DE CONSULTA ──────────────────────────────────────────────
+  // 1. Periodo -> 2. Semana -> 3. Segmento -> 4. Campaña -> 5. Código de Grupo -> 6. Reclutador
   const [selectedPeriodo, setSelectedPeriodo] = useState('TODOS')
   const [selectedSemana, setSelectedSemana] = useState('TODAS')
   const [selectedSegmento, setSelectedSegmento] = useState('TODOS')
   const [selectedCampana, setSelectedCampana] = useState('TODAS')
   const [selectedGrupo, setSelectedGrupo] = useState('TODOS')
+  const [selectedReclutador, setSelectedReclutador] = useState('TODOS')
 
   // Estado
   const [loadingConfigs, setLoadingConfigs] = useState(false)
   const [loadingCalculo, setLoadingCalculo] = useState(false)
   const [errMsg, setErrMsg] = useState(null)
   const [calculoReady, setCalculoReady] = useState(false)
+  const [mostrarBajas, setMostrarBajas] = useState(false)
 
   // ── TRAZABILIDAD / LIQUIDACIONES ──────────────────────────────────────
   const [savingLote, setSavingLote] = useState(false)
@@ -1392,6 +1444,16 @@ export default function PagosCapacitacion({ userProfile }) {
     return ['TODOS', ...Array.from(set).sort()]
   }, [gruposDisponibles, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
 
+  // 6. Reclutadores disponibles según las nóminas y personas cargadas
+  const reclutadoresDisponibles = useMemo(() => {
+    const set = new Set()
+    nominas.forEach(n => {
+      const r = String(n.reclutador || '').trim().toUpperCase()
+      if (r) set.add(r)
+    })
+    return ['TODOS', ...Array.from(set).sort()]
+  }, [nominas])
+
   // Handlers de cambio con auto-reseteo en cascada
   const handlePeriodoChange = (val) => {
     setSelectedPeriodo(val)
@@ -1434,6 +1496,7 @@ export default function PagosCapacitacion({ userProfile }) {
     setSelectedSegmento('TODOS')
     setSelectedCampana('TODAS')
     setSelectedGrupo('TODOS')
+    setSelectedReclutador('TODOS')
     setCalculoReady(false)
   }
 
@@ -1450,7 +1513,7 @@ export default function PagosCapacitacion({ userProfile }) {
       setConfigs(cfgs)
       if (caps && caps.length) setGruposCapacidad(caps)
 
-      // 2. Traer nóminas con los 5 filtros aplicados
+      // 2. Traer nóminas con los filtros aplicados
       const noms = await fetchNominasPagosCapacitacion({
         periodo: selectedPeriodo,
         semana: selectedSemana,
@@ -1474,15 +1537,28 @@ export default function PagosCapacitacion({ userProfile }) {
   }, [selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo])
 
   // Motor de cálculo puro
-  const filasCalculadas = useMemo(() => {
+  const todasFilasCalculadas = useMemo(() => {
     if (!calculoReady) return []
     return calcularPagosCapacitacion(nominas, asistencias, configs, selectedPeriodo, gruposCapacidad)
   }, [nominas, asistencias, configs, selectedPeriodo, gruposCapacidad, calculoReady])
+
+  // Filtrado por Reclutador (permite a cualquier reclutador auditar a sus compañeros o ver a todos)
+  const filasCalculadas = useMemo(() => {
+    if (selectedReclutador === 'TODOS') return todasFilasCalculadas
+    const target = String(selectedReclutador).trim().toUpperCase()
+    return todasFilasCalculadas.filter(f => String(f.reclutador || '').trim().toUpperCase() === target)
+  }, [todasFilasCalculadas, selectedReclutador])
 
   // SOLO las personas que califican para pago (excluyendo bajas, registros sin propuesta y sin días de asistencia)
   const filasQueCalifican = useMemo(() => {
     return filasCalculadas.filter(f => !f.es_baja && f.dias_asistidos > 0 && !f.sin_propuesta)
   }, [filasCalculadas])
+
+  // Filas a mostrar en la tabla (solo califican por defecto, o todas si se activa auditar bajas)
+  const filasParaTabla = useMemo(() => {
+    if (mostrarBajas) return filasCalculadas
+    return filasQueCalifican
+  }, [filasCalculadas, filasQueCalifican, mostrarBajas])
 
   const resumen = useMemo(() => generarResumenPagos(filasCalculadas), [filasCalculadas])
 
@@ -1639,7 +1715,7 @@ export default function PagosCapacitacion({ userProfile }) {
                 <Filter size={14} className="text-emerald-400" />
                 Filtros Jerárquicos de Consulta
               </div>
-              {(selectedPeriodo !== 'TODOS' || selectedSemana !== 'TODAS' || selectedSegmento !== 'TODOS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODOS') && (
+              {(selectedPeriodo !== 'TODOS' || selectedSemana !== 'TODAS' || selectedSegmento !== 'TODOS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODOS' || selectedReclutador !== 'TODOS') && (
                 <button
                   onClick={handleResetFilters}
                   className="flex items-center gap-1 text-xs text-slate-400 hover:text-rose-400 transition-colors"
@@ -1649,7 +1725,7 @@ export default function PagosCapacitacion({ userProfile }) {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
               {/* 1. PERIODO */}
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-slate-400 uppercase">1. Periodo</label>
@@ -1719,6 +1795,20 @@ export default function PagosCapacitacion({ userProfile }) {
                   ))}
                 </select>
               </div>
+
+              {/* 6. RECLUTADOR (Permite ver los propios o los de compañeros por delegación) */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-slate-400 uppercase">6. Reclutador</label>
+                <select
+                  value={selectedReclutador}
+                  onChange={e => setSelectedReclutador(e.target.value)}
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-semibold"
+                >
+                  {reclutadoresDisponibles.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-700/60">
@@ -1778,13 +1868,22 @@ export default function PagosCapacitacion({ userProfile }) {
                   <CheckCircle2 size={14} className="text-emerald-400" />
                   {filasQueCalifican.length} personas califican para pago
                   {resumen.personas_bajas > 0 && (
-                    <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 normal-case">
-                      {resumen.personas_bajas} excluidas por baja
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarBajas(prev => !prev)}
+                      className={`ml-2 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-all cursor-pointer border ${
+                        mostrarBajas
+                          ? 'bg-rose-500 text-white border-rose-400 shadow-sm'
+                          : 'bg-rose-500/20 text-rose-400 border-rose-500/30 hover:bg-rose-500/30'
+                      }`}
+                      title="Haz clic para ver u ocultar las personas excluidas por baja"
+                    >
+                      {resumen.personas_bajas} excluidas por baja {mostrarBajas ? '(Mostrando todas)' : '(Clic para auditar)'}
+                    </button>
                   )}
                 </h3>
               </div>
-              <TablaPagos filas={filasQueCalifican} maxCuotas={maxCuotas} />
+              <TablaPagos filas={filasParaTabla} maxCuotas={maxCuotas} />
             </div>
           )}
 

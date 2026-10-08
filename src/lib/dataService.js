@@ -26,6 +26,7 @@ import {
   clearPersistentCache
 } from './persistentCache.js'
 import { isDescuentoVencido48h, parseFechaRegistro } from './businessHoursUtils.js'
+import { formatFechaDDMMYYYY } from './propuestaParser.js'
 
 export const DB_MODE = isSupabaseConfigured() ? 'supabase' : 'local'
 
@@ -1555,12 +1556,13 @@ const COBERTURA_DOTACION_SELECT = [
   'PROY_INGRESOS_Q',
   'PROY_INGRESOS_FTES',
   'PROY_INGRESOS_CAPACIDAD',
+  'estado',
 ].join(',')
 
 /** Snapshot WFM ya calculado: public.cobertura_dotacion */
 export async function fetchCoberturaDotacion() {
   if (DB_MODE !== 'supabase') return []
-  return withCache('cobertura_dotacion_v4', 180000, async () => {
+  return withCache('cobertura_dotacion_v5', 180000, async () => {
     const pageSize = 1000
     const all = []
     let from = 0
@@ -5266,107 +5268,420 @@ export async function fetchPropuestasConsolidado() {
       .order('created_at', { ascending: false });
     
     if (error) {
-      if (error.code === '42P01') {
-        console.warn("Table propuestas_consolidado doesn't exist. Falling back to local storage.");
-        // continue to local storage below
-      } else {
-        throw error;
-      }
-    } else {
-      return data || [];
+      console.error("Error al obtener propuestas_consolidado de Supabase:", error);
+      throw error;
     }
+    return (data || []).map(row => ({
+      ...row,
+      fechaInicioCapa: formatFechaDDMMYYYY(row.fechaInicioCapa || ''),
+      ingresoOperacion: formatFechaDDMMYYYY(row.ingresoOperacion || ''),
+    }));
   }
   
   initLocalStorageDb();
-  return getFromStorage('propuestas_consolidado') || [];
+  const local = getFromStorage('propuestas_consolidado') || [];
+  return local.map(row => ({
+    ...row,
+    fechaInicioCapa: formatFechaDDMMYYYY(row.fechaInicioCapa || ''),
+    ingresoOperacion: formatFechaDDMMYYYY(row.ingresoOperacion || ''),
+  }));
+}
+
+export async function fetchPropuestaById(propuestaId) {
+  if (!propuestaId) return null;
+  if (DB_MODE === 'supabase') {
+    const { data, error } = await supabase
+      .from('propuestas')
+      .select('*')
+      .eq('id', propuestaId)
+      .maybeSingle();
+    if (error) {
+      console.warn("Error buscando propuesta por id:", error);
+      return null;
+    }
+    if (!data) return null;
+    return {
+      ...data,
+      inicio: formatFechaDDMMYYYY(data.inicio || ''),
+      fin: formatFechaDDMMYYYY(data.fin || ''),
+      ojt: formatFechaDDMMYYYY(data.ojt || ''),
+      ingresoOperacion: formatFechaDDMMYYYY(data.ingresoOperacion || ''),
+    };
+  }
+  initLocalStorageDb();
+  const props = getFromStorage('propuestas') || [];
+  const found = props.find(p => p.id === propuestaId);
+  if (!found) return null;
+  return {
+    ...found,
+    inicio: formatFechaDDMMYYYY(found.inicio || ''),
+    fin: formatFechaDDMMYYYY(found.fin || ''),
+    ojt: formatFechaDDMMYYYY(found.ojt || ''),
+    ingresoOperacion: formatFechaDDMMYYYY(found.ingresoOperacion || ''),
+  };
+}
+
+export async function fetchPropuestaByGrupo(grupoCodigo, campana, periodo, segmento) {
+  if (!grupoCodigo) return null;
+  const grp = String(grupoCodigo).trim().toUpperCase();
+  const cmp = String(campana || '').trim().toUpperCase();
+  const per = String(periodo || '').trim().toUpperCase();
+  const seg = String(segmento || '').trim().toUpperCase();
+
+  if (DB_MODE === 'supabase') {
+    try {
+      // 1. Intentar buscar en propuestas
+      let query = supabase.from('propuestas').select('*').ilike('grupo', grp);
+      if (cmp) query = query.ilike('campana', cmp);
+      if (per) query = query.ilike('periodoCapa', per);
+      if (seg) query = query.ilike('segmento', seg);
+      const { data: propRows } = await query.order('created_at', { ascending: false }).limit(1);
+      if (propRows && propRows.length > 0) {
+        const row = propRows[0];
+        return {
+          ...row,
+          inicio: formatFechaDDMMYYYY(row.inicio || ''),
+          fin: formatFechaDDMMYYYY(row.fin || ''),
+          ojt: formatFechaDDMMYYYY(row.ojt || ''),
+          ingresoOperacion: formatFechaDDMMYYYY(row.ingresoOperacion || ''),
+        };
+      }
+
+      // 2. Si no está en propuestas completas, buscar si existe consolidado
+      let qCons = supabase.from('propuestas_consolidado').select('*').ilike('grupo', grp);
+      if (cmp) qCons = qCons.ilike('campana', cmp);
+      if (per) qCons = qCons.ilike('periodoCapa', per);
+      if (seg) qCons = qCons.ilike('segmento', seg);
+      const { data: consRows } = await qCons.order('created_at', { ascending: false }).limit(1);
+      if (consRows && consRows.length > 0) {
+        const c = consRows[0];
+        if (c.propuesta_id) {
+          const full = await fetchPropuestaById(c.propuesta_id);
+          if (full) return full;
+        }
+        return {
+          ...c,
+          inicio: formatFechaDDMMYYYY(c.fechaInicioCapa || c.inicio || ''),
+          fin: formatFechaDDMMYYYY(c.fin || ''),
+          ojt: formatFechaDDMMYYYY(c.ojt || ''),
+          ingresoOperacion: formatFechaDDMMYYYY(c.ingresoOperacion || ''),
+        };
+      }
+    } catch (err) {
+      console.warn("Error buscando propuesta por grupo en Supabase:", err);
+    }
+  }
+
+  initLocalStorageDb();
+  const props = getFromStorage('propuestas') || [];
+  const found = props.find(p => 
+    String(p.grupo || '').toUpperCase() === grp &&
+    (!cmp || String(p.campana || '').toUpperCase() === cmp) &&
+    (!per || String(p.periodoCapa || '').toUpperCase() === per) &&
+    (!seg || String(p.segmento || '').toUpperCase() === seg)
+  );
+  if (!found) return null;
+  return {
+    ...found,
+    inicio: formatFechaDDMMYYYY(found.inicio || ''),
+    fin: formatFechaDDMMYYYY(found.fin || ''),
+    ojt: formatFechaDDMMYYYY(found.ojt || ''),
+    ingresoOperacion: formatFechaDDMMYYYY(found.ingresoOperacion || ''),
+  };
 }
 
 export async function savePropuesta(payloadForm, payloadConsolidado) {
+  // 1. Sanitizar payloadForm para evitar errores 22P02 de Postgres en columnas numéricas
+  const sanitizedForm = {
+    titulo: String(payloadForm.titulo || '').trim(),
+    horario: String(payloadForm.horario || '').trim(),
+    fullTime: String(payloadForm.fullTime || '').trim(),
+    basico: String(payloadForm.basico || '').trim(),
+    bonoMovilidad: String(payloadForm.bonoMovilidad || '').trim(),
+    variable: String(payloadForm.variable || '').trim(),
+
+    bBienvenidaM1: Number(payloadForm.bBienvenidaM1) || 0,
+    bBienvenidaM2: Number(payloadForm.bBienvenidaM2) || 0,
+    bBienvenidaM3: Number(payloadForm.bBienvenidaM3) || 0,
+    bBienvenidaObs: String(payloadForm.bBienvenidaObs || '').trim(),
+
+    bPermM1: Number(payloadForm.bPermM1) || 0,
+    bPermM2: Number(payloadForm.bPermM2) || 0,
+    bPermM3: Number(payloadForm.bPermM3) || 0,
+    bPermM4: Number(payloadForm.bPermM4) || 0,
+    bPermObs: String(payloadForm.bPermObs || '').trim(),
+
+    bAsisM1: Number(payloadForm.bAsisM1) || 0,
+    bAsisM2: Number(payloadForm.bAsisM2) || 0,
+    bAsisM3: Number(payloadForm.bAsisM3) || 0,
+    bAsisObs: String(payloadForm.bAsisObs || '').trim(),
+
+    pagoCapaTotal: Number(payloadForm.pagoCapaTotal) || 0,
+    pagoCapaPorDia: Number(payloadForm.pagoCapaPorDia) || 0,
+    diasCapa: Number(payloadForm.diasCapa) || 0,
+    capacitacionObs: String(payloadForm.capacitacionObs || '').trim(),
+    horarioCapacitacion: String(payloadForm.horarioCapacitacion || '').trim(),
+    inicio: formatFechaDDMMYYYY(payloadForm.inicio || ''),
+    fin: formatFechaDDMMYYYY(payloadForm.fin || ''),
+    ojt: formatFechaDDMMYYYY(payloadForm.ojt || ''),
+    ingresoOperacion: formatFechaDDMMYYYY(payloadForm.ingresoOperacion || ''),
+
+    quincena1: String(payloadForm.quincena1 || '').trim(),
+    finMes1: String(payloadForm.finMes1 || '').trim(),
+    finMes2: String(payloadForm.finMes2 || '').trim(),
+
+    obs1: String(payloadForm.obs1 || '').trim(),
+    obs2: String(payloadForm.obs2 || '').trim(),
+    obs3: String(payloadForm.obs3 || '').trim(),
+
+    periodoCapa: String(payloadForm.periodoCapa || '').trim().toUpperCase(),
+    semana: String(payloadForm.semana || '').trim().toUpperCase(),
+    segmento: String(payloadForm.segmento || '').trim().toUpperCase(),
+    cod: String(payloadForm.cod || '').trim().toUpperCase(),
+    cantDiasFeriados: Number(payloadForm.cantDiasFeriados) || 0,
+    mesAfectacionCapa: String(payloadForm.mesAfectacionCapa || '').trim(),
+    mesAfectacionBonos: String(payloadForm.mesAfectacionBonos || '').trim(),
+    modalidad: String(payloadForm.modalidad || 'Remoto').trim(),
+    condicionLaboral: String(payloadForm.condicionLaboral || 'Planilla Completa').trim(),
+    campana: String(payloadForm.campana || '').trim().toUpperCase(),
+    grupo: String(payloadForm.grupo || '').trim().toUpperCase(),
+  };
+
+  if (payloadForm.id && String(payloadForm.id).length > 20) {
+    sanitizedForm.id = payloadForm.id;
+  }
+
+  // Auto-calcular pagoCapaTotal si no se especificó
+  if (!sanitizedForm.pagoCapaTotal && sanitizedForm.pagoCapaPorDia && sanitizedForm.diasCapa) {
+    sanitizedForm.pagoCapaTotal = sanitizedForm.pagoCapaPorDia * sanitizedForm.diasCapa;
+  }
+
   if (DB_MODE === 'supabase') {
-    let propId = payloadForm.id;
+    let propId = sanitizedForm.id;
     let savedForm;
 
-    try {
-      // 1. Save RAW Form
-      if (!propId) {
+    // 1. Guardar en 'propuestas'
+    if (!propId) {
+      // Buscar si ya existe una propuesta para este grupo + campaña + periodo
+      let qExist = supabase
+        .from('propuestas')
+        .select('id')
+        .eq('grupo', sanitizedForm.grupo)
+        .eq('campana', sanitizedForm.campana);
+      if (sanitizedForm.periodoCapa) {
+        qExist = qExist.eq('periodoCapa', sanitizedForm.periodoCapa);
+      }
+      if (sanitizedForm.segmento) {
+        qExist = qExist.eq('segmento', sanitizedForm.segmento);
+      }
+      const { data: existingProp } = await qExist.maybeSingle();
+
+      if (existingProp?.id) {
+        propId = existingProp.id;
+        sanitizedForm.id = existingProp.id;
+        sanitizedForm.updated_at = new Date().toISOString();
         const { data, error } = await supabase
           .from('propuestas')
-          .insert([payloadForm])
-          .select()
-          .single();
-        if (error) throw error;
-        savedForm = data;
-        propId = data.id;
-      } else {
-        const { data, error } = await supabase
-          .from('propuestas')
-          .update(payloadForm)
+          .update(sanitizedForm)
           .eq('id', propId)
           .select()
           .single();
-        if (error) throw error;
+        if (error) {
+          console.error("Error actualizando propuesta existente en Supabase:", error);
+          throw new Error(error.message || 'Error al actualizar propuesta en Supabase');
+        }
         savedForm = data;
-      }
-
-      // 2. Save Consolidado
-      const consPayload = { ...payloadConsolidado, propuesta_id: propId };
-      // Try to check if consolidado exists
-      const { data: existingCons } = await supabase
-        .from('propuestas_consolidado')
-        .select('id')
-        .eq('propuesta_id', propId)
-        .maybeSingle();
-
-      if (existingCons) {
-        await supabase
-          .from('propuestas_consolidado')
-          .update(consPayload)
-          .eq('propuesta_id', propId);
       } else {
-        await supabase
-          .from('propuestas_consolidado')
-          .insert([consPayload]);
+        delete sanitizedForm.id; // Permitir que Postgres genere gen_random_uuid()
+        const { data, error } = await supabase
+          .from('propuestas')
+          .insert([sanitizedForm])
+          .select()
+          .single();
+        if (error) {
+          console.error("Error insertando propuesta en Supabase:", error);
+          throw new Error(error.message || 'Error al insertar propuesta en Supabase');
+        }
+        savedForm = data;
+        propId = data.id;
       }
-      
-      return savedForm;
-    } catch (error) {
-      console.warn("Supabase Error saving propuestas (may need tables created):", error);
-      // Fallback to local storage below if supabase fails
+    } else {
+      sanitizedForm.updated_at = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('propuestas')
+        .update(sanitizedForm)
+        .eq('id', propId)
+        .select()
+        .single();
+      if (error) {
+        console.error("Error actualizando propuesta en Supabase:", error);
+        throw new Error(error.message || 'Error al actualizar propuesta en Supabase');
+      }
+      savedForm = data;
     }
+
+    // 2. Sanitizar y consolidar en 'propuestas_consolidado'
+    const consPayload = {
+      propuesta_id: propId,
+      periodoCapa: sanitizedForm.periodoCapa,
+      semana: sanitizedForm.semana,
+      segmento: sanitizedForm.segmento,
+      campana: sanitizedForm.campana,
+      grupo: sanitizedForm.grupo,
+      modalidad: sanitizedForm.modalidad,
+      condicionLaboral: sanitizedForm.condicionLaboral,
+      cod: sanitizedForm.cod || (sanitizedForm.campana && sanitizedForm.grupo ? `${sanitizedForm.campana} - ${sanitizedForm.grupo}` : sanitizedForm.titulo),
+      fechaInicioCapa: sanitizedForm.inicio,
+      ingresoOperacion: sanitizedForm.ingresoOperacion,
+      mesAfectacionCapa: sanitizedForm.mesAfectacionCapa,
+      mesAfectacionBonos: sanitizedForm.mesAfectacionBonos,
+
+      pagoPorDia: Number(sanitizedForm.pagoCapaPorDia) || 0,
+      pagoCompleto: Number(sanitizedForm.pagoCapaTotal) || (Number(sanitizedForm.pagoCapaPorDia) * Number(sanitizedForm.diasCapa)) || 0,
+      diasCapa: Number(sanitizedForm.diasCapa) || 0,
+      cantDiasFeriados: Number(sanitizedForm.cantDiasFeriados) || 0,
+
+      bonoBienvenidaM1: Number(sanitizedForm.bBienvenidaM1) || 0,
+      bonoBienvenidaM2: Number(sanitizedForm.bBienvenidaM2) || 0,
+      bonoBienvenidaM3: Number(sanitizedForm.bBienvenidaM3) || 0,
+
+      bonoPermanenciaM1: Number(sanitizedForm.bPermM1) || 0,
+      bonoPermanenciaM2: Number(sanitizedForm.bPermM2) || 0,
+      bonoPermanenciaM3: Number(sanitizedForm.bPermM3) || 0,
+      bonoPermanenciaM4: Number(sanitizedForm.bPermM4) || 0,
+
+      bonoAsistenciaM1: Number(sanitizedForm.bAsisM1) || 0,
+      bonoAsistenciaM2: Number(sanitizedForm.bAsisM2) || 0,
+      bonoAsistenciaM3: Number(sanitizedForm.bAsisM3) || 0,
+    };
+
+    // Verificar si ya existe consolidado vinculado o por llave de grupo
+    let existingConsId = null;
+    const { data: byPropId } = await supabase
+      .from('propuestas_consolidado')
+      .select('id')
+      .eq('propuesta_id', propId)
+      .maybeSingle();
+
+    if (byPropId?.id) {
+      existingConsId = byPropId.id;
+    } else if (consPayload.grupo) {
+      let q = supabase
+        .from('propuestas_consolidado')
+        .select('id, semana')
+        .eq('grupo', consPayload.grupo);
+      if (consPayload.campana) q = q.eq('campana', consPayload.campana);
+      if (consPayload.periodoCapa) q = q.eq('periodoCapa', consPayload.periodoCapa);
+      if (consPayload.segmento) q = q.eq('segmento', consPayload.segmento);
+      
+      const { data: candidates } = await q;
+      if (candidates && candidates.length > 0) {
+        const sameSemana = candidates.find(c => {
+          const numA = String(c.semana || '').replace(/\D/g, '');
+          const numB = String(consPayload.semana || '').replace(/\D/g, '');
+          return numA && numA === numB;
+        });
+        existingConsId = sameSemana?.id || candidates[0].id;
+      }
+    }
+
+    if (existingConsId) {
+      const { error: updErr } = await supabase
+        .from('propuestas_consolidado')
+        .update(consPayload)
+        .eq('id', existingConsId);
+      if (updErr) {
+        console.error("Error actualizando propuestas_consolidado en Supabase:", updErr);
+        throw new Error(updErr.message || 'Error al actualizar consolidado en Supabase');
+      }
+    } else {
+      delete consPayload.id; // Evitar pasar id nulo
+      const { error: insErr } = await supabase
+        .from('propuestas_consolidado')
+        .insert([consPayload]);
+      if (insErr) {
+        console.error("Error insertando propuestas_consolidado en Supabase:", insErr);
+        throw new Error(insErr.message || 'Error al insertar consolidado en Supabase');
+      }
+    }
+
+    // Invalidar cachés locales para refresco instantáneo
+    invalidateCache();
+    window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+    return savedForm;
   }
-  
+
   // Local Storage Fallback
   initLocalStorageDb();
   const props = getFromStorage('propuestas') || [];
   const cons = getFromStorage('propuestas_consolidado') || [];
-  
+
   let newProp;
-  if (payloadForm.id) {
-    const idx = props.findIndex(l => l.id === payloadForm.id);
+  if (sanitizedForm.id) {
+    const idx = props.findIndex(l => l.id === sanitizedForm.id);
     if (idx >= 0) {
-      props[idx] = { ...props[idx], ...payloadForm, updated_at: new Date().toISOString() };
+      props[idx] = { ...props[idx], ...sanitizedForm, updated_at: new Date().toISOString() };
       newProp = props[idx];
       saveToStorage('propuestas', props);
     }
   }
-  
+
   if (!newProp) {
-    newProp = { ...payloadForm, id: 'prop-' + Date.now(), created_at: new Date().toISOString() };
+    newProp = { ...sanitizedForm, id: 'prop-' + Date.now(), created_at: new Date().toISOString() };
     props.push(newProp);
     saveToStorage('propuestas', props);
   }
 
-  // Handle consolidado local
-  const consPayload = { ...payloadConsolidado, propuesta_id: newProp.id, created_at: newProp.created_at || new Date().toISOString() };
-  const consIdx = cons.findIndex(c => c.propuesta_id === newProp.id);
+  const consPayload = {
+    ...payloadConsolidado,
+    propuesta_id: newProp.id,
+    created_at: newProp.created_at || new Date().toISOString()
+  };
+  const consIdx = cons.findIndex(c => c.propuesta_id === newProp.id || (c.grupo === newProp.grupo && c.campana === newProp.campana));
   if (consIdx >= 0) {
     cons[consIdx] = { ...cons[consIdx], ...consPayload };
   } else {
     cons.push(consPayload);
   }
   saveToStorage('propuestas_consolidado', cons);
-  
+
   return newProp;
+}
+
+export async function deletePropuesta(consolidadoId, propuestaId) {
+  if (DB_MODE === 'supabase') {
+    try {
+      if (propuestaId) {
+        // Al borrar de propuestas, el foreign key borra en cascada de propuestas_consolidado
+        const { error } = await supabase.from('propuestas').delete().eq('id', propuestaId);
+        if (error) throw error;
+      }
+      if (consolidadoId) {
+        const { error } = await supabase.from('propuestas_consolidado').delete().eq('id', consolidadoId);
+        if (error && !propuestaId) throw error;
+      }
+      invalidateCache();
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+      return true;
+    } catch (e) {
+      console.error("Error eliminando propuesta en Supabase:", e);
+      throw e;
+    }
+  }
+
+  initLocalStorageDb();
+  let props = getFromStorage('propuestas') || [];
+  let cons = getFromStorage('propuestas_consolidado') || [];
+  if (propuestaId) {
+    props = props.filter(p => p.id !== propuestaId);
+    cons = cons.filter(c => c.propuesta_id !== propuestaId);
+  }
+  if (consolidadoId) {
+    cons = cons.filter(c => c.id !== consolidadoId);
+  }
+  saveToStorage('propuestas', props);
+  saveToStorage('propuestas_consolidado', cons);
+  return true;
 }
 
 export async function deleteDashboardLink(id) {
@@ -8135,57 +8450,66 @@ export function parseFechaAsistencia(raw) {
 // ───────────────────────────────────────────────────────────────────────
 
 export async function fetchConfigPagosGrupo() {
-  let configs = [];
+  const configsMap = new Map();
   
-  // 1. Leer de propuestas_consolidado en Supabase (tabla canónica de 26 columnas)
   if (DB_MODE === 'supabase') {
+    // 1. Leer de 'propuestas' (tabla maestra oficial de Reclutamiento)
     try {
-      const { data: propData, error: propErr } = await supabase
-        .from('propuestas_consolidado')
+      const { data: propMaster, error: masterErr } = await supabase
+        .from('propuestas')
         .select('*')
         .order('created_at', { ascending: false });
-      
-      if (!propErr && propData && propData.length > 0) {
-        for (const p of propData) {
-          const cod = String(p.cod || '').toUpperCase().trim();
+
+      if (!masterErr && propMaster && propMaster.length > 0) {
+        for (const p of propMaster) {
           const grp = String(p.grupo || p.grupo_codigo || '').toUpperCase().trim();
+          const camp = String(p.campana || '').toUpperCase().trim();
+          const per = String(p.periodoCapa || p.periodo || '').toUpperCase().trim();
+          const sem = String(p.semana || p.semana_trabajo || '').toUpperCase().trim();
+          const seg = String(p.segmento || '').toUpperCase().trim();
+          const cod = String(p.cod || `${camp} - ${grp}`).toUpperCase().trim();
           const grupoCodigo = grp || cod;
-          
-          const m1Bvda = parseFloat(p.bonoBienvenidaM1 || p.bono_bienvenida_m1 || p.bono_bienvenida) || 0;
-          const m2Bvda = parseFloat(p.bonoBienvenidaM2 || p.bono_bienvenida_m2) || 0;
-          const m3Bvda = parseFloat(p.bonoBienvenidaM3 || p.bono_bienvenida_m3) || 0;
-          
-          const m1Perm = parseFloat(p.bonoPermanenciaM1 || p.bono_permanencia_m1 || p.bono_permanencia) || 0;
-          const m2Perm = parseFloat(p.bonoPermanenciaM2 || p.bono_permanencia_m2) || 0;
-          const m3Perm = parseFloat(p.bonoPermanenciaM3 || p.bono_permanencia_m3) || 0;
-          const m4Perm = parseFloat(p.bonoPermanenciaM4 || p.bono_permanencia_m4) || 0;
-          
-          const m1Asis = parseFloat(p.bonoAsistenciaM1 || p.bono_asistencia_m1 || p.bono_asistencia_perfecta) || 0;
-          const m2Asis = parseFloat(p.bonoAsistenciaM2 || p.bono_asistencia_m2) || 0;
-          const m3Asis = parseFloat(p.bonoAsistenciaM3 || p.bono_asistencia_m3) || 0;
-          
+
+          const pDia = parseFloat(p.pagoCapaPorDia ?? p.pagoPorDia ?? p.monto_dia_capa) || 0;
+          const dCapa = parseInt(p.diasCapa ?? p.dias_capa) || 0;
+          const pComp = parseFloat(p.pagoCapaTotal ?? p.pagoCompleto) || (pDia * dCapa);
+
+          const m1Bvda = parseFloat(p.bBienvenidaM1 ?? p.bonoBienvenidaM1 ?? p.bono_bienvenida) || 0;
+          const m2Bvda = parseFloat(p.bBienvenidaM2 ?? p.bonoBienvenidaM2) || 0;
+          const m3Bvda = parseFloat(p.bBienvenidaM3 ?? p.bonoBienvenidaM3) || 0;
+
+          const m1Perm = parseFloat(p.bPermM1 ?? p.bonoPermanenciaM1 ?? p.bono_permanencia_total) || 0;
+          const m2Perm = parseFloat(p.bPermM2 ?? p.bonoPermanenciaM2) || 0;
+          const m3Perm = parseFloat(p.bPermM3 ?? p.bonoPermanenciaM3) || 0;
+          const m4Perm = parseFloat(p.bPermM4 ?? p.bonoPermanenciaM4) || 0;
+
+          const m1Asis = parseFloat(p.bAsisM1 ?? p.bonoAsistenciaM1 ?? p.bono_asistencia_perfecta) || 0;
+          const m2Asis = parseFloat(p.bAsisM2 ?? p.bonoAsistenciaM2) || 0;
+          const m3Asis = parseFloat(p.bAsisM3 ?? p.bonoAsistenciaM3) || 0;
+
           const cuotasPermCount = [m1Perm, m2Perm, m3Perm, m4Perm].filter(v => v > 0).length || 1;
           const totalPerm = m1Perm + m2Perm + m3Perm + m4Perm;
 
-          configs.push({
+          const key = `${per}|${sem}|${seg}|${camp}|${grp}`;
+          configsMap.set(key, {
             id: p.id,
-            // 26 columnas canónicas
-            periodoCapa: p.periodoCapa || p.periodo_capa || p.periodo || '',
-            semana: p.semana || p.semana_trabajo || '',
-            segmento: p.segmento || '',
-            campana: p.campana || '',
+            propuesta_id: p.id,
+            periodoCapa: per,
+            semana: sem,
+            segmento: seg,
+            campana: camp,
             grupo: grp,
             modalidad: p.modalidad || 'REMOTO',
             condicionLaboral: p.condicionLaboral || p.condicion_laboral || 'FULL TIME',
-            cod: cod || `${p.campana || ''}${grp}`,
-            fechaInicioCapa: p.fechaInicioCapa || p.fecha_inicio_capa || '',
-            ingresoOperacion: p.ingresoOperacion || p.ingreso_operacion || '',
-            mesAfectacionCapa: p.mesAfectacionCapa || p.mes_afectacion_capa || '',
-            mesAfectacionBonos: p.mesAfectacionBonos || p.mes_afectacion_bonos || '',
-            pagoPorDia: parseFloat(p.pagoPorDia || p.pago_por_dia || p.pagoCapaPorDia) || 0,
-            diasCapa: parseInt(p.diasCapa || p.dias_capa) || 0,
-            cantDiasFeriados: parseInt(p.cantDiasFeriados || p.cant_dias_feriados) || 0,
-            pagoCompleto: parseFloat(p.pagoCompleto || p.pago_completo || p.pagoCapaTotal) || 0,
+            cod: cod,
+            fechaInicioCapa: formatFechaDDMMYYYY(p.inicio || p.fechaInicioCapa || ''),
+            ingresoOperacion: formatFechaDDMMYYYY(p.ingresoOperacion || ''),
+            mesAfectacionCapa: p.mesAfectacionCapa || '',
+            mesAfectacionBonos: p.mesAfectacionBonos || '',
+            pagoPorDia: pDia,
+            diasCapa: dCapa,
+            cantDiasFeriados: parseInt(p.cantDiasFeriados) || 0,
+            pagoCompleto: pComp,
             bonoBienvenidaM1: m1Bvda,
             bonoBienvenidaM2: m2Bvda,
             bonoBienvenidaM3: m3Bvda,
@@ -8196,18 +8520,124 @@ export async function fetchConfigPagosGrupo() {
             bonoAsistenciaM1: m1Asis,
             bonoAsistenciaM2: m2Asis,
             bonoAsistenciaM3: m3Asis,
-            
-            // Compatibilidad para filtros y tablas legacy
+
+            // Legacy & compatibilidad
             grupo_codigo: grupoCodigo,
-            periodo: p.periodoCapa || p.periodo_capa || p.periodo || '',
-            semana_trabajo: p.semana || p.semana_trabajo || '',
-            monto_dia_capa: parseFloat(p.pagoPorDia || p.pago_por_dia || p.pagoCapaPorDia) || 0,
+            periodo: per,
+            semana_trabajo: sem,
+            monto_dia_capa: pDia,
             bono_bienvenida: m1Bvda,
             bono_permanencia_total: totalPerm,
             cuotas_permanencia: cuotasPermCount,
             bono_asistencia_perfecta: m1Asis,
-            notas: p.notas || 'Propuesta de Grupo Integrada'
+            origen_tabla: 'propuestas',
+            notas: p.capacitacionObs || p.notas || 'Propuesta Oficial Reclutamiento'
           });
+        }
+      }
+    } catch (e) {
+      console.warn("Error leyendo tabla propuestas en Supabase:", e);
+    }
+
+    // 2. Leer de 'propuestas_consolidado' (enriquecer o agregar propuestas rápidas de pagos)
+    try {
+      const { data: propCons, error: consErr } = await supabase
+        .from('propuestas_consolidado')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!consErr && propCons && propCons.length > 0) {
+        for (const p of propCons) {
+          const grp = String(p.grupo || p.grupo_codigo || '').toUpperCase().trim();
+          const camp = String(p.campana || '').toUpperCase().trim();
+          const per = String(p.periodoCapa || p.periodo || '').toUpperCase().trim();
+          const sem = String(p.semana || p.semana_trabajo || '').toUpperCase().trim();
+          const seg = String(p.segmento || '').toUpperCase().trim();
+          const cod = String(p.cod || `${camp}${grp}`).toUpperCase().trim();
+          const grupoCodigo = grp || cod;
+
+          const key = `${per}|${sem}|${seg}|${camp}|${grp}`;
+
+          const m1Bvda = parseFloat(p.bonoBienvenidaM1 || p.bono_bienvenida_m1 || p.bono_bienvenida) || 0;
+          const m2Bvda = parseFloat(p.bonoBienvenidaM2 || p.bono_bienvenida_m2) || 0;
+          const m3Bvda = parseFloat(p.bonoBienvenidaM3 || p.bono_bienvenida_m3) || 0;
+
+          const m1Perm = parseFloat(p.bonoPermanenciaM1 || p.bono_permanencia_m1 || p.bono_permanencia) || 0;
+          const m2Perm = parseFloat(p.bonoPermanenciaM2 || p.bono_permanencia_m2) || 0;
+          const m3Perm = parseFloat(p.bonoPermanenciaM3 || p.bono_permanencia_m3) || 0;
+          const m4Perm = parseFloat(p.bonoPermanenciaM4 || p.bono_permanencia_m4) || 0;
+
+          const m1Asis = parseFloat(p.bonoAsistenciaM1 || p.bono_asistencia_m1 || p.bono_asistencia_perfecta) || 0;
+          const m2Asis = parseFloat(p.bonoAsistenciaM2 || p.bono_asistencia_m2) || 0;
+          const m3Asis = parseFloat(p.bonoAsistenciaM3 || p.bono_asistencia_m3) || 0;
+
+          const cuotasPermCount = [m1Perm, m2Perm, m3Perm, m4Perm].filter(v => v > 0).length || 1;
+          const totalPerm = m1Perm + m2Perm + m3Perm + m4Perm;
+
+          const pDia = parseFloat(p.pagoPorDia || p.pago_por_dia || p.pagoCapaPorDia) || 0;
+          const dCapa = parseInt(p.diasCapa || p.dias_capa) || 0;
+          const pComp = parseFloat(p.pagoCompleto || p.pago_completo || p.pagoCapaTotal) || (pDia * dCapa);
+
+          if (configsMap.has(key)) {
+            const current = configsMap.get(key);
+            configsMap.set(key, {
+              ...current,
+              consolidado_id: p.id,
+              pagoPorDia: pDia || current.pagoPorDia,
+              pagoCompleto: pComp || current.pagoCompleto,
+              diasCapa: dCapa || current.diasCapa,
+              fechaInicioCapa: p.fechaInicioCapa ? formatFechaDDMMYYYY(p.fechaInicioCapa) : current.fechaInicioCapa,
+              ingresoOperacion: p.ingresoOperacion ? formatFechaDDMMYYYY(p.ingresoOperacion) : current.ingresoOperacion,
+              mesAfectacionCapa: p.mesAfectacionCapa || current.mesAfectacionCapa,
+              mesAfectacionBonos: p.mesAfectacionBonos || current.mesAfectacionBonos,
+              bonoBienvenidaM1: m1Bvda || current.bonoBienvenidaM1,
+              bonoPermanenciaM1: m1Perm || current.bonoPermanenciaM1,
+              bonoAsistenciaM1: m1Asis || current.bonoAsistenciaM1,
+            });
+          } else {
+            configsMap.set(key, {
+              id: p.id,
+              consolidado_id: p.id,
+              propuesta_id: p.propuesta_id || null,
+              periodoCapa: per,
+              semana: sem,
+              segmento: seg,
+              campana: camp,
+              grupo: grp,
+              modalidad: p.modalidad || 'REMOTO',
+              condicionLaboral: p.condicionLaboral || p.condicion_laboral || 'FULL TIME',
+              cod: cod,
+              fechaInicioCapa: formatFechaDDMMYYYY(p.fechaInicioCapa || p.fecha_inicio_capa || ''),
+              ingresoOperacion: formatFechaDDMMYYYY(p.ingresoOperacion || p.ingreso_operacion || ''),
+              mesAfectacionCapa: p.mesAfectacionCapa || p.mes_afectacion_capa || '',
+              mesAfectacionBonos: p.mesAfectacionBonos || p.mes_afectacion_bonos || '',
+              pagoPorDia: pDia,
+              diasCapa: dCapa,
+              cantDiasFeriados: parseInt(p.cantDiasFeriados || p.cant_dias_feriados) || 0,
+              pagoCompleto: pComp,
+              bonoBienvenidaM1: m1Bvda,
+              bonoBienvenidaM2: m2Bvda,
+              bonoBienvenidaM3: m3Bvda,
+              bonoPermanenciaM1: m1Perm,
+              bonoPermanenciaM2: m2Perm,
+              bonoPermanenciaM3: m3Perm,
+              bonoPermanenciaM4: m4Perm,
+              bonoAsistenciaM1: m1Asis,
+              bonoAsistenciaM2: m2Asis,
+              bonoAsistenciaM3: m3Asis,
+
+              grupo_codigo: grupoCodigo,
+              periodo: per,
+              semana_trabajo: sem,
+              monto_dia_capa: pDia,
+              bono_bienvenida: m1Bvda,
+              bono_permanencia_total: totalPerm,
+              cuotas_permanencia: cuotasPermCount,
+              bono_asistencia_perfecta: m1Asis,
+              origen_tabla: 'propuestas_consolidado',
+              notas: p.notas || 'Propuesta de Grupo Integrada'
+            });
+          }
         }
       }
     } catch (e) {
@@ -8215,13 +8645,17 @@ export async function fetchConfigPagosGrupo() {
     }
   }
 
-  // 2. Fallback a LocalStorage si no hay datos
-  if (configs.length === 0) {
+  // 3. Fallback a LocalStorage si no hay datos
+  if (configsMap.size === 0) {
     initLocalStorageDb();
-    const local = getFromStorage('propuestas_consolidado') || getFromStorage('config_pagos_grupo') || [];
-    if (local.length > 0) configs = local;
+    const local = getFromStorage('propuestas_consolidado') || getFromStorage('propuestas') || getFromStorage('config_pagos_grupo') || [];
+    local.forEach(l => {
+      const k = `${l.periodoCapa || l.periodo}|${l.semana || l.semana_trabajo}|${l.segmento}|${l.campana}|${l.grupo || l.grupo_codigo}`;
+      configsMap.set(k, l);
+    });
   }
 
+  const configs = Array.from(configsMap.values());
   return configs.sort((a, b) => (a.grupo || a.grupo_codigo || '').localeCompare(b.grupo || b.grupo_codigo || ''));
 }
 
@@ -8243,8 +8677,8 @@ export async function upsertConfigPagoGrupo(config) {
     modalidad: String(config.modalidad || 'REMOTO').toUpperCase().trim(),
     condicionLaboral: String(config.condicionLaboral || 'FULL TIME').toUpperCase().trim(),
     cod: codUnico,
-    fechaInicioCapa: String(config.fechaInicioCapa || '').trim(),
-    ingresoOperacion: String(config.ingresoOperacion || '').trim(),
+    fechaInicioCapa: formatFechaDDMMYYYY(config.fechaInicioCapa || ''),
+    ingresoOperacion: formatFechaDDMMYYYY(config.ingresoOperacion || ''),
     mesAfectacionCapa: String(config.mesAfectacionCapa || '').trim(),
     mesAfectacionBonos: String(config.mesAfectacionBonos || '').trim(),
     pagoPorDia: pPorDia,
@@ -8263,36 +8697,67 @@ export async function upsertConfigPagoGrupo(config) {
     bonoAsistenciaM3: parseFloat(config.bonoAsistenciaM3) || 0
   };
 
+  const payloadPropuestas = {
+    titulo: config.titulo || `${camp} - ${grp}`,
+    periodoCapa: payloadConsolidado.periodoCapa,
+    semana: payloadConsolidado.semana,
+    segmento: payloadConsolidado.segmento,
+    campana: camp,
+    grupo: grp,
+    modalidad: payloadConsolidado.modalidad,
+    condicionLaboral: payloadConsolidado.condicionLaboral,
+    cod: codUnico,
+    inicio: payloadConsolidado.fechaInicioCapa,
+    ingresoOperacion: payloadConsolidado.ingresoOperacion,
+    mesAfectacionCapa: payloadConsolidado.mesAfectacionCapa,
+    mesAfectacionBonos: payloadConsolidado.mesAfectacionBonos,
+    pagoCapaPorDia: pPorDia,
+    diasCapa: dCapa,
+    cantDiasFeriados: payloadConsolidado.cantDiasFeriados,
+    pagoCapaTotal: pComp,
+    bBienvenidaM1: payloadConsolidado.bonoBienvenidaM1,
+    bBienvenidaM2: payloadConsolidado.bonoBienvenidaM2,
+    bBienvenidaM3: payloadConsolidado.bonoBienvenidaM3,
+    bPermM1: payloadConsolidado.bonoPermanenciaM1,
+    bPermM2: payloadConsolidado.bonoPermanenciaM2,
+    bPermM3: payloadConsolidado.bonoPermanenciaM3,
+    bPermM4: payloadConsolidado.bonoPermanenciaM4,
+    bAsisM1: payloadConsolidado.bonoAsistenciaM1,
+    bAsisM2: payloadConsolidado.bonoAsistenciaM2,
+    bAsisM3: payloadConsolidado.bonoAsistenciaM3,
+  };
+
   if (DB_MODE === 'supabase') {
     try {
+      let consolidadoResult = null;
       if (config.id && String(config.id).length > 20) {
-        // Actualizar por id existente
+        // Actualizar por id existente en propuestas_consolidado
         const { data, error } = await supabase
           .from('propuestas_consolidado')
           .update(payloadConsolidado)
           .eq('id', config.id)
           .select()
           .single();
-        if (!error && data) return data;
+        if (!error && data) consolidadoResult = data;
       } else {
-        const periodo = payloadConsolidado.periodoCapa
-        const semana = payloadConsolidado.semana
-        const segmento = payloadConsolidado.segmento
+        const periodo = payloadConsolidado.periodoCapa;
+        const semana = payloadConsolidado.semana;
+        const segmento = payloadConsolidado.segmento;
         const { data: candidates } = await supabase
           .from('propuestas_consolidado')
           .select('id, grupo, campana, segmento, periodoCapa, semana, cod')
-          .eq('grupo', grp)
+          .eq('grupo', grp);
 
         const sameSemana = (a, b) => {
-          const num = (v) => String(v || '').replace(/\D/g, '')
-          return num(a) && num(a) === num(b)
-        }
+          const num = (v) => String(v || '').replace(/\D/g, '');
+          return num(a) && num(a) === num(b);
+        };
         const existing = (candidates || []).find((row) => (
           String(row.campana || '').trim().toUpperCase() === String(camp).trim().toUpperCase()
           && String(row.segmento || '').trim().toUpperCase() === String(segmento).trim().toUpperCase()
           && String(row.periodoCapa || '').trim().toUpperCase() === String(periodo).trim().toUpperCase()
           && sameSemana(row.semana, semana)
-        ))
+        ));
 
         if (existing?.id) {
           const { data, error } = await supabase
@@ -8301,16 +8766,42 @@ export async function upsertConfigPagoGrupo(config) {
             .eq('id', existing.id)
             .select()
             .single();
-          if (!error && data) return data;
+          if (!error && data) consolidadoResult = data;
         } else {
           const { data, error } = await supabase
             .from('propuestas_consolidado')
             .insert([payloadConsolidado])
             .select()
             .single();
-          if (!error && data) return data;
+          if (!error && data) consolidadoResult = data;
         }
       }
+
+      // Sincronizar en la tabla 'propuestas' para que ambos módulos estén alineados
+      try {
+        let qProp = supabase
+          .from('propuestas')
+          .select('id')
+          .eq('grupo', grp)
+          .eq('campana', camp);
+        if (payloadPropuestas.periodoCapa) qProp = qProp.eq('periodoCapa', payloadPropuestas.periodoCapa);
+        if (payloadPropuestas.segmento) qProp = qProp.eq('segmento', payloadPropuestas.segmento);
+
+        const { data: existingProp } = await qProp.maybeSingle();
+
+        if (existingProp?.id) {
+          payloadPropuestas.updated_at = new Date().toISOString();
+          await supabase.from('propuestas').update(payloadPropuestas).eq('id', existingProp.id);
+        } else {
+          await supabase.from('propuestas').insert([payloadPropuestas]);
+        }
+      } catch (propSyncErr) {
+        console.warn("Aviso: No se pudo sincronizar automáticamente en tabla propuestas:", propSyncErr);
+      }
+
+      invalidateCache();
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+      if (consolidadoResult) return consolidadoResult;
     } catch (e) {
       console.warn("Error guardando propuesta en Supabase:", e);
     }
@@ -8320,24 +8811,32 @@ export async function upsertConfigPagoGrupo(config) {
   initLocalStorageDb();
   const existing = getFromStorage('propuestas_consolidado') || [];
   const sameSemana = (a, b) => {
-    const num = (v) => String(v || '').replace(/\D/g, '')
-    return num(a) && num(a) === num(b)
+    const num = (v) => String(v || '').replace(/\D/g, '');
+    return num(a) && num(a) === num(b);
+  };
+  const idx = existing.findIndex(row => (
+    String(row.grupo || '').trim().toUpperCase() === grp
+    && String(row.campana || '').trim().toUpperCase() === String(camp).trim().toUpperCase()
+    && sameSemana(row.semana, payloadConsolidado.semana)
+  ));
+  if (idx >= 0) {
+    existing[idx] = { ...existing[idx], ...payloadConsolidado, id: existing[idx].id || `${Date.now()}` };
+  } else {
+    existing.push({ ...payloadConsolidado, id: `${Date.now()}` });
   }
-  const idx = existing.findIndex(c =>
-    (config.id && c.id === config.id)
-    || (
-      String(c.grupo || '').toUpperCase() === grp
-      && String(c.campana || '').trim().toUpperCase() === String(camp).trim().toUpperCase()
-      && String(c.segmento || '').trim().toUpperCase() === String(payloadConsolidado.segmento).trim().toUpperCase()
-      && String(c.periodoCapa || '').trim().toUpperCase() === String(payloadConsolidado.periodoCapa).trim().toUpperCase()
-      && sameSemana(c.semana, payloadConsolidado.semana)
-    )
-  );
-  const recordWithId = { ...payloadConsolidado, id: config.id || ('local-' + Date.now()) };
-  if (idx >= 0) existing[idx] = recordWithId;
-  else existing.push(recordWithId);
   saveToStorage('propuestas_consolidado', existing);
-  return recordWithId;
+
+  // Guardar también en localStorage 'propuestas'
+  const localProps = getFromStorage('propuestas') || [];
+  const pIdx = localProps.findIndex(p => String(p.grupo || '').toUpperCase() === grp && String(p.campana || '').toUpperCase() === camp.toUpperCase());
+  if (pIdx >= 0) {
+    localProps[pIdx] = { ...localProps[pIdx], ...payloadPropuestas };
+  } else {
+    localProps.push({ ...payloadPropuestas, id: `${Date.now()}` });
+  }
+  saveToStorage('propuestas', localProps);
+
+  return payloadConsolidado;
 }
 
 export async function deleteConfigPagoGrupo(target) {
@@ -8428,6 +8927,7 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
         semana_trabajo: semana !== 'TODAS' ? semana : '',
         periodo_reclutado: periodo !== 'TODOS' ? periodo : '',
         status_final: 'ASISTENCIA REGISTRADA',
+        reclutador: '',
         fecha_inicio_capacitacion: null,
         fecha_fin_capacitacion: null,
         fecha_conexion_ojt: null,
@@ -8436,16 +8936,20 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     }
   });
 
-  // 3. Enriquecer con datos de 'nominas' (sin filtrar por status_final para no excluir a nadie)
-  // IMPORTANTE: NO sobreescribir campana ni grupo_codigo con valores antiguos de nómina
+  // 3. Enriquecer y unificar con datos de 'nominas' (sin filtrar por status_final para no excluir a nadie)
+  // Permite mapear Día 0 (inducción), Día 1 y condición de Agregados
   const docs = Array.from(personasMap.keys());
   if (docs.length > 0) {
     for (let i = 0; i < docs.length; i += 100) {
       const chunk = docs.slice(i, i + 100);
-      const { data: nomRows } = await supabase
+      const { data: nomRows, error: errNomRows } = await supabase
         .from('nominas')
-        .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final')
+        .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final, reclutador, dia_0, dia_0_obs, evaluacion_dia_0, dia_1, dia_1_obs, status_dia_1, condicion')
         .in('documento', chunk);
+
+      if (errNomRows) {
+        console.warn('Error enriqueciendo con nominas:', errNomRows);
+      }
 
       (nomRows || []).forEach(n => {
         const doc = String(n.documento || '').trim();
@@ -8456,6 +8960,7 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
             apellido_paterno: n.apellido_paterno || current.apellido_paterno,
             apellido_materno: n.apellido_materno || current.apellido_materno,
             nombres: n.nombres || current.nombres,
+            reclutador: n.reclutador || current.reclutador || '',
             // Mantener la campaña y grupo que vinieron de la asistencia de este filtro
             campana: current.campana || n.campana,
             segmento: current.segmento || n.segmento,
@@ -8467,31 +8972,76 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
             fecha_conexion_ojt: n.fecha_conexion_ojt || current.fecha_conexion_ojt,
             fecha_conexion_op: n.fecha_conexion_op || current.fecha_conexion_op,
             status_final: n.status_final || current.status_final,
+            dia_0: n.dia_0 || '',
+            dia_0_obs: n.dia_0_obs || '',
+            evaluacion_dia_0: n.evaluacion_dia_0 || '',
+            dia_1: n.dia_1 || '',
+            dia_1_obs: n.dia_1_obs || '',
+            status_dia_1: n.status_dia_1 || '',
+            condicion: n.condicion || '',
+            tipo_reclutado: n.condicion || '',
           });
         }
       });
     }
   }
 
-  // Si no hubieron asistencias pero existen personas en nominas para ese grupo, incluirlas como respaldo
-  if (personasMap.size === 0 && grupo_codigo && grupo_codigo !== 'TODOS') {
-    let fallbackQ = supabase
+  // 4. Si hay asesores en nóminas para los grupos objetivo que no estaban en asistencia
+  // (por ejemplo: asistieron solo a Día 0 / inducción o son agregados recientes), sumarlos también
+  try {
+    let nomTargetQ = supabase
       .from('nominas')
-      .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final')
-      .eq('grupo_codigo', grupo_codigo);
+      .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final, reclutador, dia_0, dia_0_obs, evaluacion_dia_0, dia_1, dia_1_obs, status_dia_1, condicion');
 
-    if (campana && campana !== 'TODAS') {
-      fallbackQ = fallbackQ.eq('campana', campana);
+    if (targetGrupos.length === 1) {
+      nomTargetQ = nomTargetQ.eq('grupo_codigo', targetGrupos[0]);
+    } else if (targetGrupos.length > 1) {
+      const list = targetGrupos.slice(0, 50).map(g => `"${g}"`).join(',');
+      nomTargetQ = nomTargetQ.or(`grupo_codigo.in.(${list})`);
+    } else if (grupo_codigo && grupo_codigo !== 'TODOS') {
+      nomTargetQ = nomTargetQ.eq('grupo_codigo', grupo_codigo);
     }
 
-    const { data: fallbackNoms } = await fallbackQ;
+    if (campana && campana !== 'TODAS') {
+      nomTargetQ = nomTargetQ.eq('campana', campana);
+    }
+    if (periodo && periodo !== 'TODOS') {
+      nomTargetQ = nomTargetQ.eq('periodo_reclutado', periodo);
+    }
 
-    (fallbackNoms || []).forEach(n => {
+    const { data: extraNoms } = await nomTargetQ.limit(2000);
+    (extraNoms || []).forEach(n => {
       const doc = String(n.documento || '').trim();
       if (doc && !personasMap.has(doc)) {
-        personasMap.set(doc, n);
+        personasMap.set(doc, {
+          documento: doc,
+          apellido_paterno: n.apellido_paterno || '',
+          apellido_materno: n.apellido_materno || '',
+          nombres: n.nombres || '',
+          campana: n.campana || (campana !== 'TODAS' ? campana : ''),
+          segmento: n.segmento || (segmento !== 'TODOS' ? segmento : ''),
+          grupo_codigo: n.grupo_codigo || (grupo_codigo !== 'TODOS' ? grupo_codigo : ''),
+          semana_trabajo: n.semana_trabajo || (semana !== 'TODAS' ? semana : ''),
+          periodo_reclutado: n.periodo_reclutado || (periodo !== 'TODOS' ? periodo : ''),
+          status_final: n.status_final || 'NOMINA REGISTRADA',
+          reclutador: n.reclutador || '',
+          fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || null,
+          fecha_fin_capacitacion: n.fecha_fin_capacitacion || null,
+          fecha_conexion_ojt: n.fecha_conexion_ojt || null,
+          fecha_conexion_op: n.fecha_conexion_op || null,
+          dia_0: n.dia_0 || '',
+          dia_0_obs: n.dia_0_obs || '',
+          evaluacion_dia_0: n.evaluacion_dia_0 || '',
+          dia_1: n.dia_1 || '',
+          dia_1_obs: n.dia_1_obs || '',
+          status_dia_1: n.status_dia_1 || '',
+          condicion: n.condicion || '',
+          tipo_reclutado: n.condicion || '',
+        });
       }
     });
+  } catch (errNomTarget) {
+    console.warn("Aviso al consultar nóminas complementarias:", errNomTarget);
   }
 
   // Filtrado final estricto de coherencia
@@ -8727,4 +9277,112 @@ export async function fetchLiquidacionDetalle(lote_id) {
     const rows = getFromStorage('liquidaciones_pagos_capacitacion') || [];
     return rows.filter(r => r.lote_id === lote_id);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVICIO DE ALERTAS Y NOTIFICACIONES AUTOMÁTICAS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Crea una notificación / alerta para administradores u otros roles.
+ */
+export async function crearNotificacion({ tipo = 'info', titulo, mensaje, datos = {}, rol_destinatario = 'admin' }) {
+  const row = {
+    tipo,
+    titulo,
+    mensaje,
+    datos,
+    rol_destinatario,
+    leido: false,
+    created_at: new Date().toISOString(),
+  }
+
+  if (DB_MODE === 'supabase') {
+    try {
+      const { data, error } = await supabase.from('notificaciones').insert([row]).select().maybeSingle()
+      if (error) {
+        console.warn('Error insertando notificacion en Supabase:', error)
+      }
+      window.dispatchEvent(new CustomEvent('gea-notificacion-creada', { detail: data || row }))
+      return data || row
+    } catch (e) {
+      console.warn('Excepción al crear notificación:', e)
+    }
+  }
+
+  // Fallback local
+  initLocalStorageDb();
+  const notifs = getFromStorage('notificaciones') || []
+  const newRow = { id: crypto.randomUUID(), ...row }
+  notifs.unshift(newRow)
+  saveToStorage('notificaciones', notifs.slice(0, 100))
+  window.dispatchEvent(new CustomEvent('gea-notificacion-creada', { detail: newRow }))
+  return newRow
+}
+
+/**
+ * Obtiene las notificaciones activas para el rol (o todos).
+ */
+export async function fetchNotificaciones({ rol = 'admin', limit = 40 } = {}) {
+  if (DB_MODE === 'supabase') {
+    try {
+      let q = supabase
+        .from('notificaciones')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit)
+
+      if (rol && rol !== 'todos') {
+        q = q.or(`rol_destinatario.eq.${rol},rol_destinatario.eq.todos,rol_destinatario.is.null`)
+      }
+
+      const { data, error } = await q
+      if (!error && data) return data
+    } catch (e) {
+      console.warn('Error fetching notificaciones:', e)
+    }
+  }
+
+  initLocalStorageDb();
+  const notifs = getFromStorage('notificaciones') || []
+  return notifs.slice(0, limit)
+}
+
+/**
+ * Marca una notificación como leída.
+ */
+export async function marcarNotificacionLeida(id) {
+  if (!id) return
+  if (DB_MODE === 'supabase') {
+    try {
+      await supabase.from('notificaciones').update({ leido: true }).eq('id', id)
+    } catch (e) {
+      console.warn('Error marcando notificación leída:', e)
+    }
+  }
+  const notifs = getFromStorage('notificaciones') || []
+  const updated = notifs.map(n => n.id === id ? { ...n, leido: true } : n)
+  saveToStorage('notificaciones', updated)
+  window.dispatchEvent(new CustomEvent('gea-notificaciones-actualizadas'))
+}
+
+/**
+ * Marca todas las notificaciones de un rol como leídas.
+ */
+export async function marcarTodasNotificacionesLeidas(rol = 'admin') {
+  if (DB_MODE === 'supabase') {
+    try {
+      let q = supabase.from('notificaciones').update({ leido: true }).eq('leido', false)
+      if (rol && rol !== 'todos') {
+        q = q.or(`rol_destinatario.eq.${rol},rol_destinatario.eq.todos,rol_destinatario.is.null`)
+      }
+      await q
+    } catch (e) {
+      console.warn('Error marcando todas como leídas:', e)
+    }
+  }
+  const notifs = getFromStorage('notificaciones') || []
+  const updated = notifs.map(n => ({ ...n, leido: true }))
+  saveToStorage('notificaciones', updated)
+  window.dispatchEvent(new CustomEvent('gea-notificaciones-actualizadas'))
 }

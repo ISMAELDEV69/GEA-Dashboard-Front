@@ -779,6 +779,7 @@ function RequerimientosReport({
           segmento={segmento}
           campana={campana}
           estado={estado}
+          showEstado={true}
           modalidades={modalidades}
           tipo={tipo}
           onPeriodoChange={(value) => { setPeriodo(value); setSemana(''); setSegmento(''); setCampana('') }}
@@ -1079,20 +1080,14 @@ function CoberturaDotacion() {
   const fmt = (val) => formatPeNumber(val, decimals)
 
   const filters = useMemo(
-    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado, modalidades, tipo, seguimientoAxis, condicion }),
-    [semana, segmento, campana, effectivePeriodo, estado, modalidades, tipo, seguimientoAxis, condicion]
+    () => ({ semana, segmento, campana, periodo: effectivePeriodo, estado: '', modalidades, tipo, seguimientoAxis, condicion }),
+    [semana, segmento, campana, effectivePeriodo, modalidades, tipo, seguimientoAxis, condicion]
   )
 
   const view = useMemo(
     () => aggregateCoberturaDotacion(model, filters),
     [model, filters]
   )
-
-  useEffect(() => {
-    if (estado && view.filterOptions.estados.length && !view.filterOptions.estados.includes(estado)) {
-      setEstado('')
-    }
-  }, [estado, view.filterOptions.estados])
 
   const clearFilters = useCallback(() => {
     setSemana('')
@@ -1204,7 +1199,7 @@ function CoberturaDotacion() {
           </button>
           <p className="font-black uppercase tracking-wide">Sin datos para Proyectados</p>
           <p className="mt-2 text-[var(--text-secondary)]">
-            No hay filas de cobertura_dotacion para mostrar. El estado del grupo se toma de capacidad_rys cuando existe ficha.
+            No hay filas de cobertura_dotacion para mostrar.
           </p>
         </div>
       )
@@ -1257,7 +1252,7 @@ function CoberturaDotacion() {
           semana={semana}
           segmento={segmento}
           campana={campana}
-          estado={estado}
+          showEstado={false}
           condicion={condicion}
           modalidades={modalidades}
           tipo={tipo}

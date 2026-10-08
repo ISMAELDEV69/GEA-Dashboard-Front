@@ -118,6 +118,7 @@ export function CoberturaReportChrome({
   segmento,
   campana,
   estado,
+  showEstado = false,
   condicion,
   modalidades,
   tipo,
@@ -136,7 +137,7 @@ export function CoberturaReportChrome({
     semana,
     segmento,
     campana,
-    estado,
+    estado: showEstado ? estado : '',
     condicion,
     modalidades,
     periodo,
@@ -205,14 +206,16 @@ export function CoberturaReportChrome({
               allLabel="Todas"
               wide
             />
-            <FilterField
-              label="Estado"
-              icon={Activity}
-              value={estado}
-              onChange={onEstadoChange}
-              options={filterOptions.estados || []}
-              allLabel="Todas"
-            />
+            {showEstado ? (
+              <FilterField
+                label="Estado"
+                icon={Activity}
+                value={estado}
+                onChange={onEstadoChange}
+                options={filterOptions.estados || []}
+                allLabel="Todas"
+              />
+            ) : null}
             <SegmentedTrack label="Modalidad">
               {MODALIDADES.map((m) => (
                 <SegmentedOption
