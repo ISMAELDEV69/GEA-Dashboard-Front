@@ -5061,21 +5061,30 @@ export async function fetchGoogleFormsPool(url, sheetName = null) {
  * para que en la base de datos oficial y en el Control de Asistencia figure con estado DESCUENTO
  * (y nunca como 'CESADO').
  */
-export async function syncApprovedDescuentosToConsolidado(dnis = []) {
-  if (DB_MODE !== 'supabase' || !dnis || dnis.length === 0) return;
+export async function syncApprovedDescuentosToConsolidado(items = []) {
+  if (DB_MODE !== 'supabase' || !items || items.length === 0) return;
   try {
-    const cleanDnis = [...new Set(dnis.map(d => String(d || '').trim().replace(/\D/g, '') || String(d || '').trim().toUpperCase()).filter(Boolean))];
-    if (cleanDnis.length === 0) return;
+    for (const item of items) {
+      const dni = typeof item === 'object' ? String(item.dni_ce || item.dni || '').trim() : String(item || '').trim();
+      const grupo = typeof item === 'object' ? String(item.grupo_cap || item.grupo || '').trim() : null;
+      if (!dni) continue;
 
-    for (const dni of cleanDnis) {
-      await supabase
+      let query = supabase
         .from('consolidado_asistencias')
         .update({
           estado: 'DESCUENTO',
           sigla: 'DESC',
           motivo_baja: 'DESCUENTO'
         })
-        .or(`documento.eq.${dni},documento.ilike.%${dni}%`);
+        .eq('documento', dni)
+        .or('estado.eq.CESADO,sigla.eq.B,motivo_baja.ilike.%BAJA%');
+
+      // REGLA ESTRICTA: El descuento SOLO impacta en el grupo específico donde fue solicitado
+      if (grupo) {
+        query = query.eq('codigo_grupo', grupo);
+      }
+
+      await query;
     }
 
     invalidateCache('all_consolidado');
@@ -5104,7 +5113,7 @@ export async function autoApproveExpiredDescuentos() {
 
     const now = new Date();
     const expiredIds = [];
-    const expiredDnis = [];
+    const expiredItems = [];
 
     for (const row of data) {
       if (row.procede === 'NO PROCEDE' || row.autoriza_rys === 'NO') continue;
@@ -5112,7 +5121,7 @@ export async function autoApproveExpiredDescuentos() {
       const regTime = row.fecha_registro || row.created_at;
       if (isDescuentoVencido48h(regTime, now)) {
         expiredIds.push(row.id);
-        if (row.dni_ce) expiredDnis.push(row.dni_ce);
+        if (row.dni_ce) expiredItems.push({ dni_ce: row.dni_ce, grupo_cap: row.grupo_cap });
       }
     }
 
@@ -5131,8 +5140,8 @@ export async function autoApproveExpiredDescuentos() {
       if (updErr) {
         console.warn('Error al auto-aprobar descuentos por 48h hábiles:', updErr);
       } else {
-        if (expiredDnis.length > 0) {
-          syncApprovedDescuentosToConsolidado(expiredDnis).catch(() => {});
+        if (expiredItems.length > 0) {
+          syncApprovedDescuentosToConsolidado(expiredItems).catch(() => {});
         }
         invalidateCache('descuentos_set_global');
         invalidateCache('all_descuentos_bi');
@@ -5443,9 +5452,9 @@ export async function updateDescuentosAutorizacionBulk(ids, estado, comentario) 
   if (error) throw error;
   
   if (estado === 'SI' && data && data.length > 0) {
-    const dnis = data.map(r => r.dni_ce).filter(Boolean);
-    if (dnis.length > 0) {
-      syncApprovedDescuentosToConsolidado(dnis).catch(() => {});
+    const items = data.map(r => ({ dni_ce: r.dni_ce, grupo_cap: r.grupo_cap })).filter(r => r.dni_ce);
+    if (items.length > 0) {
+      syncApprovedDescuentosToConsolidado(items).catch(() => {});
     }
   }
 
@@ -5497,7 +5506,7 @@ export async function updateDescuentosIndividuales(updatesArray) {
     if (!updErr) {
       successCount++;
       if (procedeStr === 'PROCEDE' && update.dni_ce) {
-        syncApprovedDescuentosToConsolidado([update.dni_ce]).catch(() => {});
+        syncApprovedDescuentosToConsolidado([{ dni_ce: update.dni_ce, grupo_cap: update.grupo_cap }]).catch(() => {});
       }
       mockAuditLog('descuentos', 'AUTORIZAR_RYS_INDIVIDUAL', update.id, null, { estado: update.estado, comentario: update.comentario, procede: procedeStr });
     }

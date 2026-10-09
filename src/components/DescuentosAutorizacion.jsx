@@ -103,6 +103,7 @@ export default function DescuentosAutorizacion() {
       const res = await updateDescuentosIndividuales([{
         id,
         dni_ce: row.dni_ce,
+        grupo_cap: row.grupo_cap,
         estado: edit?.estado ?? '',
         comentario: edit?.comentario || '',
         autoriza_cap: row.autoriza_cap
@@ -128,6 +129,7 @@ export default function DescuentosAutorizacion() {
       return {
         id,
         dni_ce: p?.dni_ce,
+        grupo_cap: p?.grupo_cap,
         estado: rowEdits[id]?.estado ?? '',
         comentario: rowEdits[id]?.comentario || '',
         autoriza_cap: p?.autoriza_cap
