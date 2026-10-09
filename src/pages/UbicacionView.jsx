@@ -43,6 +43,7 @@ import {
 import GeaCommandMap from '../components/dashboard/GeaCommandMap'
 import MobilityReubicacionModal from '../components/dashboard/MobilityReubicacionModal'
 import { analyzeMobilityAndDistances, GEA_SEDES } from '../lib/geoMobilityService'
+import { fetchAnaliticaMovilidad } from '../lib/dataService'
 import { useIsDarkTheme } from '../hooks/useIsDarkTheme'
 
 export default function UbicacionView({
@@ -76,13 +77,70 @@ export default function UbicacionView({
   }))
 
   useEffect(() => {
+    let isMounted = true
     startTransition(() => {
-      const result = analyzeMobilityAndDistances(postulantes || [], {
-        periodo: selectedPeriodoFilter,
-        asistencias: asistencias || []
-      })
-      setMobilityData(result)
+      fetchAnaliticaMovilidad({ periodo: selectedPeriodoFilter })
+        .then(rows => {
+          if (!isMounted) return
+          if (Array.isArray(rows) && rows.length > 0) {
+            const mapped = rows.map(r => ({
+              id: r.id,
+              documento: r.documento,
+              nombre: r.nombre_completo,
+              candidato: r.nombre_completo,
+              modalidad: r.modalidad || 'PRESENCIAL',
+              distrito: r.ciudad || r.distrito_residencia || 'LIMA',
+              ciudad: r.ciudad || 'LIMA',
+              departamento: r.departamento || 'LIMA',
+              direccion: r.direccion_domicilio || '',
+              lat: Number(r.lat_origen || -12.0463),
+              lng: Number(r.lng_origen || -76.9248),
+              sede: {
+                id: r.sede_asignada,
+                nombre: r.sede_asignada === 'SAN_ISIDRO' ? 'Sede San Isidro' : r.sede_asignada === 'JOCKEY' ? 'Sede Surco' : r.sede_asignada === 'COMAS' ? 'Sede Comas' : 'Sede Ate',
+                lat: Number(r.sede_lat || -12.0565),
+                lng: Number(r.sede_lng || -76.9535),
+                color: r.sede_asignada === 'SAN_ISIDRO' ? '#06B6D4' : r.sede_asignada === 'JOCKEY' ? '#F59E0B' : r.sede_asignada === 'COMAS' ? '#EC4899' : '#10B981'
+              },
+              distanciaKm: Number(r.distancia_km || 0),
+              rangoDistancia: r.rango_distancia || '<5km',
+              esCritico: Boolean(r.es_zona_critica),
+              asistioDia0: Boolean(r.asistio_dia_0),
+              asistioDia1: Boolean(r.asistio_dia_1),
+              esIOP: r.estado_operativo === 'I-OP',
+              esActivo: r.estado_operativo === 'ACTIVO_AULA',
+              esBaja: r.estado_operativo === 'BAJA',
+              estadoOperativo: r.estado_operativo,
+              periodo: r.periodo,
+              campana: r.campana,
+              grupoCodigo: r.grupo_codigo
+            }))
+
+            const pers = [...new Set(mapped.map(m => m.periodo).filter(Boolean))].sort((a,b) => b.localeCompare(a))
+
+            setMobilityData(prev => ({
+              ...prev,
+              postulantesMapped: mapped,
+              periodosDisponibles: pers.length > 0 ? pers : prev.periodosDisponibles
+            }))
+          } else {
+            const result = analyzeMobilityAndDistances(postulantes || [], {
+              periodo: selectedPeriodoFilter,
+              asistencias: asistencias || []
+            })
+            setMobilityData(result)
+          }
+        })
+        .catch(err => {
+          console.warn('Error fetching analitica movilidad:', err)
+          const result = analyzeMobilityAndDistances(postulantes || [], {
+            periodo: selectedPeriodoFilter,
+            asistencias: asistencias || []
+          })
+          setMobilityData(result)
+        })
     })
+    return () => { isMounted = false }
   }, [postulantes, asistencias, selectedPeriodoFilter])
 
   // ── 1. Filtrado reactivo de postulantes de la nómina ─────────────────────────
@@ -154,18 +212,18 @@ export default function UbicacionView({
     const criticos = presenciales.filter(a => a.distanciaKm > 14).length
 
     const distTot = presenciales.reduce((acc, a) => acc + (a.distanciaKm || 0), 0)
-    const distProm = presenciales.length > 0 ? (distTot / presenciales.length).toFixed(1).replace('.', ',') : '8,2'
-    const pctCrit = total > 0 ? Math.round((criticos / total) * 100) : 13
-    const pctIop = total > 0 ? Math.round((iop / total) * 100) : 39
+    const distProm = presenciales.length > 0 ? (distTot / presenciales.length).toFixed(1).replace('.', ',') : '0,0'
+    const pctCrit = total > 0 ? Math.round((criticos / total) * 100) : 0
+    const pctIop = total > 0 ? Math.round((iop / total) * 100) : 0
 
     return {
-      total: total || 530,
-      presenciales: presenciales.length || 2854,
-      remotos: remotos || 4682,
-      iop: iop || 208,
+      total,
+      presenciales: presenciales.length,
+      remotos,
+      iop,
       bajas,
-      activos: activos || 90,
-      criticos: criticos || 25,
+      activos,
+      criticos,
       distProm,
       pctCrit,
       pctIop
@@ -174,56 +232,53 @@ export default function UbicacionView({
 
   // ── 3. Embudo de Flujo Operativo: Nómina -> Día 0 -> Día 1 (Exactamente 3 etapas) ──
   const funnelOperativo = useMemo(() => {
-    const totalNomina = filteredAsesores.length || 530
-    const dia0 = filteredAsesores.filter(a => a.asistioDia0).length || Math.round(totalNomina * 0.49)
-    const dia1 = filteredAsesores.filter(a => a.asistioDia1).length || Math.round(totalNomina * 0.73)
+    const totalNomina = filteredAsesores.length
+    const dia0 = filteredAsesores.filter(a => a.asistioDia0).length
+    const dia1 = filteredAsesores.filter(a => a.asistioDia1).length
 
-    const pctD0 = Math.round((dia0 / totalNomina) * 100)
-    const pctD1 = Math.round((dia1 / totalNomina) * 100)
+    const pctD0 = totalNomina > 0 ? Math.round((dia0 / totalNomina) * 100) : 0
+    const pctD1 = totalNomina > 0 ? Math.round((dia1 / totalNomina) * 100) : 0
 
     return [
       { step: 'Nómina total', count: totalNomina, pct: 100, barWidthPct: 100, color: '#0284C7' },
-      { step: 'Asistencia día 0', count: dia0, pct: pctD0, barWidthPct: Math.max(20, pctD0), color: '#06B6D4' },
-      { step: 'Asistencia día 1', count: dia1, pct: pctD1, barWidthPct: Math.max(20, pctD1), color: '#10B981' }
+      { step: 'Asistencia día 0', count: dia0, pct: pctD0, barWidthPct: Math.max(10, pctD0), color: '#06B6D4' },
+      { step: 'Asistencia día 1', count: dia1, pct: pctD1, barWidthPct: Math.max(10, pctD1), color: '#10B981' }
     ]
   }, [filteredAsesores])
 
   // ── 4. Donut: Asesores por Sede ──────────────────────────────────────────────
   const sedeDonutData = useMemo(() => {
     const sedesConfig = [
-      { id: 'ATE', nombre: 'Ate', color: '#10B981', defaultVal: 2962 },
-      { id: 'JOCKEY', nombre: 'Jockey Plaza', color: '#F59E0B', defaultVal: 2995 },
-      { id: 'SAN_ISIDRO', nombre: 'San Isidro', color: '#06B6D4', defaultVal: 618 },
-      { id: 'COMAS', nombre: 'Comas', color: '#EC4899', defaultVal: 530 }
+      { id: 'ATE', nombre: 'Ate', color: '#10B981' },
+      { id: 'JOCKEY', nombre: 'Jockey Plaza', color: '#F59E0B' },
+      { id: 'SAN_ISIDRO', nombre: 'San Isidro', color: '#06B6D4' },
+      { id: 'COMAS', nombre: 'Comas', color: '#EC4899' }
     ]
 
     const allMapped = mobilityData.postulantesMapped || []
 
     return sedesConfig.map(s => {
-      let count = 0
-      if (allMapped.length > 0) {
-        count = allMapped.filter(a => {
-          const sId = String(a.sede?.id || a.sede || '').toUpperCase()
-          if (s.id === 'SAN_ISIDRO') {
-            return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('COLOMBIA') || sId.includes('CANAVAL')
-          }
-          if (s.id === 'ATE') {
-            return sId === 'ATE' || sId.includes('FRUTALES') || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
-          }
-          if (s.id === 'JOCKEY') {
-            return sId === 'JOCKEY' || sId === 'SURCO' || sId.includes('SURCO') || sId.includes('OLGUIN') || sId.includes('PRADO')
-          }
-          if (s.id === 'COMAS') {
-            return sId === 'COMAS' || sId.includes('ANGELES') || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
-          }
-          return sId === s.id
-        }).length
-      }
+      const count = allMapped.filter(a => {
+        const sId = String(a.sede?.id || a.sede || '').toUpperCase()
+        if (s.id === 'SAN_ISIDRO') {
+          return sId === 'SAN_ISIDRO' || sId === 'SAN ISIDRO' || sId.includes('ISIDRO') || sId.includes('COLOMBIA') || sId.includes('CANAVAL')
+        }
+        if (s.id === 'ATE') {
+          return sId === 'ATE' || sId.includes('FRUTALES') || sId.includes('PURUCHUCO') || sId.includes('AYLLON')
+        }
+        if (s.id === 'JOCKEY') {
+          return sId === 'JOCKEY' || sId === 'SURCO' || sId.includes('SURCO') || sId.includes('OLGUIN') || sId.includes('PRADO')
+        }
+        if (s.id === 'COMAS') {
+          return sId === 'COMAS' || sId.includes('ANGELES') || sId.includes('NORTE') || sId.includes('UNIVERSITARIA')
+        }
+        return sId === s.id
+      }).length
 
       return {
         id: s.id,
         name: s.nombre,
-        value: count > 0 ? count : s.defaultVal,
+        value: count,
         color: s.color,
         isSelected: selectedSedeFilter === s.id
       }
@@ -252,7 +307,7 @@ export default function UbicacionView({
       }
     })
 
-    if (realList.length >= 4) {
+    if (realList.length > 0) {
       return realList
         .sort((a, b) => b.distancia - a.distancia)
         .slice(0, 7)
@@ -264,15 +319,7 @@ export default function UbicacionView({
         })
     }
 
-    return [
-      { distrito: 'S. J. de Lurigancho', distancia: 10.4, color: '#EF4444' },
-      { distrito: 'Chiclayo', distancia: 9.0, color: '#F59E0B' },
-      { distrito: 'Lima Metrop.', distancia: 6.1, color: '#F59E0B' },
-      { distrito: 'Ate', distancia: 5.2, color: '#0284C7' },
-      { distrito: 'Comas', distancia: 4.8, color: '#0284C7' },
-      { distrito: 'S. M. de Porres', distancia: 4.1, color: '#0284C7' },
-      { distrito: 'Santa Anita', distancia: 3.6, color: '#0284C7' }
-    ]
+    return []
   }, [filteredAsesores])
 
   // ── 6. Diagnóstico de Reclutamiento: Rutas con Riesgo de Deserción (>12 km) ─
@@ -306,15 +353,7 @@ export default function UbicacionView({
       .sort((a, b) => b.distanciaKm - a.distanciaKm)
       .slice(0, 4)
 
-    if (list.length > 0) return list
-
-    // Default informativo si aún no hay nómina mapeada
-    return [
-      { distrito: 'S. J. de Lurigancho', sede: 'Ate', total: 18, distanciaKm: 18.2, bajas: 6, reubicable: 'Comas', ahorroKm: 8.5 },
-      { distrito: 'Villa El Salvador', sede: 'San Isidro', total: 14, distanciaKm: 16.4, bajas: 5, reubicable: 'Surco', ahorroKm: 7.2 },
-      { distrito: 'Puente Piedra', sede: 'San Isidro', total: 12, distanciaKm: 22.1, bajas: 4, reubicable: 'Comas', ahorroKm: 12.0 },
-      { distrito: 'Carabayllo', sede: 'Ate', total: 9, distanciaKm: 24.5, bajas: 4, reubicable: 'Comas', ahorroKm: 14.1 }
-    ]
+    return list
   }, [filteredAsesores])
 
   // ── 7. Asesores por rango de distancia ───────────────────────────────────────
@@ -344,12 +383,12 @@ export default function UbicacionView({
       })
     }
 
-    return [
-      { range: '< 5 km', asesores: 151, acumulado: 28, color: '#0284C7' },
-      { range: '5 – 10 km', asesores: 210, acumulado: 68, color: '#0284C7' },
-      { range: '10 – 15 km', asesores: 144, acumulado: 95, color: '#F59E0B' },
-      { range: '> 15 km', asesores: 25, acumulado: 100, color: '#EF4444' }
-    ]
+    return buckets.map(b => ({
+      range: b.range,
+      asesores: 0,
+      acumulado: 0,
+      color: b.color
+    }))
   }, [filteredAsesores])
 
   // ── 8. Reubicaciones inmediatas ──────────────────────────────────────────────
@@ -363,11 +402,7 @@ export default function UbicacionView({
     if (sugerenciasReubicacion.length > 0) {
       return sugerenciasReubicacion.slice(0, 5)
     }
-    return [
-      { id: '1', nombre: 'Karen Gonzales', distrito: 'Los Olivos', sedeSugerida: 'Comas', ahorroKm: 11.4 },
-      { id: '2', nombre: 'Michael Antonio Tone', distrito: 'San Martín de Porres', sedeSugerida: 'Comas', ahorroKm: 9.3 },
-      { id: '3', nombre: 'Alexa Nevenka Gibson', distrito: 'Magdalena del Mar', sedeSugerida: 'San Isidro', ahorroKm: 8.1 }
-    ]
+    return []
   }, [sugerenciasReubicacion])
 
   const handleOpenReubicar = (asesor = null) => {
@@ -801,27 +836,33 @@ export default function UbicacionView({
             </div>
 
             <div className="space-y-1.5 my-1">
-              {distritosBarData.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span className="w-28 text-[11px] text-[var(--text-secondary)] truncate text-right">
-                    {item.distrito}
-                  </span>
-                  <div className="flex-1 flex items-center gap-1.5">
-                    <div className="flex-1 bg-[var(--bg-muted)] h-2.5 rounded-xs overflow-hidden">
-                      <div
-                        className="h-full rounded-xs transition-all duration-500"
-                        style={{
-                          width: `${Math.min(100, (item.distancia / 15) * 100)}%`,
-                          backgroundColor: item.color
-                        }}
-                      />
-                    </div>
-                    <span className="text-[10px] font-mono font-bold text-[var(--text-primary)] w-7 text-right">
-                      {item.distancia.toString().replace('.', ',')}
-                    </span>
-                  </div>
+              {distritosBarData.length === 0 ? (
+                <div className="py-5 text-center text-xs text-[var(--text-muted)]">
+                  Sin traslados presenciales en este filtro
                 </div>
-              ))}
+              ) : (
+                distritosBarData.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs">
+                    <span className="w-28 text-[11px] text-[var(--text-secondary)] truncate text-right">
+                      {item.distrito}
+                    </span>
+                    <div className="flex-1 flex items-center gap-1.5">
+                      <div className="flex-1 bg-[var(--bg-muted)] h-2.5 rounded-xs overflow-hidden">
+                        <div
+                          className="h-full rounded-xs transition-all duration-500"
+                          style={{
+                            width: `${Math.min(100, (item.distancia / 15) * 100)}%`,
+                            backgroundColor: item.color
+                          }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-[var(--text-primary)] w-7 text-right">
+                        {item.distancia.toString().replace('.', ',')}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
             {/* Escala numérica inferior (0, 5, 10, 15) */}
@@ -848,35 +889,41 @@ export default function UbicacionView({
             </div>
 
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-              {rutasRiesgoReclutamiento.map((r, idx) => (
-                <div
-                  key={idx}
-                  className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-xs space-y-1"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-[var(--text-primary)] truncate text-[11px]">
-                      {r.distrito} → {r.sede}
-                    </span>
-                    <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-bold ${
-                      r.distanciaKm >= 14 ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                    }`}>
-                      {r.distanciaKm} km
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)]">
-                    <span>{r.total} postulantes en nómina</span>
-                    <span className="text-rose-600 dark:text-rose-400 font-semibold">{r.bajas} bajas tempranas</span>
-                  </div>
-
-                  {r.reubicable && (
-                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[var(--border-subtle)] text-emerald-600 dark:text-emerald-400">
-                      <span>⚡ Mejor sede: <strong>{r.reubicable}</strong></span>
-                      <span className="font-mono font-bold">-{r.ahorroKm} km</span>
-                    </div>
-                  )}
+              {rutasRiesgoReclutamiento.length === 0 ? (
+                <div className="py-6 text-center text-xs text-[var(--text-muted)]">
+                  No se detectan rutas críticas de traslado (&gt; 9 km) en este filtro
                 </div>
-              ))}
+              ) : (
+                rutasRiesgoReclutamiento.map((r, idx) => (
+                  <div
+                    key={idx}
+                    className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[var(--text-primary)] truncate text-[11px]">
+                        {r.distrito} → {r.sede}
+                      </span>
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-mono font-bold ${
+                        r.distanciaKm >= 14 ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                      }`}>
+                        {r.distanciaKm} km
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+                      <span>{r.total} postulantes en nómina</span>
+                      <span className="text-rose-600 dark:text-rose-400 font-semibold">{r.bajas} bajas tempranas</span>
+                    </div>
+
+                    {r.reubicable && (
+                      <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[var(--border-subtle)] text-emerald-600 dark:text-emerald-400">
+                        <span>⚡ Mejor sede: <strong>{r.reubicable}</strong></span>
+                        <span className="font-mono font-bold">-{r.ahorroKm} km</span>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -968,7 +1015,7 @@ export default function UbicacionView({
                 Reubicaciones inmediatas
               </h3>
               <p className="text-[11px] text-[var(--text-muted)]">
-                {sugerenciasReubicacion.length || 251} disponibles · ordenadas por ahorro de traslado
+                {sugerenciasReubicacion.length} disponibles · ordenadas por ahorro de traslado
               </p>
             </div>
             <button
@@ -992,32 +1039,40 @@ export default function UbicacionView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {reubicacionesTableList.map((item, idx) => (
-                  <tr key={item.id || idx} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
-                    <td className="py-2.5 font-medium text-[var(--text-primary)]">
-                      {item.nombre || item.candidato}
-                    </td>
-                    <td className="py-2.5 text-[var(--text-secondary)]">
-                      {item.distrito}
-                    </td>
-                    <td className="py-2.5 text-[var(--text-secondary)] font-medium">
-                      {item.sedeSugerida}
-                    </td>
-                    <td className="py-2.5">
-                      <div className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono font-semibold text-[11px]">
-                        {item.ahorroKm?.toString().replace('.', ',')} km
-                      </div>
-                    </td>
-                    <td className="py-2.5 text-right">
-                      <button
-                        onClick={() => handleOpenReubicar(item)}
-                        className="px-3 py-1 rounded-md bg-[#00897B] hover:bg-[#00796B] text-white font-medium text-xs shadow-xs transition-all cursor-pointer"
-                      >
-                        Reubicar
-                      </button>
+                {reubicacionesTableList.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-xs text-[var(--text-muted)]">
+                      No hay sugerencias de reubicación pendientes para este filtro
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  reubicacionesTableList.map((item, idx) => (
+                    <tr key={item.id || idx} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
+                      <td className="py-2.5 font-medium text-[var(--text-primary)]">
+                        {item.nombre || item.candidato}
+                      </td>
+                      <td className="py-2.5 text-[var(--text-secondary)]">
+                        {item.distrito}
+                      </td>
+                      <td className="py-2.5 text-[var(--text-secondary)] font-medium">
+                        {item.sedeSugerida}
+                      </td>
+                      <td className="py-2.5">
+                        <div className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-mono font-semibold text-[11px]">
+                          {item.ahorroKm?.toString().replace('.', ',')} km
+                        </div>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <button
+                          onClick={() => handleOpenReubicar(item)}
+                          className="px-3 py-1 rounded-md bg-[#00897B] hover:bg-[#00796B] text-white font-medium text-xs shadow-xs transition-all cursor-pointer"
+                        >
+                          Reubicar
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

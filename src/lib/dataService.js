@@ -9706,3 +9706,36 @@ export async function marcarTodasNotificacionesLeidas(rol = 'admin') {
   saveToStorage('notificaciones', updated)
   window.dispatchEvent(new CustomEvent('gea-notificaciones-actualizadas'))
 }
+
+/**
+ * Consulta la tabla analítica dedicada de movilidad y ubicación geográfica.
+ */
+export async function fetchAnaliticaMovilidad({ periodo = null, modalidad = null } = {}) {
+  if (DB_MODE === 'supabase') {
+    try {
+      let q = supabase
+        .from('analitica_movilidad_geografica')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (periodo && periodo !== 'TODOS') {
+        q = q.eq('periodo', String(periodo).trim())
+      }
+      if (modalidad && modalidad !== 'TODAS') {
+        q = q.eq('modalidad', String(modalidad).trim())
+      }
+      
+      const { data, error } = await q
+      if (error) {
+        console.warn('Error consultando analitica_movilidad_geografica:', error)
+        return []
+      }
+      return data || []
+    } catch (err) {
+      console.warn('Excepción en fetchAnaliticaMovilidad:', err)
+      return []
+    }
+  }
+  return []
+}
+
