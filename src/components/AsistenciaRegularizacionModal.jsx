@@ -373,30 +373,33 @@ export default function AsistenciaRegularizacionModal({
   const handleStatusSelect = (fecha, newSigla) => {
     setRecordsState(prev => {
       const targetIndex = prev.findIndex(r => r.fecha === fecha)
+      if (targetIndex === -1) return prev
+      const isTargetDia1 = Boolean(prev[targetIndex].isDia1 || prev[targetIndex].dayIndex === 1)
+
       return prev.map((r, idx) => {
         if (r.fecha === fecha) {
           let newMotivo = r.motivo_baja
           if (newSigla !== 'B') {
             newMotivo = ''
           } else if (!newMotivo) {
-            newMotivo = defaultBajaMotivo({
-              trainingDayIndex: r.dayIndex || (r.isDia1 ? 1 : 99),
-              row: profileRow,
-              existingMotivo: '',
-            })
+            newMotivo = isTargetDia1 ? 'BAJA DIA 1' : 'DESERCIÓN'
+          } else if (!isTargetDia1 && isBajaDia1Motivo(newMotivo)) {
+            newMotivo = 'DESERCIÓN'
           }
           return { ...r, sigla: newSigla, motivo_baja: newMotivo }
         }
 
         // Si estamos poniendo Asistencia ('A' o 'I-OP') y un día anterior tenía 'B' (Baja),
-        // convertimos la baja anterior a 'FJ' (Falta Justificada) para reactivar al alumno sin conflicto de cese
-        if ((newSigla === 'A' || newSigla === 'I-OP') && targetIndex !== -1 && idx < targetIndex && r.sigla === 'B') {
-          return { ...r, sigla: 'FJ', motivo_baja: '' }
+        // levantamos la baja convirtiendo el día anterior a 'FI' (Falta Injustificada) y reactivamos al alumno
+        if ((newSigla === 'A' || newSigla === 'I-OP') && idx < targetIndex && r.sigla === 'B') {
+          return { ...r, sigla: 'FI', motivo_baja: '' }
         }
 
         // Si marcamos 'B' en un día, los días posteriores no pueden quedar como asistentes ('A' o 'I-OP')
-        if (newSigla === 'B' && targetIndex !== -1 && idx > targetIndex && (r.sigla === 'A' || r.sigla === 'I-OP')) {
-          return { ...r, sigla: 'B', motivo_baja: r.motivo_baja || 'DESERCIÓN' }
+        // Heredan la sigla 'B' y el MISMO motivo de baja del día de origen (evitando cambiar erróneamente a 'DESERCIÓN')
+        if (newSigla === 'B' && idx > targetIndex) {
+          const originMotivo = isTargetDia1 ? 'BAJA DIA 1' : (prev[targetIndex].motivo_baja || 'DESERCIÓN')
+          return { ...r, sigla: 'B', motivo_baja: originMotivo }
         }
 
         return r
@@ -406,10 +409,27 @@ export default function AsistenciaRegularizacionModal({
   }
 
   const handleMotiveChange = (fecha, newMotivo) => {
-    setRecordsState(prev => prev.map(r => {
-      if (r.fecha !== fecha) return r
-      return { ...r, motivo_baja: newMotivo }
-    }))
+    setRecordsState(prev => {
+      const targetIndex = prev.findIndex(r => r.fecha === fecha)
+      if (targetIndex === -1) return prev
+      const isTargetDia1 = Boolean(prev[targetIndex].isDia1 || prev[targetIndex].dayIndex === 1)
+      let safeMotivo = newMotivo
+      // En días posteriores al Día 1 NUNCA se permite BAJA DIA 1
+      if (!isTargetDia1 && isBajaDia1Motivo(safeMotivo)) {
+        safeMotivo = 'DESERCIÓN'
+      }
+
+      return prev.map((r, idx) => {
+        if (r.fecha === fecha) {
+          return { ...r, motivo_baja: safeMotivo }
+        }
+        // Si este día es posterior al cese y también es 'B', sincronizar su motivo
+        if (idx > targetIndex && r.sigla === 'B') {
+          return { ...r, motivo_baja: safeMotivo }
+        }
+        return r
+      })
+    })
   }
 
   const handleMarkAllAttended = () => {
@@ -717,6 +737,9 @@ export default function AsistenciaRegularizacionModal({
                           (originalRecordsMap.get(rec.fecha).motivo_baja || '') !== (rec.motivo_baja || '')
                         )
                         const isDropdownOpen = activeDropdownDate === rec.fecha
+                        const firstBajaIndex = recordsState.findIndex(r => r.sigla === 'B')
+                        const isBajaFollower = isBaja && firstBajaIndex !== -1 && index > firstBajaIndex
+                        const isOriginDia1 = firstBajaIndex !== -1 && Boolean(recordsState[firstBajaIndex]?.isDia1 || recordsState[firstBajaIndex]?.dayIndex === 1)
 
                         return (
                           <td 
@@ -769,12 +792,17 @@ export default function AsistenciaRegularizacionModal({
                                   <select
                                     value={rec.motivo_baja || ''}
                                     onChange={e => handleMotiveChange(rec.fecha, e.target.value)}
-                                    disabled={isReadOnly || isSaving}
-                                    className="w-full py-1 px-1.5 text-[10px] font-bold rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 focus:border-rose-500 outline-none cursor-pointer truncate"
-                                    title="Motivo de Baja"
+                                    disabled={isReadOnly || isSaving || isBajaFollower}
+                                    className={`w-full py-1 px-1.5 text-[10px] font-bold rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 focus:border-rose-500 outline-none truncate ${
+                                      isBajaFollower ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
+                                    }`}
+                                    title={isBajaFollower ? `Baja consolidada el ${formatSpreadsheetDate(recordsState[firstBajaIndex].fecha)}: ${rec.motivo_baja}` : 'Motivo de Baja'}
                                   >
                                     <option value="">-- Motivo --</option>
-                                    <option value="BAJA DIA 1">BAJA DIA 1</option>
+                                    {/* SOLAMENTE en el Día 1 se permite seleccionar BAJA DIA 1 */}
+                                    {Boolean(rec.isDia1 || rec.dayIndex === 1 || (isBajaFollower && isOriginDia1)) && (
+                                      <option value="BAJA DIA 1">BAJA DIA 1</option>
+                                    )}
                                     <option value="OBSERVADO">OBSERVADO</option>
                                     <option value="SOBREDOTACIÓN">SOBREDOTACIÓN</option>
                                     <option value="DESERCIÓN">DESERCIÓN</option>

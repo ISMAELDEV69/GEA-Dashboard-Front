@@ -267,17 +267,26 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
     }
   }
 
-  // Pre-indexar asistencias con sigla I-OP y sigla B (Bajas) para cruce rápido O(1)
+  // Pre-indexar asistencias con sigla I-OP, Bajas, Día 0 y Día 1 para cruce rápido O(1)
   const iopDocsSet = new Set()
   const bajaDocsMap = new Map()
+  const dia0DocsSet = new Set()
+  const dia1DocsSet = new Set()
   if (Array.isArray(asistencias)) {
     asistencias.forEach(a => {
       const doc = String(a.postulante_documento || a.documento || '').trim()
-      const s = String(a.sigla || '').trim().toUpperCase()
+      const s = String(a.sigla || a.sigla_asistencia || a.estado || '').trim().toUpperCase()
+      const diaNum = Number(a.dia)
       if (doc && (s === 'I-OP' || s === 'IOP' || s.includes('INGRESO'))) {
         iopDocsSet.add(doc)
       } else if (doc && (s === 'B' || s.includes('BAJA') || s === 'CESE' || a.motivo_baja)) {
         bajaDocsMap.set(doc, a.motivo_baja || 'BAJA EN ASISTENCIA')
+      }
+      if (doc && diaNum === 0 && (s === 'A' || s === 'FJ' || s === 'I-OP' || s === 'ASISTIO')) {
+        dia0DocsSet.add(doc)
+      }
+      if (doc && (diaNum === 1 || diaNum >= 1) && (s === 'A' || s === 'FI' || s === 'FJ' || s === 'I-OP' || s === 'ASISTIO') && s !== 'B' && s !== 'NSP') {
+        dia1DocsSet.add(doc)
       }
     })
   }
@@ -489,16 +498,23 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
       estadoOperativo, // 'I-OP' | 'ACTIVO' | 'BAJA'
       esIOP: isIOP,
       esActivo: isActivo,
-      // ── ETAPAS DEL EMBUDO OPERATIVO REAL ──
+      // ── ETAPAS DEL EMBUDO OPERATIVO REAL (Nómina -> Día 0 -> Día 1) ──
       asistioDia0: Boolean(
-        String(p.dia_0 || '').toUpperCase().includes('ASIST') ||
-        String(p.dia_0 || '').toUpperCase() === 'SI' ||
-        Boolean(p.evaluacion_dia_0)
+        dia0DocsSet.has(doc) ||
+        String(p.dia_0 || p.asistencia_dia_0 || '').toUpperCase().includes('ASIST') ||
+        String(p.dia_0 || p.asistencia_dia_0 || '').toUpperCase() === 'SI' ||
+        String(p.dia_0 || p.asistencia_dia_0 || '').toUpperCase() === 'SÍ' ||
+        String(p.dia_0 || p.asistencia_dia_0 || '').toUpperCase() === 'OK' ||
+        String(p.dia_0 || p.asistencia_dia_0 || '').toUpperCase() === 'A' ||
+        Boolean(p.evaluacion_dia_0 || p.nota_dia_0)
       ),
       asistioDia1: Boolean(
         isIOP ||
+        dia1DocsSet.has(doc) ||
         rawD1 === 'ASISTIO' || rawD1 === 'A' || rawD1.includes('ASIST') ||
-        rawStatusD1 === 'APTO' || rawStatusD1 === 'COMPLETO' || rawStatusD1 === 'USUARIO CREADO'
+        rawStatusD1 === 'APTO' || rawStatusD1 === 'COMPLETO' || rawStatusD1 === 'USUARIO CREADO' ||
+        rawStatusD1 === 'ASISTIO' ||
+        Boolean(p.evaluacion_dia_1 || p.nota_dia_1)
       ),
       ingresoOJT: Boolean(
         isIOP ||

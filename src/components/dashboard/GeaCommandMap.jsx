@@ -16,6 +16,7 @@ import {
   Eye
 } from 'lucide-react'
 import { GEA_SEDES, LIMA_DISTRITOS } from '../../lib/geoMobilityService'
+import { useIsDarkTheme } from '../../hooks/useIsDarkTheme'
 
 // Proveedores de capas cartográficas reales de Google Maps y Esri (100% libres de marcas de agua)
 const MAP_LAYERS = {
@@ -41,9 +42,11 @@ const MAP_LAYERS = {
     id: 'dark_enterprise',
     label: 'Dark Enterprise',
     icon: '🌃',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    maxZoom: 16,
-    attribution: '&copy; Esri World Dark'
+    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    maxZoom: 20,
+    className: 'leaflet-dark-enterprise',
+    attribution: '&copy; Google Maps'
   }
 }
 
@@ -54,13 +57,25 @@ function ensureLeaflet() {
   return new Promise((resolve, reject) => {
     if (window.L) return resolve(window.L)
 
-    // Inyectar CSS
+    // Inyectar CSS de Leaflet
     if (!document.getElementById('leaflet-core-css')) {
       const link = document.createElement('link')
       link.id = 'leaflet-core-css'
       link.rel = 'stylesheet'
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
       document.head.appendChild(link)
+    }
+
+    // Inyectar CSS para la capa Dark Enterprise (sin marcas de agua ni API key)
+    if (!document.getElementById('leaflet-dark-filter-css')) {
+      const style = document.createElement('style')
+      style.id = 'leaflet-dark-filter-css'
+      style.innerHTML = `
+        .leaflet-dark-enterprise {
+          filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(95%) !important;
+        }
+      `
+      document.head.appendChild(style)
     }
 
     // Inyectar JS
@@ -87,12 +102,31 @@ export default function GeaCommandMap({
   mobilityData,
   selectedSedeId = 'TODAS',
   onSelectSede,
-  onOpenReasignacionModal
+  onOpenReasignacionModal,
+  mapMode: propMapMode,
+  onMapModeChange
 }) {
-  const [mapMode, setMapMode] = useState('puntos') // 'puntos' | 'trayectorias' | 'calor' | 'reubicacion'
+  const isDark = useIsDarkTheme()
+  const [internalMapMode, setInternalMapMode] = useState('puntos')
+  const mapMode = propMapMode !== undefined ? propMapMode : internalMapMode
+  const setMapMode = (mode) => {
+    setInternalMapMode(mode)
+    if (onMapModeChange) onMapModeChange(mode)
+  }
   const [activeLayer, setActiveLayer] = useState('google_streets') // 'google_streets' | 'google_satellite' | 'dark_enterprise'
   const [hoveredAsesor, setHoveredAsesor] = useState(null)
   const [isLeafletReady, setIsLeafletReady] = useState(false)
+
+  // Sincronizar capa cartográfica inicial sugerida ante cambios de tema
+  const prevThemeRef = useRef(isDark)
+  useEffect(() => {
+    if (prevThemeRef.current !== isDark) {
+      if (!isDark && activeLayer === 'dark_enterprise') {
+        setActiveLayer('google_streets')
+      }
+      prevThemeRef.current = isDark
+    }
+  }, [isDark, activeLayer])
 
   const mapContainerRef = useRef(null)
   const mapInstanceRef = useRef(null)
@@ -131,9 +165,11 @@ export default function GeaCommandMap({
         L.control.zoom({ position: 'bottomright' }).addTo(map)
 
         // Crear grupos de capas
-        tileLayerRef.current = L.tileLayer(MAP_LAYERS[activeLayer].url, {
-          maxZoom: MAP_LAYERS[activeLayer].maxZoom,
-          subdomains: MAP_LAYERS[activeLayer].subdomains
+        const initialLayer = MAP_LAYERS[activeLayer] || MAP_LAYERS.google_streets
+        tileLayerRef.current = L.tileLayer(initialLayer.url, {
+          maxZoom: initialLayer.maxZoom || 19,
+          subdomains: initialLayer.subdomains || ['mt0', 'mt1', 'mt2', 'mt3'],
+          className: initialLayer.className || ''
         }).addTo(map)
 
         polylinesLayerRef.current = L.layerGroup().addTo(map)
@@ -161,11 +197,12 @@ export default function GeaCommandMap({
     if (!L || !mapInstanceRef.current || !tileLayerRef.current) return
 
     mapInstanceRef.current.removeLayer(tileLayerRef.current)
-    const layerConfig = MAP_LAYERS[activeLayer]
+    const layerConfig = MAP_LAYERS[activeLayer] || MAP_LAYERS.google_streets
 
     tileLayerRef.current = L.tileLayer(layerConfig.url, {
-      maxZoom: layerConfig.maxZoom,
-      subdomains: layerConfig.subdomains
+      maxZoom: layerConfig.maxZoom || 19,
+      subdomains: layerConfig.subdomains || ['mt0', 'mt1', 'mt2', 'mt3'],
+      className: layerConfig.className || ''
     }).addTo(mapInstanceRef.current)
   }, [activeLayer])
 
@@ -339,17 +376,29 @@ export default function GeaCommandMap({
 
 
   return (
-    <div className="relative w-full h-full flex flex-col justify-between overflow-hidden rounded-2xl border border-cyan-500/25 bg-[#050B14] shadow-[0_0_50px_rgba(6,182,212,0.15)] select-none">
+    <div className={`relative w-full h-full flex flex-col justify-between overflow-hidden rounded-2xl border select-none transition-colors duration-200 ${
+      isDark 
+        ? 'border-cyan-500/25 bg-[#050B14] shadow-[0_0_50px_rgba(6,182,212,0.15)]' 
+        : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-md'
+    }`}>
       
       {/* ─────────────────────────────────────────────────────────────
           1. HEADER DEL MAPA: SELECTOR DE SEDES & CAPAS GOOGLE MAPS
           ───────────────────────────────────────────────────────────── */}
-      <div className="relative z-30 w-full px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/20 bg-slate-950/85 backdrop-blur-md">
+      <div className={`relative z-30 w-full px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b backdrop-blur-md transition-colors duration-200 ${
+        isDark 
+          ? 'border-cyan-500/20 bg-slate-950/85 text-white' 
+          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 text-[var(--text-primary)]'
+      }`}>
         
         {/* Izquierda: Selector de Sede GEA */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 font-mono text-xs font-black uppercase">
-            <Compass size={13} className="animate-spin text-cyan-400" style={{ animationDuration: '18s' }} />
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-xs font-black uppercase ${
+            isDark 
+              ? 'bg-cyan-500/15 border border-cyan-500/40 text-cyan-300' 
+              : 'bg-cyan-50 border border-cyan-200 text-cyan-700'
+          }`}>
+            <Compass size={13} className="animate-spin text-cyan-500" style={{ animationDuration: '18s' }} />
             <span>GOOGLE MAPS // LIMA</span>
           </div>
 
@@ -357,7 +406,11 @@ export default function GeaCommandMap({
             <select
               value={selectedSedeId}
               onChange={(e) => onSelectSede && onSelectSede(e.target.value)}
-              className="px-2.5 py-1 rounded-lg bg-[#0b1728] border border-cyan-500/40 text-cyan-200 font-bold text-xs focus:outline-none focus:ring-1 focus:ring-cyan-400 cursor-pointer shadow-sm"
+              className={`px-2.5 py-1 rounded-lg font-bold text-xs focus:outline-none cursor-pointer shadow-xs ${
+                isDark 
+                  ? 'bg-[#0b1728] border border-cyan-500/40 text-cyan-200 focus:ring-1 focus:ring-cyan-400' 
+                  : 'bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)]'
+              }`}
             >
               <option value="TODAS">✦ TODAS LAS SEDES GEA</option>
               {Object.values(GEA_SEDES).map(s => (
@@ -369,16 +422,22 @@ export default function GeaCommandMap({
           </div>
         </div>
 
-        {/* Centro: Selector de Capas Cartográficas (Google Calles / Satelital / Cyber Dark) */}
-        <div className="flex items-center p-0.5 rounded-lg bg-black/60 border border-white/15 text-[11px] font-mono">
+        {/* Centro: Selector de Capas Cartográficas */}
+        <div className={`flex items-center p-0.5 rounded-lg text-[11px] font-mono border ${
+          isDark ? 'bg-black/60 border-white/15' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'
+        }`}>
           {Object.values(MAP_LAYERS).map(layer => (
             <button
               key={layer.id}
               onClick={() => setActiveLayer(layer.id)}
               className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer font-bold ${
                 activeLayer === layer.id
-                  ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.6)]'
-                  : 'text-slate-400 hover:text-white'
+                  ? isDark 
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.6)]' 
+                    : 'bg-[var(--accent)] text-white shadow-xs'
+                  : isDark 
+                    ? 'text-slate-400 hover:text-white' 
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
             >
               <span>{layer.icon}</span>
@@ -387,14 +446,16 @@ export default function GeaCommandMap({
           ))}
         </div>
 
-        {/* Derecha: Selector de Modo (Puntos por Sede / Líneas / Reubicación) */}
-        <div className="flex items-center p-0.5 rounded-lg bg-black/60 border border-white/15 text-[11px] font-mono">
+        {/* Derecha: Selector de Modo */}
+        <div className={`flex items-center p-0.5 rounded-lg text-[11px] font-mono border ${
+          isDark ? 'bg-black/60 border-white/15' : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'
+        }`}>
           <button
             onClick={() => setMapMode('puntos')}
             className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
               mapMode === 'puntos'
-                ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.7)]'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-emerald-500 text-white shadow-xs'
+                : isDark ? 'text-slate-400 hover:text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
             title="Ver solo puntos de color correspondientes a cada sede (sin líneas de enlace)"
           >
@@ -405,8 +466,8 @@ export default function GeaCommandMap({
             onClick={() => setMapMode('trayectorias')}
             className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
               mapMode === 'trayectorias'
-                ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.7)]'
-                : 'text-slate-400 hover:text-white'
+                ? isDark ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.7)]' : 'bg-cyan-600 text-white shadow-xs'
+                : isDark ? 'text-slate-400 hover:text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
             title="Activar líneas de desplazamiento desde el domicilio hasta la sede"
           >
@@ -417,8 +478,8 @@ export default function GeaCommandMap({
             onClick={() => setMapMode('reubicacion')}
             className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer font-bold ${
               mapMode === 'reubicacion'
-                ? 'bg-amber-500 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.7)]'
-                : 'text-slate-400 hover:text-white'
+                ? isDark ? 'bg-amber-500 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.7)]' : 'bg-amber-500 text-slate-950 shadow-xs'
+                : isDark ? 'text-slate-400 hover:text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
             title="Oportunidades de cambio de sede para evitar deserciones"
           >
@@ -431,11 +492,19 @@ export default function GeaCommandMap({
       {/* ─────────────────────────────────────────────────────────────
           2. CONTENEDOR DEL MAPA REAL (LEAFLET / GOOGLE MAPS)
           ───────────────────────────────────────────────────────────── */}
-      <div className="relative flex-1 w-full h-full min-h-[380px] overflow-hidden bg-[#070e1b]">
+      <div className={`relative flex-1 w-full h-full min-h-[380px] overflow-hidden transition-colors ${
+        isDark ? 'bg-[#070e1b]' : 'bg-[var(--bg-muted)]'
+      }`}>
         
         {/* Leyenda Visual Flotante: Código de Color de Cada Sede */}
-        <div className="absolute top-3 left-3 z-30 flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-slate-950/85 backdrop-blur-md border border-cyan-500/30 shadow-[0_4px_20px_rgba(0,0,0,0.5)] text-xs font-mono">
-          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">Colores Sede:</span>
+        <div className={`absolute top-3 left-3 z-30 flex flex-wrap items-center gap-1.5 p-2 rounded-xl backdrop-blur-md text-xs font-mono border transition-colors ${
+          isDark 
+            ? 'bg-slate-950/85 border-cyan-500/30 text-white shadow-[0_4px_20px_rgba(0,0,0,0.5)]' 
+            : 'bg-[var(--bg-surface)]/95 border-[var(--border-subtle)] text-[var(--text-primary)] shadow-md'
+        }`}>
+          <span className={`text-[10px] font-bold uppercase tracking-wider mr-1 ${isDark ? 'text-slate-400' : 'text-[var(--text-muted)]'}`}>
+            Colores Sede:
+          </span>
           {Object.values(GEA_SEDES).map(s => {
             const isSelected = selectedSedeId === s.id
             const countSede = postulantesMapped.filter(p => p.sede?.id === s.id).length
@@ -445,11 +514,11 @@ export default function GeaCommandMap({
                 onClick={() => onSelectSede && onSelectSede(isSelected ? 'TODAS' : s.id)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-all cursor-pointer text-[11px] font-bold ${
                   isSelected
-                    ? 'bg-white/20 text-white shadow-md'
-                    : 'bg-black/50 text-slate-200 hover:bg-white/10'
+                    ? isDark ? 'bg-white/20 text-white shadow-md' : 'bg-[var(--accent)] text-white shadow-sm'
+                    : isDark ? 'bg-black/50 text-slate-200 hover:bg-white/10' : 'bg-[var(--bg-elevated)] text-[var(--text-primary)] hover:bg-[var(--bg-muted)]'
                 }`}
                 style={{
-                  borderColor: s.color,
+                  borderColor: isSelected ? s.color : isDark ? undefined : 'var(--border-subtle)',
                   boxShadow: isSelected ? `0 0 10px ${s.color}` : undefined
                 }}
                 title={`Filtrar por ${s.nombre} (${countSede} asesores)`}
@@ -470,30 +539,34 @@ export default function GeaCommandMap({
 
         {/* Tooltip HUD flotante al pasar el mouse por un asesor */}
         {hoveredAsesor && (
-          <div className="absolute bottom-4 left-4 z-40 p-3 rounded-xl border border-cyan-500/50 bg-[#070e1b]/95 backdrop-blur-md text-white shadow-[0_0_30px_rgba(6,182,212,0.3)] max-w-xs font-mono text-xs animate-in fade-in duration-150 pointer-events-none">
-            <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1.5">
-              <span className="font-black text-white truncate max-w-[170px]">
+          <div className={`absolute bottom-4 left-4 z-40 p-3 rounded-xl border backdrop-blur-md max-w-xs font-mono text-xs animate-in fade-in duration-150 pointer-events-none ${
+            isDark 
+              ? 'border-cyan-500/50 bg-[#070e1b]/95 text-white shadow-[0_0_30px_rgba(6,182,212,0.3)]' 
+              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]/98 text-[var(--text-primary)] shadow-lg'
+          }`}>
+            <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-1.5 mb-1.5">
+              <span className="font-black text-[var(--text-primary)] truncate max-w-[170px]">
                 {hoveredAsesor.nombre || hoveredAsesor.candidato}
               </span>
               <span
                 className={`px-1.5 py-0.2 rounded text-[10px] font-black ${
                   hoveredAsesor.distanciaKm > 14
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    ? 'bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-500/40'
+                    : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/40'
                 }`}
               >
                 {hoveredAsesor.distanciaKm} KM
               </span>
             </div>
-            <div className="space-y-1 text-[11px] text-slate-300">
+            <div className="space-y-1 text-[11px] text-[var(--text-secondary)]">
               <div>🏠 <strong>Domicilio:</strong> {hoveredAsesor.distrito}</div>
               <div>🏢 <strong>Sede:</strong> {hoveredAsesor.sede?.nombre}</div>
-              <div className="text-amber-300 flex items-center gap-1">
+              <div className="text-amber-600 dark:text-amber-300 flex items-center gap-1">
                 <Clock size={11} />
                 <span>Viaje estimado: ~{hoveredAsesor.tiempoEstimadoMin} min</span>
               </div>
               {hoveredAsesor.sedeSugerida && (
-                <div className="mt-1.5 p-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px]">
+                <div className="mt-1.5 p-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-[10px]">
                   ⚡ <strong>Sede óptima:</strong> {hoveredAsesor.sedeSugerida} (Ahorra {hoveredAsesor.ahorroKm} km)
                 </div>
               )}
@@ -505,16 +578,20 @@ export default function GeaCommandMap({
       {/* ─────────────────────────────────────────────────────────────
           3. FOOTER DEL MAPA: HUD INFERIOR CON MÉTRICAS EN TIEMPO REAL
           ───────────────────────────────────────────────────────────── */}
-      <div className="relative z-30 w-full px-4 py-2 border-t border-cyan-500/20 bg-slate-950/90 backdrop-blur-md flex flex-wrap items-center justify-between text-xs font-mono gap-3">
-        <div className="flex items-center gap-4 text-slate-300">
+      <div className={`relative z-30 w-full px-4 py-2 border-t backdrop-blur-md flex flex-wrap items-center justify-between text-xs font-mono gap-3 transition-colors ${
+        isDark 
+          ? 'border-cyan-500/20 bg-slate-950/90 text-slate-300' 
+          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 text-[var(--text-primary)]'
+      }`}>
+        <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-400 font-bold">TOTAL ASESORES:</span>
-            <span className="text-white font-black text-sm">{filteredPostulantes.length}</span>
+            <span className={isDark ? 'text-slate-400 font-bold' : 'text-[var(--text-muted)] font-bold'}>TOTAL ASESORES:</span>
+            <span className="font-black text-sm text-[var(--text-primary)]">{filteredPostulantes.length}</span>
           </div>
           <span className="opacity-30">|</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-400 font-bold">DISTANCIA PROM.:</span>
-            <span className="text-cyan-400 font-black text-sm">
+            <span className={isDark ? 'text-slate-400 font-bold' : 'text-[var(--text-muted)] font-bold'}>DISTANCIA PROM.:</span>
+            <span className="text-cyan-600 dark:text-cyan-400 font-black text-sm">
               {filteredPostulantes.length > 0 
                 ? (filteredPostulantes.reduce((acc, p) => acc + (p.distanciaKm || 0), 0) / filteredPostulantes.length).toFixed(1)
                 : '0.0'} km
@@ -522,8 +599,8 @@ export default function GeaCommandMap({
           </div>
           <span className="opacity-30">|</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-slate-400 font-bold">EN RIESGO (&gt;14KM):</span>
-            <span className="text-rose-400 font-black text-sm">
+            <span className={isDark ? 'text-slate-400 font-bold' : 'text-[var(--text-muted)] font-bold'}>EN RIESGO (&gt;14KM):</span>
+            <span className="text-rose-600 dark:text-rose-400 font-black text-sm">
               {filteredPostulantes.filter(p => (p.distanciaKm || 0) > 14).length}
             </span>
           </div>

@@ -64,6 +64,76 @@ export function getFeriadosPeruSet(year) {
   return holidaySet;
 }
 
+const chileHolidaysCache = new Map();
+
+/**
+ * Returns a Set of Chilean holiday dates formatted as YYYY-MM-DD for a given year.
+ */
+export function getFeriadosChileSet(year) {
+  const y = Number(year) || new Date().getFullYear();
+  if (chileHolidaysCache.has(y)) return chileHolidaysCache.get(y);
+
+  const fixed = [
+    `${y}-01-01`, // Año Nuevo
+    `${y}-05-01`, // Día Nacional del Trabajo
+    `${y}-05-21`, // Día de las Glorias Navales
+    `${y}-06-20`, // Día Nacional de los Pueblos Indígenas
+    `${y}-06-29`, // San Pedro y San Pablo
+    `${y}-07-16`, // Virgen del Carmen
+    `${y}-08-15`, // Asunción de la Virgen
+    `${y}-09-18`, // Fiestas Patrias (Independencia)
+    `${y}-09-19`, // Glorias del Ejército
+    `${y}-10-12`, // Encuentro de Dos Mundos
+    `${y}-10-31`, // Día de las Iglesias Evangélicas y Protestantes
+    `${y}-11-01`, // Día de Todos los Santos
+    `${y}-12-08`, // Inmaculada Concepción
+    `${y}-12-25`  // Navidad
+  ];
+
+  const movable = getEasterHolidays(y); // movable[1] es Viernes Santo
+  const sabadoSanto = movable[1] ? new Date(new Date(movable[1]).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : null;
+  const chileMovable = [movable[1], sabadoSanto].filter(Boolean);
+
+  const holidaySet = new Set([...fixed, ...chileMovable]);
+  chileHolidaysCache.set(y, holidaySet);
+  return holidaySet;
+}
+
+/**
+ * Determina el país ('PERU' o 'CHILE') de un grupo en función de su segmento y campaña.
+ */
+export function resolveGrupoPais(grupoObj, campana = '') {
+  const s = String(grupoObj?.segmento || '').toUpperCase();
+  const c = String(campana || grupoObj?.campana || '').toUpperCase();
+  if (
+    s.includes('CHILE') ||
+    c.includes('CHILE') ||
+    c.includes('TUVES') ||
+    c.includes('VTR') ||
+    s.includes('LIPIGAS') ||
+    c.includes('LIPIGAS')
+  ) {
+    return 'CHILE';
+  }
+  return 'PERU';
+}
+
+/**
+ * Determina si una fecha YYYY-MM-DD es feriado nacional oficial para el país del grupo.
+ */
+export function isFeriadoNacional(dateStr, pais = 'PERU') {
+  if (!dateStr) return false;
+  const iso = dateStr.slice(0, 10);
+  const year = parseInt(iso.slice(0, 4), 10);
+  if (isNaN(year)) return false;
+
+  const targetPais = String(pais || 'PERU').toUpperCase();
+  if (targetPais === 'CHILE') {
+    return getFeriadosChileSet(year).has(iso);
+  }
+  return getFeriadosPeruSet(year).has(iso);
+}
+
 /**
  * Checks if a given timestamp represents a non-working period in Peru (Sunday or Holiday).
  */

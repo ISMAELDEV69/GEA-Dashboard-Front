@@ -21,10 +21,11 @@ import {
   Radio,
   Building2,
   CalendarRange,
-  Laptop
+  Laptop,
+  Zap
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado } from '../lib/dataService'
+import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado, levantarBajaPostulante, autocompletarDiasFaltantesGrupo } from '../lib/dataService'
 import {
   canAssignBajaDia1,
   defaultBajaMotivo,
@@ -33,11 +34,13 @@ import {
   countsInFormacionDesercion,
 } from '../lib/bajaDia1Rules'
 import { resolveFormadorSegment } from '../lib/flujoOperativo'
+import { resolveGrupoPais, isFeriadoNacional } from '../lib/businessHoursUtils'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import { useToast } from '../context/ToastContext'
 import AsistenciaRegularizacionModal from './AsistenciaRegularizacionModal'
+import AsistenciaGapAssistantModal from './AsistenciaGapAssistantModal'
 
 const SIGLAS = [
   { value: 'A', label: 'A - Asistencia', bgVar: 'var(--status-a-bg)', textVar: 'var(--status-a-text)' },
@@ -80,6 +83,7 @@ const AttendanceRow = React.memo(function AttendanceRow({
   fecha,
   onStatusChange,
   onMotiveChange,
+  onLevantarBaja,
   motivosBaja,
   isReadOnly = false,
   onOpenRegularizacion
@@ -150,9 +154,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
             <select
               value={item.sigla}
               onChange={(e) => onStatusChange(item.documento, e.target.value)}
-              disabled={isReadOnly || item.isLockedBaja}
+              disabled={isReadOnly}
               className={`w-full rounded-md py-1 px-1.5 font-black text-center text-xs outline-none shadow-xs transition-all border border-[var(--border-normal)] ${
-                isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:scale-105 active:scale-95'
+                isReadOnly ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:scale-105 active:scale-95'
               }`}
               style={{
                 backgroundColor: siglaOpt?.bgVar || 'var(--bg-elevated)',
@@ -176,11 +180,15 @@ const AttendanceRow = React.memo(function AttendanceRow({
               value={item.motivo_baja || (item.isFirstRecordGroup ? 'BAJA DIA 1' : '')}
               onChange={e => onMotiveChange(item.documento, e.target.value)}
               disabled={isReadOnly || item.isLockedBaja}
-              className={`w-full max-w-[220px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
-                isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-60' : ''
+              className={`w-full max-w-[200px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
+                isReadOnly || item.isLockedBaja ? 'cursor-not-allowed opacity-75' : ''
               }`}
+              title={item.isLockedBaja ? `Baja registrada en fecha anterior: ${item.motivo_baja}` : 'Motivo de baja'}
             >
               {item.showBajaDia1Option && <option value="BAJA DIA 1">BAJA DIA 1</option>}
+              {item.isLockedBaja && item.motivo_baja && !item.showBajaDia1Option && (
+                <option value={item.motivo_baja}>{item.motivo_baja}</option>
+              )}
 
               {item.allowOtherMotivos && (
                 <>
@@ -197,6 +205,22 @@ const AttendanceRow = React.memo(function AttendanceRow({
                 </>
               )}
             </select>
+            {item.isLockedBaja && (
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-rose-500 font-bold" title="Baja consolidada en fecha anterior">
+                  🔒
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onLevantarBaja && onLevantarBaja(item)}
+                  disabled={isReadOnly}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 transition-all cursor-pointer shadow-xs active:scale-95"
+                  title="Levantar baja: Convierte el día de la baja previa en Falta Injustificada (FI) y registra Asistencia (A) el día de hoy"
+                >
+                  <span>↺ Levantar Baja</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <span className="text-[var(--text-muted)] text-xs">—</span>
@@ -254,6 +278,11 @@ export default function AsistenciaForm({
   const [calendarMonthIndex, setCalendarMonthIndex] = useState(-1)
   const [regularizandoPostulante, setRegularizandoPostulante] = useState(null)
   
+  // Asistente rápido de días faltantes
+  const [showGapModal, setShowGapModal] = useState(false)
+  const [isProcessingGap, setIsProcessingGap] = useState(false)
+  const [hasPromptedGapForDate, setHasPromptedGapForDate] = useState(null)
+
   const [dia1Calibrado, setDia1Calibrado] = useState(false)
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
   const [liveGrupoMeta, setLiveGrupoMeta] = useState(null)
@@ -1003,17 +1032,14 @@ export default function AsistenciaForm({
         status_dia_1: p.status_dia_1,
         estado: p.estado,
       }
-      const showBajaDia1Option = canAssignBajaDia1({
-        trainingDayIndex,
-        row: profileRow,
-        existingMotivo: existing?.motivo_baja || pastMotiveFromRecords || '',
-      })
-      const allowOtherMotivos = trainingDayIndex > 1
-      const isEligibleBajaD1 = canAssignBajaDia1({
+      // SOLAMENTE en el Día 1 del grupo se permite asignar 'BAJA DIA 1'.
+      const isEligibleBajaD1 = trainingDayIndex === 1 && canAssignBajaDia1({
         trainingDayIndex,
         row: profileRow,
         existingMotivo: '',
       })
+      const showBajaDia1Option = isEligibleBajaD1
+      const allowOtherMotivos = true
 
       const docFormador = String(p.formador_documento || effectiveGrupoObj?.formador_documento || '').trim()
       const nombreFormador = resolveFormadorDisplayName(allFormadores, docFormador, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador || '')
@@ -1080,21 +1106,30 @@ export default function AsistenciaForm({
       let sigla = inheritedSigla
       let motivo_baja = inheritedMotivo
 
-      // Priorizar ediciones manuales pendientes del usuario antes de que se guarden
-      if (userEditsRef.current.has(p.documento)) {
+      // Si la persona ya tiene una baja registrada en CUALQUIER fecha anterior del grupo,
+      // su estado de baja y su motivo quedan estrictamente bloqueados en los días posteriores.
+      const isLockedBaja = Boolean(pastBajaRecord)
+      const pastMotive = pastBajaRecord?.motivo_baja || pastMotiveFromRecords || ''
+      const pastBajaDate = pastBajaRecord ? (pastBajaRecord.fecha_asistencia || pastBajaRecord.fecha_registro_asistencia || pastBajaRecord.fecha) : ''
+
+      // Priorizar ediciones manuales pendientes solo si la fila NO está bloqueada por baja previa
+      if (userEditsRef.current.has(p.documento) && !isLockedBaja) {
         const localEdit = userEditsRef.current.get(p.documento)
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
+      } else if (isLockedBaja) {
+        sigla = 'B'
+        motivo_baja = pastMotive || inheritedMotivo || 'BAJA DIA 1'
       } else if (sigla === 'B' && !motivo_baja) {
-        motivo_baja = pastMotiveFromRecords || defaultBajaMotivo({
+        motivo_baja = defaultBajaMotivo({
           trainingDayIndex,
           row: profileRow,
-          existingMotivo: '',
+          existingMotivo: pastMotive || '',
+          previousMotivo: pastMotive || '',
         })
       }
 
       const isHistoricalBaja = (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || (!existing && inheritedSigla === 'B')
-      const isLockedBaja = false
 
       return {
         documento: p.documento,
@@ -1117,6 +1152,8 @@ export default function AsistenciaForm({
         motivo_baja,
         isLateInclusion,
         isLockedBaja,
+        pastMotive,
+        pastBajaDate,
         isFirstRecordGroup,
         isHistoricalBaja
       }
@@ -1125,8 +1162,84 @@ export default function AsistenciaForm({
     setAttendanceList(list)
   }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado, descuentosAprobadosSet])
 
+  // Casuística: Levantar baja de un postulante que asistió en un día posterior (ej. asistió Día 2)
+  const handleLevantarBaja = useCallback(async (item) => {
+    if (isReadOnly) return
+    const doc = String(item.documento || '').trim()
+    const pastDateRaw = item.pastBajaDate
+    const pastDateFormatted = formatSpreadsheetDate(pastDateRaw) || pastDateRaw
+
+    const confirmed = window.confirm(
+      `¿Deseas levantar la baja de ${item.nombres}?\n\n` +
+      `• Fecha anterior (${pastDateFormatted}): Se convertirá de BAJA a Falta Injustificada (FI).\n` +
+      `• Fecha de hoy (${formatSpreadsheetDate(fecha)}): Se registrará Asistencia (A).\n` +
+      `• Estado en Nómina: Volverá a estar ACTIVO.`
+    )
+    if (!confirmed) return
+
+    try {
+      setSaving(true)
+      await levantarBajaPostulante({
+        documento: doc,
+        grupo_codigo: activeGrupoObj?.codigo || selectedGrupo,
+        campana: activeGrupoObj?.campana || selectedCampana,
+        fechaBaja: pastDateRaw,
+        formadorNombre: effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador || '',
+        formadorDoc: effectiveGrupoObj?.formador_documento || '',
+        fechaHoy: fecha,
+        postulanteInfo: item
+      })
+
+      // 1. Actualizar asistencias en memoria para que la fecha previa quede en FI
+      const targetPastIso = parseFechaAsistencia(pastDateRaw) || pastDateRaw
+      setAsistencias(prev => prev.map(a => {
+        const aDoc = String(a.postulante_documento || a.documento || '').trim()
+        const aFecha = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia
+        if (aDoc === doc && aFecha === targetPastIso) {
+          return {
+            ...a,
+            sigla: 'FI',
+            sigla_asistencia: 'FI',
+            estado: 'ACTIVO',
+            tipo_reclutado: 'APTO',
+            motivo_baja: ''
+          }
+        }
+        return a
+      }))
+
+      // 2. Actualizar lista de asistencia para que hoy quede A y desbloqueado
+      setAttendanceList(prev => prev.map(it => {
+        if (it.documento !== doc) return it
+        return {
+          ...it,
+          sigla: 'A',
+          motivo_baja: '',
+          isLockedBaja: false,
+          tipoReclutado: 'APTO'
+        }
+      }))
+
+      userEditsRef.current.set(doc, { sigla: 'A', motivo_baja: '' })
+
+      toast.success('¡Baja levantada con éxito!', `${item.nombres} ahora tiene Falta Injustificada (FI) en el día previo y Asistencia (A) el día de hoy.`)
+    } catch (err) {
+      console.error('Error al levantar baja:', err)
+      toast.error('Error al levantar baja', err.message || 'No se pudo actualizar el registro.')
+    } finally {
+      setSaving(false)
+    }
+  }, [isReadOnly, activeGrupoObj, selectedGrupo, selectedCampana, effectiveGrupoObj, fecha, toast])
+
   const handleStatusChange = useCallback((doc, newSigla) => {
     if (isReadOnly) return
+    const targetItem = attendanceList.find(i => i.documento === doc)
+    if (targetItem?.isLockedBaja) {
+      if (newSigla === 'A' || newSigla === 'I-OP') {
+        handleLevantarBaja(targetItem)
+      }
+      return
+    }
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
       let newMotivo = item.motivo_baja
@@ -1136,18 +1249,20 @@ export default function AsistenciaForm({
         newMotivo = defaultBajaMotivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
-          existingMotivo: '',
+          existingMotivo: item.pastMotive || '',
+          previousMotivo: item.pastMotive || '',
         })
       }
       userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
       return { ...item, sigla: newSigla, motivo_baja: newMotivo }
     }))
-  }, [isReadOnly])
+  }, [isReadOnly, attendanceList, handleLevantarBaja])
 
   const handleMotiveChange = useCallback((doc, newMotivo) => {
     if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
+      if (item.isLockedBaja) return item
       const nextMotivo = sanitizeBajaDia1Motivo({
         trainingDayIndex: item.trainingDayIndex,
         row: item,
@@ -1185,6 +1300,64 @@ export default function AsistenciaForm({
       .filter(Boolean)
     if (fecha && !dates.includes(fecha)) dates.push(fecha)
     return Array.from(new Set(dates)).sort()
+  }, [asistencias, activeGrupoObj, selectedGrupo, selectedCampana, fecha])
+
+  // ── Detección de días laborales faltantes antes de la fecha activa (Gap Detection) ──
+  const missingWorkingDays = useMemo(() => {
+    const targetGroup = activeGrupoObj?.codigo || selectedGrupo
+    const targetCampana = activeGrupoObj?.campana || selectedCampana
+    if (!targetGroup || !fecha) return []
+
+    // Identificar país del servicio (PERÚ o CHILE)
+    const targetPais = resolveGrupoPais(activeGrupoObj, targetCampana)
+
+    const recordedDatesSet = new Set(
+      asistencias
+        .filter(a => {
+          const matchG = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.codigo_grupo) === normalize(targetGroup)
+          if (!matchG) return false
+          if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) return false
+          return true
+        })
+        .map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha))
+        .filter(Boolean)
+    )
+
+    let startDateIso = null
+    const sortedRecorded = Array.from(recordedDatesSet).sort()
+    if (sortedRecorded.length > 0) {
+      startDateIso = sortedRecorded[0]
+    }
+    if (activeGrupoObj?.fecha_dia_1 && (!startDateIso || activeGrupoObj.fecha_dia_1 < startDateIso)) {
+      startDateIso = activeGrupoObj.fecha_dia_1
+    } else if (activeGrupoObj?.fecha_registro && (!startDateIso || activeGrupoObj.fecha_registro < startDateIso)) {
+      startDateIso = activeGrupoObj.fecha_registro
+    }
+
+    if (!startDateIso || startDateIso >= fecha) return []
+
+    const missing = []
+    const [y, m, d] = startDateIso.split('-').map(Number)
+    const cur = new Date(Date.UTC(y, m - 1, d))
+    const [fy, fm, fd] = fecha.split('-').map(Number)
+    const targetDate = new Date(Date.UTC(fy, fm - 1, fd))
+
+    let safety = 0
+    while (cur < targetDate && safety < 45) {
+      const curIso = cur.toISOString().split('T')[0]
+      const dayOfWeek = cur.getUTCDay()
+      const isHoliday = isFeriadoNacional(curIso, targetPais)
+
+      // Excluir domingos (0)
+      // Si es feriado oficial del país del grupo (ej. 8/10 en Perú o 18/9 en Chile) y no hubo marcación, NO se considera día omitido
+      if (dayOfWeek !== 0 && !recordedDatesSet.has(curIso) && !isHoliday && curIso < fecha) {
+        missing.push(curIso)
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1)
+      safety++
+    }
+
+    return missing.sort()
   }, [asistencias, activeGrupoObj, selectedGrupo, selectedCampana, fecha])
 
   const handleOpenRegularizacion = useCallback((item) => {
@@ -1239,37 +1412,20 @@ export default function AsistenciaForm({
     }
   }, [fecha, activeGrupoObj, selectedGrupo, selectedCampana, onRefresh])
 
-  const handleSave = async (e) => {
-    if (e) e.preventDefault();
-    if (isReadOnly) {
-      if (readOnlyReason === 'SEGMENTO_BLOQUEADO') {
-        toast.error(`Modo solo lectura: Este grupo es de ${grupoSegmento} y tu segmento es ${userSegmento}.`);
-      } else if (readOnlyReason === 'VISTA_INFORMATIVA_RECLUTAMIENTO') {
-        toast.info('Vista informativa: Reclutamiento gestiona la asistencia y nómina en el módulo Nóminas.');
-      } else {
-        toast.error('No tienes permisos para modificar la asistencia de este grupo.');
-      }
-      return;
-    }
-    if (!selectedGrupo) return alert('Selecciona un grupo.')
-    
-    const currentDoc = String(effectiveGrupoObj?.formador_documento || '').trim();
-    const currentNombre = resolveFormadorDisplayName(allFormadores, currentDoc, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador);
-    if (!currentDoc && (!currentNombre || currentNombre === 'SIN ASIGNAR')) {
-      return alert('Este grupo no tiene un formador asignado o no se ha encontrado en la lista. Por favor, asigne un formador en la vista de Asignación antes de registrar la asistencia.');
-    }
-    
+  const executeActualSave = async () => {
     // Auto-sanitizar bajas históricas para que no bloqueen la marcación del día si venían sin motivo
     const sanitizedList = attendanceList.map(item => {
       let motivo_baja = item.motivo_baja
-      if (item.sigla === 'B' && !motivo_baja && !item.isLateInclusion) {
+      // Si la persona ya tiene una baja previa consolidada, preservamos su motivo original inmutable
+      if (item.isLockedBaja && item.pastMotive) {
+        motivo_baja = item.pastMotive
+      } else if (item.sigla === 'B' && !motivo_baja && !item.isLateInclusion) {
         motivo_baja = defaultBajaMotivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
           existingMotivo: '',
         })
-      }
-      if (item.sigla === 'B') {
+      } else if (item.sigla === 'B' && !item.isLockedBaja) {
         motivo_baja = sanitizeBajaDia1Motivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
@@ -1296,12 +1452,6 @@ export default function AsistenciaForm({
       const targetGroup = activeGrupoObj?.codigo || selectedGrupo;
       const weekNum = String(activeGrupoObj?.semana_trabajo || '');
       const nowStr = new Date().toLocaleString('es-PE');
-      
-      const groupDates = [...new Set(asistencias
-        .filter(a => (normalize(a.grupo_codigo) === normalize(targetGroup) || (activeGrupoObj && normalize(a.grupo_codigo) === normalize(activeGrupoObj.codigo))) && (!activeGrupoObj?.campana || normalize(a.campana) === normalize(activeGrupoObj.campana)))
-        .map(a => a.fecha_asistencia))]
-        .sort();
-      const pastDates = groupDates.filter(d => d < fecha);
 
       const drivePayload = [];
       
@@ -1356,6 +1506,85 @@ export default function AsistenciaForm({
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSave = async (e, options = {}) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (isReadOnly) {
+      if (readOnlyReason === 'SEGMENTO_BLOQUEADO') {
+        toast.error(`Modo solo lectura: Este grupo es de ${grupoSegmento} y tu segmento es ${userSegmento}.`);
+      } else if (readOnlyReason === 'VISTA_INFORMATIVA_RECLUTAMIENTO') {
+        toast.info('Vista informativa: Reclutamiento gestiona la asistencia y nómina en el módulo Nóminas.');
+      } else {
+        toast.error('No tienes permisos para modificar la asistencia de este grupo.');
+      }
+      return;
+    }
+    if (!selectedGrupo) return alert('Selecciona un grupo.')
+    
+    const currentDoc = String(effectiveGrupoObj?.formador_documento || '').trim();
+    const currentNombre = resolveFormadorDisplayName(allFormadores, currentDoc, effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador);
+    if (!currentDoc && (!currentNombre || currentNombre === 'SIN ASIGNAR')) {
+      return alert('Este grupo no tiene un formador asignado o no se ha encontrado en la lista. Por favor, asigne un formador en la vista de Asignación antes de registrar la asistencia.');
+    }
+
+    // Si hay días pendientes y no se ha mostrado la advertencia para esta combinación grupo/fecha:
+    // [PAUSADO TEMPORALMENTE A PEDIDO]: No mostrar alerta/modal a los formadores al marcar asistencia
+    /*
+    if (!options.bypassGapModal && missingWorkingDays.length > 0 && hasPromptedGapForDate !== `${selectedGrupo}_${fecha}`) {
+      setShowGapModal(true)
+      return
+    }
+    */
+
+    await executeActualSave()
+  }
+
+  const handleAutocompletarGap = async (datesToFill) => {
+    setIsProcessingGap(true)
+    try {
+      const targetGroup = activeGrupoObj?.codigo || selectedGrupo
+      const res = await autocompletarDiasFaltantesGrupo({
+        grupo_codigo: targetGroup,
+        campana: activeGrupoObj?.campana || selectedCampana,
+        semana: activeGrupoObj?.semana_trabajo || '',
+        formadorDoc: effectiveGrupoObj?.formador_documento || '',
+        formadorNombre: effectiveGrupoObj?.formador_nombre || effectiveGrupoObj?.formador || '',
+        missingDates: datesToFill,
+        baseAttendanceList: attendanceList,
+        allAsistencias: asistencias
+      })
+
+      if (res?.success) {
+        toast.success(
+          'Días faltantes regularizados',
+          `Se completó la asistencia de ${datesToFill.length} día(s) omitido(s). Sincronizando la fecha de hoy...`
+        )
+      }
+
+      setShowGapModal(false)
+      setHasPromptedGapForDate(`${selectedGrupo}_${fecha}`)
+
+      // Guardar también la fecha actual
+      await executeActualSave()
+    } catch (err) {
+      console.error('Error autocompletando días faltantes:', err)
+      toast.error('Error al autocompletar', err.message || 'No se pudieron regularizar los días faltantes.')
+    } finally {
+      setIsProcessingGap(false)
+    }
+  }
+
+  const handleProceedCurrentOnly = async () => {
+    setShowGapModal(false)
+    setHasPromptedGapForDate(`${selectedGrupo}_${fecha}`)
+    await executeActualSave()
+  }
+
+  const handleSelectDateToEdit = (dateIso) => {
+    setShowGapModal(false)
+    setFecha(dateIso)
+    toast.info('Fecha seleccionada', `Cambiando a la fecha ${formatSpreadsheetDate(dateIso)} para editar su asistencia.`)
   }
 
   const exportToExcel = () => {
@@ -1542,10 +1771,13 @@ export default function AsistenciaForm({
       curr.setUTCDate(curr.getUTCDate() - 1);
     }
     
+    const targetPais = resolveGrupoPais(effectiveGrupoObj || activeGrupoObj, effectiveGrupoObj?.campana || activeGrupoObj?.campana || selectedCampana);
+    
     for (let i = 0; i < 42; i++) {
       const dStr = curr.toISOString().split('T')[0];
       const isCurrentMonth = curr.getUTCMonth() === currentMonth;
       const isSunday = curr.getUTCDay() === 0;
+      const isHoliday = isFeriadoNacional(dStr, targetPais);
       const isRegistered = registeredDates.has(dStr);
       const isFuture = dStr > maxLimitStr;
       const isBeforeStart = dStr < minStr;
@@ -1560,14 +1792,19 @@ export default function AsistenciaForm({
         badgeStyle = { background: 'transparent', color: 'var(--text-muted)', opacity: 0.3 };
       } else if (isRegistered) {
         badgeStyle = { background: 'var(--status-a-bg)', color: 'var(--status-a-text)', border: '1px solid rgba(16,185,129,0.4)' };
-      } else if (isSunday || isBeforeStart || isFuture) {
+      } else if (isSunday || isBeforeStart || isFuture || (!isRegistered && isHoliday)) {
         badgeStyle = { background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' };
       } else {
         badgeStyle = { background: 'var(--status-fi-bg)', color: 'var(--status-fi-text)', border: '1px solid rgba(239,68,68,0.4)' };
       }
       
       days.push(
-        <div key={dStr} className="h-10 flex flex-col items-center justify-center font-bold text-xs rounded-md m-0.5" style={badgeStyle}>
+        <div 
+          key={dStr} 
+          className="h-10 flex flex-col items-center justify-center font-bold text-xs rounded-md m-0.5" 
+          style={badgeStyle}
+          title={isHoliday ? `Feriado oficial (${targetPais})` : undefined}
+        >
           {curr.getUTCDate()}
         </div>
       );
@@ -2059,6 +2296,43 @@ export default function AsistenciaForm({
         </div>
       )}
 
+      {/* ── ALERTA DE DÍAS DE ASISTENCIA PENDIENTES DE REGISTRAR (GAP BANNER) - PAUSADO TEMPORALMENTE A PEDIDO ── */}
+      {/*
+      {selectedGrupo && missingWorkingDays.length > 0 && (
+        <div className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-transparent border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-sm shrink-0 animate-fadeIn">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-500 flex items-center justify-center shrink-0 shadow-xs">
+              <AlertTriangle size={17} className="animate-pulse" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  {missingWorkingDays.length} día(s) sin registrar
+                </span>
+                <span className="text-xs font-bold text-[var(--text-primary)]">
+                  Este grupo tiene fechas laborales anteriores pendientes de asistencia:
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                {missingWorkingDays.map(d => (
+                  <span key={d} className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-[var(--bg-surface)] border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                    {formatSpreadsheetDate(d)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowGapModal(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-black text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all hover:scale-105 shrink-0 cursor-pointer"
+          >
+            <Zap size={14} /> Asistente Rápido
+          </button>
+        </div>
+      )}
+      */}
+
       {/* ── 4. MAX-HEIGHT POSTULANTES TABLE CONTAINER (Fills Remaining Space) ── */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xl">
         
@@ -2158,6 +2432,7 @@ export default function AsistenciaForm({
                     fecha={fecha}
                     onStatusChange={handleStatusChange}
                     onMotiveChange={handleMotiveChange}
+                    onLevantarBaja={handleLevantarBaja}
                     motivosBaja={motivosBaja}
                     isReadOnly={isReadOnly}
                     onOpenRegularizacion={handleOpenRegularizacion}
@@ -2208,6 +2483,20 @@ export default function AsistenciaForm({
         motivosBaja={motivosBaja}
         isReadOnly={isReadOnly}
         onRegularizacionSaved={handleRegularizacionSaved}
+      />
+
+      {/* ── MODAL ASISTENTE RÁPIDO DE DÍAS FALTANTES ── */}
+      <AsistenciaGapAssistantModal
+        isOpen={showGapModal}
+        onClose={() => setShowGapModal(false)}
+        missingDates={missingWorkingDays}
+        currentDate={fecha}
+        grupoCodigo={activeGrupoObj?.codigo || selectedGrupo}
+        campana={activeGrupoObj?.campana || selectedCampana}
+        onAutocompletar={handleAutocompletarGap}
+        onSelectDateToEdit={handleSelectDateToEdit}
+        onProceedCurrentOnly={handleProceedCurrentOnly}
+        isProcessing={isProcessingGap}
       />
     </div>
   )

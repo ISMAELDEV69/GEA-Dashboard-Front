@@ -2890,8 +2890,39 @@ export async function deleteMotivoBaja(motivoId) {
 }
 
 export async function insertConsolidado(payloads) {
-  if (DB_MODE !== 'supabase' || !payloads || payloads.length === 0) return;
-  
+  // Proteger datos vitales: Si algún registro viene con nombres o celular vacíos, rescatar de nóminas o consolidado
+  const incompleteDocs = payloads
+    .filter(p => !p.nombres || !p.celular || !p.apellido_paterno)
+    .map(p => String(p.documento || '').trim())
+    .filter(Boolean);
+
+  if (incompleteDocs.length > 0) {
+    try {
+      const { data: nomBackup } = await supabase
+        .from('nominas')
+        .select('documento, nombres, apellido_paterno, apellido_materno, celular, celular_referencia, condicion, campana')
+        .in('documento', incompleteDocs);
+
+      if (nomBackup && nomBackup.length > 0) {
+        const nomMap = new Map(nomBackup.map(n => [String(n.documento).trim(), n]));
+        payloads.forEach(p => {
+          const docKey = String(p.documento || '').trim();
+          const bk = nomMap.get(docKey);
+          if (bk) {
+            if (!p.nombres && bk.nombres) p.nombres = bk.nombres;
+            if (!p.apellido_paterno && bk.apellido_paterno) p.apellido_paterno = bk.apellido_paterno;
+            if (!p.apellido_materno && bk.apellido_materno) p.apellido_materno = bk.apellido_materno;
+            if (!p.celular && (bk.celular || bk.celular_referencia)) p.celular = String(bk.celular || bk.celular_referencia).trim();
+            if (!p.condicion_laboral && bk.condicion) p.condicion_laboral = bk.condicion;
+            if (!p.campana && bk.campana) p.campana = bk.campana;
+          }
+        });
+      }
+    } catch (bkErr) {
+      console.warn('Aviso enriqueciendo datos incompletos en insertConsolidado:', bkErr);
+    }
+  }
+
   // Limpiar duplicados previos de esa misma fecha, grupo Y CAMPAÑA antes de insertar el estado más fresco
   const sample = payloads[0];
   const targetGroup = sample.codigo_grupo || sample.grupo;
@@ -2958,22 +2989,57 @@ export async function regularizarAsistenciaPostulante({
   const nowStr = new Date().toLocaleString('es-PE');
 
   if (DB_MODE === 'supabase') {
-    let finalCelular = String(postulanteInfo.celular || '').trim();
+    let finalNombres = String(postulanteInfo.nombres || '').trim();
+    let finalPaterno = String(postulanteInfo.apellido_paterno || '').trim();
+    let finalMaterno = String(postulanteInfo.apellido_materno || '').trim();
+    let finalCelular = String(postulanteInfo.celular || postulanteInfo.telefono || '').trim();
+    let finalCondicion = String(postulanteInfo.condicion_laboral || postulanteInfo.condicion || '').trim();
+    let finalCampana = String(campana || postulanteInfo.campana || '').trim();
     let finalDocFormador = String(formadorDoc || postulanteInfo.documento_formador || postulanteInfo.formador_documento || '').trim();
     let finalNomFormador = String(formadorNombre || postulanteInfo.nombre_formador || postulanteInfo.formador || '').trim();
 
-    if (!finalCelular) {
+    // Rescatar campos personales de consolidado_asistencias previo si falta alguno para NUNCA perder datos
+    if (!finalNombres || !finalPaterno || !finalCelular || !finalCondicion || !finalCampana) {
+      try {
+        const { data: existingData } = await supabase
+          .from('consolidado_asistencias')
+          .select('nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, archivo_origen, documento_formador, nombre_formador')
+          .eq('documento', cleanDoc)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (existingData && existingData[0]) {
+          const ex = existingData[0];
+          if (!finalNombres && ex.nombres) finalNombres = ex.nombres;
+          if (!finalPaterno && ex.apellido_paterno) finalPaterno = ex.apellido_paterno;
+          if (!finalMaterno && ex.apellido_materno) finalMaterno = ex.apellido_materno;
+          if (!finalCelular && ex.celular) finalCelular = ex.celular;
+          if (!finalCondicion && ex.condicion_laboral) finalCondicion = ex.condicion_laboral;
+          if (!finalCampana && ex.campana) finalCampana = ex.campana;
+          if (!finalDocFormador && ex.documento_formador) finalDocFormador = ex.documento_formador;
+          if (!finalNomFormador && ex.nombre_formador) finalNomFormador = ex.nombre_formador;
+        }
+      } catch (errPrev) {
+        console.warn('Aviso rescatando datos previos de consolidado:', errPrev);
+      }
+    }
+
+    // Si aún falta celular o nombres, consultar en nóminas
+    if (!finalCelular || !finalNombres) {
       try {
         const { data: nomData } = await supabase
           .from('nominas')
-          .select('celular, celular_referencia')
+          .select('nombres, apellido_paterno, apellido_materno, celular, celular_referencia')
           .eq('documento', cleanDoc)
           .limit(1);
         if (nomData && nomData[0]) {
-          finalCelular = String(nomData[0].celular || nomData[0].celular_referencia || '').trim();
+          const nd = nomData[0];
+          if (!finalCelular) finalCelular = String(nd.celular || nd.celular_referencia || '').trim();
+          if (!finalNombres && nd.nombres) finalNombres = nd.nombres;
+          if (!finalPaterno && nd.apellido_paterno) finalPaterno = nd.apellido_paterno;
+          if (!finalMaterno && nd.apellido_materno) finalMaterno = nd.apellido_materno;
         }
       } catch (errNom) {
-        console.warn('Aviso buscando celular en nominas:', errNom);
+        console.warn('Aviso buscando datos en nominas:', errNom);
       }
     }
 
@@ -3003,74 +3069,85 @@ export async function regularizarAsistenciaPostulante({
       const spreadsheetDate2 = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
       const isBaja = r.sigla === 'B';
 
-      // 1. Limpiar registro previo de ESTE postulante en esta fecha y grupo en consolidado_asistencias
+      // 1. Verificar si ya existe registro en consolidado_asistencias para esta fecha y grupo
+      let existingId = null;
       try {
-        await supabase
+        const { data: exRows } = await supabase
           .from('consolidado_asistencias')
-          .delete()
+          .select('id')
           .eq('documento', cleanDoc)
           .in('fecha_registro_asistencia', [spreadsheetDate1, spreadsheetDate2, isoDate])
-          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`);
-      } catch (errCleanConsolidado) {
-        console.warn('Aviso limpiando consolidado para regularización:', errCleanConsolidado);
+          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
+          .limit(1);
+        if (exRows && exRows.length > 0) {
+          existingId = exRows[0].id;
+        }
+      } catch (errFind) {
+        console.warn('Aviso verificando registro previo en consolidado:', errFind);
       }
 
-      // 2. Limpiar registro de ESTE postulante en asistencias_capacitacion
+      if (existingId) {
+        // ACTUALIZAR solo estado, sigla, motivo_baja y tipo_reclutado, preservando 100% de nombres, celular y datos
+        try {
+          await supabase
+            .from('consolidado_asistencias')
+            .update({
+              sigla: r.sigla,
+              estado: isBaja ? 'CESADO' : 'ACTIVO',
+              tipo_reclutado: isBaja ? 'CESE' : (postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO'),
+              motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : '',
+              fecha_hora_registro: nowStr
+            })
+            .eq('id', existingId);
+        } catch (errUpd) {
+          console.error('Error actualizando consolidado en regularización:', errUpd);
+        }
+      } else {
+        // INSERTAR nuevo registro con todos los datos enriquecidos para que ningún campo quede vacío
+        const consolidadoPayload = {
+          archivo_origen: weekStr,
+          documento: cleanDoc,
+          apellido_materno: finalMaterno,
+          apellido_paterno: finalPaterno,
+          nombres: finalNombres,
+          celular: finalCelular,
+          condicion_laboral: finalCondicion,
+          campana: finalCampana,
+          grupo: targetGroup,
+          codigo_grupo: targetGroup,
+          documento_formador: finalDocFormador,
+          nombre_formador: finalNomFormador,
+          fecha_registro_asistencia: spreadsheetDate1,
+          tipo_reclutado: isBaja ? 'CESE' : (postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO'),
+          estado: isBaja ? 'CESADO' : 'ACTIVO',
+          sigla: r.sigla,
+          motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : '',
+          fecha_hora_registro: nowStr
+        };
+
+        const { error: insConsolidadoErr } = await supabase
+          .from('consolidado_asistencias')
+          .insert([consolidadoPayload]);
+
+        if (insConsolidadoErr) {
+          console.error('Error insertando regularización en consolidado:', insConsolidadoErr);
+        }
+      }
+
+      // 2. Insertar o actualizar registro en asistencias_capacitacion con upsert
       try {
         await supabase
           .from('asistencias_capacitacion')
-          .delete()
-          .eq('grupo_codigo', targetGroup)
-          .eq('postulante_documento', cleanDoc)
-          .eq('fecha_asistencia', isoDate);
-      } catch (errCleanAsis) {
-        console.warn('Aviso limpiando asistencias_capacitacion para regularización:', errCleanAsis);
-      }
-
-      // 3. Insertar nuevo registro en consolidado_asistencias
-      const consolidadoPayload = {
-        archivo_origen: weekStr,
-        documento: cleanDoc,
-        apellido_materno: postulanteInfo.apellido_materno || '',
-        apellido_paterno: postulanteInfo.apellido_paterno || '',
-        nombres: postulanteInfo.nombres || '',
-        celular: finalCelular,
-        condicion_laboral: postulanteInfo.condicion_laboral || '',
-        campana: campana || postulanteInfo.campana || '',
-        grupo: targetGroup,
-        codigo_grupo: targetGroup,
-        documento_formador: finalDocFormador,
-        nombre_formador: finalNomFormador,
-        fecha_registro_asistencia: spreadsheetDate1,
-        tipo_reclutado: isBaja ? 'CESE' : (postulanteInfo.tipoReclutado || postulanteInfo.tipo_reclutado || 'APTO'),
-        estado: isBaja ? 'CESADO' : 'ACTIVO',
-        sigla: r.sigla,
-        motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : '',
-        fecha_hora_registro: nowStr
-      };
-
-      const { error: insConsolidadoErr } = await supabase
-        .from('consolidado_asistencias')
-        .insert([consolidadoPayload]);
-
-      if (insConsolidadoErr) {
-        console.error('Error insertando regularización en consolidado:', insConsolidadoErr);
-      }
-
-      // 4. Insertar nuevo registro en asistencias_capacitacion
-      try {
-        await supabase
-          .from('asistencias_capacitacion')
-          .insert([{
+          .upsert([{
             grupo_codigo: targetGroup,
             postulante_documento: cleanDoc,
             fecha_asistencia: isoDate,
             sigla_asistencia: r.sigla,
             motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : null,
             usuario_registro: formadorNombre || 'REGULARIZACION'
-          }]);
+          }], { onConflict: 'grupo_codigo,postulante_documento,fecha_asistencia' });
       } catch (insAsisErr) {
-        console.warn('Aviso insertando en asistencias_capacitacion:', insAsisErr);
+        console.warn('Aviso sincronizando en asistencias_capacitacion:', insAsisErr);
       }
     }
 
@@ -3113,6 +3190,256 @@ export async function regularizarAsistenciaPostulante({
     initLocalStorageDb();
     return { success: true };
   }
+}
+
+/**
+ * Levanta la baja de un postulante que faltó en un día previo (ej. Día 1)
+ * pero se presenta en un día posterior (ej. Día 2).
+ * Convierte el día de la baja previa a 'FI' (Falta Injustificada) y reactiva al postulante en nóminas.
+ */
+export async function levantarBajaPostulante({
+  documento,
+  grupo_codigo,
+  campana = '',
+  fechaBaja,
+  formadorNombre = '',
+  formadorDoc = '',
+  fechaHoy = null,
+  postulanteInfo = null
+}) {
+  const cleanDoc = String(documento || '').trim();
+  const targetGroup = String(grupo_codigo || '').trim();
+  if (!cleanDoc || !targetGroup || !fechaBaja) {
+    return { success: false, message: 'Datos incompletos para levantar la baja.' };
+  }
+
+  const isoBaja = parseFechaAsistencia(fechaBaja) || fechaBaja;
+  const [year, month, day] = isoBaja.includes('-') ? isoBaja.split('-') : ['', '', ''];
+  const spreadsheetDate1 = year ? `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}` : fechaBaja;
+  const spreadsheetDate2 = year ? `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}` : fechaBaja;
+
+  if (DB_MODE === 'supabase') {
+    // 1. Modificar el registro en consolidado_asistencias para la fecha en la que se le dio de baja:
+    // Pasa de Baja ('B') a Falta Injustificada ('FI'), motivo vacío y estado ACTIVO.
+    // .update() en Supabase solo modifica las columnas especificadas, preservando nombres, celular, etc.
+    try {
+      await supabase
+        .from('consolidado_asistencias')
+        .update({
+          sigla: 'FI',
+          estado: 'ACTIVO',
+          tipo_reclutado: 'APTO',
+          motivo_baja: ''
+        })
+        .eq('documento', cleanDoc)
+        .in('fecha_registro_asistencia', [spreadsheetDate1, spreadsheetDate2, isoBaja, fechaBaja])
+        .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`);
+    } catch (errConsolidado) {
+      console.warn('Error actualizando consolidado en levantarBajaPostulante:', errConsolidado);
+    }
+
+    // 2. Modificar registro en asistencias_capacitacion para esa fecha:
+    // Pasa a sigla_asistencia 'FI' y motivo_baja null
+    try {
+      await supabase
+        .from('asistencias_capacitacion')
+        .update({
+          sigla_asistencia: 'FI',
+          motivo_baja: null
+        })
+        .eq('postulante_documento', cleanDoc)
+        .eq('grupo_codigo', targetGroup)
+        .eq('fecha_asistencia', isoBaja);
+    } catch (errAsis) {
+      console.warn('Error actualizando asistencias_capacitacion en levantarBajaPostulante:', errAsis);
+    }
+
+    // 3. Reactivar en nominas: limpiar motivo_baja y marcar como ACTIVO y APTO
+    try {
+      await supabase
+        .from('nominas')
+        .update({
+          estado: 'ACTIVO',
+          activo: true,
+          tipo_reclutado: 'APTO',
+          motivo_baja: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('documento', cleanDoc);
+    } catch (errNom) {
+      console.warn('Error reactivando postulante en nominas:', errNom);
+    }
+
+    // 4. Si se especificó fechaHoy (el día en que se presenta, ej. Día 2), registrar Asistencia ('A') sin perder datos
+    if (fechaHoy && parseFechaAsistencia(fechaHoy) !== isoBaja) {
+      const isoHoy = parseFechaAsistencia(fechaHoy) || fechaHoy;
+      const [hY, hM, hD] = isoHoy.includes('-') ? isoHoy.split('-') : ['', '', ''];
+      const sheetHoy = hY ? `${parseInt(hD, 10)}/${parseInt(hM, 10)}/${hY}` : fechaHoy;
+
+      try {
+        // Actualizar si ya existía en consolidado
+        const { data: existingHoy } = await supabase
+          .from('consolidado_asistencias')
+          .select('id, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, archivo_origen')
+          .eq('documento', cleanDoc)
+          .in('fecha_registro_asistencia', [sheetHoy, isoHoy, fechaHoy])
+          .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
+          .limit(1);
+
+        if (existingHoy && existingHoy.length > 0) {
+          await supabase
+            .from('consolidado_asistencias')
+            .update({
+              sigla: 'A',
+              estado: 'ACTIVO',
+              tipo_reclutado: 'APTO',
+              motivo_baja: '',
+              fecha_hora_registro: new Date().toLocaleString('es-PE')
+            })
+            .eq('id', existingHoy[0].id);
+        }
+
+        // Actualizar o insertar en asistencias_capacitacion para fechaHoy
+        await supabase
+          .from('asistencias_capacitacion')
+          .upsert([{
+            grupo_codigo: targetGroup,
+            postulante_documento: cleanDoc,
+            fecha_asistencia: isoHoy,
+            sigla_asistencia: 'A',
+            motivo_baja: null,
+            usuario_registro: formadorNombre || 'LEVANTAR_BAJA'
+          }], { onConflict: 'grupo_codigo,postulante_documento,fecha_asistencia' });
+      } catch (errHoy) {
+        console.warn('Aviso sincronizando fecha de asistencia actual en levantarBajaPostulante:', errHoy);
+      }
+    }
+
+    // Invalidar cachés para reflejar el estado desbloqueado y con datos frescos
+    invalidateCache('all_consolidado');
+    invalidateCache('consolidado');
+    invalidateCache('asistencias');
+    invalidateCache('all_asistencias_bajas');
+    invalidateCache('all_motivos_bajas');
+    invalidateCache('postulantes');
+    invalidateCache('nominas');
+    invalidateCache('grupos_dia1');
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: targetGroup, documento: cleanDoc } }));
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+    }
+
+    return { success: true };
+  } else {
+    return { success: true };
+  }
+}
+
+/**
+ * Autocompleta en lote los días de asistencia que quedaron omitidos / sin registrar en un grupo.
+ * Clona el estado del día previo (activos continúan como 'A', bajas consolidadas continúan como 'B' con su motivo original).
+ */
+export async function autocompletarDiasFaltantesGrupo({
+  grupo_codigo,
+  campana = '',
+  semana = '',
+  formadorDoc = '',
+  formadorNombre = '',
+  missingDates = [],
+  baseAttendanceList = [],
+  allAsistencias = []
+}) {
+  const targetGroup = String(grupo_codigo || '').trim();
+  if (!targetGroup || !missingDates.length || !baseAttendanceList.length) {
+    return { success: false, message: 'Datos insuficientes para autocompletar días faltantes.' };
+  }
+
+  const weekStr = semana ? `SEM${String(semana).replace(/\D/g, '')}` : '';
+  const nowStr = new Date().toLocaleString('es-PE');
+  const sortedDates = [...missingDates].sort();
+
+  for (const dateIso of sortedDates) {
+    const [year, month, day] = dateIso.split('-');
+    const spreadsheetDate = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
+
+    // Construir el payload respetando el estado de cada postulante
+    const payloads = baseAttendanceList.map(item => {
+      // Buscar si este postulante ya tenía una baja previa registrada ANTES de esta fecha
+      const doc = String(item.documento || '').trim();
+      const pastBaja = allAsistencias.find(a => {
+        const aDoc = String(a.postulante_documento || a.documento || '').trim();
+        const aGroup = String(a.grupo_codigo || a.codigo_grupo || a.grupo || '').trim();
+        if (aDoc !== doc) return false;
+        if (aGroup && aGroup !== targetGroup) return false;
+        const aFecha = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha);
+        return aFecha && aFecha < dateIso && (a.sigla_asistencia === 'B' || a.sigla === 'B');
+      });
+
+      const isBaja = Boolean(pastBaja) || (item.isLockedBaja && item.pastMotive);
+      const motivoBaja = isBaja ? (pastBaja?.motivo_baja || item.pastMotive || item.motivo_baja || 'DESERCIÓN') : '';
+      const sigla = isBaja ? 'B' : (item.sigla === 'I-OP' ? 'I-OP' : 'A');
+      const estado = isBaja ? 'CESADO' : 'ACTIVO';
+      const tipoReclutado = isBaja ? 'CESE' : (item.tipoReclutado || 'APTO');
+
+      return {
+        archivo_origen: weekStr,
+        documento: doc,
+        apellido_materno: item.apellido_materno || '',
+        apellido_paterno: item.apellido_paterno || '',
+        nombres: item.nombres || '',
+        celular: item.celular || '',
+        condicion_laboral: item.condicion_laboral || item.condicion || '',
+        campana: campana || item.campana || '',
+        grupo: targetGroup,
+        codigo_grupo: targetGroup,
+        documento_formador: formadorDoc || item.docFormador || '',
+        nombre_formador: formadorNombre || item.nombreFormador || '',
+        fecha_registro_asistencia: spreadsheetDate,
+        tipo_reclutado: tipoReclutado,
+        estado: estado,
+        sigla: sigla,
+        motivo_baja: motivoBaja,
+        fecha_hora_registro: nowStr
+      };
+    });
+
+    try {
+      await insertConsolidado(payloads);
+
+      // Sincronizar también asistencias_capacitacion
+      if (DB_MODE === 'supabase') {
+        const capPayloads = payloads.map(p => ({
+          grupo_codigo: targetGroup,
+          postulante_documento: p.documento,
+          fecha_asistencia: dateIso,
+          sigla_asistencia: p.sigla,
+          motivo_baja: p.sigla === 'B' ? (p.motivo_baja || 'DESERCIÓN') : null,
+          usuario_registro: formadorNombre || 'AUTOCOMPLETAR_GAP'
+        }));
+        await supabase
+          .from('asistencias_capacitacion')
+          .upsert(capPayloads, { onConflict: 'grupo_codigo,postulante_documento,fecha_asistencia' });
+      }
+    } catch (errDate) {
+      console.error(`Error autocompletando fecha ${dateIso}:`, errDate);
+    }
+  }
+
+  // Invalidar cachés y emitir refresco
+  invalidateCache('all_consolidado');
+  invalidateCache('consolidado');
+  invalidateCache('asistencias');
+  invalidateCache('all_asistencias_bajas');
+  invalidateCache('all_motivos_bajas');
+  invalidateCache('grupos_dia1');
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: targetGroup } }));
+    window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+  }
+
+  return { success: true, count: sortedDates.length };
 }
 
 /**
