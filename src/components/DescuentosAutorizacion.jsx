@@ -26,7 +26,7 @@ export default function DescuentosAutorizacion() {
       
       const edits = {}
       data.forEach(row => {
-        const isExp = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja).expired;
+        const isExp = getDescuentoStatus48h(row.fecha_registro || row.created_at).expired;
         const defaultEstado = isExp && (!row.autoriza_rys || row.autoriza_rys === 'PENDIENTE') ? 'SI' : ((row.autoriza_rys === 'PENDIENTE' || !row.autoriza_rys) ? '' : row.autoriza_rys);
         const defaultComentario = isExp && !row.comentario_rys ? 'descuento aprobado por tiempo de respuesta' : (row.comentario_rys || '');
 
@@ -102,6 +102,7 @@ export default function DescuentosAutorizacion() {
     try {
       const res = await updateDescuentosIndividuales([{
         id,
+        dni_ce: row.dni_ce,
         estado: edit?.estado ?? '',
         comentario: edit?.comentario || '',
         autoriza_cap: row.autoriza_cap
@@ -122,12 +123,16 @@ export default function DescuentosAutorizacion() {
       return
     }
     
-    const updates = selectedIds.map(id => ({
-      id,
-      estado: rowEdits[id]?.estado ?? '',
-      comentario: rowEdits[id]?.comentario || '',
-      autoriza_cap: pendientes.find(p => p.id === id)?.autoriza_cap
-    }))
+    const updates = selectedIds.map(id => {
+      const p = pendientes.find(item => item.id === id)
+      return {
+        id,
+        dni_ce: p?.dni_ce,
+        estado: rowEdits[id]?.estado ?? '',
+        comentario: rowEdits[id]?.comentario || '',
+        autoriza_cap: p?.autoriza_cap
+      }
+    })
     
     setActionLoading(true)
     setErrorMsg(null)
@@ -257,7 +262,7 @@ export default function DescuentosAutorizacion() {
               <tbody className="divide-y divide-[var(--border-subtle)]">
               {pendientes.map(row => {
                 const isSelected = selectedIds.includes(row.id)
-                const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja);
+                const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at);
                 const isExpired48h = status48h.expired;
 
                 const dbEstado = (row.autoriza_rys === 'PENDIENTE' || !row.autoriza_rys) ? '' : row.autoriza_rys

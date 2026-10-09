@@ -254,10 +254,10 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
         }
       })
       
-      // 2. Bloqueo estricto: la fecha de baja debe ser la fecha actual de envío
+      // 2. Bloqueo estricto: el formador o supervisor tiene hasta 48 horas hábiles desde la fecha de baja para enviar el descuento.
       const fVal = row.fecha_baja || todayPeruStr
-      if (fVal !== todayPeruStr && isSupervisorTarde(fVal)) {
-        errors.push(`Fila ${i + 1}: Los descuentos solo se pueden guardar con la fecha actual de envío (${todayPeruStr}).`)
+      if (isDescuentoVencido48h(fVal)) {
+        errors.push(`Fila ${i + 1}: La fecha de baja (${fVal}) excede el plazo máximo de 48 horas hábiles para solicitar el descuento. Fuera de plazo no procede.`)
       }
     })
 
@@ -296,7 +296,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
       {/* HEADER */}
       <PageHeader 
         title="Registro de Descuentos" 
-        subtitle="Ingresa los descuentos con la fecha actual de envío. Todo descuento nuevo ingresa en revisión para RyS dentro del plazo de 48h hábiles."
+        subtitle="Ingresa los descuentos dentro del plazo de 48h hábiles desde la fecha de baja. Los registros dentro de plazo ingresan como PENDIENTE para revisión de RyS."
       >
         <div className="flex items-center gap-3">
           <button 

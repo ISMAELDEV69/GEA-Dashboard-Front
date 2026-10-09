@@ -5108,7 +5108,8 @@ export async function autoApproveExpiredDescuentos() {
 
     for (const row of data) {
       if (row.procede === 'NO PROCEDE' || row.autoriza_rys === 'NO') continue;
-      const regTime = row.fecha_registro || row.fecha_baja;
+      // El plazo de 48h hábiles de respuesta corre desde fecha_registro (momento en que Capas envió)
+      const regTime = row.fecha_registro || row.created_at;
       if (isDescuentoVencido48h(regTime, now)) {
         expiredIds.push(row.id);
         if (row.dni_ce) expiredDnis.push(row.dni_ce);
@@ -5313,8 +5314,10 @@ export function fetchAllDescuentosBI() {
     }
     
     return allData.map(d => {
-      const isExpired = isDescuentoVencido48h(d.fecha_registro || d.created_at || d.fecha_baja);
-      if (isExpired && d.procede !== 'NO PROCEDE' && d.autoriza_rys !== 'NO') {
+      // El reloj de auto-aprobación por tiempo de respuesta de Tania corre sobre fecha_registro
+      const regTime = d.fecha_registro || d.created_at;
+      const isExpired = isDescuentoVencido48h(regTime);
+      if (isExpired && d.procede === 'PENDIENTE' && d.autoriza_rys !== 'NO') {
         return {
           ...d,
           procede: 'PROCEDE',
@@ -5333,8 +5336,20 @@ export async function insertDescuentosBulk(payloads, userEmail) {
   if (!payloads || payloads.length === 0) return { inserted: 0 };
 
   const batch = payloads.map(p => {
-    const isExplicitFueraDePlazo = String(p.fuera_de_plazo || '').trim().toUpperCase() === 'SI';
+    const fb = p.fecha_baja;
+    const isBajaExcedida48h = isDescuentoVencido48h(fb);
     
+    // REGLA OFICIAL DE NEGOCIO (Capacitación vs Tania):
+    // 1. Si Capacitación/Supervisor se excede de las 48h hábiles desde la fecha de baja -> NO PROCEDE
+    // 2. Si está dentro del plazo -> Ingresa como PENDIENTE para revisión de RyS (Tania tiene 48h hábiles para responder).
+    const procedeVal = isBajaExcedida48h ? 'NO PROCEDE' : 'PENDIENTE';
+    const autorizaCapVal = isBajaExcedida48h ? 'NO' : 'SI';
+    const autorizaRysVal = isBajaExcedida48h ? 'NO' : '';
+    const fueraDePlazoVal = isBajaExcedida48h ? 'SI' : 'NO';
+    const comentarioRysVal = isBajaExcedida48h 
+      ? 'NO PROCEDE: Solicitud extemporánea (Capacitación excedió el plazo de 48h hábiles desde la baja)' 
+      : (p.comentario_rys || '');
+
     return {
       sede: p.sede || '',
       segmento: p.segmento || '',
@@ -5348,14 +5363,11 @@ export async function insertDescuentosBulk(payloads, userEmail) {
       motivo: p.motivo || '',
       comentarios: p.comentarios || '',
       bono: 'NO',
-      autoriza_cap: 'SI',
-      fuera_de_plazo: isExplicitFueraDePlazo ? 'SI' : 'NO',
-      
-      // Todo descuento nuevo ingresa como PENDIENTE para revisión de RyS. El reloj de 48h hábiles empieza en fecha_registro.
-      autoriza_rys: isExplicitFueraDePlazo ? 'SI' : '',
-      comentario_rys: isExplicitFueraDePlazo ? (p.comentario_rys || 'descuento aprobado por tiempo de respuesta') : '',
-      procede: isExplicitFueraDePlazo ? 'PROCEDE' : 'PENDIENTE',
-      
+      autoriza_cap: autorizaCapVal,
+      fuera_de_plazo: fueraDePlazoVal,
+      autoriza_rys: autorizaRysVal,
+      comentario_rys: comentarioRysVal,
+      procede: procedeVal,
       usuario_registro: userEmail || 'admin',
       fecha_registro: p.fecha_registro || new Date().toISOString()
     };
@@ -5459,19 +5471,16 @@ export async function updateDescuentosIndividuales(updatesArray) {
   for (const update of updatesArray) {
     if (update.estado === undefined) continue; // Skip if no estado provided
     
-    // Calcular el Procede según la fórmula
+    // Calcular el Procede según la resolución de Tania
     let procedeStr = 'PENDIENTE';
-    const autCap = update.autoriza_cap || '';
     const autRys = update.estado || '';
     
-    if (autCap === '' && autRys === 'SI') {
-      procedeStr = 'PENDIENTE';
-    } else if (autCap === '' || autRys === '') {
-      procedeStr = '';
-    } else if (autCap === 'SI' && autRys === 'SI') {
+    if (autRys === 'SI') {
       procedeStr = 'PROCEDE';
-    } else {
+    } else if (autRys === 'NO') {
       procedeStr = 'NO PROCEDE';
+    } else {
+      procedeStr = 'PENDIENTE';
     }
     
     const { error: updErr } = await supabase
