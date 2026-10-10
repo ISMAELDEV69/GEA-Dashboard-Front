@@ -42,7 +42,7 @@ import {
 } from 'recharts'
 import GeaCommandMap from '../components/dashboard/GeaCommandMap'
 import MobilityReubicacionModal from '../components/dashboard/MobilityReubicacionModal'
-import { analyzeMobilityAndDistances, GEA_SEDES, stableJitter, calculateHaversineKm, PERU_DEPARTAMENTOS } from '../lib/geoMobilityService'
+import { analyzeMobilityAndDistances, GEA_SEDES, stableJitter, calculateHaversineKm, PERU_DEPARTAMENTOS, resolveDistrictCoordinates, LIMA_DISTRITOS } from '../lib/geoMobilityService'
 import { fetchAnaliticaMovilidad } from '../lib/dataService'
 import { useIsDarkTheme } from '../hooks/useIsDarkTheme'
 
@@ -90,18 +90,30 @@ export default function UbicacionView({
               const seed = doc || r.id || String(idx)
               const dep = String(r.departamento || '').toUpperCase().trim()
               const rawDistrito = String(r.distrito_residencia || r.ciudad || '').toUpperCase().trim()
+              const rawDir = String(r.direccion_domicilio || '').toUpperCase().trim()
 
               let rawLat = Number(r.lat_origen)
               let rawLng = Number(r.lng_origen)
 
-              // ── Si es de provincia/otro departamento pero vino con centroide de Lima por defecto (-12.0463) ──
+              const isLimaDefaultCoords = (isNaN(rawLat) || rawLat === 0 || (rawLat >= -12.15 && rawLat <= -11.95 && rawLng >= -77.10 && rawLng <= -76.85))
+
+              // ── 1. Si es de provincia/otro departamento pero vino con centroide de Lima por defecto (-12.0463) ──
               if (dep && dep !== 'LIMA' && dep !== 'CALLAO') {
-                const isLimaCoords = (isNaN(rawLat) || rawLat === 0 || (rawLat >= -12.15 && rawLat <= -11.95 && rawLng >= -77.10 && rawLng <= -76.85))
-                if (isLimaCoords) {
+                if (isLimaDefaultCoords) {
                   const depMatch = PERU_DEPARTAMENTOS[rawDistrito] || PERU_DEPARTAMENTOS[dep]
                   if (depMatch) {
                     rawLat = depMatch.lat
                     rawLng = depMatch.lng
+                  }
+                }
+              } else {
+                // ── 2. Si es de Lima / Callao pero tiene coordenadas genéricas de Lima Centro:
+                // Resolver el distrito real específico de Lima Metropolitana
+                if (isLimaDefaultCoords && (rawDistrito || rawDir)) {
+                  const distRes = resolveDistrictCoordinates(rawDistrito, rawDir, seed)
+                  if (distRes && distRes.resolved) {
+                    rawLat = distRes.lat
+                    rawLng = distRes.lng
                   }
                 }
               }

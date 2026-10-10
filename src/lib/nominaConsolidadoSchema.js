@@ -126,7 +126,8 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('SEMANA DE TRAB') || clean.includes('SEMANA')) colIdx['semana_trabajo'] = i
     else if (clean.includes('RECLUTADOR') || clean.includes('SELECCIONADOR') || clean.includes('PSICOLOG') || clean.includes('QUIEN TE CONTACTO') || clean.includes('QUIÉN TE CONTACTÓ')) colIdx['reclutador'] = i
     else if (clean.includes('CAMPAÑA') || clean.includes('CAMPANA') || clean.includes('A QUE CAMPAÑA') || clean.includes('A QUÉ CAMPAÑA')) colIdx['campana'] = i
-    else if (clean.includes('SEDE')) colIdx['sede'] = i
+    else if (clean.includes('SEDE') || clean.includes('LUGAR DE TRABAJO') || clean.includes('SEDE DE PREFERENCIA')) colIdx['sede'] = i
+    else if (clean.includes('MODALIDAD') || clean.includes('PRESENCIAL O REMOTO') || clean.includes('REMOTO O PRESENCIAL') || clean.includes('HOME OFFICE') || clean.includes('TELETRABAJO')) colIdx['modalidad'] = i
     else if (clean.includes('TIPO DE DOCUMENTO') || clean === 'TIPO DOC') colIdx['tipo_documento'] = i
     else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean.includes('IDENTIFICACION') || clean.includes('IDENTIFICACIÓN')) {
       if (colIdx['documento'] === undefined) colIdx['documento'] = i
@@ -150,9 +151,11 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('NIVEL ACADÉMICO') || clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
     else if (clean.includes('CARREA') || clean.includes('CARRERA') || clean.includes('PROFESION') || clean.includes('PROFESIÓN')) colIdx['carrera'] = i
     else if (clean.includes('NACIONALIDAD') || clean.includes('PAÍS') || clean.includes('PAIS')) colIdx['nacionalidad'] = i
-    else if (clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA')) colIdx['lugar_residencia'] = i
-    else if (clean.includes('DISTRITO')) colIdx['distrito_residencia'] = i
-    else if (clean.includes('DIRECCIÓN') || clean.includes('DIRECCION') || clean.includes('DOMICILIO')) colIdx['direccion_domicilio'] = i
+    else if (clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA') || clean.includes('DEPARTAMENTO') || clean.includes('PROVINCIA') || clean.includes('REGIÓN') || clean.includes('REGION') || clean.includes('CIUDAD')) {
+      if (colIdx['lugar_residencia'] === undefined) colIdx['lugar_residencia'] = i
+    }
+    else if (clean.includes('DISTRITO') || clean.includes('COMUNA') || clean.includes('LOCALIDAD')) colIdx['distrito_residencia'] = i
+    else if (clean.includes('DIRECCIÓN') || clean.includes('DIRECCION') || clean.includes('DOMICILIO') || clean.includes('DONDE VIVES') || clean.includes('CALLE') || clean.includes('AVENIDA')) colIdx['direccion_domicilio'] = i
     else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
     else if (clean.includes('TIPO DE EXPERIENCIA')) colIdx['exp_tipo_campana'] = i
     else if (clean.includes('TIEMPO DE EXPERIENCIA') || clean.includes('CUANTO TIEMPO')) {
@@ -410,6 +413,7 @@ export function parseGoogleFormRow(row, colIdx) {
     lugar_residencia: normUpper('lugar_residencia'),
     distrito_residencia: normUpper('distrito_residencia'),
     direccion_domicilio: normUpper('direccion_domicilio'),
+    modalidad: normUpper('modalidad') || (allRowText.includes('REMOT') || allRowText.includes('HOME OFFICE') || allRowText.includes('TELETRABAJO') ? 'REMOTO' : 'PRESENCIAL'),
     exp_call_center: normUpper('exp_call_center'),
     exp_tipo_campana: normUpper('exp_tipo_campana'),
     exp_tiempo_call: normUpper('exp_tiempo_call'),

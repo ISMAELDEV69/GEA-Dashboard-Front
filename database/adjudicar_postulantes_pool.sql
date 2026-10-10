@@ -83,6 +83,8 @@ BEGIN
         exp_call_center = COALESCE(NULLIF(TRIM(v_item->>'exp_call_center'), ''), exp_call_center),
         exp_tipo_campana = COALESCE(NULLIF(TRIM(v_item->>'exp_tipo_campana'), ''), exp_tipo_campana),
         fuente_oferta = COALESCE(NULLIF(TRIM(v_item->>'fuente_oferta'), ''), fuente_oferta),
+        sede = COALESCE(NULLIF(TRIM(v_item->>'sede'), ''), sede),
+        modalidad = COALESCE(NULLIF(TRIM(v_item->>'modalidad'), ''), modalidad),
         activo = true,
         updated_at = NOW()
       WHERE documento = v_doc
@@ -120,6 +122,7 @@ BEGIN
         observacion_reclutamiento,
         campana,
         grupo_codigo,
+        sede,
         modalidad,
         condicion,
         horario_gestion,
@@ -194,6 +197,7 @@ BEGIN
         NULLIF(TRIM(v_item->>'observacion_reclutamiento'), ''),
         v_clean_campana,
         v_clean_grupo,
+        NULLIF(TRIM(v_item->>'sede'), ''),
         NULLIF(TRIM(v_item->>'modalidad'), ''),
         NULLIF(TRIM(v_item->>'condicion'), ''),
         NULLIF(TRIM(v_item->>'horario_gestion'), ''),
