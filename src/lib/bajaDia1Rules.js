@@ -62,28 +62,44 @@ export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMoti
 }
 
 export function defaultBajaMotivo(params = {}) {
-  // Si el postulante ya tiene un motivo de baja previo registrado (ej. 'BAJA DIA 1'),
-  // ese motivo original se MANTIENE INMUTABLE hasta el último registro del grupo.
   const prev = params?.previousMotivo || params?.existingMotivo || params?.row?.pastMotive || params?.row?.motivo_baja || ''
   if (prev && String(prev).trim()) {
-    return String(prev).trim()
+    const cleanPrev = String(prev).trim()
+    if (isBajaDia1Motivo(cleanPrev) && isRecuperadoCapProfile(params?.row)) {
+      return 'DESERCIÓN'
+    }
+    return cleanPrev
   }
   const day = Number(params?.trainingDayIndex) || 0
-  if (day === 1) return 'BAJA DIA 1'
+  if (day === 1 && !isRecuperadoCapProfile(params?.row)) return 'BAJA DIA 1'
   return 'DESERCIÓN'
 }
 
 export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previousMotivo = '' } = {}) {
-  // Si la persona ya tiene un motivo previo consolidado (ej. BAJA DIA 1 registrada en el Día 1),
-  // se preserva ese motivo hasta el último registro sin mutar a DESERCIÓN.
-  if (previousMotivo && String(previousMotivo).trim()) {
-    return String(previousMotivo).trim()
+  // Si el usuario seleccionó o especificó un motivo explícito en la interfaz, se respeta ese motivo
+  if (motivo && String(motivo).trim()) {
+    const cleanMotivo = String(motivo).trim()
+    if (isBajaDia1Motivo(cleanMotivo)) {
+      const day = Number(trainingDayIndex) || 0
+      if (day === 1 && !isRecuperadoCapProfile(row)) {
+        return 'BAJA DIA 1'
+      }
+      return 'DESERCIÓN'
+    }
+    return cleanMotivo
   }
-  if (!isBajaDia1Motivo(motivo)) return motivo || ''
+
+  // Si no se proporcionó un motivo nuevo pero existe uno previo consolidado
+  if (previousMotivo && String(previousMotivo).trim()) {
+    const cleanPrev = String(previousMotivo).trim()
+    if (isBajaDia1Motivo(cleanPrev) && isRecuperadoCapProfile(row)) {
+      return 'DESERCIÓN'
+    }
+    return cleanPrev
+  }
+
   const day = Number(trainingDayIndex) || 0
-  // Si estamos en Día 1 y no es perfil recuperado cap, se permite BAJA DIA 1
   if (day === 1 && !isRecuperadoCapProfile(row)) return 'BAJA DIA 1'
-  // Si es un cese nuevo originado en Día 2 en adelante, no puede ser BAJA DIA 1 (se asigna DESERCIÓN)
   return 'DESERCIÓN'
 }
 

@@ -177,7 +177,7 @@ const AttendanceRow = React.memo(function AttendanceRow({
           <div className="flex items-center gap-1.5">
             <AlertTriangle size={13} className="text-rose-500 dark:text-rose-400 flex-shrink-0" />
             <select
-              value={item.motivo_baja || (item.isFirstRecordGroup ? 'BAJA DIA 1' : '')}
+              value={item.motivo_baja || ''}
               onChange={e => onMotiveChange(item.documento, e.target.value)}
               disabled={isReadOnly || item.isLockedBaja}
               className={`w-full max-w-[200px] border border-rose-500/30 rounded-md py-1 px-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 focus:border-rose-500 outline-none ${
@@ -185,14 +185,17 @@ const AttendanceRow = React.memo(function AttendanceRow({
               }`}
               title={item.isLockedBaja ? `Baja registrada en fecha anterior: ${item.motivo_baja}` : 'Motivo de baja'}
             >
+              {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
               {item.showBajaDia1Option && <option value="BAJA DIA 1">BAJA DIA 1</option>}
-              {item.isLockedBaja && item.motivo_baja && !item.showBajaDia1Option && (
+              {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && (
+                <option value="BAJA DIA 1">BAJA DIA 1</option>
+              )}
+              {item.motivo_baja && item.motivo_baja !== 'BAJA DIA 1' && item.motivo_baja !== 'OBSERVADO' && item.motivo_baja !== 'SOBREDOTACIÓN' && !motivosBaja.some(m => m.motivo === item.motivo_baja) && (
                 <option value={item.motivo_baja}>{item.motivo_baja}</option>
               )}
 
               {item.allowOtherMotivos && (
                 <>
-                  {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
                   <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
                   {!motivosBaja.some(m => m.motivo === 'SOBREDOTACIÓN') && (
                     <option value="SOBREDOTACIÓN" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">SOBREDOTACIÓN</option>
@@ -1119,7 +1122,7 @@ export default function AsistenciaForm({
         motivo_baja = localEdit.motivo_baja
       } else if (isLockedBaja) {
         sigla = 'B'
-        motivo_baja = pastMotive || inheritedMotivo || 'BAJA DIA 1'
+        motivo_baja = pastMotive || inheritedMotivo || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
       } else if (sigla === 'B' && !motivo_baja) {
         motivo_baja = defaultBajaMotivo({
           trainingDayIndex,
@@ -1267,7 +1270,6 @@ export default function AsistenciaForm({
         trainingDayIndex: item.trainingDayIndex,
         row: item,
         motivo: newMotivo,
-        previousMotivo: item.motivo_baja,
       })
       userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: nextMotivo })
       return { ...item, motivo_baja: nextMotivo }
@@ -1430,7 +1432,6 @@ export default function AsistenciaForm({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
           motivo: motivo_baja,
-          previousMotivo: item.motivo_baja,
         })
       }
       return { ...item, motivo_baja }
