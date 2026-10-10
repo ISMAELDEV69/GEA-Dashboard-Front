@@ -778,7 +778,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       }
     }
 
-    const estados = new Set(['ACTIVO', 'CESADO', 'BAJA DIA 1']);
+    const estados = new Set(['ACTIVO', 'CESADO', 'BAJA DIA 1', 'DESCUENTO']);
 
     const sortedSemanas = Array.from(semanas).sort((a, b) => {
       const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
@@ -1037,10 +1037,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       // Si el postulante llegó a Ingreso a Operación (I-OP) en cualquier fecha o su último registro es I-OP,
       // NUNCA es descuento ni baja: es un Ingreso Efectivo (ACTIVO).
       const hasAnyIop = sigla === 'I-OP' || rows.some(r => normalizeSigla(r.sigla) === 'I-OP');
-      const hasLaterAttendance = rows.some(r => {
-        const s = normalizeSigla(r.sigla);
-        return s === 'A' || s === 'I-OP';
-      });
 
       // Si el postulante asistió en alguna fecha (Día 1, Día 2, etc.), inició capacitación
       // y si cesa con posterioridad, es una BAJA EN FORMACIÓN (CESADO), NUNCA Baja Día 1.
@@ -1059,7 +1055,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       if (hasAnyIop) {
         stateMap.set(doc, 'ACTIVO');
-      } else if (isExplicitDescLatest && !hasLaterAttendance) {
+      } else if (isExplicitDescLatest) {
         descSet.add(doc);
         stateMap.set(doc, 'DESCUENTO');
       } else if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) {
@@ -1076,17 +1072,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     return { lastStateMap: stateMap, descuentosDocSet: descSet };
   }, [kpiFilteredData, descuentos, filters]);
 
-  // ── Datos filtrados para la Tabla (Excluyendo Descuentos de la vista de Control de Asistencia) ──
+  // ── Datos filtrados para la Tabla (Incluye Descuentos identificados correctamente) ──
   const filteredData = useMemo(() => {
-    const nonDiscountData = kpiFilteredData.filter(row => {
-      const doc = normalizeText(row.documento);
-      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
-      return lastState !== 'DESCUENTO';
-    });
+    if (filters.estado === 'Todas') return kpiFilteredData;
 
-    if (filters.estado === 'Todas') return nonDiscountData;
-
-    return nonDiscountData.filter((row) => {
+    return kpiFilteredData.filter((row) => {
       const doc = normalizeText(row.documento);
       const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
       return lastState === filters.estado;
@@ -1159,11 +1149,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const cap = getCapInfo(campana, gpe);
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
       const hasDescuento = docState === 'DESCUENTO';
-
-      // Los postulantes con descuento resuelto para este grupo ya no deben aparecer en la tabla
-      if (hasDescuento) {
-        continue;
-      }
 
       result.push({
         documento: doc,
@@ -1251,8 +1236,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         desertoresFormacion += 1;
       }
 
-      // Q Día 1: Asistentes efectivos a Día 1 de Capacitación (excluye Baja Día 1 y Descuentos)
-      if ((attendedAny || isActivo) && !isB1 && !hasDescuento) qDia1 += 1;
+      // Q Día 1: Asistentes efectivos a Día 1 de Capacitación (quienes realmente asistieron a aula, excluye Bajas Día 1)
+      if (attendedAny && !isB1) qDia1 += 1;
     });
 
     let sumMetaDia1 = 0;
