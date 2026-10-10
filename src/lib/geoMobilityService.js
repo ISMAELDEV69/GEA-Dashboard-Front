@@ -103,11 +103,73 @@ export const LIMA_DISTRITOS = {
   'BARRANCO': { lat: -12.1480, lng: -77.0210, nombre: 'Barranco' }
 }
 
+// 📍 Coordenadas de Departamentos y Ciudades de Todo el Perú (Cobertura Nacional para Remotos y Provincias)
+export const PERU_DEPARTAMENTOS = {
+  'PIURA': { lat: -5.1945, lng: -80.6328, nombre: 'Piura' },
+  'SULLANA': { lat: -4.9039, lng: -80.6853, nombre: 'Sullana (Piura)' },
+  'TALARA': { lat: -4.5772, lng: -81.2719, nombre: 'Talara (Piura)' },
+  'PAITA': { lat: -5.0892, lng: -81.1144, nombre: 'Paita (Piura)' },
+  'LAMBAYEQUE': { lat: -6.7714, lng: -79.8409, nombre: 'Lambayeque' },
+  'CHICLAYO': { lat: -6.7714, lng: -79.8409, nombre: 'Chiclayo' },
+  'FERREÑAFE': { lat: -6.6417, lng: -79.7900, nombre: 'Ferreñafe' },
+  'JOSE LEONARDO ORTIZ': { lat: -6.7583, lng: -79.8333, nombre: 'José Leonardo Ortiz' },
+  'LA LIBERTAD': { lat: -8.1116, lng: -79.0287, nombre: 'La Libertad' },
+  'TRUJILLO': { lat: -8.1116, lng: -79.0287, nombre: 'Trujillo' },
+  'CHEPEN': { lat: -7.2278, lng: -79.4319, nombre: 'Chepén' },
+  'PACASMAYO': { lat: -7.4006, lng: -79.5714, nombre: 'Pacasmayo' },
+  'AREQUIPA': { lat: -16.4090, lng: -71.5375, nombre: 'Arequipa' },
+  'CERRO COLORADO': { lat: -16.3756, lng: -71.5658, nombre: 'Cerro Colorado' },
+  'PAUCARPATA': { lat: -16.4256, lng: -71.5033, nombre: 'Paucarpata' },
+  'CAYMA': { lat: -16.3861, lng: -71.5433, nombre: 'Cayma' },
+  'CUSCO': { lat: -13.5319, lng: -71.9675, nombre: 'Cusco' },
+  'WANCHAQ': { lat: -13.5250, lng: -71.9567, nombre: 'Wanchaq' },
+  'SANTIAGO': { lat: -13.5361, lng: -71.9806, nombre: 'Santiago' },
+  'SAN SEBASTIAN': { lat: -13.5283, lng: -71.9286, nombre: 'San Sebastián' },
+  'JUNIN': { lat: -12.0651, lng: -75.2049, nombre: 'Junín' },
+  'HUANCAYO': { lat: -12.0651, lng: -75.2049, nombre: 'Huancayo' },
+  'EL TAMBO': { lat: -12.0558, lng: -75.2169, nombre: 'El Tambo' },
+  'CHILCA': { lat: -12.0833, lng: -75.2000, nombre: 'Chilca' },
+  'ICA': { lat: -14.0678, lng: -75.7286, nombre: 'Ica' },
+  'CHINCHA': { lat: -13.4167, lng: -76.1333, nombre: 'Chincha' },
+  'PISCO': { lat: -13.7083, lng: -76.2000, nombre: 'Pisco' },
+  'NAZCA': { lat: -14.8306, lng: -74.9389, nombre: 'Nazca' },
+  'ANCASH': { lat: -9.5278, lng: -77.5278, nombre: 'Áncash' },
+  'CHIMBOTE': { lat: -9.0767, lng: -78.5928, nombre: 'Chimbote' },
+  'HUARAZ': { lat: -9.5278, lng: -77.5278, nombre: 'Huaraz' },
+  'NUEVO CHIMBOTE': { lat: -9.1233, lng: -78.5286, nombre: 'Nuevo Chimbote' },
+  'TACNA': { lat: -18.0146, lng: -70.2536, nombre: 'Tacna' },
+  'LORETO': { lat: -3.7491, lng: -73.2538, nombre: 'Loreto' },
+  'IQUITOS': { lat: -3.7491, lng: -73.2538, nombre: 'Iquitos' },
+  'UCAYALI': { lat: -8.3791, lng: -74.5539, nombre: 'Ucayali' },
+  'PUCALLPA': { lat: -8.3791, lng: -74.5539, nombre: 'Pucallpa' },
+  'SAN MARTIN': { lat: -6.4867, lng: -76.3689, nombre: 'San Martín' },
+  'TARAPOTO': { lat: -6.4867, lng: -76.3689, nombre: 'Tarapoto' },
+  'MOYOBAMBA': { lat: -6.0333, lng: -76.9667, nombre: 'Moyobamba' },
+  'CAJAMARCA': { lat: -7.1638, lng: -78.5128, nombre: 'Cajamarca' },
+  'JAEN': { lat: -5.7083, lng: -78.8083, nombre: 'Jaén' },
+  'PUNO': { lat: -15.8402, lng: -70.0219, nombre: 'Puno' },
+  'JULIACA': { lat: -15.4989, lng: -70.1333, nombre: 'Juliaca' },
+  'AYACUCHO': { lat: -13.1588, lng: -74.2239, nombre: 'Ayacucho' },
+  'HUAMANGA': { lat: -13.1588, lng: -74.2239, nombre: 'Huamanga' },
+  'TUMBES': { lat: -3.5669, lng: -80.4515, nombre: 'Tumbes' },
+  'HUANUCO': { lat: -9.9306, lng: -76.2422, nombre: 'Huánuco' },
+  'PASCO': { lat: -10.6675, lng: -76.2561, nombre: 'Cerro de Pasco' },
+  'MOQUEGUA': { lat: -17.1983, lng: -70.9356, nombre: 'Moquegua' },
+  'ILO': { lat: -17.6394, lng: -71.3375, nombre: 'Ilo' },
+  'MADRE DE DIOS': { lat: -12.5933, lng: -69.1891, nombre: 'Madre de Dios' },
+  'PUERTO MALDONADO': { lat: -12.5933, lng: -69.1891, nombre: 'Puerto Maldonado' },
+  'AMAZONAS': { lat: -6.2317, lng: -77.8690, nombre: 'Amazonas' },
+  'CHACHAPOYAS': { lat: -6.2317, lng: -77.8690, nombre: 'Chachapoyas' },
+  'APURIMAC': { lat: -13.6339, lng: -72.8814, nombre: 'Apurímac' },
+  'ABANCAY': { lat: -13.6339, lng: -72.8814, nombre: 'Abancay' },
+  'HUANCAVELICA': { lat: -12.7864, lng: -74.9725, nombre: 'Huancavelica' }
+}
+
 /**
  * Jitter posicional determinista basado en un seed (ej: documento del postulante).
  * Reemplaza Math.random() para que useMemo() sea estable entre renders.
  */
-function stableJitter(seed, scale = 0.007) {
+export function stableJitter(seed, scale = 0.007) {
   const s = String(seed || 'x').split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7)
   const jLat = ((s * 1664525 + 1013904223) % 65536) / 65536 - 0.5
   const jLng = ((s * 22695477 + 1) % 65536) / 65536 - 0.5
@@ -147,6 +209,20 @@ export function resolveDistrictCoordinates(rawLugar, rawDireccion, seed = '') {
         distritoKey: key,
         lat: distInfo.lat + jLat,
         lng: distInfo.lng + jLng,
+        resolved: true
+      }
+    }
+  }
+
+  // 2. Cobertura Nacional: Chequear provincias y departamentos del resto del Perú
+  for (const [key, depInfo] of Object.entries(PERU_DEPARTAMENTOS)) {
+    if (cleanStr.includes(key)) {
+      const { jLat, jLng } = stableJitter(seed || cleanStr, 0.012)
+      return {
+        distrito: depInfo.nombre,
+        distritoKey: key,
+        lat: depInfo.lat + jLat,
+        lng: depInfo.lng + jLng,
         resolved: true
       }
     }

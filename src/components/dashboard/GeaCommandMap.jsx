@@ -281,58 +281,79 @@ export default function GeaCommandMap({
       })
 
       // ── B. DIBUJAR ASESORES COMO PUNTOS DE COLOR SEGÚN LA SEDE A LA QUE POSTULAN ──
-      const displayList = filteredPostulantes.slice(0, 300)
+      // Priorizar 100% de asesores de fuera de Lima/Callao para que nunca se corten en el render
+      const deProvincias = []
+      const deLima = []
+      filteredPostulantes.forEach(p => {
+        const dep = String(p.departamento || '').toUpperCase().trim()
+        if (dep && dep !== 'LIMA' && dep !== 'CALLAO') {
+          deProvincias.push(p)
+        } else {
+          deLima.push(p)
+        }
+      })
+      const maxLima = Math.max(800, 2500 - deProvincias.length)
+      const displayList = [...deProvincias, ...deLima.slice(0, maxLima)]
 
       displayList.forEach(p => {
-        if (!p.origenLat || !p.origenLng) return
+        const oLat = Number(p.origenLat ?? p.lat)
+        const oLng = Number(p.origenLng ?? p.lng)
+        if (!oLat || !oLng || isNaN(oLat) || isNaN(oLng)) return
+
+        const dLat = Number(p.destinoLat ?? p.sede?.lat)
+        const dLng = Number(p.destinoLng ?? p.sede?.lng)
 
         const isRemoto = p.modalidad === 'REMOTO'
         const isIOP = p.esIOP
         const isBaja = p.esBaja
-        const isCritical = !isRemoto && p.distanciaKm > 14
+        const isCritical = !isRemoto && (p.distanciaKm > 14 || p.esCritico)
         const isReubicacion = mapMode === 'reubicacion' && Boolean(p.sedeSugerida)
 
-        // ── CADA POSTULANTE TOMA EL MISMO COLOR DE LA SEDE A LA QUE POSTULA ──
-        // Ate -> Verde (#10B981)
-        // Surco -> Ámbar (#F59E0B)
-        // San Isidro -> Cian (#06B6D4)
-        // Comas -> Rosa (#EC4899)
-        // Remoto -> Violeta (#8B5CF6)
-        const sedeColor = isRemoto
-          ? '#8B5CF6'
-          : (p.sede?.color || (p.sede?.id && GEA_SEDES[p.sede.id]?.color) || '#10B981')
+        // ── CADA POSTULANTE TOMA EL COLOR DE LA SEDE A LA QUE POSTULA (O VIOLETA SI ES REMOTO) ──
+        const sedeColor = p.sede?.color || (p.sede?.id && GEA_SEDES[p.sede.id]?.color) || '#10B981'
+        const markerColor = isRemoto ? '#8B5CF6' : sedeColor
 
-        // Dibujar línea SOLO si el usuario activa explícitamente 'trayectorias' o está en modo 'reubicacion'
-        if (!isRemoto && p.destinoLat && p.destinoLng && (mapMode === 'trayectorias' || (mapMode === 'reubicacion' && p.sedeSugerida))) {
+        // Dibujar línea si está activo 'trayectorias' o está en modo 'reubicacion' (aplica tanto a presenciales como a remotos)
+        if (dLat && dLng && !isNaN(dLat) && !isNaN(dLng) && (mapMode === 'trayectorias' || (mapMode === 'reubicacion' && p.sedeSugerida))) {
           const polyline = L.polyline(
-            [[p.origenLat, p.origenLng], [p.destinoLat, p.destinoLng]],
+            [[oLat, oLng], [dLat, dLng]],
             {
-              color: isReubicacion ? '#10B981' : sedeColor,
-              weight: isReubicacion ? 2.5 : 1.8,
-              opacity: isReubicacion ? 0.85 : 0.5,
-              dashArray: isCritical ? '6, 6' : undefined
+              color: isReubicacion ? '#10B981' : (isRemoto ? '#A78BFA' : sedeColor),
+              weight: isReubicacion ? 2.5 : (isRemoto ? 1.6 : 1.8),
+              opacity: isReubicacion ? 0.85 : (isRemoto ? 0.75 : 0.55),
+              dashArray: isRemoto ? '6, 8' : (isCritical ? '6, 6' : undefined)
             }
           ).addTo(polylinesLayerRef.current)
 
+          const modTag = isRemoto ? '[REMOTO]' : '[PRESENCIAL]'
+          polyline.bindTooltip(
+            `<strong>${p.nombre || p.candidato}</strong> <span style="color:#818cf8;">${modTag}</span>: ${p.distrito}${p.departamento && p.departamento !== p.distrito ? ` (${p.departamento})` : ''} → ${p.sede?.nombre || 'Sede'} (${p.distanciaKm || 0} km)`,
+            { sticky: true }
+          )
           polyline.on('mouseover', () => setHoveredAsesor(p))
           polyline.on('mouseout', () => setHoveredAsesor(null))
         }
 
-        // Marcador circular del postulante: color idéntico al de su sede
-        const circleMarker = L.circleMarker([p.origenLat, p.origenLng], {
-          radius: isIOP ? 5.5 : 4.5,
+        // Marcador circular del postulante
+        const circleMarker = L.circleMarker([oLat, oLng], {
+          radius: isIOP ? 6.5 : (isRemoto ? 5 : 4.5),
           color: '#ffffff',
           weight: 1.4,
-          fillColor: sedeColor,
+          fillColor: markerColor,
           fillOpacity: 0.95
         }).addTo(markersLayerRef.current)
 
+        circleMarker.bindTooltip(
+          `<strong>${p.nombre || p.candidato}</strong><br/>${p.distrito}${p.departamento && p.departamento !== p.distrito ? ` (${p.departamento})` : ''} ${isRemoto ? '· 💻 Remoto' : ''}`,
+          { direction: 'top', offset: [0, -4] }
+        )
+
         circleMarker.on('mouseover', () => {
-          circleMarker.setRadius(7)
+          circleMarker.setRadius(7.5)
           setHoveredAsesor(p)
         })
         circleMarker.on('mouseout', () => {
-          circleMarker.setRadius(isIOP ? 5.5 : 4.5)
+          circleMarker.setRadius(isIOP ? 6.5 : (isRemoto ? 5 : 4.5))
           setHoveredAsesor(null)
         })
 
@@ -347,25 +368,29 @@ export default function GeaCommandMap({
           : '<span style="background:#0f766e;color:#ccfbf1;padding:2px 6px;border-radius:4px;font-weight:bold;font-size:9px;">PRESENCIAL</span>'
 
         circleMarker.bindPopup(`
-          <div style="font-family: monospace; font-size: 11px; color: #0f172a; min-width: 210px;">
-            <div style="margin-bottom:4px;">
+          <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 11px; color: #0f172a; min-width: 220px; padding: 2px;">
+            <div style="margin-bottom: 4px;">
               <strong style="font-size: 12px; color: #0284c7;">${p.nombre || p.candidato}</strong>
             </div>
-            <div style="margin-bottom:6px; display:flex; gap:4px; flex-wrap:wrap;">
+            <div style="margin-bottom: 6px; display: flex; gap: 4px; flex-wrap: wrap;">
               ${badgeModalidad} ${badgeEstado}
             </div>
-            ${p.documento ? `<div>📄 <strong>DNI:</strong> ${p.documento}</div>` : ''}
-            <div>🏠 <strong>Domicilio:</strong> ${p.distrito}</div>
-            ${p.direccion ? `<small style="color: #64748b;">${p.direccion}</small><br/>` : ''}
-            <div style="margin: 4px 0;">
-              🏢 <strong>Sede Postulada:</strong>
-              <span style="background:${sedeColor}; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:10px; margin-left:4px; display:inline-block;">
-                ${p.sede?.nombre || 'GEA'}
-              </span>
+            ${p.documento ? `<div style="margin-bottom: 2px;">📄 <strong>DNI:</strong> <span style="font-family: monospace;">${p.documento}</span></div>` : ''}
+            <div style="margin-bottom: 2px;">🏠 <strong>Dirección:</strong> ${p.direccion || 'Sin dirección registrada'}</div>
+            <div style="margin-bottom: 2px;">📍 <strong>Distrito / Depto:</strong> ${p.distrito}${p.departamento && p.departamento !== p.distrito ? ` (${p.departamento})` : ''}</div>
+            <div style="margin: 6px 0 4px 0; padding: 4px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
+              <div style="font-size: 10px; color: #64748b; margin-bottom: 2px;">SEDE OPERATIVA ASIGNADA</div>
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span style="background:${sedeColor}; color:#000; font-weight:900; padding:2px 6px; border-radius:4px; font-size:10px;">
+                  ${p.sede?.nombre || 'GEA'}
+                </span>
+                <span style="font-weight: bold; font-family: monospace; color:#334155;">
+                  ${p.distanciaKm ? `${p.distanciaKm} km` : ''} ${!isRemoto ? `(~${p.tiempoEstimadoMin || Math.round((p.distanciaKm || 0) * 2.8)} min)` : '(Enlace Remoto)'}
+                </span>
+              </div>
             </div>
-            ${!isRemoto ? `<div>📏 <strong>Distancia a Sede:</strong> ${p.distanciaKm} km (~${p.tiempoEstimadoMin} min)</div>` : '<div>💻 <strong>Modalidad:</strong> Sin desplazamiento físico a sede</div>'}
-            ${p.esBaja && p.motivoBaja ? `<div style="margin-top: 4px; color: #dc2626; font-weight:bold;">⚠️ Motivo Baja: ${p.motivoBaja}</div>` : ''}
-            ${p.sedeSugerida ? `<div style="margin-top: 4px; padding: 4px; background: #ecfdf5; border-radius: 4px; color: #059669; font-weight: bold;">⚡ Sugerencia de Sede: ${p.sedeSugerida} (Ahorra ${p.ahorroKm} km)</div>` : ''}
+            ${p.esBaja && p.motivoBaja ? `<div style="margin-top: 4px; padding: 4px; background: #fef2f2; border-radius: 4px; color: #dc2626; font-weight: bold; font-size: 10px;">⚠️ Motivo Baja: ${p.motivoBaja}</div>` : ''}
+            ${p.sedeSugerida ? `<div style="margin-top: 4px; padding: 4px; background: #ecfdf5; border-radius: 4px; color: #059669; font-weight: bold; font-size: 10px;">⚡ Sugerencia Reubicación: ${p.sedeSugerida} (Ahorra ${p.ahorroKm} km)</div>` : ''}
           </div>
         `)
       })
@@ -391,16 +416,71 @@ export default function GeaCommandMap({
           : 'border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 text-[var(--text-primary)]'
       }`}>
         
-        {/* Izquierda: Selector de Sede GEA */}
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-xs font-black uppercase ${
-            isDark 
-              ? 'bg-cyan-500/15 border border-cyan-500/40 text-cyan-300' 
-              : 'bg-cyan-50 border border-cyan-200 text-cyan-700'
-          }`}>
-            <Compass size={13} className="animate-spin text-cyan-500" style={{ animationDuration: '18s' }} />
-            <span>GOOGLE MAPS // LIMA</span>
-          </div>
+        {/* Izquierda: Selector de Sede GEA y Vistas Geográficas (Lima vs Nacional) */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {/* Botón Todo el Perú */}
+          <button
+            onClick={() => {
+              const map = mapInstanceRef.current
+              if (!map) return
+              map.flyTo([-9.19, -75.01], 6, { duration: 1.2 })
+            }}
+            title="Vista Nacional: Ver postulantes de todo el Perú (Piura, Chiclayo, Trujillo, Arequipa, etc.)"
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg font-mono text-[11px] font-black uppercase cursor-pointer transition-all hover:scale-105 active:scale-95 ${
+              isDark 
+                ? 'bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30' 
+                : 'bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-xs'
+            }`}
+          >
+            <Globe size={12} className="text-indigo-500" />
+            <span>🇵🇪 TODO EL PERÚ</span>
+          </button>
+
+          {/* Botón Lima Metropolitana */}
+          <button
+            onClick={() => {
+              const map = mapInstanceRef.current
+              if (!map) return
+              map.flyTo([-12.065, -77.035], 12, { duration: 1 })
+            }}
+            title="Vista Metropolitana: Centrar en Lima y sedes GEA"
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg font-mono text-[11px] font-black uppercase cursor-pointer transition-all hover:scale-105 active:scale-95 ${
+              isDark 
+                ? 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700' 
+                : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 shadow-xs'
+            }`}
+          >
+            <MapPin size={12} className="text-cyan-500" />
+            <span>📍 LIMA</span>
+          </button>
+
+          {/* Botón Auto-Enfocar Asesores */}
+          <button
+            onClick={() => {
+              const map = mapInstanceRef.current
+              if (!map) return
+              if (markersLayerRef.current && markersLayerRef.current.getLayers().length > 0) {
+                const group = window.L?.featureGroup(markersLayerRef.current.getLayers())
+                if (group) {
+                  const b = group.getBounds()
+                  if (b.isValid()) {
+                    map.fitBounds(b, { padding: [40, 40], maxZoom: 13 })
+                    return
+                  }
+                }
+              }
+              map.flyTo([-12.065, -77.035], 12, { duration: 1 })
+            }}
+            title="Ajustar vista cartográfica a todos los asesores y sedes visibles"
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg font-mono text-[11px] font-black uppercase cursor-pointer transition-all hover:scale-105 active:scale-95 ${
+              isDark 
+                ? 'bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/25' 
+                : 'bg-cyan-50 border border-cyan-200 text-cyan-700 hover:bg-cyan-100 shadow-xs'
+            }`}
+          >
+            <Compass size={12} className="text-cyan-500" />
+            <span>🎯 ENFOCAR</span>
+          </button>
 
           <div className="flex items-center gap-1 text-xs font-mono">
             <select

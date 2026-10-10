@@ -291,7 +291,7 @@ export function normalizarMotivo(motivoCrudo) {
   return m;
 }
 
-const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad']
+const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad', 'gestor_experiencia']
 
 function profileFromSession(sessionUser) {
   const meta = sessionUser?.user_metadata || {}
@@ -9731,24 +9731,42 @@ export async function marcarTodasNotificacionesLeidas(rol = 'admin') {
 export async function fetchAnaliticaMovilidad({ periodo = null, modalidad = null } = {}) {
   if (DB_MODE === 'supabase') {
     try {
-      let q = supabase
-        .from('analitica_movilidad_geografica')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      if (periodo && periodo !== 'TODOS') {
-        q = q.eq('periodo', String(periodo).trim())
+      let allRows = []
+      let from = 0
+      const pageSize = 1000
+      let hasMore = true
+
+      while (hasMore) {
+        let q = supabase
+          .from('analitica_movilidad_geografica')
+          .select('*')
+          .range(from, from + pageSize - 1)
+          .order('created_at', { ascending: false })
+        
+        if (periodo && periodo !== 'TODOS') {
+          q = q.eq('periodo', String(periodo).trim())
+        }
+        if (modalidad && modalidad !== 'TODAS') {
+          q = q.eq('modalidad', String(modalidad).trim())
+        }
+        
+        const { data, error } = await q
+        if (error) {
+          console.warn('Error consultando analitica_movilidad_geografica:', error)
+          break
+        }
+        if (data && data.length > 0) {
+          allRows = allRows.concat(data)
+          if (data.length < pageSize || allRows.length >= 10000) {
+            hasMore = false
+          } else {
+            from += pageSize
+          }
+        } else {
+          hasMore = false
+        }
       }
-      if (modalidad && modalidad !== 'TODAS') {
-        q = q.eq('modalidad', String(modalidad).trim())
-      }
-      
-      const { data, error } = await q
-      if (error) {
-        console.warn('Error consultando analitica_movilidad_geografica:', error)
-        return []
-      }
-      return data || []
+      return allRows
     } catch (err) {
       console.warn('Excepción en fetchAnaliticaMovilidad:', err)
       return []

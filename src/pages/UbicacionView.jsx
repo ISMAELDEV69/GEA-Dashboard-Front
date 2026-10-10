@@ -42,7 +42,7 @@ import {
 } from 'recharts'
 import GeaCommandMap from '../components/dashboard/GeaCommandMap'
 import MobilityReubicacionModal from '../components/dashboard/MobilityReubicacionModal'
-import { analyzeMobilityAndDistances, GEA_SEDES } from '../lib/geoMobilityService'
+import { analyzeMobilityAndDistances, GEA_SEDES, stableJitter, calculateHaversineKm, PERU_DEPARTAMENTOS } from '../lib/geoMobilityService'
 import { fetchAnaliticaMovilidad } from '../lib/dataService'
 import { useIsDarkTheme } from '../hooks/useIsDarkTheme'
 
@@ -57,6 +57,7 @@ export default function UbicacionView({
 
   const [selectedSedeFilter, setSelectedSedeFilter] = useState('TODAS') // 'TODAS', 'ATE', 'JOCKEY', 'SAN_ISIDRO', 'COMAS'
   const [selectedModalidadFilter, setSelectedModalidadFilter] = useState('TODAS') // 'TODAS', 'PRESENCIAL', 'REMOTO'
+  const [selectedDepartamentoFilter, setSelectedDepartamentoFilter] = useState('TODOS') // 'TODOS', 'LIMA', 'PROVINCIAS', o nombre de departamento
   const [selectedEstadoFilter, setSelectedEstadoFilter] = useState('TODOS') // 'TODOS', 'I-OP', 'ACTIVO', 'BAJA'
   const [selectedPeriodoFilter, setSelectedPeriodoFilter] = useState('TODOS')
   const [isReubicacionModalOpen, setIsReubicacionModalOpen] = useState(false)
@@ -83,44 +84,155 @@ export default function UbicacionView({
         .then(rows => {
           if (!isMounted) return
           if (Array.isArray(rows) && rows.length > 0) {
-            const mapped = rows.map(r => ({
-              id: r.id,
-              documento: r.documento,
-              nombre: r.nombre_completo,
-              candidato: r.nombre_completo,
-              modalidad: r.modalidad || 'PRESENCIAL',
-              distrito: r.ciudad || r.distrito_residencia || 'LIMA',
-              ciudad: r.ciudad || 'LIMA',
-              departamento: r.departamento || 'LIMA',
-              direccion: r.direccion_domicilio || '',
-              lat: Number(r.lat_origen || -12.0463),
-              lng: Number(r.lng_origen || -76.9248),
-              sede: {
-                id: r.sede_asignada,
-                nombre: r.sede_asignada === 'SAN_ISIDRO' ? 'Sede San Isidro' : r.sede_asignada === 'JOCKEY' ? 'Sede Surco' : r.sede_asignada === 'COMAS' ? 'Sede Comas' : 'Sede Ate',
-                lat: Number(r.sede_lat || -12.0565),
-                lng: Number(r.sede_lng || -76.9535),
-                color: r.sede_asignada === 'SAN_ISIDRO' ? '#06B6D4' : r.sede_asignada === 'JOCKEY' ? '#F59E0B' : r.sede_asignada === 'COMAS' ? '#EC4899' : '#10B981'
-              },
-              distanciaKm: Number(r.distancia_km || 0),
-              rangoDistancia: r.rango_distancia || '<5km',
-              esCritico: Boolean(r.es_zona_critica),
-              asistioDia0: Boolean(r.asistio_dia_0),
-              asistioDia1: Boolean(r.asistio_dia_1),
-              esIOP: r.estado_operativo === 'I-OP',
-              esActivo: r.estado_operativo === 'ACTIVO_AULA',
-              esBaja: r.estado_operativo === 'BAJA',
-              estadoOperativo: r.estado_operativo,
-              periodo: r.periodo,
-              campana: r.campana,
-              grupoCodigo: r.grupo_codigo
-            }))
+            const sugerencias = []
+            const mapped = rows.map((r, idx) => {
+              const doc = String(r.documento || '').trim()
+              const seed = doc || r.id || String(idx)
+              const dep = String(r.departamento || '').toUpperCase().trim()
+              const rawDistrito = String(r.distrito_residencia || r.ciudad || '').toUpperCase().trim()
+
+              let rawLat = Number(r.lat_origen)
+              let rawLng = Number(r.lng_origen)
+
+              // ── Si es de provincia/otro departamento pero vino con centroide de Lima por defecto (-12.0463) ──
+              if (dep && dep !== 'LIMA' && dep !== 'CALLAO') {
+                const isLimaCoords = (isNaN(rawLat) || rawLat === 0 || (rawLat >= -12.15 && rawLat <= -11.95 && rawLng >= -77.10 && rawLng <= -76.85))
+                if (isLimaCoords) {
+                  const depMatch = PERU_DEPARTAMENTOS[rawDistrito] || PERU_DEPARTAMENTOS[dep]
+                  if (depMatch) {
+                    rawLat = depMatch.lat
+                    rawLng = depMatch.lng
+                  }
+                }
+              }
+
+              const baseLat = (!isNaN(rawLat) && rawLat !== 0) ? rawLat : -12.0463
+              const baseLng = (!isNaN(rawLng) && rawLng !== 0) ? rawLng : -76.9248
+
+              // Aplicar jitter determinista para que postulantes del mismo distrito o ciudad no se superpongan en un solo pixel
+              const { jLat, jLng } = stableJitter(seed, (dep && dep !== 'LIMA' && dep !== 'CALLAO') ? 0.012 : 0.007)
+              const origenLat = Number((baseLat + jLat).toFixed(6))
+              const origenLng = Number((baseLng + jLng).toFixed(6))
+
+              const sedeId = r.sede_asignada || 'ATE'
+              const sedeConfig = GEA_SEDES[sedeId] || GEA_SEDES.ATE
+              const rawSedeLat = Number(r.sede_lat)
+              const rawSedeLng = Number(r.sede_lng)
+              const destinoLat = (!isNaN(rawSedeLat) && rawSedeLat !== 0) ? rawSedeLat : sedeConfig.lat
+              const destinoLng = (!isNaN(rawSedeLng) && rawSedeLng !== 0) ? rawSedeLng : sedeConfig.lng
+              const sedeNombre = sedeId === 'SAN_ISIDRO' ? 'Sede San Isidro' : sedeId === 'JOCKEY' ? 'Sede Surco' : sedeId === 'COMAS' ? 'Sede Comas' : 'Sede Ate'
+              const sedeColor = sedeId === 'SAN_ISIDRO' ? '#06B6D4' : sedeId === 'JOCKEY' ? '#F59E0B' : sedeId === 'COMAS' ? '#EC4899' : '#10B981'
+
+              const modalidad = r.modalidad || 'PRESENCIAL'
+              const isRemoto = modalidad === 'REMOTO'
+              
+              // Si la distancia en base de datos es 0 o no calculada (común en remotos), calcular distancia real en línea recta a sede
+              let distKm = Number(r.distancia_km || 0)
+              if ((distKm === 0 || isNaN(distKm)) && origenLat && destinoLat) {
+                distKm = calculateHaversineKm(origenLat, origenLng, destinoLat, destinoLng)
+              }
+              const tiempoEstimadoMin = Math.round(distKm * 2.8)
+
+              // Evaluar sede óptima alternativa para presenciales
+              let sedeSugerida = r.sede_optima_sugerida || null
+              let ahorroKm = Number(r.ahorro_potencial_km || 0)
+
+              if (modalidad === 'PRESENCIAL' && distKm > 9 && !sedeSugerida) {
+                for (const [key, otraSede] of Object.entries(GEA_SEDES)) {
+                  if (otraSede.id !== sedeId && otraSede.lat && otraSede.lng) {
+                    const dOtra = calculateHaversineKm(baseLat, baseLng, otraSede.lat, otraSede.lng)
+                    if (dOtra < distKm - 4.5) {
+                      const diff = Number((distKm - dOtra).toFixed(1))
+                      if (diff > ahorroKm) {
+                        sedeSugerida = otraSede.nombre
+                        ahorroKm = diff
+                      }
+                    }
+                  }
+                }
+              }
+
+              const isIOP = r.estado_operativo === 'I-OP'
+              const isActivo = r.estado_operativo === 'ACTIVO_AULA'
+              const isBaja = r.estado_operativo === 'BAJA'
+              const candidatoNombre = r.nombre_completo || 'Postulante'
+
+              if (sedeSugerida && ahorroKm > 0) {
+                sugerencias.push({
+                  id: r.id || doc || idx,
+                  nombre: candidatoNombre,
+                  candidato: candidatoNombre,
+                  documento: doc || '—',
+                  distrito: r.ciudad || r.distrito_residencia || 'LIMA',
+                  departamento: r.departamento || 'LIMA',
+                  direccion: r.direccion_domicilio || 'Domicilio Registrado',
+                  sedeActual: sedeNombre,
+                  distanciaActual: distKm,
+                  distanciaActualKm: distKm,
+                  tiempoActualMin: tiempoEstimadoMin,
+                  sedeSugerida,
+                  distanciaSugerida: Math.max(1, Number((distKm - ahorroKm).toFixed(1))),
+                  distanciaOptimaKm: Math.max(1, Number((distKm - ahorroKm).toFixed(1))),
+                  tiempoSugeridoMin: Math.round(Math.max(1, distKm - ahorroKm) * 2.8),
+                  ahorroKm,
+                  ahorroMin: Math.round(ahorroKm * 2.8),
+                  modalidad,
+                  estadoOperativo: r.estado_operativo,
+                  esBaja,
+                  esIOP
+                })
+              }
+
+              return {
+                id: r.id,
+                documento: doc,
+                nombre: candidatoNombre,
+                candidato: candidatoNombre,
+                modalidad,
+                distrito: r.ciudad || r.distrito_residencia || 'LIMA',
+                ciudad: r.ciudad || 'LIMA',
+                departamento: r.departamento || 'LIMA',
+                direccion: r.direccion_domicilio || '',
+                // Coordenadas origen (compatibilidad con GeaCommandMap y componentes)
+                origenLat,
+                origenLng,
+                lat: origenLat,
+                lng: origenLng,
+                // Coordenadas destino de sede
+                destinoLat,
+                destinoLng,
+                sede: {
+                  id: sedeId,
+                  nombre: sedeNombre,
+                  lat: destinoLat,
+                  lng: destinoLng,
+                  color: sedeColor
+                },
+                distanciaKm: distKm,
+                tiempoEstimadoMin,
+                rangoDistancia: r.rango_distancia || (distKm < 5 ? '<5km' : distKm < 10 ? '5-10km' : distKm < 15 ? '10-15km' : '>15km'),
+                esCritico: Boolean(r.es_zona_critica) || (modalidad === 'PRESENCIAL' && distKm > 14),
+                asistioDia0: Boolean(r.asistio_dia_0),
+                asistioDia1: Boolean(r.asistio_dia_1),
+                esIOP,
+                esActivo,
+                esBaja,
+                estadoOperativo: r.estado_operativo,
+                motivoBaja: r.motivo_baja,
+                periodo: r.periodo,
+                campana: r.campana,
+                grupoCodigo: r.grupo_codigo,
+                sedeSugerida,
+                ahorroKm
+              }
+            })
 
             const pers = [...new Set(mapped.map(m => m.periodo).filter(Boolean))].sort((a,b) => b.localeCompare(a))
 
             setMobilityData(prev => ({
               ...prev,
               postulantesMapped: mapped,
+              sugerenciasReubicacion: sugerencias,
               periodosDisponibles: pers.length > 0 ? pers : prev.periodosDisponibles
             }))
           } else {
@@ -147,12 +259,30 @@ export default function UbicacionView({
   const filteredAsesores = useMemo(() => {
     let list = mobilityData.postulantesMapped || []
 
-    // 1. Filtro por Modalidad (Presencial vs Remoto)
+    // 2. Filtro por Modalidad (Presencial vs Remoto)
     if (selectedModalidadFilter !== 'TODAS') {
       list = list.filter(a => a.modalidad === selectedModalidadFilter)
     }
 
-    // 2. Filtro por Estado Operativo (I-OP, Activos en Capa, Bajas/Cesados)
+    // 2b. Filtro por Departamento / Región
+    if (selectedDepartamentoFilter === 'PROVINCIAS') {
+      list = list.filter(a => {
+        const d = String(a.departamento || '').toUpperCase().trim()
+        return d !== 'LIMA' && d !== 'CALLAO'
+      })
+    } else if (selectedDepartamentoFilter === 'LIMA') {
+      list = list.filter(a => {
+        const d = String(a.departamento || '').toUpperCase().trim()
+        return d === 'LIMA' || d === 'CALLAO'
+      })
+    } else if (selectedDepartamentoFilter !== 'TODOS') {
+      list = list.filter(a => {
+        const d = String(a.departamento || '').toUpperCase().trim()
+        return d === selectedDepartamentoFilter
+      })
+    }
+
+    // 3. Filtro por Estado Operativo (I-OP, Activos en Capa, Bajas/Cesados)
     if (selectedEstadoFilter === 'I-OP') {
       list = list.filter(a => a.esIOP || a.estadoOperativo === 'I-OP')
     } else if (selectedEstadoFilter === 'ACTIVO') {
@@ -196,10 +326,23 @@ export default function UbicacionView({
   }, [
     mobilityData.postulantesMapped,
     selectedModalidadFilter,
+    selectedDepartamentoFilter,
     selectedEstadoFilter,
     selectedSedeFilter,
     searchTerm
   ])
+
+  // Catálogo dinámico de departamentos presentes en la nómina
+  const departamentosDisponibles = useMemo(() => {
+    const counts = {}
+    ;(mobilityData.postulantesMapped || []).forEach(p => {
+      const dep = String(p.departamento || 'LIMA').toUpperCase().trim()
+      if (dep) counts[dep] = (counts[dep] || 0) + 1
+    })
+    return Object.entries(counts)
+      .map(([dep, count]) => ({ dep, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [mobilityData.postulantesMapped])
 
   // ── 2. Métricas de Alto Impacto (KPI Cards) ──────────────────────────────────
   const currentMetrics = useMemo(() => {
@@ -502,6 +645,25 @@ export default function UbicacionView({
                 <option value="TODAS" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">Todas las Modalidades</option>
                 <option value="PRESENCIAL" className="bg-[var(--bg-surface)] text-cyan-600 dark:text-cyan-300">🏢 Solo Presenciales</option>
                 <option value="REMOTO" className="bg-[var(--bg-surface)] text-indigo-600 dark:text-indigo-300">💻 Solo Remotos</option>
+              </select>
+            </div>
+
+            {/* Departamento / Cobertura Nacional */}
+            <div className="flex items-center gap-1.5 bg-[var(--bg-elevated)] px-3 py-1.5 rounded-lg border border-[var(--border-subtle)]">
+              <span className="text-[var(--text-muted)] font-medium">Región/Depto:</span>
+              <select
+                value={selectedDepartamentoFilter}
+                onChange={e => setSelectedDepartamentoFilter(e.target.value)}
+                className="bg-transparent text-[var(--text-primary)] font-medium outline-none cursor-pointer text-xs"
+              >
+                <option value="TODOS" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">🇵🇪 Todos los Departamentos</option>
+                <option value="PROVINCIAS" className="bg-[var(--bg-surface)] text-amber-500 font-bold">📍 Solo Provincias / Otros Deptos</option>
+                <option value="LIMA" className="bg-[var(--bg-surface)] text-cyan-600 dark:text-cyan-400">🏢 Lima & Callao</option>
+                {departamentosDisponibles.filter(d => d.dep !== 'LIMA' && d.dep !== 'CALLAO').map(d => (
+                  <option key={d.dep} value={d.dep} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                    {d.dep} ({d.count})
+                  </option>
+                ))}
               </select>
             </div>
 

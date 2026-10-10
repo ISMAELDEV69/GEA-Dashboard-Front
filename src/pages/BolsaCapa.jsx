@@ -18,6 +18,7 @@ import {
   saveGrupoCapacitacion,
   tipoReclutadorFromAreaCapa,
   tipoReclutadoFromAreaCapa,
+  parseSheetMatrixCandidates,
 } from '../lib/dataService'
 import { cleanDocumento, NOMINA_DB_FIELDS } from '../lib/nominaConsolidadoSchema'
 import { inferSegmento } from '../lib/capacidadRysSync'
@@ -46,45 +47,139 @@ function normHeader(value) {
     .trim()
 }
 
-function pickCol(row, aliases) {
-  const keys = Object.keys(row || {})
-  for (const alias of aliases) {
-    const hit = keys.find((k) => normHeader(k) === alias || normHeader(k).includes(alias))
-    if (hit && row[hit] != null && String(row[hit]).trim() !== '') return row[hit]
-  }
-  return ''
-}
+async function parseCapaExcel(file) {
+  if (!file) return []
+  const data = await file.arrayBuffer()
+  const wb = XLSX.read(data, { type: 'array' })
+  
+  let bestRows = []
 
-function parseCapaExcel(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('No se pudo leer el archivo'))
-    reader.onload = (ev) => {
-      try {
-        const wb = XLSX.read(ev.target.result, { type: 'array' })
-        const sheet = wb.Sheets[wb.SheetNames[0]]
-        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
-        const people = []
-        const seen = new Set()
-        for (const row of rows) {
-          const documento = cleanDocumento(pickCol(row, ['DNI', 'DOCUMENTO', 'NRO DE DNI', 'CE', 'NRO DNI']))
-          if (!documento || seen.has(documento)) continue
-          seen.add(documento)
-          people.push({
-            documento,
-            apellido_paterno: String(pickCol(row, ['APELLIDO PATERNO', 'APELLIDO']) || '').trim(),
-            apellido_materno: String(pickCol(row, ['APELLIDO MATERNO']) || '').trim(),
-            nombres: String(pickCol(row, ['NOMBRES', 'NOMBRE COMPLETO', 'NOMBRES COMPLETOS', 'NOMBRE']) || '').trim(),
-            celular: String(pickCol(row, ['CELULAR', 'TELEFONO', 'CEL']) || '').trim(),
+  // 1. Probar primero con el motor oficial de Nómina Pool (el mismo que usa Bolsa de Postulantes) en cada pestaña
+  for (const sheetName of (wb.SheetNames || [])) {
+    const worksheet = wb.Sheets[sheetName]
+    if (!worksheet) continue
+    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+    if (!matrix || matrix.length < 2) continue
+
+    try {
+      const parsed = await parseSheetMatrixCandidates(matrix, { limitLast2Months: false })
+      if (parsed && parsed.length > bestRows.length) {
+        bestRows = parsed
+      }
+    } catch (e) {
+      console.warn('Error parseando hoja con parseSheetMatrixCandidates:', sheetName, e)
+    }
+  }
+
+  // 2. Si parseSheetMatrixCandidates no detectó filas (ej. formato tabular plano sin Google Form headers), escanear por columnas
+  if (bestRows.length === 0) {
+    for (const sheetName of (wb.SheetNames || [])) {
+      const worksheet = wb.Sheets[sheetName]
+      if (!worksheet) continue
+      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+      if (!matrix || matrix.length < 2) continue
+
+      // Buscar la fila de encabezados en las primeras 20 filas
+      let headerRowIdx = -1
+      let colMap = {}
+
+      for (let r = 0; r < Math.min(matrix.length, 20); r++) {
+        const row = matrix[r] || []
+        const hasDocHeader = row.some(cell => {
+          const s = normHeader(cell)
+          return s.includes('DNI') || s.includes('DOCUMENTO') || s.includes('NRO DE DNI') || s.includes('CE') || s.includes('CEDULA')
+        })
+        if (hasDocHeader) {
+          headerRowIdx = r
+          row.forEach((cell, cIdx) => {
+            const h = normHeader(cell)
+            if (h.includes('DNI') || h.includes('DOCUMENTO') || h.includes('CE') || h.includes('CEDULA')) {
+              if (colMap.doc === undefined) colMap.doc = cIdx
+            } else if (h.includes('APELLIDO PATERNO') || h === 'PATERNO') {
+              colMap.ape_pat = cIdx
+            } else if (h.includes('APELLIDO MATERNO') || h === 'MATERNO') {
+              colMap.ape_mat = cIdx
+            } else if (h.includes('APELLIDOS') || h.includes('APELLIDO')) {
+              if (colMap.apellidos === undefined) colMap.apellidos = cIdx
+            } else if (h.includes('NOMBRE COMPLETO') || h.includes('NOMBRES COMPLETOS') || h.includes('NOMBRE') || h.includes('NOMBRES')) {
+              if (colMap.nombres === undefined) colMap.nombres = cIdx
+            } else if (h.includes('CELULAR') || h.includes('TELEFONO') || h.includes('MOVIL') || h.includes('CEL')) {
+              if (colMap.cel === undefined) colMap.cel = cIdx
+            }
+          })
+          break
+        }
+      }
+
+      if (headerRowIdx >= 0 && colMap.doc !== undefined) {
+        const rowsFound = []
+        for (let r = headerRowIdx + 1; r < matrix.length; r++) {
+          const row = matrix[r]
+          if (!row || !row.length) continue
+          const doc = cleanDocumento(row[colMap.doc])
+          if (!doc || doc.length < 5) continue
+
+          let apePat = colMap.ape_pat !== undefined ? String(row[colMap.ape_pat] || '').trim() : ''
+          let apeMat = colMap.ape_mat !== undefined ? String(row[colMap.ape_mat] || '').trim() : ''
+          let nom = colMap.nombres !== undefined ? String(row[colMap.nombres] || '').trim() : ''
+
+          if (!apePat && colMap.apellidos !== undefined) {
+            const fullApe = String(row[colMap.apellidos] || '').trim().split(/\s+/)
+            apePat = fullApe[0] || ''
+            apeMat = fullApe.slice(1).join(' ') || ''
+          }
+
+          rowsFound.push({
+            documento: doc,
+            apellido_paterno: apePat,
+            apellido_materno: apeMat,
+            nombres: nom,
+            celular: colMap.cel !== undefined ? String(row[colMap.cel] || '').trim() : ''
           })
         }
-        resolve(people)
-      } catch (err) {
-        reject(err)
+
+        if (rowsFound.length > bestRows.length) {
+          bestRows = rowsFound
+        }
       }
     }
-    reader.readAsArrayBuffer(file)
-  })
+  }
+
+  // 3. Normalizar, estructurar nombres/apellidos y deduplicar por DNI
+  const seen = new Set()
+  const cleanList = []
+  for (const item of bestRows) {
+    const doc = cleanDocumento(item.documento)
+    if (!doc || seen.has(doc)) continue
+    seen.add(doc)
+
+    let apePat = item.apellido_paterno || ''
+    let apeMat = item.apellido_materno || ''
+    let nom = item.nombres || ''
+
+    // Si los nombres vienen concatenados con apellidos (ej. "MONTOYA MANCHE ENRIQUE")
+    if (!apePat && !apeMat && nom) {
+      const parts = nom.trim().split(/\s+/)
+      if (parts.length >= 3) {
+        apePat = parts[0]
+        apeMat = parts[1]
+        nom = parts.slice(2).join(' ')
+      } else if (parts.length === 2) {
+        apePat = parts[0]
+        nom = parts[1]
+      }
+    }
+
+    cleanList.push({
+      documento: doc,
+      apellido_paterno: apePat,
+      apellido_materno: apeMat,
+      nombres: nom,
+      celular: item.celular || ''
+    })
+  }
+
+  return cleanList
 }
 
 function getPeriodoVal(g) {
@@ -163,6 +258,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
   const [savingGrupo, setSavingGrupo] = useState(false)
   const [selectedKey, setSelectedKey] = useState('')
   const [people, setPeople] = useState([])
+  const [selectedDnis, setSelectedDnis] = useState(new Set())
   const [fileName, setFileName] = useState('')
   const [adjudicating, setAdjudicating] = useState(false)
   const [message, setMessage] = useState(null)
@@ -506,6 +602,40 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
     setMessage({ tone: 'ok', text: `Usando ${duplicate.codigo} · ${duplicate.campana}. Solo se agregarán personas nuevas.` })
   }
 
+  // Detección exhaustiva de personas que ya están en el grupo (por DNI, Celular o Nombre completo)
+  const existingMatches = useMemo(() => {
+    const docs = new Set()
+    const phones = new Set()
+    const names = new Set()
+
+    roster.forEach(r => {
+      const d = cleanDocumento(r.documento)
+      if (d && d.length >= 6) docs.add(d)
+
+      const cel = String(r.celular || '').replace(/\D/g, '')
+      if (cel && cel.length >= 7) phones.add(cel)
+
+      const full = normHeader([r.apellido_paterno, r.apellido_materno, r.nombres].filter(Boolean).join(' ') || r.nombre_completo || '')
+      if (full && full.length > 5) names.add(full)
+    })
+
+    return { docs, phones, names }
+  }, [roster])
+
+  const isPersonInGroup = useCallback((p) => {
+    if (!p) return false
+    const d = cleanDocumento(p.documento)
+    if (d && existingMatches.docs.has(d)) return true
+
+    const cel = String(p.celular || '').replace(/\D/g, '')
+    if (cel && existingMatches.phones.has(cel)) return true
+
+    const full = normHeader([p.apellido_paterno, p.apellido_materno, p.nombres].filter(Boolean).join(' ') || '')
+    if (full && existingMatches.names.has(full)) return true
+
+    return false
+  }, [existingMatches])
+
   const handleExcel = async (file) => {
     setMessage(null)
     if (!file) return
@@ -513,30 +643,69 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       const rows = await parseCapaExcel(file)
       setPeople(rows)
       setFileName(file.name)
+      
+      // Pre-seleccionar automáticamente a los que NO están ya en la nómina
+      const toSelect = new Set()
+      rows.forEach(r => {
+        if (!isPersonInGroup(r)) {
+          toSelect.add(r.documento)
+        }
+      })
+      // Si todos ya están o si no se detectaron duplicados, seleccionar todos para darle libertad al usuario
+      if (toSelect.size === 0 && rows.length > 0) {
+        rows.forEach(r => toSelect.add(r.documento))
+      }
+      setSelectedDnis(toSelect)
+
       if (!rows.length) {
         setMessage({ tone: 'warn', text: 'El Excel no trajo DNI válidos. Usa columnas DNI, nombres y apellidos.' })
       }
     } catch (err) {
       setPeople([])
+      setSelectedDnis(new Set())
       setMessage({ tone: 'error', text: err?.message || 'Excel inválido.' })
     }
   }
 
-  const existingDocs = useMemo(() => new Set(roster.map((p) => cleanDocumento(p.documento)).filter(Boolean)), [roster])
-  const nuevos = useMemo(() => people.filter((p) => !existingDocs.has(p.documento)), [people, existingDocs])
-  const yaEstaban = people.length - nuevos.length
+  // Funciones de selección interactiva
+  const toggleSelect = (doc) => {
+    setSelectedDnis(prev => {
+      const next = new Set(prev)
+      if (next.has(doc)) next.delete(doc)
+      else next.add(doc)
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    setSelectedDnis(new Set(people.map(p => p.documento)))
+  }
+
+  const deselectAll = () => {
+    setSelectedDnis(new Set())
+  }
+
+  const selectOnlyNew = () => {
+    const toSelect = new Set()
+    people.forEach(p => {
+      if (!isPersonInGroup(p)) toSelect.add(p.documento)
+    })
+    setSelectedDnis(toSelect)
+  }
+
+  const allSelected = people.length > 0 && selectedDnis.size === people.length
+  const someSelected = selectedDnis.size > 0 && selectedDnis.size < people.length
 
   const handleAdjudicar = async () => {
     if (!selectedGrupo) {
       setMessage({ tone: 'error', text: 'Elige o crea un grupo de capa primero.' })
       return
     }
-    if (!nuevos.length) {
+    const seleccionados = people.filter((p) => selectedDnis.has(p.documento))
+    if (!seleccionados.length) {
       setMessage({
         tone: 'warn',
-        text: people.length
-          ? 'Todas las personas del Excel ya están en este grupo. No se duplicó nadie.'
-          : 'Carga un Excel con DNI.',
+        text: 'Selecciona al menos una persona con el checkbox para agregar al grupo.',
       })
       return
     }
@@ -546,7 +715,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       const tipo = tipoReclutador
       const semanaNum = parseInt(String(selectedGrupo.semana_trabajo || selectedGrupo.semana_label || '').replace(/\D/g, ''), 10) || null
       const validFields = new Set([...NOMINA_DB_FIELDS, 'activo'])
-      const postulantesPayload = nuevos.map((p) => {
+      const postulantesPayload = seleccionados.map((p) => {
         const raw = {
           documento: p.documento,
           apellido_paterno: p.apellido_paterno || null,
@@ -584,14 +753,15 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       window.dispatchEvent(new CustomEvent('gea-data-mutation', {
         detail: { grupo_codigo: getCodigoVal(selectedGrupo), campana: getCampanaVal(selectedGrupo) },
       }))
+      const skipped = people.filter(p => isPersonInGroup(p)).length
       setPeople([])
+      setSelectedDnis(new Set())
       setFileName('')
       if (fileRef.current) fileRef.current.value = ''
       const inserted = result?.inserted ?? postulantesPayload.length
-      const skipped = yaEstaban
       setMessage({
         tone: 'ok',
-        text: `${inserted} persona(s) nuevas en ${getCodigoVal(selectedGrupo)} (${tipo}).${skipped ? ` ${skipped} ya estaban y no se tocaron.` : ''} Quedaron en el consolidado de nóminas.`,
+        text: `${inserted} persona(s) agregadas a ${getCodigoVal(selectedGrupo)} (${tipo}).${skipped ? ` ${skipped} ya estaban en el grupo.` : ''} Quedaron consolidadas en nóminas.`,
       })
 
       // Enviar alerta a administradores sobre nómina cargada
@@ -929,7 +1099,11 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   className="hidden"
-                  onChange={(e) => handleExcel(e.target.files?.[0])}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleExcel(f)
+                    e.target.value = ''
+                  }}
                 />
                 <button
                   type="button"
@@ -942,18 +1116,23 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
               </div>
               <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5">
                 <Users size={13} />
-                {nuevos.length} nuevas
-                {yaEstaban > 0 ? ` · ${yaEstaban} ya estaban` : ''}
+                <span className="font-semibold text-[var(--text-primary)]">{selectedDnis.size} seleccionados</span>
+                {people.length > 0 && (
+                  <span>
+                    de {people.length} en el archivo ({people.filter(p => !isPersonInGroup(p)).length} nuevos
+                    {people.some(p => isPersonInGroup(p)) ? `, ${people.filter(p => isPersonInGroup(p)).length} ya en nómina` : ''})
+                  </span>
+                )}
                 {people.length ? ` · tipo ${tipoReclutador}` : ''}
               </div>
               <button
                 type="button"
-                disabled={adjudicating || !selectedGrupo || !nuevos.length}
+                disabled={adjudicating || !selectedGrupo || selectedDnis.size === 0}
                 onClick={handleAdjudicar}
-                className="h-9 px-4 rounded-lg bg-[var(--accent)] text-[var(--text-on-accent)] text-xs font-bold disabled:opacity-60 inline-flex items-center gap-1.5"
+                className="h-9 px-4 rounded-lg bg-[var(--accent)] text-[var(--text-on-accent)] text-xs font-bold disabled:opacity-60 inline-flex items-center gap-1.5 cursor-pointer shadow-sm hover:opacity-95"
               >
                 {adjudicating && <Loader2 size={14} className="animate-spin" />}
-                Agregar al grupo y consolidar
+                Agregar {selectedDnis.size > 0 ? selectedDnis.size : ''} al grupo y consolidar
               </button>
             </div>
           </Card>
@@ -962,36 +1141,111 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
         {people.length > 0 && (
           <Card>
             <div className="p-4">
-              <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)] mb-2">Vista previa Excel</p>
-              <div className="overflow-auto max-h-64">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                    Vista previa Excel ({people.length} postulantes)
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    <strong className="text-[var(--accent)] font-bold">{selectedDnis.size}</strong> de {people.length} seleccionados para agregar
+                  </p>
+                </div>
+
+                {/* Acciones de selección masiva */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    className="px-2.5 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-[var(--accent)] hover:text-white transition-all text-[11px] font-semibold cursor-pointer"
+                  >
+                    Seleccionar todos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={selectOnlyNew}
+                    className="px-2.5 py-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20 transition-all text-[11px] font-semibold cursor-pointer"
+                  >
+                    Solo nuevos ({people.filter(p => !isPersonInGroup(p)).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deselectAll}
+                    className="px-2.5 py-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all text-[11px] font-semibold cursor-pointer"
+                  >
+                    Deseleccionar
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-auto max-h-72 border border-[var(--border-subtle)] rounded-lg">
                 <table className="w-full text-left text-xs">
-                  <thead className="text-[10px] uppercase text-[var(--text-muted)]">
+                  <thead className="text-[10px] uppercase text-[var(--text-muted)] bg-[var(--bg-elevated)] sticky top-0 z-10 border-b border-[var(--border-subtle)]">
                     <tr>
-                      <th className="py-1.5 pr-2">DNI</th>
-                      <th className="py-1.5 pr-2">Apellidos</th>
-                      <th className="py-1.5 pr-2">Nombres</th>
-                      <th className="py-1.5 pr-2">Celular</th>
-                      <th className="py-1.5">Estado</th>
+                      <th className="py-2 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={el => { if (el) el.indeterminate = someSelected }}
+                          onChange={() => (allSelected ? deselectAll() : selectAll())}
+                          className="w-4 h-4 rounded accent-[var(--accent)] cursor-pointer"
+                          title="Seleccionar / Deseleccionar todos"
+                        />
+                      </th>
+                      <th className="py-2 pr-2">DNI</th>
+                      <th className="py-2 pr-2">Apellidos</th>
+                      <th className="py-2 pr-2">Nombres</th>
+                      <th className="py-2 pr-2">Celular</th>
+                      <th className="py-2 pr-3">Estado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
-                    {people.slice(0, 80).map((p) => {
-                      const exists = existingDocs.has(p.documento)
+                    {people.map((p) => {
+                      const inGroup = isPersonInGroup(p)
+                      const isSelected = selectedDnis.has(p.documento)
                       return (
-                        <tr key={p.documento} className={exists ? 'opacity-50' : ''}>
-                          <td className="py-1.5 pr-2">{p.documento}</td>
-                          <td className="py-1.5 pr-2 font-sans">{p.apellido_paterno} {p.apellido_materno}</td>
-                          <td className="py-1.5 pr-2 font-sans">{p.nombres}</td>
-                          <td className="py-1.5 pr-2">{p.celular}</td>
-                          <td className="py-1.5 font-sans">{exists ? 'Ya en el grupo' : `Nueva · ${tipoReclutador}`}</td>
+                        <tr
+                          key={p.documento}
+                          onClick={() => toggleSelect(p.documento)}
+                          className={`cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-[var(--accent)]/10 text-[var(--text-primary)] font-medium'
+                              : inGroup
+                              ? 'opacity-60 bg-transparent text-[var(--text-muted)]'
+                              : 'hover:bg-[var(--bg-elevated)]/50'
+                          }`}
+                        >
+                          <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(p.documento)}
+                              className="w-4 h-4 rounded accent-[var(--accent)] cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-2 pr-2 font-bold">{p.documento}</td>
+                          <td className="py-2 pr-2 font-sans">{p.apellido_paterno} {p.apellido_materno}</td>
+                          <td className="py-2 pr-2 font-sans">{p.nombres}</td>
+                          <td className="py-2 pr-2">{p.celular || '—'}</td>
+                          <td className="py-2 pr-3 font-sans">
+                            {inGroup ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                Ya en nómina
+                              </span>
+                            ) : isSelected ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                Listo para agregar
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-500/10 text-slate-400">
+                                No seleccionado
+                              </span>
+                            )}
+                          </td>
                         </tr>
                       )
                     })}
                   </tbody>
                 </table>
-                {people.length > 80 && (
-                  <p className="text-[11px] text-[var(--text-muted)] mt-2">+ {people.length - 80} más</p>
-                )}
               </div>
             </div>
           </Card>

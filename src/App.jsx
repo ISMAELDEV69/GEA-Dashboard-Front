@@ -88,18 +88,18 @@ export const ALL_NAV = [
   { id: 'scorecard_individual', label: 'KPIS - Reclutador / Formador', icon: Award, description: 'Rendimiento 360°, rankings y metas', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
   { id: 'resumen_capacitacion', label: 'Resumen Cap.', icon: BarChart3, description: 'KPIs y embudo de capacitación', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'cobertura_dotacion', label: 'Cobertura de Dotación', icon: PieChart, description: 'Reporte gerencial RQ vs ingresos OP', roles: ['admin', 'visor', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
-  { id: 'ubicacion', label: 'Ubicación & Mapa', icon: MapPin, description: 'Análisis geográfico y deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad', 'supervisor_capacitacion', 'jefe_capacitacion'] },
+  { id: 'ubicacion', label: 'Ubicación & Mapa', icon: MapPin, description: 'Análisis geográfico y deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad', 'supervisor_capacitacion', 'jefe_capacitacion', 'gestor_experiencia'] },
   { id: 'consolidado', label: 'Control de Asistencia', icon: Activity, description: 'Power BI de metas vs real', roles: ['admin', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
   { id: 'descuentos_bi', label: 'Descuentos BI', icon: Layers, description: 'Análisis de procedencias', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
-  { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
-  { id: 'attendancebi', label: 'Dispersión BI', icon: Activity, description: 'Métricas de retención diaria', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad'] },
+  { id: 'motivos_bajas_bi', label: 'Motivos de Bajas', icon: Activity, description: 'Pareto causal de deserción', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad', 'gestor_experiencia'] },
+  { id: 'attendancebi', label: 'Dispersión BI', icon: Activity, description: 'Métricas de retención diaria', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys', 'reclutador', 'calidad', 'gestor_experiencia'] },
   { id: 'dashboard', label: 'Dashboard General', icon: LayoutDashboard, description: 'Control Operativo y SLAs', roles: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'] },
   { id: 'reportedia1', label: 'Reporte Día 1', icon: Radio, description: 'Calibración inicial de grupos', roles: ['admin', 'visor', 'reclutador', 'formador', 'coordinador_rys', 'jefe_rys', 'calidad'] },
   { id: 'cartera_reclutador', label: 'Mi Cartera', icon: Users, description: 'Métricas, metas y postulantes', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'] },
   { id: 'capacidad', label: 'Capacidad RYS', icon: Layers, description: 'Planificación de grupos y metas', roles: ['admin', 'formador', 'visor', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asignacion_formador', label: 'Asignar Formador', icon: UserCheck, description: 'Distribución de formadores', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys'] },
   { id: 'asistencia', label: 'Marcación Asistencia', icon: ClipboardCheck, description: 'Registro diario A / F / B', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'reclutador'] },
-  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
+  { id: 'nominas_completar', label: 'Nóminas', icon: ClipboardCheck, description: 'Validación y completar datos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'calidad', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion', 'gestor_experiencia'] },
   { id: 'nomina', label: 'Bolsa Postulantes', icon: UserPlus, description: 'Ingreso masivo y registro', roles: ['admin', 'reclutador', 'formador', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'visor', 'calidad'] },
   { id: 'bolsa_capa', label: 'Bolsa de Capa', icon: GraduationCap, description: 'Grupos recuperados y traslados de capacitación', roles: ['admin', 'formador', 'supervisor_capacitacion', 'jefe_capacitacion'] },
   { id: 'propuestas', label: 'Propuestas', icon: ClipboardCheck, description: 'Formatos y acuerdos', roles: ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys', 'visor'] },
@@ -179,7 +179,7 @@ export default function App() {
         setUserProfile({
           id: session.user.id,
           nombre: meta.nombre || session.user.email?.split('@')[0] || 'Usuario',
-          rol: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad'].includes(metaRol) ? metaRol : 'visor',
+          rol: ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad', 'gestor_experiencia'].includes(metaRol) ? metaRol : 'visor',
         })
       })
   }, [session])
