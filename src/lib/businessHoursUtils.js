@@ -230,6 +230,29 @@ export function isDescuentoVencido48h(fechaRegistro, referenceDate = new Date())
 }
 
 /**
+ * Calculates remaining business hours between two dates skipping Sundays and Peruvian holidays.
+ */
+export function getRemainingBusinessHoursPeru(startDate, endDate) {
+  if (!startDate || !endDate) return 0;
+  const start = startDate instanceof Date ? startDate : new Date(startDate);
+  const end = endDate instanceof Date ? endDate : new Date(endDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start.getTime() >= end.getTime()) return 0;
+
+  let count = 0;
+  const cursor = new Date(start.getTime());
+  let safety = 0;
+
+  while (cursor.getTime() < end.getTime() && safety < 2000) {
+    safety++;
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
+    if (!isNonWorkingDayPeru(cursor)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Calculates remaining business hours / status message for UI presentation.
  */
 export function getDescuentoStatus48h(fechaRegistro, referenceDate = new Date()) {
@@ -251,13 +274,13 @@ export function getDescuentoStatus48h(fechaRegistro, referenceDate = new Date())
     };
   }
   
-  const diffMs = deadline.getTime() - ref.getTime();
-  const diffHours = Math.max(0, Math.ceil(diffMs / (3600 * 1000)));
+  // Contar estrictamente horas HÁBILES restantes (omitiendo domingos y feriados)
+  const remainingBizHours = getRemainingBusinessHoursPeru(ref, deadline);
   
   return {
     expired: false,
     deadline,
-    remainingHours: diffHours,
-    label: `${diffHours}h restantes`
+    remainingHours: remainingBizHours,
+    label: `${remainingBizHours}h restantes`
   };
 }

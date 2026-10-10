@@ -362,7 +362,7 @@ export default function DescuentosAutorizacion() {
                     {/* PLAZO 48H HÁBILES */}
                     <td className="p-2 text-center border-r border-[var(--border-subtle)]">
                       {(() => {
-                        const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at || row.fecha_baja);
+                        const status48h = getDescuentoStatus48h(row.fecha_registro || row.created_at);
                         return (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                             status48h.expired 
