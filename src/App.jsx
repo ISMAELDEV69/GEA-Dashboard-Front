@@ -219,19 +219,36 @@ export default function App() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isOreoModalOpen, setIsOreoModalOpen] = useState(false)
 
-  // Auto-mostrar Resumen Diario OREO al iniciar sesión o ingresar a la web por primera vez en la sesión
+  // Rol directivo / gerencial / administrativo exclusivo para Resumen Ejecutivo
+  const isDirectivoOrAdmin = useMemo(() => {
+    const r = (currentRole || '').toLowerCase()
+    return ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion', 'directivo', 'gerente'].includes(r)
+  }, [currentRole])
+
+  // Auto-mostrar Resumen Diario OREO al iniciar sesión o ingresar a la web SOLO a directivos y administradores
   useEffect(() => {
-    if (effectiveSession && !loading) {
-      const welcomeShown = sessionStorage.getItem('gea-oreo-welcome-shown')
-      if (!welcomeShown) {
+    if (effectiveSession && !loading && isDirectivoOrAdmin) {
+      setIsOreoModalOpen(true)
+    }
+  }, [effectiveSession, loading, isDirectivoOrAdmin])
+
+  // Listener global para invocar el Resumen Ejecutivo desde cualquier vista o evento
+  useEffect(() => {
+    const handleOpenOreo = () => {
+      if (isDirectivoOrAdmin) {
         setIsOreoModalOpen(true)
       }
     }
-  }, [effectiveSession, loading])
+    window.addEventListener('gea:open_oreo_modal', handleOpenOreo)
+    window.addEventListener('gea:open_executive_summary', handleOpenOreo)
+    return () => {
+      window.removeEventListener('gea:open_oreo_modal', handleOpenOreo)
+      window.removeEventListener('gea:open_executive_summary', handleOpenOreo)
+    }
+  }, [isDirectivoOrAdmin])
 
   const handleCloseOreoModal = useCallback(() => {
     setIsOreoModalOpen(false)
-    sessionStorage.setItem('gea-oreo-welcome-shown', 'true')
   }, [])
 
   const handleNavigate = useCallback((viewId) => {
@@ -572,6 +589,7 @@ export default function App() {
                   csatUrl="https://encuesta-de-satisfaccion-eight.vercel.app/"
                   onSelectWorkforce={(targetView) => handleNavigate(targetView || 'scorecard_individual')}
                   onNavigateNav={(targetView) => handleNavigate(targetView)}
+                  onOpenOreoResumen={isDirectivoOrAdmin ? () => setIsOreoModalOpen(true) : null}
                 />
               </Suspense>
             ) : (
@@ -605,7 +623,7 @@ export default function App() {
                   viewAsRole={viewAsRole}
                   onSelectViewRole={setViewAsRole}
                   onGoToPortal={() => handleNavigate('portal')}
-                  onOpenOreoResumen={() => setIsOreoModalOpen(true)}
+                  onOpenOreoResumen={isDirectivoOrAdmin ? () => setIsOreoModalOpen(true) : null}
                   onNavigate={handleNavigate}
                 />
 
@@ -942,8 +960,11 @@ export default function App() {
                 theme={theme}
                 setTheme={setTheme}
               />
+            </div>
+            )}
 
-              {/* Pantalla Completa de Bienvenida Ejecutiva GEITO (Resumen Diario 3D) */}
+            {/* Pantalla Completa de Bienvenida Ejecutiva GEITO (Resumen Diario) - EXCLUSIVO PARA DIRECTIVOS Y ADMINISTRADORES */}
+            {isDirectivoOrAdmin && (
               <OreoExecutiveModal
                 isOpen={isOreoModalOpen}
                 onClose={handleCloseOreoModal}
@@ -956,21 +977,6 @@ export default function App() {
                 motivosBaja={motivosBaja}
                 grupos={grupos}
               />
-
-              {/* Asistente Flotante GEÍTO (Vuelo Elíptico + Chat IA Consultivo) - Exclusivo del Panel de Resumen */}
-              {activeView === 'resumen_capacitacion' && (
-                <GeaMascotCompanion
-                  userName={effectiveProfile?.nombre || 'Usuario'}
-                  adminPhone="51980690494"
-                  currentView={activeView}
-                  postulantes={postulantes}
-                  grupos={grupos}
-                  asistencias={asistencias}
-                  campanasMetas={campanasMetas}
-                  sedes={sedes}
-                />
-              )}
-            </div>
             )}
 
           </TooltipProvider>

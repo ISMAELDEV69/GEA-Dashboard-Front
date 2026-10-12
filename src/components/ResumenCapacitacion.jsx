@@ -276,6 +276,23 @@ function MultiSelectFilter({
   );
 }
 
+// Validación rigurosa de formador asignado real (descarta nulos, vacíos, guiones y cualquier variante de "Sin Asignar")
+const isFormadorValido = (formador) => {
+  if (!formador) return false;
+  const s = String(formador).trim().toUpperCase();
+  if (!s || s === '-' || s === 'S/A' || s === 'N/A' || s === 'NULL' || s === 'UNDEFINED' || s === 'PENDIENTE') return false;
+  if (
+    s.includes('SIN ASIGNAR') ||
+    s.includes('SIN FORMADOR') ||
+    s.includes('POR ASIGNAR') ||
+    s.includes('NO ASIGNAD') ||
+    s.includes('NO TIENE')
+  ) {
+    return false;
+  }
+  return true;
+};
+
 export default function ResumenCapacitacion({
   grupos = [],
   campanasMetas = [],
@@ -388,6 +405,7 @@ export default function ResumenCapacitacion({
       if (g.is_cancelado) return false;
       const st = norm(g.estado);
       if (st.includes('CANCEL') || st.includes('ANULAD') || st.includes('INACT')) return false;
+      if (!isFormadorValido(g.formador || g.formador_nombre)) return false;
       return true;
     });
     
@@ -523,6 +541,11 @@ export default function ResumenCapacitacion({
       if (d.is_cancelado) return false;
       const stNorm = norm(d.estado);
       if (stNorm.includes('CANCEL') || stNorm.includes('ANULAD') || stNorm.includes('INACT')) return false;
+
+      // Excluir grupos sin formador asignado
+      if (!isFormadorValido(d.formador || d.formador_nombre)) {
+        return false;
+      }
 
       // Filtro Periodo (PERIODO INGRESO OP)
       const cleanP = resolvePeriodoIngreso(d) || getGrupoPeriodo(d);
@@ -935,8 +958,8 @@ export default function ResumenCapacitacion({
     // Se calcula usando las métricas reales y validadas por cohorte protegiendo a quienes graduaron a I-OP o siguen activos
     const formMap = new Map();
     filteredData.forEach(g => {
-      const formador = String(g.formador || 'SIN FORMADOR').trim().toUpperCase();
-      if (!formador || formador === 'SIN FORMADOR' || formador === 'SIN ASIGNAR') return;
+      if (!isFormadorValido(g.formador || g.formador_nombre)) return;
+      const formador = String(g.formador || g.formador_nombre).trim().toUpperCase();
       if (!formMap.has(formador)) {
         formMap.set(formador, { formador, campana: g.campana, d1: 0, desertores: 0 });
       }
@@ -1115,7 +1138,8 @@ export default function ResumenCapacitacion({
   const formadoresRankingList = useMemo(() => {
     const map = new Map();
     filteredData.forEach(g => {
-      const fName = String(g.formador || 'SIN ASIGNAR').trim().toUpperCase();
+      if (!isFormadorValido(g.formador || g.formador_nombre)) return;
+      const fName = String(g.formador || g.formador_nombre).trim().toUpperCase();
       if (!map.has(fName)) {
         map.set(fName, {
           nombre: fName,

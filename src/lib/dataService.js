@@ -9741,10 +9741,11 @@ export async function fetchAnaliticaMovilidad({ periodo = null, modalidad = null
           .from('analitica_movilidad_geografica')
           .select('*')
           .range(from, from + pageSize - 1)
-          .order('created_at', { ascending: false })
+          .order('periodo', { ascending: false })
         
         if (periodo && periodo !== 'TODOS') {
-          q = q.eq('periodo', String(periodo).trim())
+          const cleanP = String(periodo).trim()
+          q = q.or(`periodo.eq.${cleanP},periodo.ilike.%${cleanP}%`)
         }
         if (modalidad && modalidad !== 'TODAS') {
           q = q.eq('modalidad', String(modalidad).trim())
@@ -9753,6 +9754,20 @@ export async function fetchAnaliticaMovilidad({ periodo = null, modalidad = null
         const { data, error } = await q
         if (error) {
           console.warn('Error consultando analitica_movilidad_geografica:', error)
+          // Fallback sin order si hubiera discrepancia de índice
+          const fallbackRes = await supabase
+            .from('analitica_movilidad_geografica')
+            .select('*')
+            .range(from, from + pageSize - 1)
+          if (fallbackRes.data && fallbackRes.data.length > 0) {
+            allRows = allRows.concat(fallbackRes.data)
+            if (fallbackRes.data.length < pageSize || allRows.length >= 10000) {
+              hasMore = false
+            } else {
+              from += pageSize
+            }
+            continue
+          }
           break
         }
         if (data && data.length > 0) {

@@ -22,13 +22,15 @@ import {
   MapPin,
   Clock,
   Film,
-  Calendar
+  Calendar,
+  Layers
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import {
   isBajaCapacitacion,
   normalizarMotivo,
   fetchCoberturaDotacion,
+  fetchCapacidadRysLookup,
   fetchKpiReclutadoresConsolidado,
   calculateMetricasResumenCapacitacionFast
 } from '../../lib/dataService'
@@ -42,9 +44,9 @@ import {
 import { isJunkResponsable, normKpi } from '../../lib/kpiReclutadoresAnalytics'
 
 /**
- * 🦁 Mascota Oficial "GEITO" (El León de GEA con Headset y Laptop)
+ * 🦁 Avatar Oficial Ejecutivo "GEITO" (GEA Asistente)
  */
-export function GeitoLionMascot({ size = 44, className = '' }) {
+export function GeitoLionMascot({ size = 38, className = '' }) {
   const handleClick = (e) => {
     e.stopPropagation()
     if (typeof window !== 'undefined') {
@@ -56,195 +58,29 @@ export function GeitoLionMascot({ size = 44, className = '' }) {
     <div
       onClick={handleClick}
       title="Consultar a Geíto IA sobre la operación"
-      className={`relative shrink-0 flex flex-col items-center justify-center select-none cursor-pointer group ${className}`}
-      style={{ width: size, height: size * 1.15 }}
+      className={`relative shrink-0 flex items-center justify-center select-none cursor-pointer group ${className}`}
+      style={{ width: size, height: size }}
       role="button"
       tabIndex={0}
     >
-      {/* Resplandor Neón de Fondo (Dorado y Cian) */}
-      <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-amber-500/35 via-cyan-500/30 to-amber-400/25 blur-xl pointer-events-none animate-pulse group-hover:scale-125 transition-transform" />
-
-      {/* Imagen Oficial del León GEITO */}
-      <img
-        src="/mascot/geito.png"
-        alt="GEITO - Mascota Oficial GEA"
-        className="w-full h-full object-contain relative z-10 drop-shadow-[0_0_16px_rgba(6,182,212,0.7)] transition-transform duration-300 group-hover:scale-110"
-        onError={(e) => {
-          e.currentTarget.src = '/geito.png'
-        }}
-      />
-
-      {/* Placa Neón GEITO */}
-      <div className="relative z-20 -mt-2 px-2 py-0.5 rounded-full bg-slate-950/95 border border-amber-400/90 text-[8px] font-black tracking-widest text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.7)] uppercase group-hover:border-cyan-400 group-hover:text-cyan-300 transition-colors">
-        GEITO IA
+      <div className="w-full h-full rounded-xl bg-white border border-slate-200 flex items-center justify-center overflow-hidden shadow-xs group-hover:border-blue-500/80 transition-all p-1">
+        <img
+          src="/mascot/geito.png"
+          alt="GEITO"
+          className="w-full h-full object-contain transition-transform group-hover:scale-105"
+          onError={(e) => {
+            e.currentTarget.src = '/geito.png'
+          }}
+        />
       </div>
     </div>
   )
 }
 
 /**
- * 🌌 Canvas con Campo Estelar 3D en Perspectiva Warp & Polvo Cósmico
+ * Sparkline SVG Ejecutivo Suave y Corporativo
  */
-function SpaceCanvas3D() {
-  const canvasRef = useRef(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    let animationFrameId
-    let width = (canvas.width = window.innerWidth)
-    let height = (canvas.height = window.innerHeight)
-
-    const handleResize = () => {
-      if (!canvas) return
-      width = canvas.width = window.innerWidth
-      height = canvas.height = window.innerHeight
-      // Regenerar gradiente de fondo al cambiar tamaño
-      bgGrad = buildBgGrad()
-    }
-    window.addEventListener('resize', handleResize)
-
-    // ── OPTIMIZACIÓN: Crear gradiente una sola vez, no en cada frame ──
-    const cx = width / 2
-    const cy = height * 0.42
-    let bgGrad
-    function buildBgGrad() {
-      const g = ctx.createRadialGradient(cx, cy, 50, cx, cy, Math.max(width, height) * 0.75)
-      g.addColorStop(0, '#0c1228')
-      g.addColorStop(0.35, '#060a17')
-      g.addColorStop(0.7, '#02040a')
-      g.addColorStop(1, '#010205')
-      return g
-    }
-    bgGrad = buildBgGrad()
-
-    // Reducido de 160 → 120 estrellas para mejor rendimiento en hardware modesto
-    const numStars = 120
-    const stars = Array.from({ length: numStars }, () => ({
-      x: (Math.random() - 0.5) * width * 1.8,
-      y: (Math.random() - 0.5) * height * 1.8,
-      z: Math.random() * 900 + 50,
-      radius: Math.random() * 1.3 + 0.5,
-      color: Math.random() > 0.35 ? '#67e8f9' : '#fde047'
-    }))
-
-    const speed = 0.7
-    const fov = 350
-
-    const render = () => {
-      ctx.fillStyle = bgGrad
-      ctx.fillRect(0, 0, width, height)
-
-      // Dibujar estrellas en perspectiva 3D
-      stars.forEach(star => {
-        star.z -= speed
-        if (star.z <= 10) {
-          star.z = 900
-          star.x = (Math.random() - 0.5) * width * 1.8
-          star.y = (Math.random() - 0.5) * height * 1.8
-        }
-
-        const k = fov / star.z
-        const px = star.x * k + cx
-        const py = star.y * k + cy
-
-        if (px >= 0 && px <= width && py >= 0 && py <= height) {
-          const size = Math.max(0.4, (1 - star.z / 900) * star.radius * 2.0)
-          const alpha = Math.min(1, Math.max(0.1, (1 - star.z / 900) * 1.2))
-
-          ctx.beginPath()
-          ctx.arc(px, py, size, 0, Math.PI * 2)
-          ctx.fillStyle = star.color === '#67e8f9'
-            ? `rgba(103, 232, 249, ${alpha})`
-            : `rgba(253, 224, 71, ${alpha * 0.85})`
-
-          if (size > 1.4) {
-            ctx.shadowBlur = 7
-            ctx.shadowColor = star.color
-          } else {
-            ctx.shadowBlur = 0
-          }
-          ctx.fill()
-        }
-      })
-
-      animationFrameId = requestAnimationFrame(render)
-    }
-
-    // ── OPTIMIZACIÓN: Pausar rAF cuando el tab no es visible (Page Visibility API) ──
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        cancelAnimationFrame(animationFrameId)
-      } else {
-        render()
-      }
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    render()
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      cancelAnimationFrame(animationFrameId)
-    }
-  }, [])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 w-full h-full pointer-events-none z-0"
-    />
-  )
-}
-
-/**
- * 🪐 Rejilla Holográfica 3D en el Suelo y Anillos de Luz Orbital
- */
-function HologramFloor3D() {
-  return (
-    <div className="absolute inset-x-0 bottom-0 h-[360px] pointer-events-none overflow-hidden z-0 flex items-center justify-center">
-      {/* Anillo de energía orbital en el suelo */}
-      <div
-        className="absolute w-[680px] sm:w-[820px] h-[320px] rounded-full border border-cyan-500/25 shadow-[0_0_50px_rgba(6,182,212,0.25)] animate-pulse"
-        style={{
-          transform: 'rotateX(72deg) translateY(60px)',
-          background: 'radial-gradient(ellipse at center, rgba(6,182,212,0.12) 0%, rgba(139,92,246,0.06) 45%, transparent 70%)'
-        }}
-      />
-
-      {/* Segundo anillo concéntrico con borde ámbar */}
-      <div
-        className="absolute w-[480px] sm:w-[580px] h-[240px] rounded-full border border-dashed border-amber-400/20"
-        style={{
-          transform: 'rotateX(72deg) translateY(60px)'
-        }}
-      />
-
-      {/* Rejilla de perspectiva 3D (Grid Floor) */}
-      <div
-        className="absolute inset-x-0 bottom-0 h-[260px] opacity-25"
-        style={{
-          transform: 'perspective(500px) rotateX(68deg)',
-          transformOrigin: 'bottom center',
-          backgroundImage: `
-            linear-gradient(to right, rgba(6, 182, 212, 0.4) 1px, transparent 1px),
-            linear-gradient(to bottom, rgba(6, 182, 212, 0.4) 1px, transparent 1px)
-          `,
-          backgroundSize: '36px 36px',
-          maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, transparent 85%)',
-          WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 0%, transparent 85%)'
-        }}
-      />
-    </div>
-  )
-}
-
-/**
- * Sparkline SVG Suave e Interactivo Compacto
- */
-function SparklineChart({ data = [], isMejora = true, height = 26, width = 210 }) {
+function SparklineChart({ data = [], isMejora = true, height = 48, width = 310 }) {
   if (!data || data.length < 2) return null
 
   const values = data.map(d => d.val)
@@ -252,8 +88,8 @@ function SparklineChart({ data = [], isMejora = true, height = 26, width = 210 }
   const maxVal = Math.max(...values)
   const range = maxVal - minVal === 0 ? 1 : maxVal - minVal
 
-  const padX = 10
-  const padY = 4
+  const padX = 14
+  const padY = 6
   const chartW = width - padX * 2
   const chartH = height - padY * 2
 
@@ -279,19 +115,19 @@ function SparklineChart({ data = [], isMejora = true, height = 26, width = 210 }
   return (
     <div className="w-full flex flex-col items-center">
       <svg
-        viewBox={`0 0 ${width} ${height + 12}`}
+        viewBox={`0 0 ${width} ${height + 14}`}
         className="w-full overflow-visible"
-        style={{ maxHeight: `${height + 12}px` }}
+        style={{ maxHeight: `${height + 14}px` }}
       >
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
+            <stop offset="0%" stopColor={strokeColor} stopOpacity="0.25" />
             <stop offset="100%" stopColor={strokeColor} stopOpacity="0.0" />
           </linearGradient>
         </defs>
 
         <path d={fillD} fill={`url(#${gradId})`} />
-        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.0" strokeLinecap="round" />
+        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" />
 
         {points.map((p, idx) => {
           const isLast = idx === points.length - 1
@@ -300,19 +136,19 @@ function SparklineChart({ data = [], isMejora = true, height = 26, width = 210 }
               <circle
                 cx={p.x}
                 cy={p.y}
-                r={isLast ? 3 : 1.5}
+                r={isLast ? 3.5 : 2}
                 fill={isLast ? strokeColor : '#ffffff'}
                 stroke={isLast ? '#ffffff' : strokeColor}
-                strokeWidth="1"
+                strokeWidth="1.5"
               />
               <text
                 x={p.x}
-                y={height + 9}
+                y={height + 11}
                 textAnchor="middle"
-                fontSize="6.5"
-                fontWeight={isLast ? 'bold' : 'normal'}
-                fill={isLast ? '#f8fafc' : '#94a3b8'}
-                fontFamily="monospace"
+                fontSize="8.5"
+                fontWeight={isLast ? '600' : '500'}
+                fill={isLast ? (isMejora ? '#10b981' : '#f43f5e') : '#94a3b8'}
+                fontFamily="system-ui, -apple-system, sans-serif"
               >
                 {p.label}
               </text>
@@ -325,7 +161,225 @@ function SparklineChart({ data = [], isMejora = true, height = 26, width = 210 }
 }
 
 /**
- * 🃏 Ficha 3D Cinemática Reducida un 30% con Transición Coverflow Holográfica
+ * 📊 Gráfico Combinado Oficial WFM Cobertura: Requerimiento vs Ingresos + Línea % Cobertura
+ */
+function CoberturaComboChart({ data = [], selectedPeriodo = '', height = 115, width = 360 }) {
+  if (!data || data.length === 0) return null
+
+  // Períodos a visualizar (hasta 10 períodos)
+  const items = data.slice(-10)
+  const padL = 20
+  const padR = 20
+  const padT = 16
+  const padB = 20
+  const innerW = width - padL - padR
+  const innerH = height - padT - padB
+
+  const maxVolume = Math.max(10, ...items.map(d => Math.max(d.rq || 0, d.ing || 0))) * 1.15
+  const maxPct = 120
+
+  const colWidth = innerW / items.length
+  const barW = Math.max(3.5, Math.min(9, colWidth * 0.32))
+
+  const linePoints = items.map((d, i) => {
+    const x = padL + i * colWidth + colWidth / 2
+    const clampedPct = Math.min(maxPct, Math.max(0, d.val || 0))
+    const y = padT + innerH - (clampedPct / maxPct) * innerH
+    return { x, y, val: d.val, periodo: d.periodo, selected: d.periodo === selectedPeriodo }
+  })
+
+  let pathD = ''
+  if (linePoints.length > 0) {
+    pathD = `M ${linePoints[0].x} ${linePoints[0].y}`
+    for (let i = 0; i < linePoints.length - 1; i++) {
+      const curr = linePoints[i]
+      const next = linePoints[i + 1]
+      const cx = (curr.x + next.x) / 2
+      pathD += ` C ${cx} ${curr.y}, ${cx} ${next.y}, ${next.x} ${next.y}`
+    }
+  }
+
+  return (
+    <div className="w-full flex flex-col">
+      <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1 px-1">
+        <div className="flex items-center gap-2.5">
+          <span className="flex items-center gap-1 font-medium">
+            <span className="inline-block w-2 h-2 rounded-xs bg-[#c2410c]" />
+            Total Requerido
+          </span>
+          <span className="flex items-center gap-1 font-medium">
+            <span className="inline-block w-2 h-2 rounded-xs bg-[#059669]" />
+            Ingresos Efectivos
+          </span>
+          <span className="flex items-center gap-1 font-medium">
+            <span className="inline-block w-2 h-0.5 bg-[#0284c7]" />
+            % Cobertura
+          </span>
+        </div>
+        <span className="text-[9px] font-semibold text-slate-400">Meta 100%</span>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full overflow-visible"
+        style={{ maxHeight: `${height}px` }}
+      >
+        {/* Línea meta 100% */}
+        {(() => {
+          const y100 = padT + innerH - (100 / maxPct) * innerH
+          return (
+            <line
+              x1={padL}
+              y1={y100}
+              x2={width - padR}
+              y2={y100}
+              stroke="#0284c7"
+              strokeDasharray="3 3"
+              strokeOpacity="0.4"
+              strokeWidth="1"
+            />
+          )
+        })()}
+
+        {/* Barras */}
+        {items.map((d, i) => {
+          const xCenter = padL + i * colWidth + colWidth / 2
+          const xRq = xCenter - barW - 1
+          const xIng = xCenter + 1
+
+          const hRq = ((d.rq || 0) / maxVolume) * innerH
+          const hIng = ((d.ing || 0) / maxVolume) * innerH
+
+          const yRq = padT + innerH - hRq
+          const yIng = padT + innerH - hIng
+
+          const isSelected = d.periodo === selectedPeriodo
+
+          return (
+            <g key={d.periodo || i}>
+              <rect
+                x={xRq}
+                y={yRq}
+                width={barW}
+                height={Math.max(1, hRq)}
+                rx="1.5"
+                fill={isSelected ? '#ea580c' : '#c2410c'}
+                opacity={isSelected ? 1 : 0.6}
+              />
+              <rect
+                x={xIng}
+                y={yIng}
+                width={barW}
+                height={Math.max(1, hIng)}
+                rx="1.5"
+                fill={isSelected ? '#10b981' : '#059669'}
+                opacity={isSelected ? 1 : 0.6}
+              />
+              <text
+                x={xCenter}
+                y={height - 4}
+                textAnchor="middle"
+                fontSize={isSelected ? '8' : '7'}
+                fontWeight={isSelected ? '700' : '500'}
+                fill={isSelected ? '#0f172a' : '#64748b'}
+              >
+                {d.label}
+              </text>
+            </g>
+          )
+        })}
+
+        {/* Línea % Cobertura */}
+        {pathD && (
+          <path
+            d={pathD}
+            fill="none"
+            stroke="#0284c7"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        )}
+
+        {/* Puntos de línea */}
+        {linePoints.map((p, idx) => (
+          <g key={idx}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={p.selected ? 3.5 : 1.8}
+              fill={p.selected ? '#0284c7' : '#ffffff'}
+              stroke="#0284c7"
+              strokeWidth={p.selected ? 2 : 1}
+            />
+            {p.selected && (
+              <text
+                x={p.x}
+                y={Math.max(10, p.y - 6)}
+                textAnchor="middle"
+                fontSize="8"
+                fontWeight="800"
+                fill="#0284c7"
+              >
+                {p.val.toFixed(1)}%
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+    </div>
+  )
+}
+
+/**
+ * 🏢 Lista Horizontal Oficial de Segmentos WFM Cobertura
+ */
+function CoberturaSegmentosList({ segmentos = [] }) {
+  if (!segmentos || segmentos.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-slate-400 italic">
+        Sin datos de segmentos en este período
+      </div>
+    )
+  }
+
+  const maxCob = Math.max(100, ...segmentos.map(s => Number(s.coberturaPct) || 0))
+
+  return (
+    <div className="space-y-2 py-0.5">
+      {segmentos.slice(0, 4).map((s, idx) => {
+        const pct = Number(s.coberturaPct) || 0
+        const barWidth = Math.min(100, (pct / maxCob) * 100)
+        const barColor = pct >= 100 ? 'bg-emerald-500' : 'bg-[#fb7185]'
+
+        return (
+          <div key={s.segmento || idx} className="space-y-1">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-semibold text-slate-700 truncate max-w-[140px]" title={s.segmento}>
+                {s.segmento}
+              </span>
+              <span className="font-bold text-slate-900 tabular-nums">
+                {formatPePercent(pct)}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60 relative">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                style={{ width: `${Math.max(pct > 0 ? 3 : 0, barWidth)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[9px] text-slate-400">
+              <span>RQ: {formatPeNumber(s.requerimiento, 1)} FT</span>
+              <span>Ing: {formatPeNumber(s.ingresos, 1)} FT</span>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 🃏 Ficha Ejecutiva Panorámica (Estilo Corporativo / Enterprise SaaS)
  */
 function MoviePremiereCard({
   card,
@@ -340,77 +394,77 @@ function MoviePremiereCard({
   const theme = useMemo(() => {
     if (card.tipo === 'ranking_formadores') {
       return {
-        tag: 'FORMACIÓN · CAPACIDAD',
+        tag: 'Formación y Desarrollo',
         icon: GraduationCap,
-        glowBorder: 'border-amber-400/90 shadow-[0_0_25px_rgba(245,158,11,0.45)]',
-        bg: 'from-amber-950/45 via-slate-900/95 to-[#080914]/95',
-        badge: 'bg-amber-500/20 text-amber-300 border-amber-400/60',
-        badgeText: '🏆 TOP 5 FORMADORES',
-        accentText: 'text-amber-400'
+        glowBorder: 'border-amber-200/90',
+        bg: 'from-white via-amber-50/20 to-slate-50/60',
+        badge: 'bg-amber-50 text-amber-800 border-amber-200',
+        badgeText: 'Top 5 Formadores',
+        accentText: 'text-amber-700'
       }
     }
     if (card.tipo === 'ranking_reclutadores') {
       return {
-        tag: 'TALENTO · CAPACIDAD',
+        tag: 'Atracción y Selección',
         icon: Users,
-        glowBorder: 'border-cyan-400/90 shadow-[0_0_25px_rgba(6,182,212,0.45)]',
-        bg: 'from-cyan-950/45 via-slate-900/95 to-[#080914]/95',
-        badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-400/60',
-        badgeText: '🎯 TOP 5 RECLUTADORES',
-        accentText: 'text-cyan-400'
+        glowBorder: 'border-blue-200/90',
+        bg: 'from-white via-blue-50/20 to-slate-50/60',
+        badge: 'bg-blue-50 text-blue-800 border-blue-200',
+        badgeText: 'Top 5 Reclutadores',
+        accentText: 'text-blue-700'
       }
     }
     if (card.tipo === 'desercion_motivos') {
       return {
-        tag: 'BAJAS · CAPACIDAD',
+        tag: 'Gestión de Retención',
         icon: AlertTriangle,
-        glowBorder: 'border-rose-500/90 shadow-[0_0_25px_rgba(244,63,94,0.45)]',
-        bg: 'from-rose-950/45 via-slate-900/95 to-[#080914]/95',
-        badge: 'bg-rose-500/20 text-rose-300 border-rose-500/60',
-        badgeText: isMejora ? '▲ BAJA CONTROLADA' : '▼ ALERTA DE BAJAS',
-        accentText: 'text-rose-400'
+        glowBorder: 'border-rose-200/90',
+        bg: 'from-white via-rose-50/20 to-slate-50/60',
+        badge: 'bg-rose-50 text-rose-800 border-rose-200',
+        badgeText: isMejora ? 'Baja Controlada' : 'Alerta de Bajas',
+        accentText: 'text-rose-700'
       }
     }
     if (card.tipo === 'cobertura') {
       return {
-        tag: 'COBERTURA DE DOTACIÓN',
+        tag: 'Gestión de Dotación WFM',
         icon: Target,
-        glowBorder: 'border-emerald-400/90 shadow-[0_0_25px_rgba(16,185,129,0.45)]',
-        bg: 'from-emerald-950/45 via-slate-900/95 to-[#080914]/95',
-        badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/60',
-        badgeText: '🌟 COBERTURA OFICIAL',
-        accentText: 'text-emerald-400'
+        glowBorder: 'border-emerald-200/90',
+        bg: 'from-white via-emerald-50/20 to-slate-50/60',
+        badge: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+        badgeText: 'Cobertura Oficial',
+        accentText: 'text-emerald-700'
       }
     }
     if (card.tipo === 'asistencia' || card.tipo === 'grupos_en_curso') {
       return {
-        tag: 'CAPACITACIÓN · EN CURSO',
+        tag: 'Capacitación en Curso',
         icon: GraduationCap,
-        glowBorder: 'border-sky-400/90 shadow-[0_0_25px_rgba(56,189,248,0.45)]',
-        bg: 'from-sky-950/45 via-slate-900/95 to-[#080914]/95',
-        badge: 'bg-sky-500/20 text-sky-300 border-sky-400/60',
-        badgeText: `🟢 ${card.totalGrupos || 0} GRUPOS ACTIVOS`,
-        accentText: 'text-sky-400'
+        glowBorder: 'border-sky-200/90',
+        bg: 'from-white via-sky-50/20 to-slate-50/60',
+        badge: 'bg-sky-50 text-sky-800 border-sky-200',
+        badgeText: `${card.totalGrupos || 0} Grupos Activos`,
+        accentText: 'text-sky-700'
       }
     }
     return {
-      tag: 'CONTROL GERENCIAL',
+      tag: 'Control Gerencial',
       icon: Film,
-      glowBorder: 'border-purple-400/90 shadow-[0_0_25px_rgba(168,85,247,0.45)]',
-      bg: 'from-purple-950/45 via-slate-900/95 to-[#080914]/95',
-      badge: 'bg-purple-500/20 text-purple-300 border-purple-400/60',
-      badgeText: '⚡ MISIÓN DIARIA',
-      accentText: 'text-purple-400'
+      glowBorder: 'border-slate-200',
+      bg: 'from-white to-slate-50',
+      badge: 'bg-slate-100 text-slate-700 border-slate-200',
+      badgeText: 'Resumen Ejecutivo',
+      accentText: 'text-slate-800'
     }
   }, [card.tipo, isMejora])
 
   const IconComponent = theme.icon
 
-  // 🚀 CoverFlow Holográfico 3D en Escenario (No circular)
+  // Transición suave de carrusel horizontal elegante
   const transformStyle = useMemo(() => {
     if (offset === 0) {
       return {
-        transform: 'translate3d(0, 0, 75px) scale(1) rotateY(0deg)',
+        transform: 'translate3d(0, 0, 40px) scale(1)',
         zIndex: 50,
         opacity: 1,
         filter: 'none',
@@ -423,29 +477,28 @@ function MoviePremiereCard({
 
     if (dist === 1) {
       return {
-        transform: `translate3d(${dir * 185}px, 0, -45px) scale(0.85) rotateY(${dir * -30}deg)`,
+        transform: `translate3d(${dir * 320}px, 0, -40px) scale(0.88)`,
         zIndex: 40,
-        opacity: 0.65,
-        filter: 'brightness(0.65) blur(0.5px)',
+        opacity: 0.5,
+        filter: 'brightness(0.95)',
         pointerEvents: 'auto'
       }
     }
 
     if (dist === 2) {
       return {
-        transform: `translate3d(${dir * 330}px, 0, -110px) scale(0.72) rotateY(${dir * -44}deg)`,
+        transform: `translate3d(${dir * 540}px, 0, -80px) scale(0.76)`,
         zIndex: 30,
-        opacity: 0.35,
-        filter: 'brightness(0.45) blur(1px)',
+        opacity: 0.25,
+        filter: 'brightness(0.9)',
         pointerEvents: 'auto'
       }
     }
 
     return {
-      transform: `translate3d(${dir * 440}px, 0, -170px) scale(0.6) rotateY(${dir * -55}deg)`,
+      transform: `translate3d(${dir * 680}px, 0, -120px) scale(0.65)`,
       zIndex: 10,
       opacity: 0,
-      filter: 'brightness(0.3) blur(2px)',
       pointerEvents: 'none'
     }
   }, [offset])
@@ -454,39 +507,41 @@ function MoviePremiereCard({
     <div
       onClick={onClick}
       style={transformStyle}
-      className={`absolute w-[245px] sm:w-[265px] md:w-[275px] h-[315px] sm:h-[330px] rounded-2xl p-3 sm:p-3.5 select-none transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) cursor-pointer flex flex-col justify-between backdrop-blur-2xl border ${
+      className={`absolute select-none transition-all duration-300 ease-out cursor-pointer flex flex-col justify-between backdrop-blur-xl border ${
         isActive
-          ? `${theme.glowBorder} bg-gradient-to-b ${theme.bg} shadow-[0_20px_45px_rgba(0,0,0,0.9)]`
-          : 'border-white/10 bg-slate-950/80 hover:border-cyan-400/40 shadow-xl'
+          ? `w-[92vw] max-w-[760px] md:max-w-[820px] lg:max-w-[860px] h-[375px] sm:h-[395px] rounded-2xl p-5 sm:p-6 ${theme.glowBorder} bg-gradient-to-b ${theme.bg} shadow-xl shadow-slate-300/40 ring-1 ring-slate-100`
+          : 'w-[250px] sm:w-[270px] h-[320px] sm:h-[340px] rounded-xl p-3.5 border-slate-200 bg-white/95 hover:border-slate-300 shadow-md overflow-hidden'
       }`}
     >
-      {/* ── HEADER DE LA FICHA CINEMÁTICA ── */}
-      <div>
-        <div className="flex items-center justify-between gap-1.5 mb-1.5">
-          <div className="flex items-center gap-1 text-[8px] font-mono tracking-widest text-slate-400 uppercase">
-            <IconComponent size={10} className={theme.accentText} />
+      {/* ── HEADER DE LA FICHA ── */}
+      <div className="shrink-0">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+            <IconComponent size={14} className={theme.accentText} />
             <span>{theme.tag}</span>
           </div>
           <span
-            className={`px-1.5 py-0.5 rounded-full text-[8px] font-mono font-bold tracking-wider border ${theme.badge}`}
+            className={`px-2.5 py-0.5 rounded-md text-[11px] font-semibold border ${theme.badge}`}
           >
             {theme.badgeText}
           </span>
         </div>
 
         {/* Título y Valor Macro */}
-        <div className="flex items-baseline justify-between gap-1.5 border-b border-white/10 pb-1.5">
+        <div className="flex items-baseline justify-between gap-3 border-b border-slate-100 pb-2.5">
           <div className="min-w-0">
-            <h3 className="text-[11px] font-mono font-bold text-slate-200 uppercase tracking-tight truncate">
+            <h3 className={`font-bold text-slate-900 tracking-tight truncate ${isActive ? 'text-lg sm:text-xl' : 'text-sm'}`}>
               {card.nombre}
             </h3>
-            <p className="text-[9px] text-slate-400 font-sans line-clamp-1">
+            <p className={`text-slate-500 line-clamp-1 mt-0.5 ${isActive ? 'text-xs' : 'text-[10px]'}`}>
               {card.detalle}
             </p>
           </div>
           <div className="text-right shrink-0">
             <span
-              className={`text-xl sm:text-2xl font-black font-mono tracking-tight ${theme.accentText} drop-shadow-[0_0_10px_rgba(255,255,255,0.25)]`}
+              className={`font-black tracking-tight ${theme.accentText} ${
+                isActive ? 'text-3xl sm:text-4xl' : 'text-xl'
+              }`}
             >
               {card.valor_actual}
             </span>
@@ -495,210 +550,362 @@ function MoviePremiereCard({
       </div>
 
       {/* ── CUERPO DE LA FICHA SEGÚN SU TIPO ── */}
-      <div className="flex-1 flex flex-col justify-center my-1.5 overflow-hidden">
+      <div className="flex-1 flex flex-col justify-center my-2 overflow-hidden">
         {/* CASO A: RANKINGS TOP 5 (FORMADORES O RECLUTADORES) */}
         {(card.tipo === 'ranking_formadores' || card.tipo === 'ranking_reclutadores') && (
-          <div className="space-y-1 overflow-hidden">
-            {(card.ranking || []).slice(0, 5).map((item, rIdx) => (
-              <div
-                key={rIdx}
-                className={`px-2 py-0.5 rounded-lg flex items-center justify-between text-xs transition-all ${
-                  rIdx === 0
-                    ? 'bg-amber-500/15 border border-amber-400/40 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
-                    : 'bg-white/5 border border-white/5'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-xs shrink-0">{item.medal}</span>
-                  <div className="truncate">
-                    <span className="font-bold text-slate-100 block truncate text-[9.5px]">
-                      {item.nombre}
-                    </span>
-                    <span className="text-[8px] text-slate-400 font-mono block truncate">
-                      {item.logro || item.subtext}
-                    </span>
+          isActive ? (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-stretch h-full">
+              {/* Lado Izquierdo: Tarjeta Resumen de Honor */}
+              <div className="md:col-span-5 rounded-xl bg-slate-50/80 border border-slate-200/80 p-4 flex flex-col justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-slate-500 block">
+                    {card.tipo === 'ranking_formadores' ? 'Retención Promedio' : 'Total Postulantes'}
+                  </span>
+                  <div className={`text-3xl font-extrabold text-slate-900 mt-1`}>
+                    {card.valor_actual}
                   </div>
+                  <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                    {card.detalle}
+                  </p>
                 </div>
-                <div className="text-right shrink-0 pl-1.5">
-                  <span className={`font-mono font-black text-[10px] ${theme.accentText}`}>
-                    {item.score}
-                  </span>
-                  <span className="text-[7.5px] text-slate-500 block font-mono">
-                    {item.unit || (card.tipo === 'ranking_reclutadores' ? 'en aula' : 'retenc.')}
-                  </span>
-                </div>
+
+                {/* Tarjeta del Líder */}
+                {(card.ranking || []).length > 0 && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 mt-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🥇</span>
+                      <div className="truncate">
+                        <span className="text-[10px] text-amber-800 font-bold uppercase block">Primer Lugar</span>
+                        <span className="text-xs font-bold text-slate-900 truncate block">{card.ranking[0]?.nombre}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+
+              {/* Lado Derecho: Lista Ranking Podio */}
+              <div className="md:col-span-7 space-y-1.5 overflow-y-auto max-h-[175px] pr-1 scrollbar-none flex flex-col justify-center">
+                {(card.ranking || []).slice(0, 5).map((item, rIdx) => (
+                  <div
+                    key={rIdx}
+                    className={`px-3 py-2 rounded-lg flex items-center justify-between text-xs transition-colors ${
+                      rIdx === 0
+                        ? 'bg-amber-50/90 border border-amber-200/90 shadow-2xs'
+                        : 'bg-white border border-slate-200/80 hover:border-slate-300 shadow-2xs'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-sm shrink-0">{item.medal}</span>
+                      <div className="truncate">
+                        <span className="font-semibold text-slate-800 block truncate text-xs">
+                          {item.nombre}
+                        </span>
+                        <span className="text-[11px] text-slate-500 block truncate">
+                          {item.logro || item.subtext}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 pl-2">
+                      <span className={`font-bold text-xs sm:text-sm ${theme.accentText}`}>
+                        {item.score}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">
+                        {item.unit || (card.tipo === 'ranking_reclutadores' ? 'en aula' : 'retenc.')}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5 overflow-hidden">
+              {(card.ranking || []).slice(0, 3).map((item, rIdx) => (
+                <div key={rIdx} className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+                  <span className="truncate text-xs text-slate-700 font-medium">{item.medal} {item.nombre}</span>
+                  <span className={`font-bold text-xs ${theme.accentText}`}>{item.score}</span>
+                </div>
+              ))}
+            </div>
+          )
         )}
 
         {/* CASO B: DESERCIÓN DE CAPACITACIÓN (CT vs OJT & PARETO) */}
         {card.tipo === 'desercion_motivos' && (
-          <div className="space-y-1.5 flex flex-col justify-between h-full">
-            {/* Indicadores Oficiales CT vs OJT (Réplica Exacta Resumen Cap) */}
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="p-1.5 rounded-lg bg-black/40 border border-white/5 text-center flex flex-col justify-center">
-                <div className="flex items-center justify-between px-0.5 text-[7px] text-slate-400 font-mono">
-                  <span>DESERCIÓN CT</span>
-                  <span className="text-slate-500 font-bold">Meta 20%</span>
+          isActive ? (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-stretch h-full">
+              {/* Lado Izquierdo: 2 Indicadores Ejecutivos (CT y OJT) */}
+              <div className="md:col-span-5 grid grid-rows-2 gap-2">
+                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">Deserción CT (Aula)</span>
+                    <span className="text-emerald-700 font-medium text-[11px]">Meta ≤ 20%</span>
+                  </div>
+                  <div className="flex items-baseline justify-between mt-1">
+                    <span className="text-2xl font-bold text-rose-600">
+                      {card.pctDesercionCT != null ? `${card.pctDesercionCT}%` : '38.24%'}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {card.desertoresCt || 0} de {card.d1 || 0} D1
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-slate-200 overflow-hidden mt-1.5">
+                    <div className="h-full rounded-full bg-rose-500" style={{ width: `${Math.min(100, (card.pctDesercionCT || 38.24) * 2)}%` }} />
+                  </div>
                 </div>
-                <span className="text-xs font-mono font-black text-rose-400 leading-tight my-0.5">
-                  {card.pctDesercionCT != null ? `${card.pctDesercionCT}%` : '38.24%'}
-                </span>
-                <span className="text-[7.5px] text-slate-400 font-mono block truncate">
-                  {card.desertoresCt || 0} de {card.d1 || 0} D1
-                </span>
+
+                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/80 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span className="font-semibold text-slate-700">Deserción OJT (Nesting)</span>
+                    <span className="text-emerald-700 font-medium text-[11px]">Meta ≤ 20%</span>
+                  </div>
+                  <div className="flex items-baseline justify-between mt-1">
+                    <span className="text-2xl font-bold text-amber-600">
+                      {card.pctDesercionOJT != null ? `${card.pctDesercionOJT}%` : '27.11%'}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {card.desertoresOjt || 0} de {card.qIniciaOjt || 0} OJT
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-slate-200 overflow-hidden mt-1.5">
+                    <div className="h-full rounded-full bg-amber-500" style={{ width: `${Math.min(100, (card.pctDesercionOJT || 27.11) * 2)}%` }} />
+                  </div>
+                </div>
               </div>
-              <div className="p-1.5 rounded-lg bg-black/40 border border-white/5 text-center flex flex-col justify-center">
-                <div className="flex items-center justify-between px-0.5 text-[7px] text-slate-400 font-mono">
-                  <span>DESERCIÓN OJT</span>
-                  <span className="text-slate-500 font-bold">Meta 20%</span>
+
+              {/* Lado Derecho: Top Motivos Operativos (Pareto) */}
+              <div className="md:col-span-7 rounded-xl bg-slate-50/80 border border-slate-200/80 p-3.5 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-200">
+                  <span className="text-slate-700 font-semibold">Top Motivos Reales de Baja</span>
+                  <span className="text-rose-600 font-medium">% Participación</span>
                 </div>
-                <span className="text-xs font-mono font-black text-amber-400 leading-tight my-0.5">
-                  {card.pctDesercionOJT != null ? `${card.pctDesercionOJT}%` : '27.11%'}
-                </span>
-                <span className="text-[7.5px] text-slate-400 font-mono block truncate">
-                  {card.desertoresOjt || 0} de {card.qIniciaOjt || 0} OJT
-                </span>
+
+                <div className="space-y-2 py-1">
+                  {(card.topMotivos || []).slice(0, 4).map((m, mIdx) => (
+                    <div key={mIdx} className="space-y-0.5">
+                      <div className="flex justify-between text-xs text-slate-700">
+                        <span className="truncate pr-2 font-medium">{mIdx + 1}. {m.nombre}</span>
+                        <span className="font-semibold text-rose-600 shrink-0">{m.pctActual}%</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-500"
+                          style={{ width: `${Math.min(100, m.pctActual)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
+          ) : (
+            <div className="space-y-1.5 text-center p-2">
+              <span className="text-xs text-rose-600 font-semibold block">Deserción CT: {card.pctDesercionCT}%</span>
+              <span className="text-xs text-amber-600 font-semibold block">Deserción OJT: {card.pctDesercionOJT}%</span>
+            </div>
+          )
+        )}
 
-            {/* Pareto de Motivos (Sin Baja Día 1 ni Descuentos) */}
-            <div className="space-y-1 pt-1 border-t border-white/5">
-              <div className="text-[7.5px] font-mono text-slate-400 flex justify-between px-0.5 mb-0.5">
-                <span className="text-slate-300 font-bold">Top Motivos Operativos</span>
-                <span className="text-rose-400 font-bold">% Bajas</span>
-              </div>
-              {(card.topMotivos || []).slice(0, 3).map((m, mIdx) => (
-                <div key={mIdx} className="space-y-0.5">
-                  <div className="flex justify-between text-[7.5px] text-slate-300">
-                    <span className="truncate pr-1.5">{mIdx + 1}. {m.nombre}</span>
-                    <span className="font-mono font-bold text-rose-300 shrink-0">{m.pctActual}%</span>
+        {/* CASO C: COBERTURA DE DOTACIÓN - PANEL RESUMEN OFICIAL WFM */}
+        {card.tipo === 'cobertura' && (
+          isActive ? (
+            <div className="flex flex-col h-full justify-between gap-2.5">
+              {/* 1. Grid de 4 KPIs Clave Idénticos a WFM */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {/* KPI 1: REQUERIMIENTO */}
+                <div className="p-2.5 rounded-xl bg-slate-50/90 border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-slate-500 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Requerimiento</span>
+                    <Target size={13} className="text-amber-600" />
                   </div>
-                  <div className="w-full h-1 rounded-full bg-white/10 overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-rose-500 to-amber-500"
-                      style={{ width: `${Math.min(100, m.pctActual)}%` }}
+                  <div className="text-xl sm:text-2xl font-black text-slate-800 tabular-nums">
+                    {formatPeNumber(card.totalRQ, 2)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                    Período {card.selectedPeriodo}
+                  </div>
+                </div>
+
+                {/* KPI 2: INGRESOS EFECTIVOS */}
+                <div className="p-2.5 rounded-xl bg-slate-50/90 border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-slate-500 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Ingresos Efectivos</span>
+                    <TrendingUp size={13} className="text-emerald-600" />
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-emerald-600 tabular-nums">
+                    {formatPeNumber(card.totalIngresos, 2)}
+                  </div>
+                  <div
+                    className="text-[10px] text-emerald-700/80 font-medium truncate mt-0.5"
+                    title={`Objetivo: ${formatPeNumber(card.totalRQ, 2)} (${card.deltaIngresosPct >= 0 ? '+' : ''}${formatPePercent(card.deltaIngresosPct)})`}
+                  >
+                    Obj: {formatPeNumber(card.totalRQ, 2)} ({card.deltaIngresosPct >= 0 ? '+' : ''}{formatPePercent(card.deltaIngresosPct)})
+                  </div>
+                </div>
+
+                {/* KPI 3: % COBERTURA */}
+                <div className="p-2.5 rounded-xl bg-slate-50/90 border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-slate-500 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">% Cobertura</span>
+                    <PieChart size={13} className="text-blue-600" />
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-blue-600 tabular-nums">
+                    {card.valor_actual}
+                  </div>
+                  <div
+                    className="text-[10px] text-blue-700/80 font-medium truncate mt-0.5"
+                    title={`Objetivo: 100 % (${card.deltaCobPct >= 0 ? '+' : ''}${formatPePercent(card.deltaCobPct)})`}
+                  >
+                    Obj: 100% ({card.deltaCobPct >= 0 ? '+' : ''}{formatPePercent(card.deltaCobPct)})
+                  </div>
+                </div>
+
+                {/* KPI 4: BRECHA */}
+                <div className="p-2.5 rounded-xl bg-slate-50/90 border border-slate-200/90 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-slate-500 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Brecha</span>
+                    <AlertTriangle size={13} className={card.brecha >= 0 ? 'text-emerald-600' : 'text-rose-600'} />
+                  </div>
+                  <div className={`text-xl sm:text-2xl font-black tabular-nums ${card.brecha >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {formatPeNumber(card.brecha, 2)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                    Objetivo: 0,00
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Grid de Visualización Doble: Seguimiento Histórico + Segmentos */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-stretch">
+                {/* Lado Izquierdo: Seguimiento Cobertura (Períodos 202601 a 202610) */}
+                <div className="md:col-span-7 rounded-xl bg-slate-50/80 border border-slate-200/80 p-3 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs pb-1 border-b border-slate-200/80">
+                    <span className="text-slate-800 font-semibold flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      Seguimiento Cobertura
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-medium">Evolución Períodos</span>
+                  </div>
+                  <div className="py-1">
+                    <CoberturaComboChart
+                      data={card.historico || []}
+                      selectedPeriodo={card.selectedPeriodo}
+                      height={95}
+                      width={340}
                     />
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* CASO C: COBERTURA (OFICIAL WFM SUPABASE CON COMPARATIVAS Y SEGMENTOS) */}
-        {card.tipo === 'cobertura' && (
-          <div className="flex flex-col justify-between h-full gap-1">
-            <div className="p-1 rounded-lg bg-black/40 border border-white/5 flex flex-col items-center">
-              <span className="text-[7.5px] font-mono text-cyan-300/80 mb-0.5 uppercase tracking-wider">
-                Seguimiento Mensual WFM Cobertura
-              </span>
-              <SparklineChart data={card.historico || []} isMejora={isMejora} height={22} width={200} />
-            </div>
-
-            <div className="grid grid-cols-2 gap-1">
-              {(card.comparaciones || []).slice(0, 2).map((comp, cIdx) => (
-                <div
-                  key={cIdx}
-                  className="p-1 rounded-lg bg-white/5 border border-white/5 flex flex-col justify-between"
-                >
-                  <span className="text-[7.5px] text-slate-400 font-mono truncate">{comp.periodo}</span>
-                  <div className="flex items-baseline justify-between mt-0.5">
-                    <span className="font-mono font-bold text-slate-200 text-[9.5px]">{comp.valor}</span>
-                    <span
-                      className={`text-[7.5px] font-mono font-bold ${
-                        comp.es_favorable ? 'text-emerald-400' : 'text-rose-400'
-                      }`}
-                    >
-                      {comp.delta}
+                {/* Lado Derecho: Cobertura por Segmento */}
+                <div className="md:col-span-5 rounded-xl bg-slate-50/80 border border-slate-200/80 p-3 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-xs pb-1 border-b border-slate-200/80">
+                    <span className="text-slate-800 font-semibold flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                      Cobertura por Segmento
                     </span>
+                    <span className="text-[10px] text-slate-500 font-medium">Top Segmentos</span>
+                  </div>
+                  <div className="py-1">
+                    <CoberturaSegmentosList segmentos={card.topSegmentos || []} />
                   </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Top Segmentos Reales de Cobertura */}
-            {(card.topSegmentos || []).length > 0 && (
-              <div className="pt-0.5 border-t border-white/5 flex items-center justify-between text-[7.5px] font-mono">
-                <span className="text-slate-400">Top Segmento:</span>
-                <span className="text-emerald-300 font-bold truncate max-w-[150px]">
-                  {card.topSegmentos[0]?.segmento}: {card.topSegmentos[0]?.coberturaPct}%
-                </span>
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="p-2 text-center">
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <span className="text-lg font-black text-emerald-600">{card.valor_actual}</span>
+                <span className="text-xs text-slate-500">RQ: {formatPeNumber(card.totalRQ, 1)} FT</span>
+              </div>
+              <SparklineChart data={card.historico || []} isMejora={isMejora} height={35} width={220} />
+            </div>
+          )
         )}
 
-        {/* CASO C-2: GRUPOS EN CURSO & ASISTENCIA EN TIEMPO REAL (100% REAL DE SUPABASE) */}
+        {/* CASO C-2: GRUPOS EN CURSO */}
         {(card.tipo === 'asistencia' || card.tipo === 'grupos_en_curso') && (
-          <div className="space-y-1.5 overflow-hidden flex flex-col justify-between h-full">
-            {/* Lista interactiva de los grupos en curso reales */}
-            <div className="space-y-1 overflow-y-auto max-h-[140px] pr-0.5 scrollbar-none">
-              {(card.gruposList || []).length === 0 ? (
-                <div className="p-3 text-center text-[10px] text-slate-400 font-mono">
-                  No hay grupos en curso registrados para este período.
+          isActive ? (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-stretch h-full">
+              {/* Lado Izquierdo: Resumen Numérico */}
+              <div className="md:col-span-5 rounded-xl bg-slate-50/80 border border-slate-200/80 p-4 flex flex-col justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-slate-500 block">Grupos Activos</span>
+                  <div className="text-3xl font-extrabold text-sky-700 mt-1">{card.valor_actual}</div>
+                  <p className="text-xs text-slate-500 mt-1">{card.detalle}</p>
                 </div>
-              ) : (
-                (card.gruposList || []).map((grp, gIdx) => (
-                  <div
-                    key={gIdx}
-                    className="p-1.5 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between text-xs"
-                  >
-                    <div className="min-w-0 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                      <div className="truncate">
-                        <span className="font-bold text-slate-100 block truncate text-[9.5px]">
-                          {grp.codigo} · {grp.campana}
+
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="p-2.5 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 block font-medium">En Aula</span>
+                    <span className="text-sm font-bold text-sky-700">{card.totalAsesores || 0} alum.</span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 block font-medium">Activos</span>
+                    <span className="text-sm font-bold text-emerald-700">{card.totalActivosCorte || 0}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lado Derecho: Grid de Grupos */}
+              <div className="md:col-span-7 rounded-xl bg-slate-50/80 border border-slate-200/80 p-3 overflow-y-auto max-h-[175px] pr-1 space-y-2 scrollbar-none">
+                {(card.gruposList || []).length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500 font-sans">
+                    No hay grupos en curso registrados para este período.
+                  </div>
+                ) : (
+                  (card.gruposList || []).map((grp, gIdx) => (
+                    <div
+                      key={gIdx}
+                      className="p-2.5 rounded-lg bg-white border border-slate-200/80 shadow-2xs flex items-center justify-between text-xs"
+                    >
+                      <div className="min-w-0 flex items-center gap-2.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <div className="truncate">
+                          <span className="font-semibold text-slate-800 block truncate text-xs">
+                            {grp.codigo} · {grp.campana}
+                          </span>
+                          <span className="text-[11px] text-slate-500 block truncate">
+                            Formador: {grp.formador}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 pl-2">
+                        <span className="font-bold text-sky-700 text-xs">
+                          {grp.totalAsesores} alum.
                         </span>
-                        <span className="text-[8px] text-slate-400 font-mono block truncate">
-                          Formador: {grp.formador}
+                        <span className="text-[10px] text-emerald-700 block font-semibold">
+                          {grp.fase}
                         </span>
                       </div>
                     </div>
-                    <div className="text-right shrink-0 pl-1.5">
-                      <span className="font-mono font-black text-sky-300 text-[10px]">
-                        {grp.totalAsesores} alum.
-                      </span>
-                      <span className="text-[7.5px] text-emerald-400 block font-mono font-bold">
-                        {grp.fase}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Resumen métrico real en la base de la tarjeta */}
-            <div className="grid grid-cols-2 gap-1 pt-1 border-t border-white/5">
-              <div className="p-1 rounded bg-black/40 border border-white/5 text-center">
-                <span className="text-[7.5px] text-slate-400 font-mono block">Total Asesores</span>
-                <span className="text-[11px] font-mono font-black text-sky-300">{card.totalAsesores || 0} en aula</span>
-              </div>
-              <div className="p-1 rounded bg-black/40 border border-white/5 text-center">
-                <span className="text-[7.5px] text-slate-400 font-mono block">Activos Último Corte</span>
-                <span className="text-[11px] font-mono font-black text-emerald-400">{card.totalActivosCorte ?? card.totalAsesores ?? 0} activos</span>
+                  ))
+                )}
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="p-2 text-center text-xs text-slate-600 font-sans">
+              {card.totalGrupos || 0} grupos activos
+            </div>
+          )
         )}
 
         {/* CASO D: OTRAS FICHAS */}
         {!['ranking_formadores', 'ranking_reclutadores', 'desercion_motivos', 'cobertura', 'asistencia'].includes(card.tipo) && (
-          <div className="p-2 rounded-lg bg-black/40 border border-white/5 text-center flex flex-col items-center justify-center h-full">
-            <Sparkles size={18} className={`${theme.accentText} mb-1 animate-bounce`} />
-            <p className="text-[9.5px] text-slate-300 font-medium leading-relaxed">
+          <div className="p-4 rounded-xl bg-slate-50/80 border border-slate-200 text-center flex flex-col items-center justify-center h-full">
+            <Sparkles size={20} className={`${theme.accentText} mb-2`} />
+            <p className="text-xs text-slate-700 font-medium leading-relaxed max-w-md">
               {card.conclusion || 'Seguimiento continuo de metas operativas y SLAs de formación en GEA.'}
             </p>
           </div>
         )}
       </div>
 
-      {/* ── FOOTER DE LA FICHA: CONCLUSIÓN DE GEITO ── */}
-      <div className="pt-1 border-t border-white/10">
-        <div className="p-1.5 rounded-lg bg-black/60 border border-white/10 flex items-start gap-1">
-          <span className="text-amber-400 text-[8.5px] font-mono font-black shrink-0 mt-0.5">GEITO&gt;</span>
-          <p className="text-[8.5px] text-slate-300 leading-snug line-clamp-2">
+      {/* ── FOOTER DE LA FICHA: INSIGHT EJECUTIVO ── */}
+      <div className="shrink-0 pt-2.5 border-t border-slate-100">
+        <div className="p-2.5 sm:p-3 rounded-xl bg-blue-50/80 border border-blue-200/70 flex items-start gap-2.5">
+          <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white text-[10px] font-bold shrink-0 mt-0.5 shadow-2xs">
+            RESUMEN
+          </span>
+          <p className="text-xs text-slate-700 leading-relaxed line-clamp-2 font-sans font-medium">
             {card.conclusion}
           </p>
         </div>
@@ -730,10 +937,12 @@ export default function OreoExecutiveModal({
   const [progress, setProgress] = useState(0)
   const [systemTime, setSystemTime] = useState('')
   const [coberturaRows, setCoberturaRows] = useState([])
+  const [capacidadRows, setCapacidadRows] = useState([])
   const [kpiReclutadoresRows, setKpiReclutadoresRows] = useState([])
   const [resumenCapMetricas, setResumenCapMetricas] = useState([])
   const [loadingData, setLoadingData] = useState(false)
   const progressTimerRef = useRef(null)
+  const localDataCacheRef = useRef(new Map())
 
   // 1. Reloj en tiempo real
   useEffect(() => {
@@ -746,22 +955,41 @@ export default function OreoExecutiveModal({
     return () => clearInterval(timer)
   }, [])
 
-  // Período de ingreso de Capacidad seleccionado (por defecto el más reciente)
-  const [selectedPeriodo, setSelectedPeriodo] = useState('202609')
+  // Período de ingreso de Capacidad seleccionado (por defecto el año y mes en curso)
+  const [selectedPeriodo, setSelectedPeriodo] = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
 
-  // 2. Carga oficial de `cobertura_dotacion` y `kpi_reclutadores_consolidado` de Supabase
+  // 2. Carga oficial de `cobertura_dotacion`, `capacidad_rys` y `kpi_reclutadores_consolidado` de Supabase
   useEffect(() => {
     if (!isOpen) return
     let isMounted = true
+
+    // Si ya está en caché para este período, reusar instantáneamente
+    const cached = localDataCacheRef.current.get(selectedPeriodo)
+    if (cached) {
+      setCoberturaRows(cached.cob)
+      setCapacidadRows(cached.cap)
+      setKpiReclutadoresRows(cached.rec)
+      return
+    }
+
     setLoadingData(true)
     Promise.all([
       fetchCoberturaDotacion().catch(() => []),
+      fetchCapacidadRysLookup().catch(() => []),
       fetchKpiReclutadoresConsolidado({ periodo: selectedPeriodo }).catch(() => [])
     ])
-      .then(([cob, rec]) => {
+      .then(([cob, cap, rec]) => {
         if (isMounted) {
-          setCoberturaRows(Array.isArray(cob) ? cob : [])
-          setKpiReclutadoresRows(Array.isArray(rec) ? rec : [])
+          const cobData = Array.isArray(cob) ? cob : []
+          const capData = Array.isArray(cap) ? cap : []
+          const recData = Array.isArray(rec) ? rec : []
+          localDataCacheRef.current.set(selectedPeriodo, { cob: cobData, cap: capData, rec: recData })
+          setCoberturaRows(cobData)
+          setCapacidadRows(capData)
+          setKpiReclutadoresRows(recData)
         }
       })
       .catch(err => {
@@ -832,7 +1060,14 @@ export default function OreoExecutiveModal({
     }
 
     const list = Array.from(set).sort().reverse()
-    return list.length > 0 ? list : ['202609', '202608']
+    if (list.length > 0) return list
+
+    // Fallback dinámico con el mes actual y anterior
+    const now = new Date()
+    const currentYm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const prevYm = `${prevMonthDate.getFullYear()}${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`
+    return [currentYm, prevYm]
   }, [campanasMetas, coberturaRows, postulantes])
 
   // Auto-ajustar al primer período detectado si cambia la lista
@@ -874,38 +1109,56 @@ export default function OreoExecutiveModal({
     )
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FICHA 1: COBERTURA DE DOTACIÓN OFICIAL (MODELO WFM SUPABASE)
+    // FICHA 1: COBERTURA DE DOTACIÓN OFICIAL (MODELO CANÓNICO WFM)
     // ══════════════════════════════════════════════════════════════════════════
     let totalRQ = 0
     let totalIngresos = 0
-    let pctCobertura = '0.0'
+    let pctCobertura = '0,00'
+    let pctCoberturaNum = 0
     let brecha = 0
+    let deltaIngresosPct = 0
+    let deltaCobPct = 0
     let histCobertura = []
     let topSegmentos = []
+    let seguimientoData = []
 
-    // 1. Evaluar modelo canónico con la tabla `public.cobertura_dotacion`
+    // 1. Evaluar modelo canónico oficial (idéntico a CoberturaDotacion.jsx)
     if (coberturaRows.length > 0) {
       try {
-        const modelCob = buildCoberturaDotacionModelFromTable(coberturaRows, campanasMetas || [])
+        // Exclusivamente grupos CERRADO igual que el panel principal WFM
+        const closedRows = coberturaRows.filter((r) => {
+          const st = String(r.estado || r.ESTADO || '').trim().toUpperCase()
+          return st === 'CERRADO'
+        })
+        const modelCob = buildCoberturaDotacionModelFromTable(closedRows, capacidadRows || [])
         const viewCob = aggregateCoberturaDotacion(modelCob, {
-          periodo: selectedPeriodo,
+          periodos: [selectedPeriodo],
           modalidades: ['PRESENCIAL', 'REMOTO'],
           tipo: 'ftes',
           seguimientoAxis: 'periodo'
         })
 
         if (viewCob?.kpis) {
-          totalRQ = viewCob.kpis.requerimiento
-          totalIngresos = viewCob.kpis.ingresos
-          pctCobertura = Number(viewCob.kpis.coberturaPct).toFixed(1)
-          brecha = viewCob.kpis.brecha
-          topSegmentos = (viewCob.segmentos || []).slice(0, 5)
+          totalRQ = viewCob.kpis.requerimiento || 0
+          totalIngresos = viewCob.kpis.ingresos || 0
+          pctCoberturaNum = Number(viewCob.kpis.coberturaPct) || 0
+          pctCobertura = formatPeNumber(pctCoberturaNum, 2)
+          brecha = viewCob.kpis.brecha || 0
 
-          const seg = (viewCob.seguimiento || []).filter(s => s.periodo >= '202604')
-          if (seg.length > 0) {
-            histCobertura = seg.map(s => ({
+          deltaIngresosPct = totalRQ > 0 ? ((totalIngresos - totalRQ) / totalRQ) * 100 : 0
+          deltaCobPct = pctCoberturaNum - 100
+
+          topSegmentos = viewCob.segmentos || []
+          seguimientoData = viewCob.seguimiento || []
+
+          if (seguimientoData.length > 0) {
+            histCobertura = seguimientoData.map(s => ({
               label: s.periodo?.length === 6 ? `M${s.periodo.slice(4)}` : s.periodo,
-              val: Number(s.coberturaPct || 0)
+              periodo: s.periodo,
+              val: Number(s.coberturaPct || 0),
+              rq: Number(s.requerimiento || 0),
+              ing: Number(s.ingresos || 0),
+              selected: s.periodo === selectedPeriodo
             }))
           }
         }
@@ -914,7 +1167,7 @@ export default function OreoExecutiveModal({
       }
     }
 
-    // Fallback directo sobre coberturaRows si no hay cálculo en el modelo
+    // Fallback directo sobre coberturaRows si no hubo cálculo en el modelo
     if (totalRQ === 0 && totalIngresos === 0) {
       const rowsCobPeriodo = (coberturaRows || []).filter(r => {
         const rawP = r.PERIODO || r.periodo || r.FECHA_INGRESO_OP || r.fecha_ingreso_op
@@ -937,50 +1190,42 @@ export default function OreoExecutiveModal({
       totalIngresos = Number(totalIngresos.toFixed(2))
       if (totalRQ === 0) totalRQ = Math.max(totalIngresos, 1)
 
-      pctCobertura = ((totalIngresos / totalRQ) * 100).toFixed(1)
+      pctCoberturaNum = Number(((totalIngresos / totalRQ) * 100).toFixed(2))
+      pctCobertura = formatPeNumber(pctCoberturaNum, 2)
       brecha = Number((totalIngresos - totalRQ).toFixed(2))
-
-      // Semanas de fallback
-      const semanasMap = new Map()
-      rowsCobPeriodo.forEach(r => {
-        const sem = r.SEMANA || r.semana
-        if (!sem) return
-        const sKey = String(sem)
-        if (!semanasMap.has(sKey)) semanasMap.set(sKey, { rq: 0, ing: 0 })
-        const sObj = semanasMap.get(sKey)
-        sObj.rq += Number(r.RQ_FTES ?? r.rq_ftes ?? r.RQ_Q ?? 0)
-        sObj.ing += Number(r.INGRESOS_FTES ?? r.ingresos_ftes ?? r.INGRESOS_Q ?? 0)
-      })
-
-      histCobertura = Array.from(semanasMap.entries())
-        .sort((a, b) => (Number(a[0]) || 0) - (Number(b[0]) || 0))
-        .slice(-6)
-        .map(([sem, v]) => ({
-          label: `S${sem}`,
-          val: v.rq > 0 ? Number(((v.ing / v.rq) * 100).toFixed(1)) : 100
-        }))
+      deltaIngresosPct = totalRQ > 0 ? ((totalIngresos - totalRQ) / totalRQ) * 100 : 0
+      deltaCobPct = pctCoberturaNum - 100
     }
 
     if (histCobertura.length < 2) {
       histCobertura = [
-        { label: 'M06', val: 78.4 },
-        { label: 'M07', val: 94.6 },
-        { label: 'M08', val: 86.8 },
-        { label: 'M09', val: Number(pctCobertura) || 90.2 }
+        { label: 'M06', periodo: '202606', val: 78.4, rq: 300, ing: 235 },
+        { label: 'M07', periodo: '202607', val: 94.6, rq: 450, ing: 425 },
+        { label: 'M08', periodo: '202608', val: 86.8, rq: 420, ing: 365 },
+        { label: 'M09', periodo: '202609', val: 90.2, rq: 460, ing: 415 },
+        { label: 'M10', periodo: '202610', val: pctCoberturaNum || 22.38, rq: totalRQ || 105, ing: totalIngresos || 23.5, selected: true }
       ]
     }
 
     const cardCobertura = {
       id: 'kpi_cobertura_oficial',
       tipo: 'cobertura',
-      nombre: 'COBERTURA DE DOTACIÓN',
-      tendencia: Number(pctCobertura) >= 90 ? 'mejora' : 'baja',
-      valor_actual: `${pctCobertura}%`,
+      shortLabel: 'Cobertura',
+      nombre: 'REPORTE GERENCIAL DE COBERTURA DE DOTACIÓN',
+      tendencia: pctCoberturaNum >= 80 ? 'mejora' : 'baja',
+      valor_actual: `${pctCobertura} %`,
+      pctCoberturaNum,
+      totalRQ,
+      totalIngresos,
+      brecha,
+      deltaIngresosPct,
+      deltaCobPct,
+      selectedPeriodo,
       detalle: `Período ${selectedPeriodo} · RQ: ${formatPeNumber(totalRQ, 2)} FT · Ingresos: ${formatPeNumber(totalIngresos, 2)} FT`,
       comparaciones: [
         {
           periodo: 'Cobertura Oficial',
-          valor: `${pctCobertura}%`,
+          valor: `${pctCobertura} %`,
           delta: brecha >= 0 ? `+${formatPeNumber(brecha, 2)} FT` : `${formatPeNumber(brecha, 2)} FT`,
           es_favorable: brecha >= 0
         },
@@ -992,8 +1237,9 @@ export default function OreoExecutiveModal({
         }
       ],
       historico: histCobertura,
+      seguimientoData,
       topSegmentos,
-      conclusion: `La cobertura oficial de dotación para el período ${selectedPeriodo} alcanza el ${pctCobertura}%, con ${formatPeNumber(totalIngresos, 2)} FT de ingresos efectivos sobre una meta de ${formatPeNumber(totalRQ, 2)} FT (Brecha: ${formatPeNumber(brecha, 2)} FT).`
+      conclusion: `La cobertura oficial de dotación para el período ${selectedPeriodo} se sitúa en ${pctCobertura}%, alcanzando ${formatPeNumber(totalIngresos, 2)} FT de ingresos efectivos sobre una meta requerida de ${formatPeNumber(totalRQ, 2)} FT (Brecha neta de ${formatPeNumber(brecha, 2)} FT).`
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1010,6 +1256,7 @@ export default function OreoExecutiveModal({
         fName !== 'FORMADOR' &&
         !fName.includes('SIN FORMADOR') &&
         !fName.includes('POR ASIGNAR') &&
+        !fName.includes('SIN ASIGNAR') &&
         !normKpi(fName).includes('ADMIN') &&
         !isJunkResponsable(fName)
       ) {
@@ -1039,6 +1286,7 @@ export default function OreoExecutiveModal({
             fName === 'FORMADOR' ||
             fName.includes('SIN FORMADOR') ||
             fName.includes('POR ASIGNAR') ||
+            fName.includes('SIN ASIGNAR') ||
             normKpi(fName).includes('ADMIN') ||
             isJunkResponsable(fName)
           ) return
@@ -1111,6 +1359,7 @@ export default function OreoExecutiveModal({
     const cardFormadores = {
       id: 'kpi_ranking_formadores',
       tipo: 'ranking_formadores',
+      shortLabel: 'Formadores',
       nombre: 'TOP 5 FORMADORES',
       tendencia: 'mejora',
       valor_actual: `${avgRetencion}%`,
@@ -1237,6 +1486,7 @@ export default function OreoExecutiveModal({
     const cardReclutadores = {
       id: 'kpi_ranking_reclutadores',
       tipo: 'ranking_reclutadores',
+      shortLabel: 'Reclutadores',
       nombre: 'TOP 5 RECLUTADORES',
       tendencia: 'mejora',
       valor_actual: `${totalDia1Reclutadores} en aula`,
@@ -1409,6 +1659,7 @@ export default function OreoExecutiveModal({
     const cardDesercion = {
       id: 'kpi_desercion_motivos',
       tipo: 'desercion_motivos',
+      shortLabel: 'Deserción',
       nombre: 'DESERCIÓN DE CAPACITACIÓN',
       tendencia: pctDesercionGlobal <= 43 ? 'mejora' : 'baja',
       valor_actual: `${pctDesercionGlobal.toFixed(2)}%`,
@@ -1442,17 +1693,43 @@ export default function OreoExecutiveModal({
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FICHA 5: GRUPOS EN CURSO & ACTIVOS AL ÚLTIMO CORTE (100% REAL DE SUPABASE)
+    // FICHA 5: GRUPOS EN CURSO DEL PERÍODO ACTUAL (AULAS VIGENTES EN FORMACIÓN)
     // ══════════════════════════════════════════════════════════════════════════
-    const gruposActivosPeriodo = gruposDelPeriodo.filter(g => {
-      const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim()
-      const isCerrado = st.includes('CERR') || st.includes('FIN') || st.includes('CULM') || g.is_cerrado
-      return !isCerrado
-    })
+    const nowCur = new Date()
+    const currentPeriodoReal = `${nowCur.getFullYear()}${String(nowCur.getMonth() + 1).padStart(2, '0')}`
 
-    const gruposEnCursoFinales = gruposActivosPeriodo.length > 0
-      ? gruposActivosPeriodo
-      : gruposDelPeriodo.slice(0, 6)
+    // Filtrar estrictamente grupos del período actual que estén vigentes / en curso
+    const gruposEnCursoFinales = gruposCapacidad.filter(g => {
+      if (!g || g.is_cerrado) return false
+
+      // 1. Validar que pertenezca al período actual
+      const p = normalize2026Period(
+        resolvePeriodoIngreso(g) ||
+        g.periodo ||
+        g.periodo_ingreso_op ||
+        g.periodo_ingreso ||
+        g.periodo_efectivo
+      )
+      if (p !== currentPeriodoReal) return false
+
+      // 2. Validar que el estado sea estrictamente vigente/en curso
+      const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim()
+      const isCerrado = st.includes('CERR') || st.includes('FIN') || st.includes('CULM')
+      const isPlanificado = st.includes('PLAN') || st.includes('PROY') || st.includes('CANC') || st.includes('INACT')
+      if (isCerrado || isPlanificado) return false
+
+      // 3. Si ya pasaron todos a operación y no quedan activos en aula/OJT, no es en curso
+      const activosActuales = Number(g.activos_actuales || 0)
+      const activosOjt = Number(g.activos_ojt || 0)
+      const totalEnAula = activosActuales + activosOjt
+      const iop = Number(g.ingresos_iop || 0)
+
+      if (totalEnAula === 0 && iop > 0) return false
+
+      // Debe tener estado en curso/activo o tener asesores actualmente en aula
+      const tieneEstadoEnCurso = st.includes('CURSO') || st.includes('ACT')
+      return tieneEstadoEnCurso || totalEnAula > 0
+    })
 
     let totalAsesoresEnCurso = 0
     let totalActivosCorte = 0
@@ -1469,7 +1746,7 @@ export default function OreoExecutiveModal({
         ? (activosActuales + activosOjt)
         : Math.max(1, (d1 > 0 ? d1 : 15) - Number(g.desertores_ct || 0) - Number(g.desertores_ojt || 0))
 
-      const countMatriculados = d1 > 0 ? d1 : Number(g.total_nomina || 15)
+      const countMatriculados = d1 > 0 ? d1 : Number(g.total_nomina || countActivos)
 
       totalAsesoresEnCurso += countMatriculados
       totalActivosCorte += countActivos
@@ -1497,15 +1774,16 @@ export default function OreoExecutiveModal({
     const cardAsistencia = {
       id: 'kpi_grupos_en_curso',
       tipo: 'asistencia',
+      shortLabel: 'Aulas en Curso',
       nombre: 'GRUPOS EN CURSO',
       tendencia: 'mejora',
       valor_actual: `${gruposList.length} Grupos`,
       totalGrupos: gruposList.length,
       totalAsesores: totalAsesoresEnCurso,
       totalActivosCorte,
-      detalle: `${totalActivosCorte} activos al último corte · ${campanasEnCurso.size} campañas activas`,
-      gruposList: gruposList.slice(0, 5),
-      conclusion: `Actualmente hay ${gruposList.length} grupos en curso con ${totalActivosCorte} asesores activos al último corte para el período ${selectedPeriodo} (de ${totalAsesoresEnCurso} matriculados).`
+      detalle: `${totalActivosCorte} activos en formación · ${campanasEnCurso.size} campañas activas (Período actual ${currentPeriodoReal})`,
+      gruposList: gruposList.slice(0, 8),
+      conclusion: `Actualmente hay ${gruposList.length} grupos en curso con ${totalActivosCorte} asesores activos en formación para el período actual ${currentPeriodoReal} (de ${totalAsesoresEnCurso} matriculados).`
     }
 
     return [
@@ -1571,46 +1849,41 @@ export default function OreoExecutiveModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose, handlePrev, handleNext])
 
-  if (!isOpen) return null
+  // 🔒 CONTROL ESTRICTO: Solo accesible para Administradores y Directivos
+  const userRole = (userProfile?.rol || '').toLowerCase()
+  const isDirectivoOrAdmin = ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion', 'directivo', 'gerente'].includes(userRole)
+
+  if (!isOpen || !isDirectivoOrAdmin) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[#02040a]/95 select-none animate-fadeIn">
-      {/* ── FONDO 1: CAMPO ESTELAR EN PERSPECTIVA 3D WARP ── */}
-      <SpaceCanvas3D />
-
-      {/* ── FONDO 2: REJILLA HOLOGRÁFICA 3D Y ANILLOS ORBITALES EN EL PISO ── */}
-      <HologramFloor3D />
-
-      {/* Resplandor Cósmico Central */}
-      <div className="absolute top-[42%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] sm:w-[680px] h-[280px] bg-gradient-to-tr from-cyan-600/15 via-indigo-600/10 to-amber-500/15 blur-[95px] pointer-events-none rounded-full" />
-
-      {/* ── CONTENEDOR PRINCIPAL FLOTANTE ── */}
-      <div className="relative z-10 w-full h-full flex flex-col justify-between p-3 sm:p-4 overflow-hidden">
-        {/* ── 1. CABECERA EJECUTIVA TIPO PREMIERE CON SELECTOR DE PERÍODO ── */}
-        <header className="w-full max-w-4xl mx-auto flex items-center justify-between gap-3 px-2 pt-1 shrink-0">
+    <div className="fixed inset-0 z-50 w-screen h-screen bg-[#f8fafc] select-none animate-fadeIn flex flex-col justify-between p-3 sm:p-5 lg:p-6 overflow-hidden">
+      {/* ── CONTENIDO PRINCIPAL A PANTALLA COMPLETA ── */}
+      <div className="relative z-10 w-full h-full max-w-7xl mx-auto flex flex-col justify-between">
+        {/* ── 1. CABECERA EJECUTIVA LIMPIA CON SELECTOR DE PERÍODO ── */}
+        <header className="w-full flex items-center justify-between gap-3 px-2 pt-1 shrink-0 border-b border-slate-200 pb-3">
           {/* Izquierda: Sello GEA/WFM y Selector de Período de Ingreso */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-xs font-mono text-cyan-400/80 bg-slate-900/70 border border-cyan-500/25 px-3 py-1 rounded-full backdrop-blur-md shadow-[0_0_15px_rgba(6,182,212,0.15)]">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-              <span className="font-bold tracking-wider hidden sm:inline">GEA · RESUMEN DIARIO</span>
-              <span className="opacity-40 hidden sm:inline">|</span>
-              <span className="text-white font-bold">{systemTime || '10:00:00'}</span>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 text-xs text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="font-semibold text-slate-800 hidden sm:inline">GEA DataCenter</span>
+              <span className="text-slate-300 hidden sm:inline">|</span>
+              <span className="text-slate-500 font-mono text-[11px]">{systemTime || '10:00:00'}</span>
             </div>
 
             {/* Selector de Período de Ingreso de Capacidad */}
-            <div className="flex items-center gap-1.5 bg-slate-900/80 border border-amber-400/40 px-2.5 py-1 rounded-full text-xs font-mono backdrop-blur-md shadow-[0_0_10px_rgba(245,158,11,0.2)]">
-              <Calendar size={12} className="text-amber-400" />
-              <span className="text-slate-400 text-[10px] hidden md:inline">Ingreso OP:</span>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-xs shadow-2xs">
+              <Calendar size={13} className="text-slate-500" />
+              <span className="text-slate-500 text-xs hidden md:inline">Período:</span>
               <select
                 value={selectedPeriodo}
                 onChange={e => {
                   setSelectedPeriodo(e.target.value)
                   setProgress(0)
                 }}
-                className="bg-transparent text-amber-300 font-bold outline-none cursor-pointer text-xs"
+                className="bg-transparent text-slate-800 font-semibold outline-none cursor-pointer text-xs"
               >
                 {availablePeriodos.map(p => (
-                  <option key={p} value={p} className="bg-slate-900 text-white font-mono">
+                  <option key={p} value={p} className="bg-white text-slate-800 font-mono">
                     {p}
                   </option>
                 ))}
@@ -1618,44 +1891,103 @@ export default function OreoExecutiveModal({
             </div>
           </div>
 
-          {/* Centro: Mascota GEITO y Título Despejado */}
+          {/* Centro: Título Ejecutivo Despejado */}
           <div className="flex items-center gap-2.5">
-            <GeitoLionMascot size={38} />
+            <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/80 flex items-center justify-center text-blue-700 shadow-2xs">
+              <Sparkles size={18} />
+            </div>
             <div className="text-left hidden sm:block">
-              <div className="flex items-center gap-1.5 font-mono text-[8.5px] font-bold tracking-widest text-amber-400 uppercase">
-                <span>ESTRENO EJECUTIVO</span>
-                <span className="opacity-40">·</span>
-                <span className="text-cyan-300">ASISTENTE GEITO</span>
-              </div>
-              <h1 className="text-sm sm:text-base font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-white to-cyan-300">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">
+                Resumen Ejecutivo Directivo
+              </span>
+              <h1 className="text-sm sm:base font-bold text-slate-900">
                 {greeting}, {userName}
               </h1>
             </div>
           </div>
 
-          {/* Derecha: Botón Cerrar */}
+          {/* Derecha: Botón Salir al Tablero */}
           <button
             onClick={onClose}
-            title="Cerrar y entrar al tablero (Esc)"
-            className="p-1.5 rounded-full border border-cyan-500/30 text-cyan-400 hover:text-white hover:bg-cyan-500/20 hover:border-cyan-400 transition-all cursor-pointer shadow-[0_0_12px_rgba(6,182,212,0.2)]"
+            title="Ir a los Módulos / Tablero (Esc)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 shadow-2xs transition-colors cursor-pointer text-xs font-semibold"
           >
-            <X size={16} />
+            <span>Ir al Tablero</span>
+            <X size={15} />
           </button>
         </header>
 
-        {/* ── 2. ESCENARIO 3D COVERFLOW (TRANSICIÓN FRONTAL / PROFUNDIDAD LINEAL) ── */}
+        {/* ── 2. BARRA DE NAVEGACIÓN EJECUTIVA LIMPIA (SIN SCROLLBAR, ESTILO LINEAR/STRIPE) ── */}
+        <div className="w-full flex items-center justify-center shrink-0 z-30 my-1 sm:my-2">
+          <nav className="p-1 sm:p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 shadow-2xs flex items-center gap-1 sm:gap-1.5">
+            {defaultCards.map((card, idx) => {
+              const isCurrent = idx === activeIndex
+
+              let IconTab = Target
+              let activeText = 'text-blue-700'
+              let dotBg = 'bg-blue-500'
+              let iconColor = 'text-blue-600'
+
+              if (card.tipo === 'cobertura') {
+                IconTab = Target
+                activeText = 'text-emerald-700'
+                dotBg = 'bg-emerald-500'
+                iconColor = 'text-emerald-600'
+              } else if (card.tipo === 'ranking_formadores') {
+                IconTab = GraduationCap
+                activeText = 'text-amber-800'
+                dotBg = 'bg-amber-500'
+                iconColor = 'text-amber-600'
+              } else if (card.tipo === 'ranking_reclutadores') {
+                IconTab = Users
+                activeText = 'text-blue-700'
+                dotBg = 'bg-blue-500'
+                iconColor = 'text-blue-600'
+              } else if (card.tipo === 'desercion_motivos') {
+                IconTab = AlertTriangle
+                activeText = 'text-rose-700'
+                dotBg = 'bg-rose-500'
+                iconColor = 'text-rose-600'
+              } else if (card.tipo === 'asistencia') {
+                IconTab = Layers
+                activeText = 'text-sky-700'
+                dotBg = 'bg-sky-500'
+                iconColor = 'text-sky-600'
+              }
+
+              return (
+                <button
+                  key={card.id || idx}
+                  onClick={() => {
+                    setActiveIndex(idx)
+                    setProgress(0)
+                  }}
+                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-xs font-bold transition-all duration-150 cursor-pointer flex items-center gap-1.5 sm:gap-2 select-none group ${
+                    isCurrent
+                      ? `bg-white ${activeText} border border-slate-200/90 shadow-xs scale-[1.02]`
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/70 border border-transparent'
+                  }`}
+                >
+                  <IconTab size={14} className={isCurrent ? iconColor : 'text-slate-400 group-hover:text-slate-600'} />
+                  <span>{card.shortLabel || card.nombre}</span>
+                  {isCurrent && (
+                    <span className={`w-1.5 h-1.5 rounded-full ${dotBg} animate-pulse`} />
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+
+        {/* ── 3. ESCENARIO DE TARJETAS HORIZONTALES ── */}
         <div
           className="relative flex-1 w-full flex items-center justify-center my-0"
-          style={{
-            perspective: '900px',
-            perspectiveOrigin: 'center 45%'
-          }}
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
         >
-          {/* Contenedor CoverFlow 3D */}
+          {/* Contenedor CoverFlow */}
           <div
-            className="relative w-full h-[340px] flex items-center justify-center"
+            className="relative w-full h-[385px] sm:h-[405px] flex items-center justify-center"
             style={{ transformStyle: 'preserve-3d' }}
           >
             {defaultCards.map((card, idx) => {
@@ -1677,45 +2009,45 @@ export default function OreoExecutiveModal({
             })}
           </div>
 
-          {/* Botones Flotantes Laterales 3D */}
+          {/* Botones Flotantes Laterales */}
           <button
             onClick={handlePrev}
             title="Ficha anterior (←)"
-            className="absolute left-3 sm:left-12 z-50 w-9 h-9 rounded-full border border-cyan-500/40 bg-slate-950/75 text-cyan-300 hover:text-white hover:bg-cyan-500/30 hover:scale-110 active:scale-95 transition-all flex items-center justify-center backdrop-blur-md cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+            className="absolute left-1 sm:left-4 lg:left-8 z-50 w-11 h-11 rounded-full border border-slate-200 bg-white text-slate-700 hover:text-blue-600 hover:border-blue-300 hover:scale-105 active:scale-95 transition-all flex items-center justify-center cursor-pointer shadow-md"
           >
-            <ChevronLeft size={18} />
+            <ChevronLeft size={22} />
           </button>
 
           <button
             onClick={handleNext}
             title="Siguiente ficha (→)"
-            className="absolute right-3 sm:right-12 z-50 w-9 h-9 rounded-full border border-cyan-500/40 bg-slate-950/75 text-cyan-300 hover:text-white hover:bg-cyan-500/30 hover:scale-110 active:scale-95 transition-all flex items-center justify-center backdrop-blur-md cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+            className="absolute right-1 sm:right-4 lg:right-8 z-50 w-11 h-11 rounded-full border border-slate-200 bg-white text-slate-700 hover:text-blue-600 hover:border-blue-300 hover:scale-105 active:scale-95 transition-all flex items-center justify-center cursor-pointer shadow-md"
           >
-            <ChevronRight size={18} />
+            <ChevronRight size={22} />
           </button>
         </div>
 
-        {/* ── 3. CONTROLES Y BARRA DE ROTACIÓN DE 5 SEGUNDOS ── */}
-        <div className="w-full max-w-sm mx-auto flex flex-col items-center gap-2 shrink-0 pb-1">
-          {/* Barra de Progreso de 5 Segundos (Estilo Trailer de Cine) */}
-          <div className="w-full flex items-center gap-2">
+        {/* ── 4. CONTROLES Y BARRA DE ROTACIÓN DE 5 SEGUNDOS ── */}
+        <div className="w-full max-w-sm mx-auto flex flex-col items-center gap-2.5 shrink-0 pb-1">
+          {/* Barra de Progreso de 5 Segundos */}
+          <div className="w-full flex items-center gap-2.5">
             <button
               onClick={() => setIsPlaying(p => !p)}
-              className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+              className="text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
               title={isPlaying ? 'Pausar rotación automática' : 'Reanudar rotación cada 5s'}
             >
-              {isPlaying ? <Pause size={12} /> : <Play size={12} className="fill-white" />}
+              {isPlaying ? <Pause size={13} /> : <Play size={13} className="fill-slate-600" />}
             </button>
 
-            <div className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden relative">
+            <div className="flex-1 h-1.5 rounded-full bg-slate-200 overflow-hidden relative">
               <div
-                className="h-full bg-gradient-to-r from-cyan-400 via-amber-400 to-cyan-400 transition-all duration-75"
+                className="h-full bg-blue-600 transition-all duration-75"
                 style={{ width: `${progress}%` }}
               />
             </div>
 
-            <span className="text-[8.5px] font-mono text-slate-400 shrink-0">
-              {isPlaying ? (isHovered ? 'Pausado (hover)' : '5s') : 'Pausa'}
+            <span className="text-[10px] font-sans text-slate-500 shrink-0">
+              {isPlaying ? (isHovered ? 'Pausa' : '5s') : 'Pausa'}
             </span>
           </div>
 
@@ -1728,10 +2060,10 @@ export default function OreoExecutiveModal({
                   setActiveIndex(i)
                   setProgress(0)
                 }}
-                className={`transition-all duration-300 rounded-full cursor-pointer ${
+                className={`transition-all duration-200 rounded-full cursor-pointer ${
                   i === activeIndex
-                    ? 'w-6 h-1.5 bg-gradient-to-r from-amber-400 to-cyan-400 shadow-[0_0_8px_#38bdf8]'
-                    : 'w-1.5 h-1.5 bg-white/20 hover:bg-white/40'
+                    ? 'w-6 h-1.5 bg-blue-600'
+                    : 'w-1.5 h-1.5 bg-slate-300 hover:bg-slate-400'
                 }`}
                 title={`Ir a ficha ${i + 1}: ${card.nombre}`}
               />
@@ -1741,23 +2073,23 @@ export default function OreoExecutiveModal({
           {/* Botón Principal: ENTRAR AL TABLERO */}
           <button
             onClick={onClose}
-            className="group px-7 py-2 rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black text-xs tracking-wider uppercase shadow-[0_0_20px_rgba(6,182,212,0.6)] hover:shadow-[0_0_35px_rgba(6,182,212,0.9)] hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer flex items-center gap-1.5 mt-0.5"
+            className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs tracking-wide transition-all duration-150 cursor-pointer flex items-center gap-2 shadow-md shadow-blue-500/20 active:scale-95 mt-0.5"
           >
-            <span>ENTRAR AL TABLERO PRINCIPAL</span>
-            <ArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+            <span>Entrar al Tablero Principal</span>
+            <ArrowRight size={14} />
           </button>
         </div>
 
-        {/* ── 4. FOOTER INFERIOR ── */}
-        <footer className="w-full flex items-center justify-between text-[9.5px] text-slate-400 font-mono px-2 pt-1 border-t border-white/5 shrink-0">
+        {/* ── 5. FOOTER INFERIOR ── */}
+        <footer className="w-full flex items-center justify-between text-[11px] text-slate-500 font-sans px-2 pt-2 border-t border-slate-200 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-cyan-400">GEA//CORE</span>
-            <span className="opacity-40">·</span>
-            <span>COBERTURA OFICIAL & CAPACIDAD RYS ({selectedPeriodo})</span>
+            <span className="text-slate-700 font-medium">GEA WFM</span>
+            <span className="text-slate-300">·</span>
+            <span>Dotación Oficial & Capacidad RYS ({selectedPeriodo})</span>
           </div>
 
-          <div className="text-slate-400 hidden sm:block">
-            Usa las flechas <kbd className="px-1 py-0.5 rounded bg-white/10 text-white font-bold">←</kbd> <kbd className="px-1 py-0.5 rounded bg-white/10 text-white font-bold">→</kbd> o haz clic en las fichas para rotar · Esc para salir
+          <div className="text-slate-500 hidden sm:block">
+            Usa las flechas <kbd className="px-1.5 py-0.5 rounded bg-white text-slate-700 border border-slate-200 font-mono text-[10px] shadow-2xs">←</kbd> <kbd className="px-1.5 py-0.5 rounded bg-white text-slate-700 border border-slate-200 font-mono text-[10px] shadow-2xs">→</kbd> para navegar · Esc para salir
           </div>
         </footer>
       </div>

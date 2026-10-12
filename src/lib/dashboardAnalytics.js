@@ -1319,8 +1319,8 @@ export function buildResumenMensualCapacitacion(
     })
   }
 
-  // 3. Formatear y calcular indicadores para cada periodo activo (solo periodos válidos >= 202608 y <= 202609)
-  const MAX_PERIODO_ACTIVO = '202609'
+  // 3. Formatear y calcular indicadores para cada periodo activo (desde MIN_PERIODO_CORTE hasta el período actual dinámico)
+  const MAX_PERIODO_ACTIVO = getMaxAutoPeriodo()
   const periodEntries = Array.from(periodMap.values())
     .map(p => {
       const ingresosFtes = Array.from(p.ingresosFtesMap.values()).reduce((sum, v) => sum + v, 0)

@@ -19,20 +19,10 @@ import { supabase } from '../../lib/supabase'
  * 🦁 Mascota Oficial "GEITO" (El León de GEA con Headset y Laptop)
  */
 function OreoMascot({ size = 46, animated = true }) {
-  const handleClick = () => {
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('gea:open_geito_chat'))
-    }
-  }
-
   return (
     <div
-      onClick={handleClick}
-      title="Consultar a Geíto IA sobre la operación"
-      className="relative shrink-0 flex items-center justify-center select-none cursor-pointer"
+      className="relative shrink-0 flex items-center justify-center select-none"
       style={{ width: size, height: size * 1.15 }}
-      role="button"
-      tabIndex={0}
     >
       <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-amber-500/20 via-cyan-500/15 to-amber-400/15 blur-md pointer-events-none" />
       <img

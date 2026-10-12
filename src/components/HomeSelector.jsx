@@ -173,7 +173,8 @@ export default function HomeSelector({
   onSelectWorkforce,
   ojtUrl = 'https://control-ojt.vercel.app/',
   csatUrl = 'https://encuesta-de-satisfaccion-eight.vercel.app/',
-  onNavigateNav
+  onNavigateNav,
+  onOpenOreoResumen
 }) {
   const [activeChip, setActiveChip] = useState('Todos')
   const [hoveredModule, setHoveredModule] = useState(null)
@@ -293,18 +294,33 @@ export default function HomeSelector({
             </div>
           </div>
 
-          {/* Perfil de Usuario */}
-          <div
-            className="avatar-chip-pill"
-            onClick={() => onSelectWorkforce && onSelectWorkforce('perfil')}
-            title="Ver perfil de usuario"
-          >
-            <svg viewBox="0 0 32 32" fill="none">
-              <circle cx="16" cy="16" r="16" fill="#E8F0FE" />
-              <circle cx="16" cy="13" r="5.5" fill="var(--g-blue)" />
-              <path d="M5 28c0-6.6 5.4-11 11-11s11 4.4 11 11" fill="var(--g-blue)" />
-            </svg>
-            <span>{avatarLabel}</span>
+          <div className="flex items-center gap-2.5">
+            {/* Botón Resumen Diario Ejecutivo GEITO */}
+            {onOpenOreoResumen && (
+              <button
+                type="button"
+                onClick={onOpenOreoResumen}
+                title="Abrir Resumen Ejecutivo Diario con KPIs y Cobertura"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-all cursor-pointer text-xs font-bold shadow-xs select-none"
+              >
+                <span>🦁</span>
+                <span>Resumen Ejecutivo</span>
+              </button>
+            )}
+
+            {/* Perfil de Usuario */}
+            <div
+              className="avatar-chip-pill"
+              onClick={() => onSelectWorkforce && onSelectWorkforce('perfil')}
+              title="Ver perfil de usuario"
+            >
+              <svg viewBox="0 0 32 32" fill="none">
+                <circle cx="16" cy="16" r="16" fill="#E8F0FE" />
+                <circle cx="16" cy="13" r="5.5" fill="var(--g-blue)" />
+                <path d="M5 28c0-6.6 5.4-11 11-11s11 4.4 11 11" fill="var(--g-blue)" />
+              </svg>
+              <span>{avatarLabel}</span>
+            </div>
           </div>
         </div>
       </header>

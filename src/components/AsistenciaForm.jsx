@@ -197,6 +197,9 @@ const AttendanceRow = React.memo(function AttendanceRow({
               {item.allowOtherMotivos && (
                 <>
                   <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
+                  {!motivosBaja.some(m => m.motivo === 'DISTANCIA') && (
+                    <option value="DISTANCIA" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">DISTANCIA</option>
+                  )}
                   {!motivosBaja.some(m => m.motivo === 'SOBREDOTACIÓN') && (
                     <option value="SOBREDOTACIÓN" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">SOBREDOTACIÓN</option>
                   )}

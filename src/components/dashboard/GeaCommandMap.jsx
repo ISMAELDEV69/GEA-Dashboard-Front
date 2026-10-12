@@ -103,6 +103,7 @@ export default function GeaCommandMap({
   selectedSedeId = 'TODAS',
   onSelectSede,
   onOpenReasignacionModal,
+  onSendQuickMessage,
   mapMode: propMapMode,
   onMapModeChange
 }) {
@@ -116,6 +117,30 @@ export default function GeaCommandMap({
   const [activeLayer, setActiveLayer] = useState('google_streets') // 'google_streets' | 'google_satellite' | 'dark_enterprise'
   const [hoveredAsesor, setHoveredAsesor] = useState(null)
   const [isLeafletReady, setIsLeafletReady] = useState(false)
+
+  // Registrar handlers globales para interactividad desde popups HTML de Leaflet
+  useEffect(() => {
+    window.geaOpenReubicar = (id) => {
+      const all = mobilityData?.asesoresMapeados || mobilityData?.postulantesMapped || []
+      const found = all.find(p => String(p.id) === String(id) || String(p.documento) === String(id))
+      if (onOpenReasignacionModal) {
+        onOpenReasignacionModal(found || null)
+      }
+    }
+
+    window.geaQuickMessage = (id) => {
+      const all = mobilityData?.asesoresMapeados || mobilityData?.postulantesMapped || []
+      const found = all.find(p => String(p.id) === String(id) || String(p.documento) === String(id))
+      if (found && onSendQuickMessage) {
+        onSendQuickMessage(found)
+      }
+    }
+
+    return () => {
+      delete window.geaOpenReubicar
+      delete window.geaQuickMessage
+    }
+  }, [mobilityData, onOpenReasignacionModal, onSendQuickMessage])
 
   // Sincronizar capa cartográfica inicial sugerida ante cambios de tema
   const prevThemeRef = useRef(isDark)
@@ -313,14 +338,58 @@ export default function GeaCommandMap({
         const sedeColor = p.sede?.color || (p.sede?.id && GEA_SEDES[p.sede.id]?.color) || '#10B981'
         const markerColor = isRemoto ? '#8B5CF6' : sedeColor
 
-        // Dibujar línea si está activo 'trayectorias' o está en modo 'reubicacion' (aplica tanto a presenciales como a remotos)
-        if (dLat && dLng && !isNaN(dLat) && !isNaN(dLng) && (mapMode === 'trayectorias' || (mapMode === 'reubicacion' && p.sedeSugerida))) {
+        // Dibujar líneas según el modo del mapa
+        if (mapMode === 'reubicacion' && p.sedeSugerida) {
+          // ── Modo Reubicación: Trazar ruta verde a la sede sugerida más cercana ──
+          const sugSede = Object.values(GEA_SEDES).find(s => 
+            s.nombre === p.sedeSugerida || s.id === p.sedeSugeridaId || (p.sedeSugerida && s.nombre.includes(p.sedeSugerida))
+          )
+          const sugLat = sugSede?.lat || Number(p.sedeSugeridaLat)
+          const sugLng = sugSede?.lng || Number(p.sedeSugeridaLng)
+
+          if (sugLat && sugLng && !isNaN(sugLat) && !isNaN(sugLng)) {
+            // Ruta optimizada a la sede más cercana
+            const polyOptima = L.polyline(
+              [[oLat, oLng], [sugLat, sugLng]],
+              {
+                color: '#10B981',
+                weight: 3,
+                opacity: 0.9
+              }
+            ).addTo(polylinesLayerRef.current)
+
+            polyOptima.bindTooltip(
+              `<strong>${p.nombre || p.candidato}</strong><br/>⚡ Sede más cercana: <strong>${p.sedeSugerida}</strong> (Ahorro: <strong>-${p.ahorroKm} km</strong>)`,
+              { sticky: true }
+            )
+            polyOptima.on('mouseover', () => setHoveredAsesor(p))
+            polyOptima.on('mouseout', () => setHoveredAsesor(null))
+
+            // Ruta discontinua hacia la sede actual lejana para contrastar el ahorro
+            if (dLat && dLng) {
+              const polyActual = L.polyline(
+                [[oLat, oLng], [dLat, dLng]],
+                {
+                  color: '#F43F5E',
+                  weight: 1.5,
+                  opacity: 0.45,
+                  dashArray: '4, 6'
+                }
+              ).addTo(polylinesLayerRef.current)
+              polyActual.bindTooltip(
+                `<span>Sede actual lejana: ${p.sede?.nombre || 'GEA'} (${p.distanciaKm || 0} km)</span>`,
+                { sticky: true }
+              )
+            }
+          }
+        } else if (dLat && dLng && !isNaN(dLat) && !isNaN(dLng) && mapMode === 'trayectorias') {
+          // Modo Trayectorias regular
           const polyline = L.polyline(
             [[oLat, oLng], [dLat, dLng]],
             {
-              color: isReubicacion ? '#10B981' : (isRemoto ? '#A78BFA' : sedeColor),
-              weight: isReubicacion ? 2.5 : (isRemoto ? 1.6 : 1.8),
-              opacity: isReubicacion ? 0.85 : (isRemoto ? 0.75 : 0.55),
+              color: isRemoto ? '#A78BFA' : sedeColor,
+              weight: isRemoto ? 1.6 : 1.8,
+              opacity: isRemoto ? 0.75 : 0.55,
               dashArray: isRemoto ? '6, 8' : (isCritical ? '6, 6' : undefined)
             }
           ).addTo(polylinesLayerRef.current)
@@ -367,8 +436,13 @@ export default function GeaCommandMap({
           ? '<span style="background:#4338ca;color:#e0e7ff;padding:2px 6px;border-radius:4px;font-weight:bold;font-size:9px;">REMOTO (TELETRABAJO)</span>'
           : '<span style="background:#0f766e;color:#ccfbf1;padding:2px 6px;border-radius:4px;font-weight:bold;font-size:9px;">PRESENCIAL</span>'
 
+        const candId = p.id || p.documento || ''
+        const celStr = p.celular || p.telefono || ''
+        const grpStr = p.grupo || ''
+        const codStr = p.codigo_grupo || p.grupo_codigo || ''
+
         circleMarker.bindPopup(`
-          <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 11px; color: #0f172a; min-width: 220px; padding: 2px;">
+          <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 11px; color: #0f172a; min-width: 230px; padding: 2px;">
             <div style="margin-bottom: 4px;">
               <strong style="font-size: 12px; color: #0284c7;">${p.nombre || p.candidato}</strong>
             </div>
@@ -376,8 +450,11 @@ export default function GeaCommandMap({
               ${badgeModalidad} ${badgeEstado}
             </div>
             ${p.documento ? `<div style="margin-bottom: 2px;">📄 <strong>DNI:</strong> <span style="font-family: monospace;">${p.documento}</span></div>` : ''}
+            ${grpStr ? `<div style="margin-bottom: 2px;">👥 <strong>Grupo:</strong> ${grpStr} ${codStr && codStr !== '—' ? `<span style="font-family: monospace; background: #e2e8f0; padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: bold;">${codStr}</span>` : ''}</div>` : ''}
+            ${celStr ? `<div style="margin-bottom: 2px;">📱 <strong>Teléfono:</strong> <span style="font-family: monospace; font-weight: bold; color: #059669;">${celStr}</span></div>` : ''}
             <div style="margin-bottom: 2px;">🏠 <strong>Dirección:</strong> ${p.direccion || 'Sin dirección registrada'}</div>
             <div style="margin-bottom: 2px;">📍 <strong>Distrito / Depto:</strong> ${p.distrito}${p.departamento && p.departamento !== p.distrito ? ` (${p.departamento})` : ''}</div>
+            
             <div style="margin: 6px 0 4px 0; padding: 4px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
               <div style="font-size: 10px; color: #64748b; margin-bottom: 2px;">SEDE OPERATIVA ASIGNADA</div>
               <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -389,8 +466,27 @@ export default function GeaCommandMap({
                 </span>
               </div>
             </div>
+
             ${p.esBaja && p.motivoBaja ? `<div style="margin-top: 4px; padding: 4px; background: #fef2f2; border-radius: 4px; color: #dc2626; font-weight: bold; font-size: 10px;">⚠️ Motivo Baja: ${p.motivoBaja}</div>` : ''}
-            ${p.sedeSugerida ? `<div style="margin-top: 4px; padding: 4px; background: #ecfdf5; border-radius: 4px; color: #059669; font-weight: bold; font-size: 10px;">⚡ Sugerencia Reubicación: ${p.sedeSugerida} (Ahorra ${p.ahorroKm} km)</div>` : ''}
+            
+            ${p.sedeSugerida ? `
+              <div style="margin-top: 6px; padding: 6px; background: #ecfdf5; border-radius: 6px; border: 1px solid #10b981;">
+                <div style="color: #047857; font-weight: 900; font-size: 11px; margin-bottom: 2px;">
+                  ⚡ Sede más cercana: ${p.sedeSugerida}
+                </div>
+                <div style="color: #065f46; font-size: 10px; margin-bottom: 6px;">
+                  Ahorro de traslado: <strong>-${p.ahorroKm} km</strong> (~${p.ahorroMin || Math.round(p.ahorroKm * 2.8)} min menos)
+                </div>
+                <div style="display: flex; gap: 4px;">
+                  <button onclick="window.geaOpenReubicar('${candId}')" style="flex: 1; padding: 5px 6px; border-radius: 4px; background: #00897B; color: white; border: none; font-weight: bold; font-size: 10px; cursor: pointer;">
+                    Reubicar
+                  </button>
+                  <button onclick="window.geaQuickMessage('${candId}')" style="padding: 5px 8px; border-radius: 4px; background: #25D366; color: white; border: none; font-weight: bold; font-size: 10px; cursor: pointer;">
+                    💬 WhatsApp
+                  </button>
+                </div>
+              </div>
+            ` : ''}
           </div>
         `)
       })

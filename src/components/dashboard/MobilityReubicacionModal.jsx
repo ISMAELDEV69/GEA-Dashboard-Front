@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   X,
   Zap,
@@ -12,7 +12,10 @@ import {
   Filter,
   Search,
   TrendingDown,
-  Navigation
+  Navigation,
+  MessageCircle,
+  Phone,
+  Users
 } from 'lucide-react'
 
 /**
@@ -23,12 +26,24 @@ export default function MobilityReubicacionModal({
   isOpen,
   onClose,
   sugerencias = [],
-  onApplyReubicacion
+  selectedPostulante = null,
+  onApplyReubicacion = null,
+  onSendQuickMessage = null
 }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterSede, setFilterSede] = useState('TODAS')
   const [filterRiesgo, setFilterRiesgo] = useState('TODOS')
   const [appliedIds, setAppliedIds] = useState(new Set())
+
+  // Sincronizar búsqueda cuando se abre con un postulante específico seleccionado
+  useEffect(() => {
+    if (isOpen && selectedPostulante) {
+      const q = selectedPostulante.documento || selectedPostulante.nombre || selectedPostulante.candidato || ''
+      setSearchTerm(q)
+    } else if (isOpen && !selectedPostulante) {
+      setSearchTerm('')
+    }
+  }, [isOpen, selectedPostulante])
 
   // Filtrado reactivo de sugerencias con seguridad contra undefined
   const filteredList = useMemo(() => {
@@ -37,16 +52,22 @@ export default function MobilityReubicacionModal({
       const nombreStr = String(item.nombre || item.candidato || '').toLowerCase()
       const distritoStr = String(item.distrito || '').toLowerCase()
       const docStr = String(item.documento || '')
+      const gStr = String(item.grupo || '').toLowerCase()
+      const codStr = String(item.codigo_grupo || item.grupo_codigo || '').toLowerCase()
 
       const matchSearch =
         nombreStr.includes(sTerm) ||
         distritoStr.includes(sTerm) ||
-        docStr.includes(sTerm)
+        docStr.includes(sTerm) ||
+        gStr.includes(sTerm) ||
+        codStr.includes(sTerm)
 
       const matchSede =
         filterSede === 'TODAS' ||
         item.sedeActual === filterSede ||
-        item.sedeSugerida === filterSede
+        item.sedeSugerida === filterSede ||
+        item.sedeActualId === filterSede ||
+        item.sedeSugeridaId === filterSede
 
       const dist = Number(item.distanciaActual ?? item.distanciaActualKm ?? 0)
       const matchRiesgo =
@@ -71,7 +92,8 @@ export default function MobilityReubicacionModal({
     return { total, criticos, ahorroKmProm, ahorroTiempoProm, ingresoRetenido }
   }, [sugerencias])
 
-  const handleToggleApply = (id) => {
+  const handleToggleApply = (item) => {
+    const id = item.id || item.documento
     setAppliedIds(prev => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -82,7 +104,7 @@ export default function MobilityReubicacionModal({
       return next
     })
     if (onApplyReubicacion) {
-      onApplyReubicacion(id)
+      onApplyReubicacion(item)
     }
   }
 
@@ -215,8 +237,13 @@ export default function MobilityReubicacionModal({
                 >
                   {/* Info Postulante */}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-[var(--text-primary)] text-sm truncate">{item.nombre}</span>
+                      {item.documento && item.documento !== '—' && (
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
+                          DNI: {item.documento}
+                        </span>
+                      )}
                       {isCritico && (
                         <span className="px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-300 font-mono text-[9px] font-bold">
                           RIESGO CRÍTICO
@@ -228,13 +255,33 @@ export default function MobilityReubicacionModal({
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)] font-mono">
+
+                    {/* Grupo, Código de grupo, Teléfono y Ubicación */}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2.5 text-xs text-[var(--text-muted)] font-mono">
+                      <span className="flex items-center gap-1 text-[var(--text-primary)] font-semibold">
+                        <Users size={12} className="text-cyan-500" />
+                        <span>Grupo: {item.grupo || 'Sin grupo'}</span>
+                      </span>
+
+                      {(item.codigo_grupo || item.grupo_codigo) && item.codigo_grupo !== '—' && (
+                        <span className="px-1.5 py-0.2 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-700 dark:text-cyan-300 font-bold text-[10px]">
+                          Cód: {item.codigo_grupo || item.grupo_codigo}
+                        </span>
+                      )}
+
+                      {(item.celular || item.telefono) && (
+                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
+                          <Phone size={11} />
+                          <span>{item.celular || item.telefono}</span>
+                        </span>
+                      )}
+
                       <span className="flex items-center gap-1 text-[var(--text-secondary)]">
                         <MapPin size={11} className="text-amber-500" />
                         <strong className="text-[var(--text-primary)]">{item.distrito}</strong>
                       </span>
                       {item.direccion && (
-                        <span className="text-[var(--text-muted)] truncate max-w-[220px]">
+                        <span className="text-[var(--text-muted)] truncate max-w-[200px]" title={item.direccion}>
                           {item.direccion}
                         </span>
                       )}
@@ -269,14 +316,25 @@ export default function MobilityReubicacionModal({
                     </div>
                   </div>
 
-                  {/* Botón de Acción */}
-                  <div className="shrink-0 flex items-center justify-end">
+                  {/* Botones de Acción: Mensaje Rápido y Reasignar */}
+                  <div className="shrink-0 flex items-center justify-end gap-2">
+                    {onSendQuickMessage && (
+                      <button
+                        onClick={() => onSendQuickMessage(item)}
+                        title="Enviar mensaje rápido por WhatsApp para gestionar el cambio de sede"
+                        className="px-3 py-2 rounded-xl text-xs font-bold font-mono tracking-wider transition-all cursor-pointer flex items-center gap-1.5 bg-[#25D366] hover:bg-[#20BD5A] text-white shadow-xs active:scale-95"
+                      >
+                        <MessageCircle size={13} />
+                        <span>Mensaje</span>
+                      </button>
+                    )}
+
                     <button
-                      onClick={() => handleToggleApply(item.id)}
+                      onClick={() => handleToggleApply(item)}
                       className={`px-3.5 py-2 rounded-xl text-xs font-black font-mono tracking-wider uppercase transition-all cursor-pointer flex items-center gap-1.5 ${
                         isApplied
                           ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-500/30'
-                          : 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-sm'
+                          : 'bg-[#00897B] hover:bg-[#00796B] text-white shadow-sm'
                       }`}
                     >
                       {isApplied ? (

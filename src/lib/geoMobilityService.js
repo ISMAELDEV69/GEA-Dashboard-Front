@@ -296,24 +296,27 @@ export function resolveSedeGea(rawSede, p = {}) {
 export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS', asistencias = [] } = {}) {
   const allPostulantes = Array.isArray(postulantes) ? postulantes : []
 
-  // Extraer catálogo de períodos reales de reclutamiento (ej. 202609, 202608)
+  // Extraer catálogo de períodos reales de reclutamiento / ingreso (ej. 202609, 202608)
   const periodosSet = new Set()
   allPostulantes.forEach(p => {
-    const per = String(p.periodo_reclutado || '').trim()
-    if (per && /^\d{6}$/.test(per)) periodosSet.add(per)
+    const candidates = [p.periodo_ingreso_op, p.periodo_ingreso, p.periodo_reclutado, p.periodo]
+    candidates.forEach(raw => {
+      const per = String(raw || '').replace(/\D/g, '').slice(0, 6)
+      if (per && per.length === 6 && per.startsWith('202')) periodosSet.add(per)
+    })
   })
-  if (periodosSet.size === 0) {
-    periodosSet.add('202609')
-    periodosSet.add('202608')
-  }
+  periodosSet.add('202609')
+  periodosSet.add('202608')
   const periodosDisponibles = Array.from(periodosSet).sort().reverse()
 
   // 1. Filtrar postulantes según el período solicitado
   let basePostulantes = allPostulantes
   if (periodo && periodo !== 'TODOS') {
+    const cleanFilter = String(periodo).replace(/\D/g, '')
     basePostulantes = allPostulantes.filter(p => {
-      const per = String(p.periodo_reclutado || '').trim()
-      return per === periodo
+      const per = String(p.periodo_ingreso_op || p.periodo_ingreso || p.periodo_reclutado || p.periodo || '').trim()
+      const cleanPer = per.replace(/\D/g, '')
+      return (cleanFilter && cleanPer && cleanPer.slice(0, 6) === cleanFilter.slice(0, 6)) || per === periodo
     })
   }
 
@@ -476,10 +479,12 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
       optimosCount++
     }
 
-    // ── D. MOTOR DE REUBICACIÓN DE SEDES (Solo Presenciales con trayecto > 11 km) ──
+    // ── D. MOTOR DE REUBICACIÓN DE SEDES (Solo Presenciales con sede alternativa más cercana) ──
     let sedeOptima = null
     let ahorroKm = 0
-    if (modalidad === 'PRESENCIAL' && distanciaKm > 11) {
+    let menorDistancia = distanciaKm
+
+    if (modalidad === 'PRESENCIAL' && distanciaKm > 2 && geoDomicilio.lat && geoDomicilio.lng) {
       for (const [key, otraSede] of Object.entries(GEA_SEDES)) {
         if (otraSede.id !== sedeAsignada.id && otraSede.lat && otraSede.lng) {
           const dOtra = calculateHaversineKm(
@@ -488,31 +493,44 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
             otraSede.lat,
             otraSede.lng
           )
-          if (dOtra < distanciaKm - 5.5) {
-            if (!sedeOptima || dOtra < calculateHaversineKm(geoDomicilio.lat, geoDomicilio.lng, sedeOptima.lat, sedeOptima.lng)) {
-              sedeOptima = otraSede
-              ahorroKm = Number((distanciaKm - dOtra).toFixed(1))
-            }
+          const ahorro = Number((distanciaKm - dOtra).toFixed(1))
+          if (ahorro >= 1.5 && dOtra < menorDistancia) {
+            menorDistancia = dOtra
+            sedeOptima = otraSede
+            ahorroKm = ahorro
           }
         }
       }
     }
 
+    const candCelular = String(p.celular || p.telefono || p.celular_referencia || p.movil || '').trim()
+    const candGrupoCodigo = String(p.grupo_codigo || p.codigo_grupo || p.grupo || '—').trim()
+    const candGrupoNombre = String(p.grupo || p.campana || p.campaign || candGrupoCodigo).trim()
+
     if (sedeOptima) {
-      const dOptima = calculateHaversineKm(geoDomicilio.lat, geoDomicilio.lng, sedeOptima.lat, sedeOptima.lng)
+      const dOptima = menorDistancia
       const candNombre = p.candidato || `${p.nombres || ''} ${p.apellido_paterno || ''}`.trim() || 'Postulante GEA'
       sugerenciasReubicacion.push({
         id: p.id || doc || idx,
         nombre: candNombre,
         candidato: candNombre,
         documento: doc || '—',
+        celular: candCelular,
+        telefono: candCelular,
+        grupo: candGrupoNombre,
+        codigo_grupo: candGrupoCodigo,
+        grupo_codigo: candGrupoCodigo,
         distrito: geoDomicilio.distrito || 'LIMA',
         direccion: rawDir || 'Domicilio Registrado',
         sedeActual: sedeAsignada.nombre,
+        sedeActualId: sedeAsignada.id,
         distanciaActual: distanciaKm,
         distanciaActualKm: distanciaKm,
         tiempoActualMin: tiempoEstimadoMin,
         sedeSugerida: sedeOptima.nombre,
+        sedeSugeridaId: sedeOptima.id,
+        sedeSugeridaLat: sedeOptima.lat,
+        sedeSugeridaLng: sedeOptima.lng,
         distanciaSugerida: dOptima,
         distanciaOptimaKm: dOptima,
         tiempoSugeridoMin: Math.round(dOptima * 2.8),
@@ -521,7 +539,10 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
         modalidad,
         estadoOperativo,
         esBaja: isBaja,
-        esIOP: isIOP
+        esIOP: isIOP,
+        segmento: String(p.segmento || '').trim() || 'CLARO PERU',
+        campana: String(p.campana || p.campaign || '').trim(),
+        periodo: String(p.periodo_ingreso_op || p.periodo_ingreso || p.periodo_reclutado || p.periodo || '').trim()
       })
     }
 
@@ -608,8 +629,22 @@ export function analyzeMobilityAndDistances(postulantes = [], { periodo = 'TODOS
       tiempoEstimadoMin,
       riesgoDistancia,
       sedeSugerida: sedeOptima ? sedeOptima.nombre : null,
+      sedeSugeridaId: sedeOptima ? sedeOptima.id : null,
+      sedeSugeridaLat: sedeOptima ? sedeOptima.lat : null,
+      sedeSugeridaLng: sedeOptima ? sedeOptima.lng : null,
       ahorroKm,
-      periodo: String(p.periodo_reclutado || p.semana_trabajo || '').trim(),
+      ahorroMin: Math.round(ahorroKm * 2.8),
+      celular: candCelular,
+      telefono: candCelular,
+      grupo: candGrupoNombre,
+      codigo_grupo: candGrupoCodigo,
+      grupo_codigo: candGrupoCodigo,
+      periodoIngreso: String(p.periodo_ingreso_op || p.periodo_ingreso || p.periodo_reclutado || p.periodo || '').trim(),
+      periodo: String(p.periodo_ingreso_op || p.periodo_ingreso || p.periodo_reclutado || p.periodo || '').trim(),
+      periodoReclutado: String(p.periodo_reclutado || p.periodo || '').trim(),
+      periodoGrupo: String(p.periodo || '').trim(),
+      semana: String(p.semana || p.semana_trabajo || '—').trim(),
+      segmento: String(p.segmento || '').trim() || 'CLARO PERU',
       campana: String(p.campana || p.campaign || '').trim()
     }
   })
