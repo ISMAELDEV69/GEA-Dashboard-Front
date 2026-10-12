@@ -65,35 +65,29 @@ const normalizeSegmento = (rawSeg, campana) => {
   let s = String(rawSeg || '').trim().toUpperCase()
   const c = String(campana || '').toUpperCase()
 
-  // 1. EXCEPCIÓN CLAVE: "RETENCIONES FIJA INBOUND" y "RETENCIONES FIJA" pertenecen a "CLARO PERU"
-  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
-    return 'CLARO PERU'
+  // 1. Campañas exclusivas de CLARO CHILE
+  if (c.includes('TUVES') || c.includes('CHILE') || s === 'CLARO CHILE' || s.includes('CHILE')) {
+    return 'CLARO CHILE'
   }
 
-  // 2. EXCEPCIÓN CLAVE: Campañas de Claro Postpago pertenecen a "CLARO PERU"
+  // 2. Campañas exclusivas de LIPIGAS
+  if (c.includes('LIPIGAS') || c.includes('LIMAGAS') || s === 'LIPIGAS' || s.includes('LIPIGAS')) {
+    return 'LIPIGAS'
+  }
+
+  // 3. EXCEPCIÓN CLAVE: Campañas de Claro Postpago pertenecen a "CLARO PERU"
   if (c.includes('CLARO POSTPAGO')) {
     return 'CLARO PERU'
   }
 
-  // 3. Campañas exclusivas de CLARO CHILE
-  if (c.includes('TUVES') || c.includes('CHILE')) {
-    return 'CLARO CHILE'
+  // 4. EXCEPCIÓN CLAVE: "RETENCIONES FIJA INBOUND" y "RETENCIONES FIJA" pertenecen a "CLARO PERU"
+  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
+    return 'CLARO PERU'
   }
 
-  // 4. Campañas exclusivas de LIPIGAS
-  if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) {
-    return 'LIPIGAS'
-  }
-
-  // 5. Si en la base de datos ya viene explícito uno de los 5 segmentos oficiales, respetarlo
-  if (s === 'CLARO PERU') return 'CLARO PERU'
-  if (s === 'CLARO PERU RETENCIONES') return 'CLARO PERU RETENCIONES'
-  if (s === 'CLARO PERU OUT') return 'CLARO PERU OUT'
-  if (s === 'CLARO CHILE' || s.includes('CHILE')) return 'CLARO CHILE'
-  if (s === 'LIPIGAS' || s.includes('LIPIGAS')) return 'LIPIGAS'
-
-  // 6. Palabras clave de RETENCIONES
+  // 5. Palabras clave y subtipos de RETENCIONES
   if (
+    s === 'CLARO PERU RETENCIONES' ||
     s.includes('RETENCION') || 
     c.includes('RETENCION') || 
     c.includes('CONTACTADOS') || 
@@ -109,14 +103,15 @@ const normalizeSegmento = (rawSeg, campana) => {
     return 'CLARO PERU RETENCIONES'
   }
 
-  // 7. Palabras clave de OUT
+  // 6. Palabras clave y subtipos de OUT
   if (
+    s === 'CLARO PERU OUT' ||
     s.includes('OUT') || 
     c.includes('OUT') || 
     c.includes('PREVENTIVA') || 
     c.includes('PORTA OUT') || 
-    c.includes('RENO OUT') || 
-    c.includes('VENTAS OUT') || 
+    c.includes('RENO') || 
+    c.includes('VENTAS') || 
     c.includes('CROSS') ||
     c.includes('MIGRACIONES') ||
     c.includes('UPGRADE') ||
@@ -125,6 +120,8 @@ const normalizeSegmento = (rawSeg, campana) => {
     return 'CLARO PERU OUT'
   }
 
+  // 7. Si viene explícito CLARO PERU u otro segmento
+  if (s === 'CLARO PERU') return 'CLARO PERU'
   if (s && s !== 'OTROS' && s !== 'NULL' && s !== 'UNDEFINED' && s !== '—') {
     return s
   }
@@ -812,13 +809,7 @@ export default function UbicacionView({
     if (!filter || filter === 'TODOS') return true
     const normFilter = normalizeSegmento(filter, filter)
     const normA = normalizeSegmento(a.segmento, a.campana)
-    return (
-      normA === normFilter ||
-      a.segmento === filter ||
-      String(a.segmento || '').toUpperCase() === String(filter).toUpperCase() ||
-      String(normA).includes(String(normFilter)) ||
-      String(normFilter).includes(String(normA))
-    )
+    return normA === normFilter
   }
 
   const isCampanaMatch = (a, filter) => {
