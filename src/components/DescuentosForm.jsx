@@ -28,11 +28,35 @@ const getEmptyRow = () => ({
 
 export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [], postulantes = [] }) {
   const todayPeruStr = useMemo(() => getTodayPeruString(), [])
-  const [dataRows, setDataRows] = useState([getEmptyRow()])
+
+  // Identificar supervisor si el usuario conectado tiene dicho perfil
+  const loggedSupervisorName = useMemo(() => {
+    const raw = String(userProfile?.nombre || userProfile?.name || '').trim().toUpperCase()
+    if (raw === 'CAVEROSM' || raw.includes('CAVERO') || String(userProfile?.documento) === '43614771') {
+      return 'SANDRA CAVERO'
+    }
+    if (raw.includes('LESLIE') || raw.includes('RIVERA')) return 'LESLIE RIVERA'
+    if (raw.includes('JESUS') || raw.includes('NAVARRO')) return 'JESUS NAVARRO'
+    if (raw.includes('ROBERTO') || raw.includes('SERNAQUE')) return 'ROBERTO SERNAQUE'
+    if (raw.includes('PEDRO') || raw.includes('FLORES')) return 'PEDRO FLORES'
+    if (raw.includes('LUIS') || raw.includes('RIVAS')) return 'LUIS RIVAS'
+    if (raw.includes('JHOJAN') || raw.includes('SALVADOR')) return 'JHOJAN SALVADOR'
+    if (raw.includes('JUNIOR')) return 'JUNIOR SERNAQUE'
+    return ''
+  }, [userProfile])
+
+  const [dataRows, setDataRows] = useState(() => [{ ...getEmptyRow(), supervisor: loggedSupervisorName || '' }])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
   const [validationErrors, setValidationErrors] = useState([])
+
+  // Si se detecta supervisor logueado y la fila está vacía de supervisor, autocompletar
+  React.useEffect(() => {
+    if (loggedSupervisorName) {
+      setDataRows(prev => prev.map(r => (!r.supervisor ? { ...r, supervisor: loggedSupervisorName } : r)))
+    }
+  }, [loggedSupervisorName])
 
   // Búsqueda de postulantes por DNI para autocompletar nombres
   const postulantesByDoc = useMemo(() => {
@@ -71,8 +95,11 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
   }, [grupos, campanas, opcionesHomologadas])
 
   const todosSupervisores = useMemo(() => {
-    return [...new Set(opcionesHomologadas.map(o => o.supervisor).filter(Boolean))].sort()
-  }, [opcionesHomologadas])
+    const list = [...new Set(opcionesHomologadas.map(o => o.supervisor).filter(Boolean))]
+    if (!list.includes('SANDRA CAVERO')) list.push('SANDRA CAVERO')
+    if (loggedSupervisorName && !list.includes(loggedSupervisorName)) list.push(loggedSupervisorName)
+    return list.sort()
+  }, [opcionesHomologadas, loggedSupervisorName])
 
   const motivosUnicos = useMemo(() => {
     return [...new Set(opcionesHomologadas.map(o => o.motivo).filter(Boolean))].sort()
@@ -85,7 +112,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
 
   // Manejo de Filas
   const addRow = () => {
-    setDataRows([...dataRows, getEmptyRow()])
+    setDataRows([...dataRows, { ...getEmptyRow(), supervisor: loggedSupervisorName || '' }])
   }
 
   // Replicar encabezados de la Fila 1 a todas las filas
@@ -403,12 +430,28 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
                 }
                 
                 // Supervisores disponibles: Filtra homologadas por la campaña elegida o todas
-                const supFilt = [...new Set(
+                let supFilt = [...new Set(
                   opcionesHomologadas
                     .filter(o => row.campana ? String(o.campana).trim().toUpperCase() === String(row.campana).trim().toUpperCase() : true)
                     .map(o => o.supervisor)
                     .filter(Boolean)
-                )].sort()
+                )]
+
+                // Garantizar supervisoras oficiales (SANDRA CAVERO en Claro Perú / Retenciones)
+                const isClaroPeruOrRetenciones = 
+                  (row.segmento && (String(row.segmento).toUpperCase().includes('CLARO') || String(row.segmento).toUpperCase().includes('RETENCIONES'))) ||
+                  (row.campana && (String(row.campana).toUpperCase().includes('CLARO') || String(row.campana).toUpperCase().includes('RETENCIONES'))) ||
+                  supFilt.some(s => s === 'JESUS NAVARRO' || s === 'LESLIE RIVERA')
+
+                if (isClaroPeruOrRetenciones && !supFilt.includes('SANDRA CAVERO')) {
+                  supFilt.push('SANDRA CAVERO')
+                }
+
+                if (loggedSupervisorName && !supFilt.includes(loggedSupervisorName)) {
+                  supFilt.push(loggedSupervisorName)
+                }
+
+                supFilt.sort()
                 const supervisoresDisponibles = supFilt.length > 0 ? supFilt : todosSupervisores
                 
                 // Grupos disponibles: Filtra grupos (Capacidad RYS) por segmento y campaña
