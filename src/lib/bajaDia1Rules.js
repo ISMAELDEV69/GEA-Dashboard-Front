@@ -53,12 +53,45 @@ export function isAgregadoObservadoProfile(row = {}) {
   return blob.includes('AGREGADO') || blob.includes('OBSERVAD')
 }
 
-export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMotivo = '' } = {}) {
+export function isDistintoAptoProfile(row = {}) {
+  if (isRecuperadoCapProfile(row)) return false
+  const blob = profileBlob(row)
+  if (
+    blob.includes('AGREGADO') ||
+    blob.includes('RECUPERAD') ||
+    blob.includes('OBSERVAD') ||
+    blob.includes('CESE') ||
+    blob.includes('CESADO') ||
+    blob.includes('REUBICAD')
+  ) {
+    return true
+  }
+  const tipo = cleanUpper(row.tipo_reclutado || row.tipoReclutado || row.tipo || '')
+  if (tipo && tipo !== 'APTO' && tipo !== 'REGULAR') {
+    return true
+  }
+  return false
+}
+
+export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMotivo = '', hadDia1Attendance = false } = {}) {
   if (isRecuperadoCapProfile(row)) return false
   const day = Number(trainingDayIndex) || 0
-  // REGLA ESTRICTA: Solamente en el Día 1 del grupo se permite asignar 'BAJA DIA 1'.
-  // En Día 2 o posteriores NUNCA se permite asignar 'BAJA DIA 1'.
-  return day === 1
+  if (day === 1) return true
+
+  // Tiempo de gracia para perfiles distintos a APTO (Agregados, Recuperados, Observados, Cesados, etc.):
+  // Si en Día 2 son baja y no tuvieron asistencia en Día 1 (faltaron o no tuvieron registro), se permite BAJA DIA 1
+  const hasDia1Att = Boolean(
+    hadDia1Attendance ||
+    row?.hadDia1Attendance ||
+    row?.dia1Asistio ||
+    (row?.dia1Sigla === 'A' || row?.dia1Sigla === 'I-OP')
+  )
+
+  if (day === 2 && isDistintoAptoProfile(row) && !hasDia1Att) {
+    return true
+  }
+
+  return false
 }
 
 export function defaultBajaMotivo(params = {}) {
@@ -71,17 +104,24 @@ export function defaultBajaMotivo(params = {}) {
     return cleanPrev
   }
   const day = Number(params?.trainingDayIndex) || 0
-  if (day === 1 && !isRecuperadoCapProfile(params?.row)) return 'BAJA DIA 1'
+  const row = params?.row || {}
+  const hadDia1Attendance = Boolean(params?.hadDia1Attendance || row?.hadDia1Attendance)
+  if (canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance })) {
+    return 'BAJA DIA 1'
+  }
   return 'DESERCIÓN'
 }
 
-export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previousMotivo = '' } = {}) {
+export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previousMotivo = '', hadDia1Attendance = false } = {}) {
+  const day = Number(trainingDayIndex) || 0
+  const hasDia1Att = Boolean(hadDia1Attendance || row?.hadDia1Attendance)
+  const isEligible = canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance: hasDia1Att })
+
   // Si el usuario seleccionó o especificó un motivo explícito en la interfaz, se respeta ese motivo
   if (motivo && String(motivo).trim()) {
     const cleanMotivo = String(motivo).trim()
     if (isBajaDia1Motivo(cleanMotivo)) {
-      const day = Number(trainingDayIndex) || 0
-      if (day === 1 && !isRecuperadoCapProfile(row)) {
+      if (isEligible) {
         return 'BAJA DIA 1'
       }
       return 'DESERCIÓN'
@@ -92,14 +132,16 @@ export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previous
   // Si no se proporcionó un motivo nuevo pero existe uno previo consolidado
   if (previousMotivo && String(previousMotivo).trim()) {
     const cleanPrev = String(previousMotivo).trim()
-    if (isBajaDia1Motivo(cleanPrev) && isRecuperadoCapProfile(row)) {
+    if (isBajaDia1Motivo(cleanPrev)) {
+      if (isEligible || !isRecuperadoCapProfile(row)) {
+        return cleanPrev
+      }
       return 'DESERCIÓN'
     }
     return cleanPrev
   }
 
-  const day = Number(trainingDayIndex) || 0
-  if (day === 1 && !isRecuperadoCapProfile(row)) return 'BAJA DIA 1'
+  if (isEligible) return 'BAJA DIA 1'
   return 'DESERCIÓN'
 }
 

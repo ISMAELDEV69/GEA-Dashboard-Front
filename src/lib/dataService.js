@@ -2485,25 +2485,44 @@ export async function fetchReclutadoresFull() {
       }
     }
 
-    const { data, error } = await supabase
-      .from('reclutadores')
-      .select('id, nombre_completo, activo')
-      .eq('activo', true)
-      .order('nombre_completo')
-    if (error) throw error
-    return data
+    const [recRes, eqRes] = await Promise.all([
+      supabase.from('reclutadores').select('id, nombre_completo, activo').eq('activo', true).order('nombre_completo'),
+      supabase.from('equipo_reclutamiento').select('documento, alias, apellido_paterno, apellido_materno, nombres_completos').eq('estado', 'ACTIVO')
+    ])
+    if (recRes.error) throw recRes.error
+
+    const eqMap = new Map()
+    for (const eq of (eqRes.data || [])) {
+      const full = `${eq.apellido_paterno || ''} ${eq.apellido_materno || ''} ${eq.nombres_completos || ''}`.trim().replace(/\s+/g, ' ').toUpperCase()
+      eqMap.set(full, { documento: eq.documento, alias: eq.alias })
+    }
+
+    return (recRes.data || []).map(r => {
+      const norm = (r.nombre_completo || '').trim().replace(/\s+/g, ' ').toUpperCase()
+      const eq = eqMap.get(norm) || {}
+      return {
+        ...r,
+        documento: eq.documento || null,
+        alias: eq.alias || null
+      }
+    })
   }
   // Local fallback
   const list = getFromStorage('reclutadores') || []
   return list.map((nombre, index) => ({
     id: index + 1,
     nombre_completo: nombre,
-    activo: true
+    activo: true,
+    documento: null,
+    alias: null
   }))
 }
 
-export function fetchGruposConMetas() {
-  return withCache('grupos_con_metas', 180000, async () => {
+export function fetchGruposConMetas(bypassCache = false) {
+  if (bypassCache) {
+    invalidateCache('grupos_con_metas')
+  }
+  return withCache('grupos_con_metas', 60000, async () => {
     if (DB_MODE === 'supabase') {
       // 1. Fetch groups and recruiters in parallel (consultando solo columnas necesarias de nominas activas)
       const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
@@ -2513,7 +2532,7 @@ export function fetchGruposConMetas() {
           .order('codigo'),
         supabase
           .from('grupo_reclutadores')
-          .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, reclutadores(nombre_completo)'),
+          .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, documento, reclutador_nombre, reclutadores(nombre_completo)'),
         supabase
           .from('nominas')
           .select('documento, grupo_codigo, campana, reclutador_id, dia_0, dia_1, sede')
@@ -2541,13 +2560,13 @@ export function fetchGruposConMetas() {
     const relMap = {}
     for (const r of (relRes.data || [])) {
       if (!relMap[r.grupo_codigo]) relMap[r.grupo_codigo] = []
-      const nomFull = (r.reclutadores?.nombre_completo || 'Desconocido').toUpperCase()
+      const nomFull = (r.reclutador_nombre || r.reclutadores?.nombre_completo || 'Desconocido').toUpperCase()
       const eqData = equipoMap[nomFull] || {}
       
       relMap[r.grupo_codigo].push({
         reclutador_id: r.reclutador_id,
-        nombre_completo: r.reclutadores?.nombre_completo || 'Desconocido',
-        documento: eqData.documento || null,
+        nombre_completo: r.reclutador_nombre || r.reclutadores?.nombre_completo || 'Desconocido',
+        documento: r.documento || eqData.documento || null,
         alias: eqData.alias || null,
         meta_rq_individual: r.meta_rq_individual || 0,
         meta_dia_1_individual: r.meta_dia_1_individual || 0
@@ -2647,7 +2666,7 @@ export function fetchGruposConMetas() {
   })
 }
 
-export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
+export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas, grupoContext = {}) {
   if (DB_MODE === 'supabase') {
     if (!grupoCodigo) return false
     const grupo_codigo = grupoCodigo
@@ -2664,8 +2683,15 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas) {
       const rows = reclutadoresMetas.map(rm => ({
         grupo_codigo: grupo_codigo,
         reclutador_id: rm.reclutador_id,
+        documento: rm.documento || null,
+        reclutador_nombre: rm.nombre_completo || null,
+        periodo: grupoContext.periodo || null,
+        semana: grupoContext.semana || null,
+        segmento: grupoContext.segmento || null,
+        campana: grupoContext.campana || null,
         meta_rq_individual: rm.meta_rq_individual || 0,
-        meta_dia_1_individual: rm.meta_dia_1_individual || 0
+        meta_dia_1_individual: rm.meta_dia_1_individual || 0,
+        updated_at: new Date().toISOString()
       }))
       const { error: insErr } = await supabase
         .from('grupo_reclutadores')

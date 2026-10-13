@@ -374,7 +374,14 @@ export default function AsistenciaRegularizacionModal({
     setRecordsState(prev => {
       const targetIndex = prev.findIndex(r => r.fecha === fecha)
       if (targetIndex === -1) return prev
-      const isTargetDia1 = Boolean(prev[targetIndex].isDia1 || prev[targetIndex].dayIndex === 1)
+      const targetDayIndex = prev[targetIndex].dayIndex || (targetIndex + 1)
+      const dia1Rec = prev[0]
+      const hadDia1Att = targetIndex > 0 && dia1Rec ? (dia1Rec.sigla === 'A' || dia1Rec.sigla === 'I-OP') : false
+      const canBajaD1 = canAssignBajaDia1({
+        trainingDayIndex: targetDayIndex,
+        row: profileRow,
+        hadDia1Attendance: hadDia1Att
+      })
 
       return prev.map((r, idx) => {
         if (r.fecha === fecha) {
@@ -382,8 +389,8 @@ export default function AsistenciaRegularizacionModal({
           if (newSigla !== 'B') {
             newMotivo = ''
           } else if (!newMotivo) {
-            newMotivo = isTargetDia1 ? 'BAJA DIA 1' : 'DESERCIÓN'
-          } else if (!isTargetDia1 && isBajaDia1Motivo(newMotivo)) {
+            newMotivo = canBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN'
+          } else if (!canBajaD1 && isBajaDia1Motivo(newMotivo)) {
             newMotivo = 'DESERCIÓN'
           }
           return { ...r, sigla: newSigla, motivo_baja: newMotivo }
@@ -398,7 +405,7 @@ export default function AsistenciaRegularizacionModal({
         // Si marcamos 'B' en un día, los días posteriores no pueden quedar como asistentes ('A' o 'I-OP')
         // Heredan la sigla 'B' y el MISMO motivo de baja del día de origen (evitando cambiar erróneamente a 'DESERCIÓN')
         if (newSigla === 'B' && idx > targetIndex) {
-          const originMotivo = isTargetDia1 ? 'BAJA DIA 1' : (prev[targetIndex].motivo_baja || 'DESERCIÓN')
+          const originMotivo = canBajaD1 ? 'BAJA DIA 1' : (prev[targetIndex].motivo_baja || 'DESERCIÓN')
           return { ...r, sigla: 'B', motivo_baja: originMotivo }
         }
 
@@ -412,10 +419,18 @@ export default function AsistenciaRegularizacionModal({
     setRecordsState(prev => {
       const targetIndex = prev.findIndex(r => r.fecha === fecha)
       if (targetIndex === -1) return prev
-      const isTargetDia1 = Boolean(prev[targetIndex].isDia1 || prev[targetIndex].dayIndex === 1)
+      const targetDayIndex = prev[targetIndex].dayIndex || (targetIndex + 1)
+      const dia1Rec = prev[0]
+      const hadDia1Att = targetIndex > 0 && dia1Rec ? (dia1Rec.sigla === 'A' || dia1Rec.sigla === 'I-OP') : false
+      const canBajaD1 = canAssignBajaDia1({
+        trainingDayIndex: targetDayIndex,
+        row: profileRow,
+        hadDia1Attendance: hadDia1Att
+      })
+
       let safeMotivo = newMotivo
-      // En días posteriores al Día 1 NUNCA se permite BAJA DIA 1
-      if (!isTargetDia1 && isBajaDia1Motivo(safeMotivo)) {
+      // Si no es elegible para Baja Día 1, no permitir BAJA DIA 1
+      if (!canBajaD1 && isBajaDia1Motivo(safeMotivo)) {
         safeMotivo = 'DESERCIÓN'
       }
 
@@ -739,7 +754,8 @@ export default function AsistenciaRegularizacionModal({
                         const isDropdownOpen = activeDropdownDate === rec.fecha
                         const firstBajaIndex = recordsState.findIndex(r => r.sigla === 'B')
                         const isBajaFollower = isBaja && firstBajaIndex !== -1 && index > firstBajaIndex
-                        const isOriginDia1 = firstBajaIndex !== -1 && Boolean(recordsState[firstBajaIndex]?.isDia1 || recordsState[firstBajaIndex]?.dayIndex === 1)
+                        const originBajaMotivo = firstBajaIndex !== -1 ? (recordsState[firstBajaIndex]?.motivo_baja || '') : ''
+                        const isOriginDia1 = firstBajaIndex !== -1 && Boolean(recordsState[firstBajaIndex]?.isDia1 || recordsState[firstBajaIndex]?.dayIndex === 1 || isBajaDia1Motivo(originBajaMotivo))
 
                         return (
                           <td 
@@ -799,8 +815,17 @@ export default function AsistenciaRegularizacionModal({
                                     title={isBajaFollower ? `Baja consolidada el ${formatSpreadsheetDate(recordsState[firstBajaIndex].fecha)}: ${rec.motivo_baja}` : 'Motivo de Baja'}
                                   >
                                     <option value="">-- Motivo --</option>
-                                    {/* SOLAMENTE en el Día 1 se permite seleccionar BAJA DIA 1 */}
-                                    {Boolean(rec.isDia1 || rec.dayIndex === 1 || (isBajaFollower && isOriginDia1)) && (
+                                    {/* En Día 1, o en Día 2 con periodo de gracia para no-APTO sin asistencia en Día 1, se permite BAJA DIA 1 */}
+                                    {Boolean(
+                                      rec.isDia1 ||
+                                      rec.dayIndex === 1 ||
+                                      (isBajaFollower && isOriginDia1) ||
+                                      canAssignBajaDia1({
+                                        trainingDayIndex: rec.dayIndex,
+                                        row: profileRow,
+                                        hadDia1Attendance: recordsState[0] ? (recordsState[0].sigla === 'A' || recordsState[0].sigla === 'I-OP') : false
+                                      })
+                                    ) && (
                                       <option value="BAJA DIA 1">BAJA DIA 1</option>
                                     )}
                                     <option value="OBSERVADO">OBSERVADO</option>

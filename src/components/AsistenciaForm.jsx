@@ -35,6 +35,7 @@ import {
 } from '../lib/bajaDia1Rules'
 import { resolveFormadorSegment } from '../lib/flujoOperativo'
 import { resolveGrupoPais, isFeriadoNacional } from '../lib/businessHoursUtils'
+import { resolvePeriodoIngreso, normalize2026Period } from '../lib/dashboardAnalytics'
 import { supabase } from '../lib/supabase'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
@@ -51,6 +52,101 @@ const SIGLAS = [
 ]
 
 const normalize = (s) => (s || '').toString().trim().toUpperCase()
+
+// Normalizador oficial de segmento idéntico a ResumenCapacitacion y UbicacionView
+const normalizeSegmento = (rawSeg, campana) => {
+  let s = String(rawSeg || '').trim().toUpperCase()
+  const c = String(campana || '').toUpperCase()
+
+  // 1. Campañas exclusivas de CLARO CHILE
+  if (c.includes('TUVES') || c.includes('CHILE') || s === 'CLARO CHILE' || s.includes('CHILE')) {
+    return 'CLARO CHILE'
+  }
+
+  // 2. Campañas exclusivas de LIPIGAS
+  if (c.includes('LIPIGAS') || c.includes('LIMAGAS') || s === 'LIPIGAS' || s.includes('LIPIGAS')) {
+    return 'LIPIGAS'
+  }
+
+  // 3. EXCEPCIÓN CLAVE: Campañas de Claro Postpago pertenecen a "CLARO PERU"
+  if (c.includes('CLARO POSTPAGO')) {
+    return 'CLARO PERU'
+  }
+
+  // 4. EXCEPCIÓN CLAVE: "RETENCIONES FIJA INBOUND" y "RETENCIONES FIJA" pertenecen a "CLARO PERU"
+  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
+    return 'CLARO PERU'
+  }
+
+  // 5. Palabras clave y subtipos de RETENCIONES
+  if (
+    s === 'CLARO PERU RETENCIONES' ||
+    s.includes('RETENCION') || 
+    c.includes('RETENCION') || 
+    c.includes('CONTACTADOS') || 
+    c.includes('CONTENCI') || 
+    c.includes('DESCUENTO') || 
+    c.includes('BABYSTING') || 
+    c.includes('CONSULTA PREVIA') || 
+    c.includes('MI CLARO') || 
+    c.includes('ENCUESTAS IZO') ||
+    c.includes('CANAL DIGITAL') ||
+    c.includes('WSP INBOUND')
+  ) {
+    return 'CLARO PERU RETENCIONES'
+  }
+
+  // 6. Palabras clave y subtipos de OUT
+  if (
+    s === 'CLARO PERU OUT' ||
+    s.includes('OUT') || 
+    c.includes('OUT') || 
+    c.includes('PREVENTIVA') || 
+    c.includes('PORTA OUT') || 
+    c.includes('RENO') || 
+    c.includes('VENTAS') || 
+    c.includes('CROSS') || 
+    c.includes('MIGRACIONES') ||
+    c.includes('UPGRADE') ||
+    c.includes('VENTA')
+  ) {
+    return 'CLARO PERU OUT'
+  }
+
+  return 'CLARO PERU'
+}
+
+// Extracción canónica del periodo de Capacidad R&S (Priorizando periodo de ingreso a OP)
+const getCapacidadPeriodo = (g) => {
+  if (!g) return ''
+  const pIngreso = resolvePeriodoIngreso(g)
+  if (pIngreso) return pIngreso
+  const pDirect = normalize2026Period(g.periodo_ingreso_op || g.fecha_ingreso_op || g.periodo_ingreso || g.periodo_efectivo)
+  if (pDirect) return pDirect
+  const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
+  if (pRaw) return pRaw
+  if (g.periodo) {
+    const clean = String(g.periodo).replace(/\D/g, '').slice(0, 6)
+    if (clean) return clean
+  }
+  return ''
+}
+
+const isGrupoPeriodoMatch = (g, targetPeriodo) => {
+  if (!targetPeriodo) return true
+  const cleanTarget = String(targetPeriodo).trim()
+  const pCap = getCapacidadPeriodo(g)
+  if (pCap === cleanTarget) return true
+  const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
+  if (pRaw === cleanTarget) return true
+  if (g.periodo && String(g.periodo).trim() === cleanTarget) return true
+  return false
+}
+
+const isGrupoSegmentoMatch = (g, targetSegmento) => {
+  if (!targetSegmento) return true
+  return normalizeSegmento(g?.segmento, g?.campana) === String(targetSegmento).trim().toUpperCase()
+}
 
 const getSemanaLabel = (g) => {
   if (!g) return ''
@@ -293,6 +389,35 @@ export default function AsistenciaForm({
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
   const [liveGrupoMeta, setLiveGrupoMeta] = useState(null)
   const [descuentosAprobadosSet, setDescuentosAprobadosSet] = useState(new Set())
+  const [capacidadGrupos, setCapacidadGrupos] = useState(grupos)
+
+  useEffect(() => {
+    if (Array.isArray(grupos) && grupos.length > 0) {
+      setCapacidadGrupos(grupos)
+    }
+  }, [grupos])
+
+  // Carga directa de la tabla maestra capacidad_rys para alimentar filtros en tiempo real
+  useEffect(() => {
+    let isMounted = true
+    async function loadCapacidadDirect() {
+      try {
+        if (DB_MODE === 'supabase') {
+          const { data, error } = await supabase
+            .from('capacidad_rys')
+            .select('*')
+            .order('periodo_ingreso_op', { ascending: false })
+          if (!error && Array.isArray(data) && data.length > 0 && isMounted) {
+            setCapacidadGrupos(data)
+          }
+        }
+      } catch (e) {
+        console.warn('Error loading capacidad_rys direct in AsistenciaForm:', e)
+      }
+    }
+    loadCapacidadDirect()
+    return () => { isMounted = false }
+  }, [])
 
   useEffect(() => {
     getEquipoFormacion().then(data => {
@@ -426,77 +551,94 @@ export default function AsistenciaForm({
     return `${day} ${monthNames[monthIndex] || ''} ${year}`;
   };
 
-  // ── 1. Cascading filter collections ─────────────────────────────
+  // ── 1. Cascading filter collections alimentados de Capacidad R&S ──
+  const allGrupos = useMemo(() => {
+    return (Array.isArray(capacidadGrupos) && capacidadGrupos.length > 0) ? capacidadGrupos : (Array.isArray(grupos) ? grupos : [])
+  }, [capacidadGrupos, grupos])
+
   const periodos = useMemo(() => {
-    return [...new Set(grupos.map(g => g.periodo ? String(g.periodo).trim() : null).filter(Boolean))].sort()
-  }, [grupos])
+    const set = new Set()
+    allGrupos.forEach(g => {
+      const p = getCapacidadPeriodo(g)
+      if (p) set.add(p)
+      const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
+      if (pRaw) set.add(pRaw)
+    })
+    return [...set].filter(p => /^\d{6}$/.test(p) || p.length > 0).sort((a, b) => b.localeCompare(a))
+  }, [allGrupos])
 
   const semanas = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    let filtered = allGrupos
+    if (selectedPeriodo) filtered = filtered.filter(g => isGrupoPeriodoMatch(g, selectedPeriodo))
     const list = filtered.map(g => getSemanaLabel(g)).filter(Boolean)
     return [...new Set(list)].sort((a, b) => {
       const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
       const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
       return numB - numA
     })
-  }, [grupos, selectedPeriodo])
+  }, [allGrupos, selectedPeriodo])
 
   const segmentos = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    let filtered = allGrupos
+    if (selectedPeriodo) filtered = filtered.filter(g => isGrupoPeriodoMatch(g, selectedPeriodo))
     if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
-    return [...new Set(filtered.map(g => g.segmento ? String(g.segmento).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSemana])
+    return [...new Set(filtered.map(g => normalizeSegmento(g.segmento, g.campana)).filter(Boolean))].sort()
+  }, [allGrupos, selectedPeriodo, selectedSemana])
 
   const campanas = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    let filtered = allGrupos
+    if (selectedPeriodo) filtered = filtered.filter(g => isGrupoPeriodoMatch(g, selectedPeriodo))
     if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
-    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento) filtered = filtered.filter(g => isGrupoSegmentoMatch(g, selectedSegmento))
     return [...new Set(filtered.map(g => g.campana ? String(g.campana).trim() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento])
+  }, [allGrupos, selectedPeriodo, selectedSemana, selectedSegmento])
 
   const modalidades = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    let filtered = allGrupos
+    if (selectedPeriodo) filtered = filtered.filter(g => isGrupoPeriodoMatch(g, selectedPeriodo))
     if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
-    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento) filtered = filtered.filter(g => isGrupoSegmentoMatch(g, selectedSegmento))
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     return [...new Set(filtered.map(g => g.modalidad ? String(g.modalidad).trim().toUpperCase() : null).filter(Boolean))].sort()
-  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
+  }, [allGrupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
 
   const gruposFiltrados = useMemo(() => {
-    let filtered = grupos.filter(g => g.periodo)
-    if (selectedPeriodo) filtered = filtered.filter(g => String(g.periodo).trim() === String(selectedPeriodo).trim())
+    let filtered = allGrupos
+    if (selectedPeriodo) filtered = filtered.filter(g => isGrupoPeriodoMatch(g, selectedPeriodo))
     if (selectedSemana) filtered = filtered.filter(g => matchSemana(getSemanaLabel(g), selectedSemana))
-    if (selectedSegmento) filtered = filtered.filter(g => String(g.segmento).trim() === String(selectedSegmento).trim())
+    if (selectedSegmento) filtered = filtered.filter(g => isGrupoSegmentoMatch(g, selectedSegmento))
     if (selectedCampana) filtered = filtered.filter(g => String(g.campana).trim() === String(selectedCampana).trim())
     if (selectedModalidad) filtered = filtered.filter(g => String(g.modalidad || '').trim().toUpperCase() === String(selectedModalidad).trim().toUpperCase())
     
     const unique = [];
     const seen = new Set();
     for (const g of filtered) {
-      const uniqueKey = `${g.codigo}_${g.id || ''}_${g.periodo || ''}_${getSemanaLabel(g)}`;
+      if (!g.codigo) continue;
+      const cleanCod = String(g.codigo).trim().toUpperCase();
+      const uniqueKey = `${cleanCod}_${g.campana || ''}_${getCapacidadPeriodo(g)}_${getSemanaLabel(g)}`;
       if (!seen.has(uniqueKey)) {
         seen.add(uniqueKey);
         unique.push(g);
       }
     }
     return unique.sort((a,b) => String(a.codigo).localeCompare(String(b.codigo)));
-  }, [grupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedModalidad])
+  }, [allGrupos, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedModalidad])
 
   const activeGrupoObj = useMemo(() => {
     if (!selectedGrupo) return null;
-    const match = gruposFiltrados.find(g => g.id === selectedGrupo || g.codigo === selectedGrupo);
+    const cleanSel = String(selectedGrupo).trim().toUpperCase();
+    const match = gruposFiltrados.find(g => 
+      String(g.id || '').toUpperCase() === cleanSel || 
+      String(g.codigo || '').toUpperCase() === cleanSel
+    );
     if (match) return match;
-    return grupos.find(g => 
-      (g.id === selectedGrupo || g.codigo === selectedGrupo) && 
+    return allGrupos.find(g => 
+      (String(g.id || '').toUpperCase() === cleanSel || String(g.codigo || '').toUpperCase() === cleanSel) && 
       (!selectedCampana || String(g.campana).trim() === String(selectedCampana).trim()) &&
-      (!selectedPeriodo || String(g.periodo).trim() === String(selectedPeriodo).trim()) &&
+      (!selectedPeriodo || isGrupoPeriodoMatch(g, selectedPeriodo)) &&
       (!selectedSemana || matchSemana(getSemanaLabel(g), selectedSemana))
     );
-  }, [grupos, gruposFiltrados, selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana])
+  }, [allGrupos, gruposFiltrados, selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana])
 
   const effectiveGrupoObj = useMemo(() => {
     if (!activeGrupoObj && !liveGrupoMeta) return null;
@@ -519,8 +661,10 @@ export default function AsistenciaForm({
   }, [userProfile, allFormadores])
 
   const grupoSegmento = useMemo(() => {
-    return String(effectiveGrupoObj?.segmento || selectedSegmento || '').trim().toUpperCase()
-  }, [effectiveGrupoObj, selectedSegmento])
+    const rawSeg = effectiveGrupoObj?.segmento || selectedSegmento || ''
+    const rawCamp = effectiveGrupoObj?.campana || selectedCampana || ''
+    return normalizeSegmento(rawSeg, rawCamp)
+  }, [effectiveGrupoObj, selectedSegmento, selectedCampana])
 
   const { isReadOnly, readOnlyReason } = useMemo(() => {
     if (isSuperAdmin || isFormador) {
@@ -613,7 +757,7 @@ export default function AsistenciaForm({
     }
     const targetGrupoCodigo = String(activeGrupoObj?.codigo || selectedGrupo).trim();
     const targetCampana = String(activeGrupoObj?.campana || selectedCampana || '').trim();
-    const targetPeriodo = String(activeGrupoObj?.periodo || selectedPeriodo || '').replace(/\D/g, '').trim();
+    const targetPeriodo = String(getCapacidadPeriodo(activeGrupoObj) || activeGrupoObj?.periodo || selectedPeriodo || '').replace(/\D/g, '').trim();
     const targetSemanaRaw = activeGrupoObj?.semana_trabajo || activeGrupoObj?.semana_label || selectedSemana || '';
     const targetSemanaNum = parseInt(String(targetSemanaRaw).replace(/\D/g, ''), 10);
 
@@ -621,34 +765,32 @@ export default function AsistenciaForm({
       let isMounted = true;
       (async () => {
         try {
-          // Búsqueda delimitada por Grupo + Semana + Periodo para evitar cruces entre semanas
-          // IMPORTANTE: Se usan filtros eq() separados (AND lógico) en vez de .or() encadenado
-          // para evitar que el OR rompa el filtro de grupo_codigo y jale otros grupos del mismo período.
+          // Búsqueda delimitada por Grupo + Semana + Periodo alimentado desde Capacidad R&S
           let q1 = supabase
             .from('v_nominas_consolidado')
             .select('*')
-            .eq('grupo_codigo', targetGrupoCodigo)
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
           if (targetPeriodo) {
-            q1 = q1.eq('periodo_reclutado', targetPeriodo)
+            q1 = q1.or(`periodo_reclutado.eq.${targetPeriodo},periodo_ingreso_op.eq.${targetPeriodo}`)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             q1 = q1.eq('semana_trabajo', targetSemanaNum)
           }
-          if (targetCampana) {
+          if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
             q1 = q1.ilike('campana', `%${targetCampana}%`)
           }
 
           let qNom = supabase
             .from('nominas')
             .select('*')
-            .eq('grupo_codigo', targetGrupoCodigo)
+            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
           if (targetPeriodo) {
-            qNom = qNom.eq('periodo_reclutado', targetPeriodo)
+            qNom = qNom.or(`periodo_reclutado.eq.${targetPeriodo},periodo_ingreso_op.eq.${targetPeriodo}`)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             qNom = qNom.eq('semana_trabajo', targetSemanaNum)
           }
-          if (targetCampana) {
+          if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
             qNom = qNom.ilike('campana', `%${targetCampana}%`)
           }
 
@@ -687,12 +829,15 @@ export default function AsistenciaForm({
 
           const isRowMatchWeekAndPeriod = (row) => {
             if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
-              const rSem = parseInt(String(row.semana_trabajo || '').replace(/\D/g, ''), 10)
-              if (isNaN(rSem) || rSem !== targetSemanaNum) return false
+              const rSem = parseInt(String(row.semana_trabajo || row.semana || '').replace(/\D/g, ''), 10)
+              if (!isNaN(rSem) && rSem !== targetSemanaNum) return false
             }
             if (targetPeriodo) {
-              const rPer = String(row.periodo_reclutado || '').replace(/\D/g, '')
-              if (!rPer || (!rPer.includes(targetPeriodo) && !targetPeriodo.includes(rPer))) return false
+              const rPerRec = String(row.periodo_reclutado || '').replace(/\D/g, '')
+              const rPerIng = String(row.periodo_ingreso_op || '').replace(/\D/g, '')
+              const matchRec = rPerRec && (rPerRec.includes(targetPeriodo) || targetPeriodo.includes(rPerRec))
+              const matchIng = rPerIng && (rPerIng.includes(targetPeriodo) || targetPeriodo.includes(rPerIng))
+              if (!matchRec && !matchIng) return false
             }
             return true
           }
@@ -918,7 +1063,12 @@ export default function AsistenciaForm({
 
       if (String(p.estado || '').toUpperCase() === 'DESASIGNADO') return false
 
-      const isGrupoMatch = normalize(p.grupo_codigo) === normalize(targetGroup) || normalize(p.grupo_codigo) === normalize(targetGrupoCodigo)
+      const isGrupoMatch = 
+        normalize(p.grupo_codigo) === normalize(targetGroup) || 
+        normalize(p.grupo_codigo) === normalize(targetGrupoCodigo) ||
+        normalize(p.grupo) === normalize(targetGroup) ||
+        normalize(p.grupo) === normalize(targetGrupoCodigo) ||
+        (p.grupo && normalize(p.grupo).startsWith(normalize(targetGrupoCodigo)))
 
       if (!isGrupoMatch && !hasHistoryInGroup) {
         return false
@@ -1023,6 +1173,12 @@ export default function AsistenciaForm({
       const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
       const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
 
+      // Verificar si tuvo asistencia activa efectiva en el Día 1
+      const hadDia1Attendance = prevList.some(r => {
+        const s = (r.sigla_asistencia || r.sigla || '').toUpperCase().trim()
+        return s === 'A' || s === 'I-OP'
+      })
+
       if ((existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || pastBajaRecord || p.estado === 'CESADO' || p.estado === 'BAJA') {
         if (rawTipo === 'APTO' || !rawTipo || rawTipo === 'CESADO') {
           rawTipo = 'CESE'
@@ -1037,11 +1193,14 @@ export default function AsistenciaForm({
         tipoReclutado,
         status_dia_1: p.status_dia_1,
         estado: p.estado,
+        condicion: p.condicion,
+        hadDia1Attendance,
       }
-      // SOLAMENTE en el Día 1 del grupo se permite asignar 'BAJA DIA 1'.
-      const isEligibleBajaD1 = trainingDayIndex === 1 && canAssignBajaDia1({
+      // Se permite BAJA DIA 1 en Día 1, o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1 (periodo de gracia)
+      const isEligibleBajaD1 = canAssignBajaDia1({
         trainingDayIndex,
         row: profileRow,
+        hadDia1Attendance,
         existingMotivo: '',
       })
       const showBajaDia1Option = isEligibleBajaD1
@@ -1130,6 +1289,7 @@ export default function AsistenciaForm({
         motivo_baja = defaultBajaMotivo({
           trainingDayIndex,
           row: profileRow,
+          hadDia1Attendance,
           existingMotivo: pastMotive || '',
           previousMotivo: pastMotive || '',
         })
@@ -1151,6 +1311,7 @@ export default function AsistenciaForm({
         tipoReclutado,
         status_dia_1: p.status_dia_1 || '',
         trainingDayIndex,
+        hadDia1Attendance,
         isEligibleBajaD1,
         showBajaDia1Option,
         allowOtherMotivos,
@@ -1255,6 +1416,7 @@ export default function AsistenciaForm({
         newMotivo = defaultBajaMotivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
+          hadDia1Attendance: item.hadDia1Attendance,
           existingMotivo: item.pastMotive || '',
           previousMotivo: item.pastMotive || '',
         })
@@ -1272,6 +1434,7 @@ export default function AsistenciaForm({
       const nextMotivo = sanitizeBajaDia1Motivo({
         trainingDayIndex: item.trainingDayIndex,
         row: item,
+        hadDia1Attendance: item.hadDia1Attendance,
         motivo: newMotivo,
       })
       userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: nextMotivo })

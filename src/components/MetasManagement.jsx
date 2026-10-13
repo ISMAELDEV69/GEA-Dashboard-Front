@@ -2,13 +2,117 @@ import React, { useState, useEffect, useCallback, useMemo, Fragment } from 'reac
 import { createPortal } from 'react-dom'
 import {
   Target, Users, Check, X,
-  Loader2, AlertCircle, Edit, Save, HelpCircle, Search
+  Loader2, AlertCircle, Edit, Save, HelpCircle, Search, RotateCcw
 } from 'lucide-react'
 import { fetchGruposConMetas, fetchReclutadoresFull, saveGrupoMetas, updateGrupoCapacidadField } from '../lib/dataService'
+import { resolvePeriodoIngreso, normalize2026Period } from '../lib/dashboardAnalytics'
 import PageLayout from './ui/PageLayout'
 import PageHeader from './ui/PageHeader'
 import Card from './ui/Card'
 
+// Normalizador oficial de segmento idéntico a ResumenCapacitacion y Capacidad R&S
+const normalizeSegmento = (rawSeg, campana) => {
+  let s = String(rawSeg || '').trim().toUpperCase()
+  const c = String(campana || '').toUpperCase()
+
+  if (c.includes('TUVES') || c.includes('CHILE') || s === 'CLARO CHILE' || s.includes('CHILE')) {
+    return 'CLARO CHILE'
+  }
+  if (c.includes('LIPIGAS') || c.includes('LIMAGAS') || s === 'LIPIGAS' || s.includes('LIPIGAS')) {
+    return 'LIPIGAS'
+  }
+  if (c.includes('CLARO POSTPAGO')) {
+    return 'CLARO PERU'
+  }
+  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) {
+    return 'CLARO PERU'
+  }
+  if (
+    s === 'CLARO PERU RETENCIONES' ||
+    s.includes('RETENCION') || 
+    c.includes('RETENCION') || 
+    c.includes('CONTACTADOS') || 
+    c.includes('CONTENCI') || 
+    c.includes('DESCUENTO') || 
+    c.includes('BABYSTING') || 
+    c.includes('CONSULTA PREVIA') || 
+    c.includes('MI CLARO') || 
+    c.includes('ENCUESTAS IZO') ||
+    c.includes('CANAL DIGITAL') ||
+    c.includes('WSP INBOUND')
+  ) {
+    return 'CLARO PERU RETENCIONES'
+  }
+  if (
+    s === 'CLARO PERU OUT' ||
+    s.includes('OUT') || 
+    c.includes('OUT') || 
+    c.includes('PREVENTIVA') || 
+    c.includes('PORTA OUT') || 
+    c.includes('RENO') || 
+    c.includes('VENTAS') || 
+    c.includes('CROSS') || 
+    c.includes('MIGRACIONES') ||
+    c.includes('UPGRADE') ||
+    c.includes('VENTA')
+  ) {
+    return 'CLARO PERU OUT'
+  }
+  return 'CLARO PERU'
+}
+
+// Extracción canónica del periodo de Capacidad R&S
+const getCapacidadPeriodo = (g) => {
+  if (!g) return ''
+  const pIngreso = resolvePeriodoIngreso(g)
+  if (pIngreso) return pIngreso
+  const pDirect = normalize2026Period(g.periodo_ingreso_op || g.fecha_ingreso_op || g.periodo_ingreso)
+  if (pDirect) return pDirect
+  const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
+  if (pRaw) return pRaw
+  if (g.periodo) {
+    const clean = String(g.periodo).replace(/\D/g, '').slice(0, 6)
+    if (clean) return clean
+  }
+  return ''
+}
+
+const isGrupoPeriodoMatch = (g, targetPeriodo) => {
+  if (!targetPeriodo || targetPeriodo === 'Todos') return true
+  const cleanTarget = String(targetPeriodo).trim()
+  const pCap = getCapacidadPeriodo(g)
+  if (pCap === cleanTarget) return true
+  const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
+  if (pRaw === cleanTarget) return true
+  if (String(g.periodo).trim() === cleanTarget) return true
+  if (String(g.periodo_ingreso_op).trim() === cleanTarget) return true
+  return false
+}
+
+const getSemanaStr = (g) => {
+  if (!g) return ''
+  const val = g.semana_label || g.semana || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : '')
+  if (!val) return ''
+  const clean = String(val).trim().toUpperCase()
+  const num = parseInt(clean.replace(/\D/g, ''), 10)
+  return (!isNaN(num) && num > 0) ? `SEM ${num}` : clean
+}
+
+const matchSemana = (valA, valB) => {
+  if (!valA || !valB) return false
+  const strB = String(valB).trim().toUpperCase()
+  if (strB === 'TODOS' || strB === 'TODAS' || !strB) return true
+  const numA = parseInt(String(valA).replace(/\D/g, ''), 10)
+  const numB = parseInt(String(valB).replace(/\D/g, ''), 10)
+  if (!isNaN(numA) && !isNaN(numB)) return numA === numB
+  return String(valA).trim().toUpperCase() === String(valB).trim().toUpperCase()
+}
+
+const isGrupoSegmentoMatch = (g, targetSegmento) => {
+  if (!targetSegmento || targetSegmento === 'Todos') return true
+  const normG = normalizeSegmento(g.segmento, g.campana || g.campana_nombre)
+  return normG === String(targetSegmento).trim().toUpperCase()
+}
 
 export default function MetasManagement({ postulantes = [], asistencias = [] }) {
   const [grupos, setGrupos] = useState([])
@@ -36,27 +140,40 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
       setError(null)
     }
     try {
+      // Forzar lectura fresca de capacidad_rys
       const [gData, rData] = await Promise.all([
-        fetchGruposConMetas(),
+        fetchGruposConMetas(true),
         fetchReclutadoresFull()
       ])
-      // Filter out CERRADO if you want, or just show all. For now we show all and let filters handle it.
-      setGrupos(gData)
-      setReclutadores(rData.filter(r => r.activo))
+      // Filtrar estrictamente: solo grupos traídos por RECLUTAMIENTO (excluyendo RECUPERADO, CAPACITACIÓN, etc.)
+      const recluGrupos = (gData || []).filter(g => {
+        const area = String(g.area_traslado || '').trim().toUpperCase()
+        return area === 'RECLUTAMIENTO'
+      })
+      setGrupos(recluGrupos)
+      setReclutadores((rData || []).filter(r => r.activo))
 
-      if (isInit && gData.length > 0) {
-        // Encontrar el último periodo
-        const allPeriodos = [...new Set(gData.map(g => g.periodo).filter(Boolean))].sort((a, b) => b.localeCompare(a))
-        if (allPeriodos.length > 0) {
-          const latestP = allPeriodos[0]
-          setFilterPeriodo(latestP)
-          
-          // Encontrar la última semana dentro de ese periodo
-          const semanasInPeriodo = [...new Set(gData.filter(g => g.periodo === latestP).map(g => g.semana).filter(Boolean))].sort((a, b) => b.localeCompare(a))
-          if (semanasInPeriodo.length > 0) {
-            setFilterSemana(semanasInPeriodo[0])
-          }
+      if (isInit && recluGrupos && recluGrupos.length > 0) {
+        // Encontrar los periodos disponibles
+        const allPers = new Set()
+        recluGrupos.forEach(g => {
+          const p = getCapacidadPeriodo(g)
+          if (p) allPers.add(p)
+          const pRaw = normalize2026Period(g.periodo)
+          if (pRaw) allPers.add(pRaw)
+        })
+        const sortedPers = Array.from(allPers).filter(p => /^\d{6}$/.test(p)).sort((a, b) => b.localeCompare(a))
+        
+        // Priorizar el periodo 2026 más reciente (ej. 202604 o 202603) o el primero disponible
+        const active2026 = sortedPers.find(p => p.startsWith('2026')) || sortedPers[0]
+        if (active2026) {
+          setFilterPeriodo(active2026)
+        } else {
+          setFilterPeriodo('Todos')
         }
+        setFilterSemana('Todos')
+        setFilterSegmento('Todos')
+        setFilterCampana('Todos')
       }
     } catch (err) {
       console.error(err)
@@ -77,53 +194,88 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
     return () => { document.body.style.overflow = prev }
   }, [editingGrupo])
 
-  // Opciones de filtro (Filtro Cruzado)
+  // ── Opciones de Filtro en Cascada (Alimentadas de Capacidad R&S) ──
+  // Períodos: Lista TODOS los periodos existentes en Capacidad R&S (sin ser bloqueado por la semana)
   const periodosOptions = useMemo(() => {
-    const subset = grupos.filter(g => 
-      (filterSemana === 'Todos' || g.semana === filterSemana) &&
-      (filterSegmento === 'Todos' || g.segmento === filterSegmento) &&
-      (filterCampana === 'Todos' || g.campana_nombre === filterCampana)
-    )
-    return ['Todos', ...new Set(subset.map(g => g.periodo).filter(Boolean))].sort((a, b) => b.localeCompare(a))
-  }, [grupos, filterSemana, filterSegmento, filterCampana])
+    const set = new Set()
+    grupos.forEach(g => {
+      const p = getCapacidadPeriodo(g)
+      if (p) set.add(p)
+      const pRaw = normalize2026Period(g.periodo)
+      if (pRaw) set.add(pRaw)
+      if (g.periodo && String(g.periodo).trim()) set.add(String(g.periodo).trim())
+    })
+    const list = Array.from(set).filter(p => /^\d{6}$/.test(p) || p.length > 0).sort((a, b) => b.localeCompare(a))
+    return ['Todos', ...list]
+  }, [grupos])
   
+  // Semanas: Muestra las semanas disponibles dentro del período seleccionado
   const semanasOptions = useMemo(() => {
-    const subset = grupos.filter(g => 
-      (filterPeriodo === 'Todos' || g.periodo === filterPeriodo) &&
-      (filterSegmento === 'Todos' || g.segmento === filterSegmento) &&
-      (filterCampana === 'Todos' || g.campana_nombre === filterCampana)
-    )
-    return ['Todos', ...new Set(subset.map(g => g.semana).filter(Boolean))].sort((a, b) => b.localeCompare(a))
-  }, [grupos, filterPeriodo, filterSegmento, filterCampana])
+    const subset = grupos.filter(g => isGrupoPeriodoMatch(g, filterPeriodo))
+    const list = subset.map(g => getSemanaStr(g)).filter(Boolean)
+    const unique = [...new Set(list)].sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0
+      return numB - numA
+    })
+    return ['Todos', ...unique]
+  }, [grupos, filterPeriodo])
   
+  // Segmentos: Muestra los segmentos normalizados disponibles en el período y semana
   const segmentosOptions = useMemo(() => {
     const subset = grupos.filter(g => 
-      (filterPeriodo === 'Todos' || g.periodo === filterPeriodo) &&
-      (filterSemana === 'Todos' || g.semana === filterSemana) &&
-      (filterCampana === 'Todos' || g.campana_nombre === filterCampana)
+      isGrupoPeriodoMatch(g, filterPeriodo) &&
+      matchSemana(getSemanaStr(g), filterSemana)
     )
-    return ['Todos', ...new Set(subset.map(g => g.segmento).filter(Boolean))].sort()
-  }, [grupos, filterPeriodo, filterSemana, filterCampana])
+    const list = subset.map(g => normalizeSegmento(g.segmento, g.campana || g.campana_nombre)).filter(Boolean)
+    return ['Todos', ...new Set(list)].sort()
+  }, [grupos, filterPeriodo, filterSemana])
 
+  // Campañas: Muestra las campañas disponibles según período, semana y segmento
   const campanasOptions = useMemo(() => {
     const subset = grupos.filter(g => 
-      (filterPeriodo === 'Todos' || g.periodo === filterPeriodo) &&
-      (filterSemana === 'Todos' || g.semana === filterSemana) &&
-      (filterSegmento === 'Todos' || g.segmento === filterSegmento)
+      isGrupoPeriodoMatch(g, filterPeriodo) &&
+      matchSemana(getSemanaStr(g), filterSemana) &&
+      isGrupoSegmentoMatch(g, filterSegmento)
     )
-    return ['Todos', ...new Set(subset.map(g => g.campana_nombre).filter(Boolean))].sort()
+    const list = subset.map(g => g.campana_nombre || g.campana).filter(Boolean)
+    return ['Todos', ...new Set(list)].sort()
   }, [grupos, filterPeriodo, filterSemana, filterSegmento])
+
+  // Manejadores en cascada explícitos
+  const handlePeriodoChange = (val) => {
+    setFilterPeriodo(val)
+    setFilterSemana('Todos')
+    setFilterSegmento('Todos')
+    setFilterCampana('Todos')
+  }
+
+  const handleSemanaChange = (val) => {
+    setFilterSemana(val)
+    setFilterSegmento('Todos')
+    setFilterCampana('Todos')
+  }
+
+  const handleSegmentoChange = (val) => {
+    setFilterSegmento(val)
+    setFilterCampana('Todos')
+  }
+
+  const handleCampanaChange = (val) => {
+    setFilterCampana(val)
+  }
 
   // Aplicar filtros
   const filteredGrupos = useMemo(() => {
     return grupos.filter(g => {
-      if (filterPeriodo !== 'Todos' && g.periodo !== filterPeriodo) return false
-      if (filterSemana !== 'Todos' && g.semana !== filterSemana) return false
-      if (filterSegmento !== 'Todos' && g.segmento !== filterSegmento) return false
-      if (filterCampana !== 'Todos' && g.campana_nombre !== filterCampana) return false
+      if (!isGrupoPeriodoMatch(g, filterPeriodo)) return false
+      if (!matchSemana(getSemanaStr(g), filterSemana)) return false
+      if (!isGrupoSegmentoMatch(g, filterSegmento)) return false
+      if (filterCampana !== 'Todos' && String(g.campana_nombre || g.campana).trim() !== String(filterCampana).trim()) return false
       if (filterGrupo) {
-        const searchString = `${g.grupo_codigo} ${g.campana_nombre}`.toLowerCase()
-        if (!searchString.includes(filterGrupo.toLowerCase())) return false
+        const q = filterGrupo.trim().toLowerCase()
+        const searchString = `${g.grupo_codigo || ''} ${g.codigo || ''} ${g.campana_nombre || ''} ${g.campana || ''}`.toLowerCase()
+        if (!searchString.includes(q)) return false
       }
       return true
     })
@@ -145,6 +297,8 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
       setSelectedRecs(prev => [...prev, {
         reclutador_id: rec.id,
         nombre_completo: rec.nombre_completo,
+        documento: rec.documento || null,
+        alias: rec.alias || null,
         meta_rq_individual: 0,
         meta_dia_1_individual: 0
       }])
@@ -166,7 +320,12 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
     setSaving(true)
     setSaveSuccess(null)
     try {
-      await saveGrupoMetas(editingGrupo.grupo_codigo, selectedRecs)
+      await saveGrupoMetas(editingGrupo.grupo_codigo, selectedRecs, {
+        periodo: editingGrupo.periodo,
+        semana: editingGrupo.semana_label || editingGrupo.semana,
+        segmento: editingGrupo.segmento,
+        campana: editingGrupo.campana_nombre || editingGrupo.campana
+      })
       setSaveSuccess('Metas de grupo guardadas con éxito!')
       setTimeout(() => {
         setEditingGrupo(null)
@@ -203,8 +362,24 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
       {/* Title block */}
       <PageHeader
         title="Metas y Equipos de Campaña"
-        subtitle="Asigna objetivos de reclutamiento (RQ) y Día 1 a nivel individual para cada Grupo de Capacitación."
+        subtitle="Asigna objetivos de reclutamiento (RQ) y Día 1 a nivel individual para cada Grupo de Capacitación traído por Reclutamiento."
         icon={Target}
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Área: Exclusivo Reclutamiento
+            </span>
+            <button
+              type="button"
+              onClick={() => loadData(false)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--border-normal)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-muted)] text-[var(--text-primary)] font-bold text-xs transition-all active:scale-95 cursor-pointer shadow-xs"
+              title="Recargar grupos frescos de Capacidad R&S"
+            >
+              <RotateCcw size={14} className={loading ? 'animate-spin' : ''} />
+              <span>Actualizar</span>
+            </button>
+          </div>
+        }
       />
 
       {error && (
@@ -219,26 +394,26 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="flex flex-col">
             <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] mb-1">Período</label>
-            <select value={filterPeriodo} onChange={e => setFilterPeriodo(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
-              {periodosOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todos' : o}</option>)}
+            <select value={filterPeriodo} onChange={e => handlePeriodoChange(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
+              {periodosOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todos los Períodos' : o}</option>)}
             </select>
           </div>
           <div className="flex flex-col">
             <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] mb-1">Semana</label>
-            <select value={filterSemana} onChange={e => setFilterSemana(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
+            <select value={filterSemana} onChange={e => handleSemanaChange(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
               {semanasOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todas las Semanas' : o}</option>)}
             </select>
           </div>
           <div className="flex flex-col">
             <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] mb-1">Segmento</label>
-            <select value={filterSegmento} onChange={e => setFilterSegmento(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
-              {segmentosOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todos Segmentos' : o}</option>)}
+            <select value={filterSegmento} onChange={e => handleSegmentoChange(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
+              {segmentosOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todos los Segmentos' : o}</option>)}
             </select>
           </div>
           <div className="flex flex-col">
             <label className="text-[10px] uppercase font-bold text-[var(--text-secondary)] mb-1">Campaña</label>
-            <select value={filterCampana} onChange={e => setFilterCampana(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
-              {campanasOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todas Campañas' : o}</option>)}
+            <select value={filterCampana} onChange={e => handleCampanaChange(e.target.value)} className="form-input bg-[var(--input-bg)] border-[var(--input-border)] text-[var(--text-primary)] rounded-xl px-3 py-2 text-sm">
+              {campanasOptions.map(o => <option key={o} value={o}>{o === 'Todos' ? 'Todas las Campañas' : o}</option>)}
             </select>
           </div>
           <div className="flex flex-col">
@@ -402,8 +577,11 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                     {/* Middle rows (First recruiter or empty) */}
                     {recs.length > 0 ? (
                       <>
-                        <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)}>
-                          {recs[0].alias}
+                        <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)} title={recs[0].documento ? `DNI: ${recs[0].documento} (${recs[0].nombre_completo})` : recs[0].nombre_completo}>
+                          <span>{recs[0].alias || recs[0].nombre_completo}</span>
+                          {recs[0].documento && (
+                            <span className="block text-[9px] font-mono text-[var(--text-muted)] tracking-wider">[{recs[0].documento}]</span>
+                          )}
                         </td>
                         <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold bg-[var(--bg-muted)] text-[var(--text-primary)]">
                           {recs[0].meta_rq_individual}
@@ -462,8 +640,11 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                   {/* Additional rows for recruiters 2+ */}
                   {recs.slice(1).map((r, idx) => (
                     <tr key={idx} className={baseRowClasses}>
-                      <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)}>
-                        {r.alias}
+                      <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center text-[var(--text-primary)] cursor-pointer hover:text-[var(--accent)] underline decoration-dashed underline-offset-2" onClick={() => handleEditClick(g)} title={r.documento ? `DNI: ${r.documento} (${r.nombre_completo})` : r.nombre_completo}>
+                        <span>{r.alias || r.nombre_completo}</span>
+                        {r.documento && (
+                          <span className="block text-[9px] font-mono text-[var(--text-muted)] tracking-wider">[{r.documento}]</span>
+                        )}
                       </td>
                       <td className="border-r border-[var(--border-subtle)] px-2 py-1.5 text-center font-bold bg-[var(--bg-muted)] text-[var(--text-primary)]">
                         {r.meta_rq_individual}
@@ -573,7 +754,10 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                               : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-normal)]'
                           }`}
                         >
-                          <span className="truncate pr-2">{r.nombre_completo}</span>
+                          <span className="truncate pr-2">
+                            <span className="font-bold">{r.alias || r.nombre_completo}</span>
+                            {r.documento && <span className="ml-1 text-[10px] text-[var(--text-muted)] font-mono">[{r.documento}]</span>}
+                          </span>
                           <div className={`shrink-0 w-3.5 h-3.5 rounded flex items-center justify-center border transition-all ${
                             isChecked 
                               ? 'bg-[var(--accent)] border-[var(--accent)] text-white' 
@@ -628,7 +812,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
                           </div>
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-[var(--text-primary)] truncate pr-4">{recName}</p>
-                            <p className="text-[10px] text-[var(--text-muted)]">Miembro del equipo</p>
+                            <p className="text-[10px] text-[var(--text-muted)] font-mono">DNI: <span className="font-bold text-[var(--accent)]">{rm.documento || 'No registrado'}</span></p>
                           </div>
                         </div>
                         
