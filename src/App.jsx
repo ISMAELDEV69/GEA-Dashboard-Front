@@ -218,6 +218,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
   const [isOreoModalOpen, setIsOreoModalOpen] = useState(false)
+  const hasAutoOpenedOreoRef = useRef(false)
 
   // Rol directivo / gerencial / administrativo exclusivo para Resumen Ejecutivo
   const isDirectivoOrAdmin = useMemo(() => {
@@ -225,14 +226,27 @@ export default function App() {
     return ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion', 'directivo', 'gerente'].includes(r)
   }, [currentRole])
 
-  // Auto-mostrar Resumen Diario OREO al iniciar sesión o ingresar a la web SOLO a directivos y administradores
+  // Auto-mostrar Resumen Diario OREO ÚNICAMENTE 1 vez al iniciar sesión (sin volver a interrumpir durante el uso de la web)
   useEffect(() => {
-    if (effectiveSession && !loading && isDirectivoOrAdmin) {
-      setIsOreoModalOpen(true)
+    if (!effectiveSession) {
+      hasAutoOpenedOreoRef.current = false
+      return
     }
-  }, [effectiveSession, loading, isDirectivoOrAdmin])
 
-  // Listener global para invocar el Resumen Ejecutivo desde cualquier vista o evento
+    if (!loading && isDirectivoOrAdmin) {
+      const userKey = effectiveSession === 'demo' ? 'demo' : (session?.user?.id || userProfile?.id || 'auth_user')
+      const sessionShownKey = `gea_oreo_shown_${userKey}`
+      const alreadyShown = sessionStorage.getItem(sessionShownKey) === 'true'
+
+      if (!hasAutoOpenedOreoRef.current && !alreadyShown) {
+        hasAutoOpenedOreoRef.current = true
+        sessionStorage.setItem(sessionShownKey, 'true')
+        setIsOreoModalOpen(true)
+      }
+    }
+  }, [effectiveSession, loading, isDirectivoOrAdmin, session, userProfile])
+
+  // Listener global para invocar el Resumen Ejecutivo desde cualquier vista o evento manual
   useEffect(() => {
     const handleOpenOreo = () => {
       if (isDirectivoOrAdmin) {
@@ -249,7 +263,10 @@ export default function App() {
 
   const handleCloseOreoModal = useCallback(() => {
     setIsOreoModalOpen(false)
-  }, [])
+    const userKey = effectiveSession === 'demo' ? 'demo' : (session?.user?.id || userProfile?.id || 'auth_user')
+    sessionStorage.setItem(`gea_oreo_shown_${userKey}`, 'true')
+    hasAutoOpenedOreoRef.current = true
+  }, [effectiveSession, session, userProfile])
 
   const handleNavigate = useCallback((viewId) => {
     startTransition(() => {
@@ -539,10 +556,16 @@ export default function App() {
   }
 
   const handleSignOut = useCallback(async () => {
+    try {
+      const userKey = session?.user?.id || userProfile?.id || 'auth_user'
+      sessionStorage.removeItem(`gea_oreo_shown_${userKey}`)
+      sessionStorage.removeItem('gea_oreo_shown_demo')
+    } catch {}
+    hasAutoOpenedOreoRef.current = false
     await signOut()
     setSession(null)
     setUserProfile(null)
-  }, [])
+  }, [session, userProfile])
 
   const isSupabase = DB_MODE === 'supabase'
 
