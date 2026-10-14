@@ -1850,8 +1850,41 @@ export default function OreoExecutiveModal({
   }, [isOpen, onClose, handlePrev, handleNext])
 
   // 🔒 CONTROL ESTRICTO: Solo accesible para Administradores y Directivos
+  // REGLA: Exclusivo para administradores y directivos. NUNCA para formadores ni reclutadores.
   const userRole = (userProfile?.rol || '').toLowerCase()
-  const isDirectivoOrAdmin = ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion', 'directivo', 'gerente'].includes(userRole)
+  const isDirectivoOrAdmin = useMemo(() => {
+    if (!userProfile || !userRole) return false
+    if (userRole === 'admin') return true
+
+    const isOperativoRYSoCapa = [
+      'reclutador',
+      'formador',
+      'coordinador_rys',
+      'supervisor_capacitacion',
+      'capacitador',
+      'analista_rys',
+      'asistente_rys'
+    ].includes(userRole) || Boolean(userProfile?.es_reclutador) || Boolean(userProfile?.es_formador)
+
+    if (isOperativoRYSoCapa) return false
+
+    const userFullName = (userProfile?.nombre_completo || userProfile?.nombre || '').trim().toUpperCase()
+    if (userFullName) {
+      const isRec = (reclutadores || []).some(r => {
+        const n = (typeof r === 'string' ? r : (r?.nombre_completo || r?.nombres_completos || '')).trim().toUpperCase()
+        return n && (n === userFullName || userFullName.includes(n) || n.includes(userFullName))
+      })
+      if (isRec) return false
+
+      const isForm = (formadores || []).some(f => {
+        const n = (typeof f === 'string' ? f : (f?.nombre_completo || f?.nombres_completos || '')).trim().toUpperCase()
+        return n && (n === userFullName || userFullName.includes(n) || n.includes(userFullName))
+      })
+      if (isForm) return false
+    }
+
+    return ['directivo', 'gerente', 'director', 'visor'].includes(userRole)
+  }, [userRole, userProfile, reclutadores, formadores])
 
   if (!isOpen || !isDirectivoOrAdmin) return null
 

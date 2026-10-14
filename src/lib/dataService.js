@@ -327,7 +327,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
       if (userAlix) {
         const { data: recByAlix } = await supabase
           .from('equipo_reclutamiento')
-          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix, cargo')
           .eq('alix', userAlix)
           .maybeSingle();
 
@@ -342,6 +342,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.apellido_paterno = recByAlix.apellido_paterno;
           profile.apellido_materno = recByAlix.apellido_materno;
           profile.primer_nombre = String(recByAlix.nombres_completos || '').trim().split(' ')[0] || '';
+          profile.cargo = recByAlix.cargo;
+          profile.es_reclutador = true;
+          if (profile.rol === 'visor' || !profile.rol) {
+            profile.rol = 'reclutador';
+          }
           return profile;
         }
       }
@@ -349,7 +354,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
       if (searchTerm) {
         const { data: recData } = await supabase
           .from('equipo_reclutamiento')
-          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, alix, cargo')
           .or(`alix.eq.${searchTerm},nombres_completos.eq.${searchTerm}`)
           .maybeSingle();
 
@@ -364,6 +369,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.apellido_paterno = recData.apellido_paterno;
           profile.apellido_materno = recData.apellido_materno;
           profile.primer_nombre = String(recData.nombres_completos || '').trim().split(' ')[0] || '';
+          profile.cargo = recData.cargo;
+          profile.es_reclutador = true;
+          if (profile.rol === 'visor' || !profile.rol) {
+            profile.rol = 'reclutador';
+          }
           return profile;
         }
       }
@@ -372,7 +382,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
       if (userAlix) {
         const { data: formByAlix } = await supabase
           .from('equipo_formacion')
-          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix, cargo_funcional')
           .eq('usuario_alix', userAlix)
           .maybeSingle();
 
@@ -387,6 +397,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.apellido_paterno = formByAlix.apellido_paterno;
           profile.apellido_materno = formByAlix.apellido_materno;
           profile.primer_nombre = String(formByAlix.nombres_completos || '').trim().split(' ')[0] || '';
+          profile.cargo = formByAlix.cargo_funcional;
+          profile.es_formador = true;
+          if (profile.rol === 'visor' || !profile.rol) {
+            profile.rol = 'formador';
+          }
           return profile;
         }
       }
@@ -394,7 +409,7 @@ export async function fetchUserProfile(userId, sessionUser = null) {
       if (searchTerm) {
         const { data: formData } = await supabase
           .from('equipo_formacion')
-          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix')
+          .select('documento, apellido_paterno, apellido_materno, nombres_completos, usuario_alix, cargo_funcional')
           .or(`usuario_alix.eq.${searchTerm},nombres_completos.eq.${searchTerm}`)
           .maybeSingle();
 
@@ -409,6 +424,11 @@ export async function fetchUserProfile(userId, sessionUser = null) {
           profile.apellido_paterno = formData.apellido_paterno;
           profile.apellido_materno = formData.apellido_materno;
           profile.primer_nombre = String(formData.nombres_completos || '').trim().split(' ')[0] || '';
+          profile.cargo = formData.cargo_funcional;
+          profile.es_formador = true;
+          if (profile.rol === 'visor' || !profile.rol) {
+            profile.rol = 'formador';
+          }
           return profile;
         }
       }
@@ -9815,4 +9835,218 @@ export async function fetchAnaliticaMovilidad({ periodo = null, modalidad = null
   }
   return []
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAQUETA Y LIQUIDACIÓN DE BONOS (RYS) - PERSISTENCIA Y AUDITORÍA
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Consulta la configuración de escalas y tramos activos de maqueta
+ */
+export async function fetchMaquetaEscalasConfig() {
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('maqueta_escalas_config')
+        .select('*')
+        .eq('is_active', true)
+        .order('orden', { ascending: true })
+
+      if (error) throw error
+      return data || []
+    } catch (err) {
+      console.warn('[Maqueta] Error al consultar maqueta_escalas_config:', err)
+      return []
+    }
+  }
+  return []
+}
+
+/**
+ * Guarda o actualiza (Upsert) la liquidación consolidada de un periodo
+ */
+export async function guardarLiquidacionPeriodo(periodo, filas = [], userProfile = null) {
+  if (!periodo || !filas.length) return { success: false, count: 0 }
+
+  const liquidadoPor = userProfile?.nombre_completo || userProfile?.nombre || userProfile?.email || 'Admin'
+
+  const records = filas.map((f) => ({
+    periodo: String(periodo).trim(),
+    colaborador_id: f.documento || f.key,
+    personal_rys: f.nombre,
+    cargo: f.cargo,
+    estado: f.estado || 'ACTIVO',
+    campanas: f.campanas || '',
+
+    // Paso 1: Cumplimiento Real
+    meta_dia_1: f.dia1Meta || 0,
+    real_dia_1: f.dia1Real || 0,
+    cump_dia1_pct: f.pctDia1Operativo || 0,
+    rq_dotacion: f.rqReal || 0,
+    real_dotacion: f.dotacionReal || 0,
+    cump_dotacion_pct: f.pctDotacionOperativo || 0,
+    cantidad_aptos: f.aptosReal || 0,
+    cantidad_evaluados: f.evaluadosReal || 0,
+    cump_calidad_pct: f.pctCalidadReal !== undefined ? f.pctCalidadReal : 100,
+
+    // Paso 2: % Alcance
+    alcance_dia1_pct: f.alcanceDia1 || 0,
+    alcance_dotacion_pct: f.alcanceDotacion || 0,
+    alcance_calidad_pct: f.alcanceCalidad || 100,
+
+    // Paso 3: Pesos y Puntos
+    peso_dia1_pct: f.pesoDia1 || 50,
+    peso_dotacion_pct: f.pesoDotacion || 40,
+    peso_calidad_pct: f.pesoCalidad || 10,
+
+    puntos_dia1_pct: f.puntosDia1 || 0,
+    puntos_dotacion_pct: f.puntosDotacion || 0,
+    puntos_calidad_pct: f.puntosCalidad || 0,
+    total_puntos_pct: f.totalPuntosPct || 0,
+
+    // Paso 4: Resultados Financieros y Subdivisión
+    bono_bruto: f.bonoBruto || 400,
+    bono_neto: f.bonoNeto || 0,
+    bono_neto_efectivo: f.bonoEfectivo || 0,
+    bono_neto_sodexo: f.bonoSodexo || 0,
+
+    // Auditoría
+    estado_pago: 'PENDIENTE',
+    liquidado_por: liquidadoPor,
+    fecha_cierre: new Date().toISOString(),
+  }))
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('maqueta_reclutadores_liquidaciones')
+        .upsert(records, { onConflict: 'periodo,personal_rys' })
+
+      if (error) throw error
+      return { success: true, count: records.length, data }
+    } catch (err) {
+      console.error('[Maqueta] Error al guardar liquidación en Supabase:', err)
+      throw err
+    }
+  } else {
+    // Modo Local
+    try {
+      const storageKey = `gea_maqueta_liq_${periodo}`
+      localStorage.setItem(storageKey, JSON.stringify(records))
+      return { success: true, count: records.length, local: true }
+    } catch (err) {
+      console.warn('[Maqueta] Error al guardar en localStorage:', err)
+      return { success: false, count: 0 }
+    }
+  }
+}
+
+/**
+ * Consulta la Base Operativa Oficial de 16 Columnas desde maqueta_reclutadores_base
+ */
+export async function fetchMaquetaBaseOperativa(periodo = '') {
+  if (DB_MODE !== 'supabase' || !isSupabaseConfigured()) {
+    return []
+  }
+  try {
+    let query = supabase.from('maqueta_reclutadores_base').select('*')
+    if (periodo && periodo !== 'TODOS') {
+      const pNorm = String(periodo).replace(/\D/g, '').slice(0, 6)
+      const validPeriodos = Array.from(new Set([String(periodo).trim(), pNorm].filter(Boolean)))
+      if (validPeriodos.length === 1) {
+        query = query.eq('periodo_efectivo', validPeriodos[0])
+      } else if (validPeriodos.length > 1) {
+        query = query.in('periodo_efectivo', validPeriodos)
+      }
+    }
+    const { data, error } = await query.order('codigo_gpe', { ascending: true })
+    if (error) throw error
+    return data || []
+  } catch (err) {
+    console.error('[MaquetaBase] Error al consultar maqueta_reclutadores_base:', err)
+    return []
+  }
+}
+
+/**
+ * Guarda o sincroniza registros en maqueta_reclutadores_base
+ */
+export async function guardarMaquetaBaseOperativa(records = []) {
+  if (!records.length) return { success: false, count: 0 }
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('maqueta_reclutadores_base')
+        .upsert(records, { onConflict: 'periodo_efectivo,codigo_gpe,analista_reclutador' })
+      if (error) throw error
+      return { success: true, count: records.length, data }
+    } catch (err) {
+      console.error('[MaquetaBase] Error al guardar en maqueta_reclutadores_base:', err)
+      throw err
+    }
+  }
+  return { success: false, count: 0 }
+}
+
+/**
+ * Sincroniza automáticamente la base operativa de 16 columnas desde el consolidado de nóminas y asistencias
+ */
+export async function sincronizarMaquetaBaseDesdeConsolidado(periodo = '') {
+  const pStr = String(periodo || '').trim()
+  const pNorm = pStr.replace(/\D/g, '').slice(0, 6)
+  
+  // Obtener filas consolidadas de operaciones
+  const kpiRows = await fetchKpiReclutadoresConsolidado({ periodo: pStr || pNorm })
+  if (!kpiRows || !kpiRows.length) return { success: false, count: 0, message: 'No hay filas consolidadas en este periodo' }
+
+  // Mapear al esquema exacto de 16 columnas de maqueta_reclutadores_base
+  const mapped = kpiRows.map((r) => ({
+    periodo_efectivo: pStr || r.periodo_efectivo || pNorm,
+    codigo_gpe: r.grupo_g || r.codigo_gpe || 'GPE-S/C',
+    fecha_inicio_capa: r.fecha_inicio || null,
+    fecha_fin_capa: r.fecha_ingreso_op || null,
+    segmento: r.segmento || '',
+    campana: r.campana || '',
+    modalidad: r.modalidad || 'PRESENCIAL',
+    tipo_reclutador: r.tipo_reclutador || 'Interno',
+    analista_reclutador: String(r.responsable || '').trim(),
+    meta_dia_1_grupal: Number(r.meta_dia_1_campana || r.rq || 0),
+    nomina: Number(r.nomina || 0),
+    meta_dia_1_individual: Number(r.meta_dia_1_individual || r.dia_1_tope || 0),
+    meta_dia_1_nuevo_criterio: Number(r.meta_dia_1_nuevo_criterio || 0),
+    asistencia_dia_1: Number(r.dia_1 || 0),
+    dotacion: Number(r.dotacion_q || 0),
+    rq_op: Number(r.rq_individual || r.rq || 0),
+  })).filter(r => r.analista_reclutador && !r.analista_reclutador.toUpperCase().includes('SIN NOMINA'))
+
+  return await guardarMaquetaBaseOperativa(mapped)
+}
+
+/**
+ * Consulta la liquidación guardada o congelada de un periodo
+ */
+export async function fetchLiquidacionesPeriodo(periodo) {
+  if (!periodo) return []
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('maqueta_reclutadores_liquidaciones')
+        .select('*')
+        .eq('periodo', String(periodo).trim())
+        .order('nombre', { ascending: true })
+
+      if (error) throw error
+      return data || []
+    } catch (err) {
+      console.warn('[Maqueta] Error al consultar liquidaciones:', err)
+      return []
+    }
+  } else {
+    const storageKey = `gea_maqueta_liq_${periodo}`
+    const raw = localStorage.getItem(storageKey)
+    return raw ? JSON.parse(raw) : []
+  }
+}
+
 

@@ -197,7 +197,7 @@ export default function App() {
   const effectiveSession = isDemoMode ? 'demo' : session
   const effectiveProfile = isDemoMode ? demoProfile : userProfile
 
-  const realRole = (effectiveProfile?.rol || 'visor').toLowerCase()
+  const realRole = (effectiveProfile?.rol || '').toLowerCase()
   const [viewAsRole, setViewAsRole] = useState(null)
   const currentRole = realRole === 'admin' && viewAsRole ? viewAsRole : realRole
 
@@ -211,6 +211,21 @@ export default function App() {
     })
   }, [navPermissions, currentRole])
 
+  // ── Datos Globales ───────────────────────────────────────────────────────────
+  const [postulantes, setPostulantes] = useState([])
+  const [asistencias, setAsistencias] = useState([])
+  const [grupos, setGrupos] = useState([])
+  const [reclutadores, setReclutadores] = useState([])
+  const [sedes, setSedes] = useState([])
+  const [campanas, setCampanas] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
+  const [formadores, setFormadores] = useState([])
+  const [campanasMetas, setCampanasMetas] = useState([])
+  const [motivosBaja, setMotivosBaja] = useState([])
+  const [opcionesHomologadas, setOpcionesHomologadas] = useState([])
+  const [appRoles, setAppRoles] = useState([])
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false)
+
   // ── Estado de Vista & Transiciones Ultrarrápidas ────────────────────────────
   const [activeView, setActiveView] = useState('portal')
   const [, startTransition] = useTransition()
@@ -221,10 +236,46 @@ export default function App() {
   const hasAutoOpenedOreoRef = useRef(false)
 
   // Rol directivo / gerencial / administrativo exclusivo para Resumen Ejecutivo
+  // REGLA ESTRICTA: Exclusivo para administradores y directivos. NUNCA para formadores ni reclutadores.
   const isDirectivoOrAdmin = useMemo(() => {
+    if (!effectiveProfile || !currentRole) return false
     const r = (currentRole || '').toLowerCase()
-    return ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion', 'directivo', 'gerente'].includes(r)
-  }, [currentRole])
+
+    // Administrador siempre tiene acceso
+    if (r === 'admin') return true
+
+    // DENEGACIÓN EXPLÍCITA: Formadores, Reclutadores y roles operativos de capacitación/selección
+    const isOperativoRYSoCapa = [
+      'reclutador',
+      'formador',
+      'coordinador_rys',
+      'supervisor_capacitacion',
+      'capacitador',
+      'analista_rys',
+      'asistente_rys'
+    ].includes(r) || Boolean(effectiveProfile.es_reclutador) || Boolean(effectiveProfile.es_formador)
+
+    if (isOperativoRYSoCapa) return false
+
+    // DENEGACIÓN POR IDENTIFICACIÓN: Si coincide con la nómina de reclutadores o formadores
+    const userFullName = (effectiveProfile.nombre_completo || effectiveProfile.nombre || '').trim().toUpperCase()
+    if (userFullName) {
+      const isReclutadorName = (reclutadores || []).some(rec => {
+        const recName = (typeof rec === 'string' ? rec : (rec?.nombre_completo || rec?.nombres_completos || '')).trim().toUpperCase()
+        return recName && (recName === userFullName || userFullName.includes(recName) || recName.includes(userFullName))
+      })
+      if (isReclutadorName) return false
+
+      const isFormadorName = (formadores || []).some(form => {
+        const formName = (typeof form === 'string' ? form : (form?.nombre_completo || form?.nombres_completos || '')).trim().toUpperCase()
+        return formName && (formName === userFullName || userFullName.includes(formName) || formName.includes(userFullName))
+      })
+      if (isFormadorName) return false
+    }
+
+    // ÚNICAMENTE roles de directivos / alta gerencia autorizados
+    return ['directivo', 'gerente', 'director', 'visor'].includes(r)
+  }, [currentRole, effectiveProfile, reclutadores, formadores])
 
   // Auto-mostrar Resumen Diario OREO ÚNICAMENTE 1 vez al iniciar sesión (sin volver a interrumpir durante el uso de la web)
   useEffect(() => {
@@ -293,21 +344,6 @@ export default function App() {
       handleNavigate(navItems[0].id)
     }
   }, [currentRole, navItems, activeView, handleNavigate])
-
-  // ── Datos Globales ───────────────────────────────────────────────────────────
-  const [postulantes, setPostulantes] = useState([])
-  const [asistencias, setAsistencias] = useState([])
-  const [grupos, setGrupos] = useState([])
-  const [reclutadores, setReclutadores] = useState([])
-  const [sedes, setSedes] = useState([])
-  const [campanas, setCampanas] = useState([])
-  const [auditLogs, setAuditLogs] = useState([])
-  const [formadores, setFormadores] = useState([])
-  const [campanasMetas, setCampanasMetas] = useState([])
-  const [motivosBaja, setMotivosBaja] = useState([])
-  const [opcionesHomologadas, setOpcionesHomologadas] = useState([])
-  const [appRoles, setAppRoles] = useState([])
-  const [isManualRefreshing, setIsManualRefreshing] = useState(false)
 
   const hasLoadedOnceRef = useRef(false)
   const lastFullFetchTimeRef = useRef(Date.now())

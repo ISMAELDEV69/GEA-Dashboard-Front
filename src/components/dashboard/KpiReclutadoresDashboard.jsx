@@ -25,6 +25,7 @@ import {
 import { ChartTooltipContent } from '../ui/chart-tooltip'
 import Card, { CardHeader, CardTitle, CardContent } from '../ui/Card'
 import KpiMultiSelect from './KpiMultiSelect'
+import MaquetaBonosReclutadores from './MaquetaBonosReclutadores'
 
 const OPTION_CLASS = 'bg-[var(--bg-surface)] text-[var(--text-primary)]'
 const MINI_SELECT =
@@ -679,7 +680,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const effectiveResponsable = isLocked ? (lockedName || '__SIN_PERFIL__') : responsable
 
   useEffect(() => {
-    if (!canSeeRanking && vista !== 'resumen') setVista('resumen')
+    if (!canSeeRanking && vista === 'ranking') setVista('resumen')
   }, [canSeeRanking, vista])
 
   const cascadeRows = useMemo(() => {
@@ -993,11 +994,11 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
         </span>
       </div>
 
-      {canSeeRanking && (
       <div className="flex items-center gap-1 px-1">
         {[
           { id: 'resumen', label: 'Resumen' },
-          { id: 'ranking', label: 'Ranking' },
+          ...(canSeeRanking ? [{ id: 'ranking', label: 'Ranking' }] : []),
+          { id: 'maqueta_bonos', label: 'Maqueta & Bonos' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -1005,7 +1006,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
             onClick={() => setVista(tab.id)}
             className={`h-7 px-2.5 rounded-md text-[11px] font-medium cursor-pointer ${
               vista === tab.id
-                ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-bold'
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -1013,7 +1014,6 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
           </button>
         ))}
       </div>
-      )}
 
       {vista === 'resumen' && (
         <>
@@ -1241,6 +1241,16 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
         </CardContent>
       </Card>
         </>
+      )}
+
+      {vista === 'maqueta_bonos' && (
+        <MaquetaBonosReclutadores
+          kpiRows={rows}
+          userProfile={userProfile}
+          periodoSeleccionado={Array.isArray(periodo) ? (periodo[0] || currentOperativePeriodo()) : (periodo || currentOperativePeriodo())}
+          onSelectPeriodo={(p) => setPeriodo([p])}
+          periodosDisponibles={periodoOptions}
+        />
       )}
 
       <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
