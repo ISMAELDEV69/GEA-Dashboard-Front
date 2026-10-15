@@ -3,7 +3,8 @@ import {
   BanknoteIcon, Settings2, Calculator, Download, RefreshCw,
   CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Star,
   TrendingUp, Users, DollarSign, Plus, Pencil, Trash2, Save, X,
-  Filter, Search, RotateCcw, Lock, History, Eye, Loader2
+  Filter, Search, RotateCcw, Lock, History, Eye, Loader2,
+  FileSpreadsheet, Layers, Clock
 } from 'lucide-react'
 import {
   fetchConfigPagosGrupo,
@@ -16,6 +17,7 @@ import {
   saveLiquidacionPagos,
   fetchLiquidacionesLotes,
   fetchLiquidacionDetalle,
+  fetchLiquidacionesHistoricas,
 } from '../lib/dataService'
 import {
   calcularPagosCapacitacion,
@@ -25,6 +27,9 @@ import {
   claveGrupoPago,
   claveDesdeCapacidad,
   claveDesdeConfig,
+  generarMatrizCronogramaPagos,
+  generarResumenMatrizPagos,
+  exportarCSVMatrizPagos,
 } from '../lib/pagosCapacitacionEngine'
 import { formatFechaDDMMYYYY } from '../lib/propuestaParser'
 
@@ -1058,7 +1063,489 @@ function TablaConfigs({ configs, onDelete, onEdit, onRefresh }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Sub-componente: Tabla de pagos calculados
+// Sub-componente: TABLA MATRIZ DE CRONOGRAMA DE PAGOS (Exacta a la Maqueta Excel)
+// Columnas: DOCUMENTO | NOMBRE COMPLETO | CAMPAÑA | GPE | MES DE PAGO | IMPORTE DE CAPA | BIENVENIDA | PERMANENCIA | ASISTENCIA PERFECTA | TOTAL MES | ESTADO DE PAGO
+// ────────────────────────────────────────────────────────────────────────
+function TablaMatrizPagos({ filas = [] }) {
+  const [searchTerm, setSearchTerm] = useState('')
+  const [sortKey, setSortKey] = useState('nombre_completo')
+  const [sortDir, setSortDir] = useState(1)
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => -d)
+    else { setSortKey(key); setSortDir(1) }
+  }
+
+  const filasFiltradas = useMemo(() => {
+    let list = [...filas]
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase().trim()
+      list = list.filter(f => 
+        (f.documento || '').toLowerCase().includes(q) ||
+        (f.nombre_completo || '').toLowerCase().includes(q) ||
+        (f.campana || '').toLowerCase().includes(q) ||
+        (f.grupo_codigo || '').toLowerCase().includes(q) ||
+        (f.reclutador || '').toLowerCase().includes(q) ||
+        (f.status_final || '').toLowerCase().includes(q) ||
+        (f.mes_pago || '').toLowerCase().includes(q) ||
+        (f.estado_pago || '').toLowerCase().includes(q) ||
+        (f.es_agregado ? 'agregado' : 'apto').includes(q)
+      )
+    }
+
+    return list.sort((a, b) => {
+      let va = a[sortKey] ?? ''
+      let vb = b[sortKey] ?? ''
+      if (sortKey === 'nombre_completo' || sortKey === 'documento') {
+        const comp = String(va).localeCompare(String(vb)) * sortDir
+        if (comp !== 0) return comp
+        return String(a.mes_pago || '').localeCompare(String(b.mes_pago || ''))
+      }
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return (va - vb) * sortDir
+      }
+      return String(va).localeCompare(String(vb)) * sortDir
+    })
+  }, [filas, searchTerm, sortKey, sortDir])
+
+  const renderMonto = (v, color = 'text-slate-300') => {
+    const num = Number(v) || 0
+    if (num <= 0) return <span className="text-slate-600 font-mono text-[11px]">—</span>
+    return <span className={`font-mono font-medium ${color}`}>{soles(num)}</span>
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Buscador y Conteo */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+        <div className="relative flex-1 max-w-sm w-full">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Buscar por DNI, postulante, campaña, grupo o mes de pago..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="text-xs text-slate-400 font-medium">
+          Mostrando <strong className="text-emerald-400">{filasFiltradas.length}</strong> cuotas mensuales en cronograma
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-700/80 shadow-lg bg-slate-900/60 max-h-[650px] relative">
+        <table className="w-full text-xs whitespace-nowrap border-collapse">
+          <thead className="bg-slate-800/95 sticky top-0 z-20 text-slate-300 border-b border-slate-700">
+            <tr className="uppercase text-[11px] font-bold tracking-wider">
+              <th onClick={() => handleSort('documento')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white">
+                DOCUMENTO
+              </th>
+              <th onClick={() => handleSort('nombre_completo')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white">
+                NOMBRE COMPLETO
+              </th>
+              <th onClick={() => handleSort('reclutador')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white text-emerald-400">
+                RECLUTADOR
+              </th>
+              <th onClick={() => handleSort('campana')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white">
+                CAMPAÑA
+              </th>
+              <th onClick={() => handleSort('grupo_codigo')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white font-mono text-emerald-400">
+                GPE
+              </th>
+              <th onClick={() => handleSort('status_final')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white" title="Ingreso a Operación confirmado en asistencia">
+                ESTADO / I-OP
+              </th>
+              <th onClick={() => handleSort('dia_0_status')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-cyan-300" title="Día 0 de Inducción (Aptos lo cobran si asistieron; Agregados no lo cobran)">
+                DÍA 0 (INDUCCIÓN)
+              </th>
+              <th onClick={() => handleSort('dias_asistidos')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white">
+                DÍAS ASIST.
+              </th>
+              <th onClick={() => handleSort('asistencia_perfecta')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-rose-300" title="0 faltas durante la capacitación">
+                ASIST. PERF.
+              </th>
+              <th onClick={() => handleSort('mes_pago')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white bg-slate-800 border-x border-slate-700 text-amber-300">
+                MES DE PAGO
+              </th>
+              <th onClick={() => handleSort('importe_capa')} className="px-3 py-2.5 text-right cursor-pointer hover:text-white text-emerald-400">
+                IMPORTE DE CAPA
+              </th>
+              <th onClick={() => handleSort('bono_bienvenida')} className="px-3 py-2.5 text-right cursor-pointer hover:text-white text-amber-400">
+                BIENVENIDA
+              </th>
+              <th onClick={() => handleSort('bono_permanencia')} className="px-3 py-2.5 text-right cursor-pointer hover:text-white text-violet-400">
+                PERMANENCIA
+              </th>
+              <th onClick={() => handleSort('bono_asistencia_perfecta')} className="px-3 py-2.5 text-right cursor-pointer hover:text-white text-rose-400">
+                ASISTENCIA PERFECTA
+              </th>
+              <th onClick={() => handleSort('total_mes')} className="px-3 py-2.5 text-right font-bold text-emerald-300 bg-emerald-950/20 cursor-pointer hover:text-white">
+                TOTAL MES
+              </th>
+              <th onClick={() => handleSort('estado_pago')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white">
+                ESTADO DE PAGO
+              </th>
+              <th className="px-3 py-2.5 text-center text-slate-400">
+                TRAZABILIDAD
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800 bg-slate-900/40">
+            {filasFiltradas.length === 0 ? (
+              <tr>
+                <td colSpan={17} className="text-center py-10 text-slate-500">
+                  No se encontraron registros de cuotas de pago para los filtros seleccionados.
+                </td>
+              </tr>
+            ) : (
+              filasFiltradas.map((r, i) => (
+                <tr
+                  key={`${r.documento}-${r.mes_pago}-${i}`}
+                  className={`hover:bg-slate-800/40 transition-colors ${
+                    r.es_baja ? 'bg-rose-950/20 opacity-70' : ''
+                  }`}
+                >
+                  {/* 1. Documento */}
+                  <td className="px-3 py-2 font-mono font-bold text-slate-300">{r.documento}</td>
+
+                  {/* 2. Nombre Completo + Condición Apto / Agregado */}
+                  <td className="px-3 py-2 text-white font-medium uppercase">
+                    {r.nombre_completo}
+                    {r.es_agregado ? (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Agregado/Recuperado: No cobra Día 0 de inducción">
+                        AGREGADO
+                      </span>
+                    ) : (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                        APTO
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 3. Reclutador */}
+                  <td className="px-3 py-2 text-slate-300 font-medium text-[11px] truncate max-w-[130px]" title={r.reclutador || '—'}>
+                    {r.reclutador || <span className="text-slate-600">—</span>}
+                  </td>
+
+                  {/* 4. Campaña */}
+                  <td className="px-3 py-2 text-slate-300">{r.campana}</td>
+
+                  {/* 5. GPE */}
+                  <td className="px-3 py-2 font-mono font-bold text-emerald-400">{r.grupo_codigo}</td>
+
+                  {/* 6. Estado / I-OP */}
+                  <td className="px-3 py-2 text-center">
+                    {r.es_baja ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                        BAJA
+                      </span>
+                    ) : r.tiene_iop ? (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1"
+                        title={r.total_iop > 1 ? `${r.total_iop} registros I-OP registrados en asistencia` : `Ingreso a Operación: ${r.fecha_primer_iop || 'OK'}`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        I-OP {r.fecha_primer_iop ? `(${r.fecha_primer_iop.slice(5)})` : ''}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        {r.status_final || 'CALIFICA'}
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 7. Día 0 (Inducción) */}
+                  <td className="px-3 py-2 text-center">
+                    {r.asistio_dia_0 ? (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1"
+                        title="Asistió al Día 0 de inducción: Se computa y se paga (+1 día)"
+                      >
+                        <span>✓</span> Asistió
+                      </span>
+                    ) : r.es_agregado ? (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300/80 border border-amber-500/20"
+                        title="Agregado/Recuperado: No cobra Día 0"
+                      >
+                        N/A
+                      </span>
+                    ) : (
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20"
+                        title="Apto faltó al Día 0"
+                      >
+                        Falta
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 8. Días Asistidos */}
+                  <td className="px-3 py-2 text-center font-bold text-blue-400">
+                    <span className="text-sm font-black">{r.dias_asistidos}</span>
+                    {r.asistio_dia_0 && (
+                      <span className="block text-[9px] text-cyan-300 font-normal">
+                        (c/ Día 0)
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 9. Asistencia Perfecta */}
+                  <td className="px-3 py-2 text-center">
+                    {r.asistencia_perfecta ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" title="0 faltas registradas en capacitación">
+                        ✓ Perfecta
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20" title="Tuvo faltas o inasistencias en capacitación">
+                        Con Falta
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 10. Mes de Pago */}
+                  <td className="px-3 py-2 text-center font-mono font-bold border-x border-slate-800/80 bg-slate-950/40 text-amber-300">
+                    {r.mes_pago}
+                  </td>
+
+                  {/* 11. Importe de Capa */}
+                  <td className="px-3 py-2 text-right">{renderMonto(r.importe_capa, 'text-emerald-400')}</td>
+
+                  {/* 12. Bienvenida */}
+                  <td className="px-3 py-2 text-right">{renderMonto(r.bono_bienvenida, 'text-amber-400')}</td>
+
+                  {/* 13. Permanencia */}
+                  <td className="px-3 py-2 text-right">{renderMonto(r.bono_permanencia, 'text-violet-400')}</td>
+
+                  {/* 14. Asistencia Perfecta (Monto) */}
+                  <td className="px-3 py-2 text-right">
+                    {r.bono_asistencia_perfecta > 0 ? (
+                      renderMonto(r.bono_asistencia_perfecta, 'text-rose-400')
+                    ) : !r.asistencia_perfecta ? (
+                      <span className="text-rose-400/50 text-[10px]" title="No aplica por registrar inasistencia">S/. 0.00</span>
+                    ) : (
+                      <span className="text-slate-600 font-mono text-[11px]">—</span>
+                    )}
+                  </td>
+
+                  {/* 15. Total Mes */}
+                  <td className="px-3 py-2 text-right font-black bg-emerald-950/20 text-emerald-300">
+                    {soles(r.total_mes)}
+                  </td>
+
+                  {/* 16. Estado de Pago */}
+                  <td className="px-3 py-2 text-center">
+                    {r.estado_pago === 'PAGADO' ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <CheckCircle2 size={11} /> PAGADO
+                      </span>
+                    ) : r.estado_pago === 'NO APLICA' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                        NO APLICA
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        ⏳ PENDIENTE
+                      </span>
+                    )}
+                  </td>
+
+                  {/* 17. Trazabilidad / Lote */}
+                  <td className="px-3 py-2 text-center text-[10px] text-slate-400">
+                    {r.lote_id ? (
+                      <span className="font-mono text-violet-300 font-medium" title={`Cerrado el: ${r.cerrado_at ? new Date(r.cerrado_at).toLocaleString() : ''} por ${r.cerrado_por || 'admin'}`}>
+                        Lote: {String(r.lote_id).substring(0, 8)}...
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Sub-componente: TABLA RESUMEN POR POSTULANTE (Mapeo de Meses Pagados vs Pendientes)
+// ────────────────────────────────────────────────────────────────────────
+function TablaResumenPostulantes({ personas = [] }) {
+  const [searchTerm, setSearchTerm] = useState('')
+  const [expandedDoc, setExpandedDoc] = useState(null)
+
+  const filtrados = useMemo(() => {
+    if (!searchTerm.trim()) return personas
+    const q = searchTerm.toLowerCase().trim()
+    return personas.filter(p =>
+      (p.documento || '').toLowerCase().includes(q) ||
+      (p.nombre_completo || '').toLowerCase().includes(q) ||
+      (p.campana || '').toLowerCase().includes(q) ||
+      (p.grupo_codigo || '').toLowerCase().includes(q)
+    )
+  }, [personas, searchTerm])
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+        <div className="relative flex-1 max-w-sm w-full">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Buscar por DNI, postulante, campaña o grupo..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="text-xs text-slate-400 font-medium">
+          Mostrando <strong className="text-emerald-400">{filtrados.length}</strong> postulantes con cronograma
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-700/80 shadow-lg bg-slate-900/60">
+        <table className="w-full text-xs whitespace-nowrap border-collapse">
+          <thead className="bg-slate-800/90 text-slate-300 border-b border-slate-700">
+            <tr className="uppercase text-[11px] font-bold">
+              <th className="px-3 py-2.5 text-left">DNI/CE</th>
+              <th className="px-3 py-2.5 text-left">Postulante</th>
+              <th className="px-3 py-2.5 text-left">Campaña</th>
+              <th className="px-3 py-2.5 text-left font-mono">GPE</th>
+              <th className="px-3 py-2.5 text-right text-cyan-300">Total Programado</th>
+              <th className="px-3 py-2.5 text-right text-emerald-400">Total Pagado</th>
+              <th className="px-3 py-2.5 text-right text-amber-400">Saldo Pendiente</th>
+              <th className="px-3 py-2.5 text-left">Meses Pagados</th>
+              <th className="px-3 py-2.5 text-left">Meses que Falta Pagar</th>
+              <th className="px-3 py-2.5 text-center">Acción</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800 bg-slate-900/40">
+            {filtrados.map(p => {
+              const isExpanded = expandedDoc === p.documento
+              return (
+                <React.Fragment key={p.documento}>
+                  <tr className="hover:bg-slate-800/40 transition-colors">
+                    <td className="px-3 py-2 font-mono font-bold text-slate-300">{p.documento}</td>
+                    <td className="px-3 py-2 text-white font-medium uppercase">
+                      {p.nombre_completo}
+                      {p.es_agregado ? (
+                        <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Agregado/Recuperado">
+                          AGREGADO
+                        </span>
+                      ) : (
+                        <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                          APTO
+                        </span>
+                      )}
+                      {p.tiene_iop && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" title="Ingresó a Operación">
+                          I-OP
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-slate-300">{p.campana}</td>
+                    <td className="px-3 py-2 font-mono text-emerald-400 font-bold">{p.grupo_codigo}</td>
+                    <td className="px-3 py-2 text-right font-bold text-cyan-300">{soles(p.total_programado)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-emerald-400">{soles(p.total_pagado)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-amber-400">{soles(p.total_pendiente)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {p.meses_pagados.length > 0 ? (
+                          p.meses_pagados.map(m => (
+                            <span key={m} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                              ✓ {m}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-slate-600 text-[11px]">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {p.meses_pendientes.length > 0 ? (
+                          p.meses_pendientes.map(m => (
+                            <span key={m} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                              ⏳ {m}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-emerald-400 text-[10px] font-bold">TODO PAGADO</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => setExpandedDoc(isExpanded ? null : p.documento)}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium flex items-center gap-1 mx-auto"
+                      >
+                        {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        {isExpanded ? 'Ocultar' : 'Ver Cuotas'}
+                      </button>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="bg-slate-950/60">
+                      <td colSpan={10} className="px-6 py-3">
+                        <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+                          <h4 className="text-xs font-bold text-slate-300 uppercase mb-2">
+                            Cronograma Mensual de {p.nombre_completo} ({p.documento})
+                          </h4>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-slate-400 border-b border-slate-800 text-[10px] uppercase">
+                                <th className="text-left py-1">Mes de Pago</th>
+                                <th className="text-right py-1">Importe Capa</th>
+                                <th className="text-right py-1">Bienvenida</th>
+                                <th className="text-right py-1">Permanencia</th>
+                                <th className="text-right py-1">Asist. Perfecta</th>
+                                <th className="text-right py-1 text-emerald-400">Total Mes</th>
+                                <th className="text-center py-1">Estado</th>
+                                <th className="text-left py-1">Lote / Fecha</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/40">
+                              {p.cuotas_detalle.map((c, idx) => (
+                                <tr key={idx} className="py-1 text-slate-300">
+                                  <td className="py-1.5 font-mono font-bold text-amber-300">{c.mes_pago}</td>
+                                  <td className="py-1.5 text-right">{c.importe_capa > 0 ? soles(c.importe_capa) : '—'}</td>
+                                  <td className="py-1.5 text-right">{c.bono_bienvenida > 0 ? soles(c.bono_bienvenida) : '—'}</td>
+                                  <td className="py-1.5 text-right">{c.bono_permanencia > 0 ? soles(c.bono_permanencia) : '—'}</td>
+                                  <td className="py-1.5 text-right">{c.bono_asistencia_perfecta > 0 ? soles(c.bono_asistencia_perfecta) : '—'}</td>
+                                  <td className="py-1.5 text-right font-bold text-emerald-400">{soles(c.total_mes)}</td>
+                                  <td className="py-1.5 text-center">
+                                    {c.estado_pago === 'PAGADO' ? (
+                                      <span className="text-emerald-400 text-[10px] font-bold">✓ PAGADO</span>
+                                    ) : (
+                                      <span className="text-amber-400 text-[10px] font-bold">⏳ PENDIENTE</span>
+                                    )}
+                                  </td>
+                                  <td className="py-1.5 text-slate-400 text-[10px]">
+                                    {c.lote_id ? `Lote: ${c.lote_id.substring(0, 8)}... (${c.cerrado_at ? new Date(c.cerrado_at).toLocaleDateString() : ''})` : '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Sub-componente: Tabla de pagos calculados (Vista Clásica / Auditoría)
 // ────────────────────────────────────────────────────────────────────────
 function TablaPagos({ filas, maxCuotas }) {
   const [searchTerm, setSearchTerm] = useState('')
@@ -1295,6 +1782,11 @@ export default function PagosCapacitacion({ userProfile }) {
   const [selectedGrupo, setSelectedGrupo] = useState('TODOS')
   const [selectedReclutador, setSelectedReclutador] = useState('TODOS')
 
+  // ── MODO DE VISTA & FILTROS DE MATRIZ CRONOGRAMA ─────────────────────────
+  const [vistaModo, setVistaModo] = useState('matriz') // 'matriz' (exacta a Excel) | 'resumen_postulantes' | 'clasica'
+  const [selectedMesPago, setSelectedMesPago] = useState('TODOS')
+  const [selectedEstadoPago, setSelectedEstadoPago] = useState('TODOS') // 'TODOS' | 'PENDIENTE' | 'PAGADO'
+
   // Estado
   const [loadingConfigs, setLoadingConfigs] = useState(false)
   const [loadingCalculo, setLoadingCalculo] = useState(false)
@@ -1303,6 +1795,7 @@ export default function PagosCapacitacion({ userProfile }) {
   const [mostrarBajas, setMostrarBajas] = useState(false)
 
   // ── TRAZABILIDAD / LIQUIDACIONES ──────────────────────────────────────
+  const [liquidacionesHistoricas, setLiquidacionesHistoricas] = useState([])
   const [savingLote, setSavingLote] = useState(false)
   const [loteMsg, setLoteMsg] = useState(null)
   const [lotes, setLotes] = useState([])
@@ -1323,18 +1816,20 @@ export default function PagosCapacitacion({ userProfile }) {
   }, [])
 
 
-  // Cargar grupos y configuraciones iniciales
+  // Cargar grupos, configuraciones iniciales y liquidaciones históricas
   const loadInitialData = useCallback(async () => {
     setLoadingConfigs(true)
     setErrMsg(null)
     try {
-      const [cfgs, grps, caps] = await Promise.all([
+      const [cfgs, grps, caps, liqs] = await Promise.all([
         fetchConfigPagosGrupo(),
         fetchGruposPagosDisponibles(),
         fetchCapacidadRysOperativo(),
+        fetchLiquidacionesHistoricas().catch(() => []),
       ])
       setConfigs(cfgs)
       setGruposCapacidad(caps || [])
+      setLiquidacionesHistoricas(liqs || [])
       // Deduplicar por grupo_codigo+campana+segmento+semana para evitar filas repetidas
       const seen = new Set()
       const grpsUnicos = grps.filter(g => {
@@ -1505,13 +2000,15 @@ export default function PagosCapacitacion({ userProfile }) {
     setLoadingCalculo(true)
     setErrMsg(null)
     try {
-      // 1. Recargar configs de propuestas actualizadas y capacidad
-      const [cfgs, caps] = await Promise.all([
+      // 1. Recargar configs de propuestas actualizadas, capacidad y liquidaciones
+      const [cfgs, caps, liqs] = await Promise.all([
         fetchConfigPagosGrupo(),
         fetchCapacidadRysOperativo(),
+        fetchLiquidacionesHistoricas().catch(() => []),
       ])
       setConfigs(cfgs)
       if (caps && caps.length) setGruposCapacidad(caps)
+      setLiquidacionesHistoricas(liqs || [])
 
       // 2. Traer nóminas con los filtros aplicados
       const noms = await fetchNominasPagosCapacitacion({
@@ -1554,7 +2051,7 @@ export default function PagosCapacitacion({ userProfile }) {
     return filasCalculadas.filter(f => !f.es_baja && f.dias_asistidos > 0 && !f.sin_propuesta)
   }, [filasCalculadas])
 
-  // Filas a mostrar en la tabla (solo califican por defecto, o todas si se activa auditar bajas)
+  // Filas a mostrar en la tabla clásica (solo califican por defecto, o todas si se activa auditar bajas)
   const filasParaTabla = useMemo(() => {
     if (mostrarBajas) return filasCalculadas
     return filasQueCalifican
@@ -1566,45 +2063,103 @@ export default function PagosCapacitacion({ userProfile }) {
     filasQueCalifican.reduce((m, f) => Math.max(m, f.cuotas_permanencia?.length || 0), 0)
   , [filasQueCalifican])
 
-  // Exportar CSV solo de calificados
+  // ── MATRIZ MULTI-MES DE CRONOGRAMA DE PAGOS (Exacta a Excel con Trazabilidad) ──
+  const { matrizFilas: todasMatrizFilas, resumenPorPersona } = useMemo(() => {
+    const fuente = mostrarBajas ? filasCalculadas : filasQueCalifican
+    if (!fuente.length) return { matrizFilas: [], resumenPorPersona: [] }
+    return generarMatrizCronogramaPagos(fuente, liquidacionesHistoricas)
+  }, [mostrarBajas, filasCalculadas, filasQueCalifican, liquidacionesHistoricas])
+
+  // Meses de pago únicos encontrados en la matriz
+  const mesesDePagoDisponibles = useMemo(() => {
+    const set = new Set()
+    todasMatrizFilas.forEach(f => {
+      if (f.mes_pago) set.add(String(f.mes_pago).trim())
+    })
+    return ['TODOS', ...Array.from(set).sort()]
+  }, [todasMatrizFilas])
+
+  // Matriz filtrada por Mes de Pago y por Estado de Pago
+  const matrizFilasFiltradas = useMemo(() => {
+    return todasMatrizFilas.filter(f => {
+      if (selectedMesPago !== 'TODOS' && f.mes_pago !== selectedMesPago) return false
+      if (selectedEstadoPago !== 'TODOS' && f.estado_pago !== selectedEstadoPago) return false
+      return true
+    })
+  }, [todasMatrizFilas, selectedMesPago, selectedEstadoPago])
+
+  // Métricas de la matriz filtrada
+  const resumenMatriz = useMemo(() => {
+    return generarResumenMatrizPagos(matrizFilasFiltradas)
+  }, [matrizFilasFiltradas])
+
+  // Exportar CSV
   const handleExport = () => {
-    if (!filasQueCalifican.length) return
-    const csv = exportarCSVPagos(filasQueCalifican, maxCuotas)
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Pagos_Capacitacion_${selectedPeriodo}_${selectedSemana}_${selectedCampana}_${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    if (vistaModo === 'matriz') {
+      if (!matrizFilasFiltradas.length) return
+      const csv = exportarCSVMatrizPagos(matrizFilasFiltradas)
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Matriz_Pagos_${selectedPeriodo}_Mes${selectedMesPago}_${new Date().toISOString().split('T')[0]}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } else {
+      if (!filasQueCalifican.length) return
+      const csv = exportarCSVPagos(filasQueCalifican, maxCuotas)
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Pagos_Capacitacion_${selectedPeriodo}_${selectedSemana}_${selectedCampana}_${new Date().toISOString().split('T')[0]}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
   }
 
-  // Cerrar lote de pagos (guardar snapshot histórico solo de calificados)
+  // Cerrar lote de pagos (liquida quirúrgicamente las cuotas PENDIENTES filtradas o del mes)
   const handleCerrarLote = useCallback(async () => {
-    if (!filasQueCalifican?.length) return
-    if (!window.confirm(`¿Deseas cerrar y guardar este lote de ${filasQueCalifican.length} personas que califican como histórico?\n\nEsta acción es un snapshot inmutable del cálculo actual.`)) return
+    const cuotasALiquidar = (vistaModo === 'matriz' ? matrizFilasFiltradas : todasMatrizFilas).filter(f => f.estado_pago === 'PENDIENTE')
+
+    if (!cuotasALiquidar.length) {
+      alert('No hay cuotas pendientes para liquidar en la selección actual.')
+      return
+    }
+
+    const descripMes = selectedMesPago !== 'TODOS' ? `del mes de pago ${selectedMesPago}` : 'de las cuotas pendientes mostradas'
+    const totalSoles = cuotasALiquidar.reduce((s, c) => s + (c.total_mes || c.total_general || 0), 0)
+
+    if (!window.confirm(`¿Deseas cerrar y guardar como PAGADO el lote ${descripMes} para ${cuotasALiquidar.length} cuotas por un total de ${soles(totalSoles)}?\n\nEsta acción registrará las cuotas como liquidadas de forma inmutable.`)) return
+
     setSavingLote(true)
     setLoteMsg(null)
     try {
       const meta = {
         periodo: selectedPeriodo !== 'TODOS' ? selectedPeriodo : '',
+        mes_pago: selectedMesPago !== 'TODOS' ? selectedMesPago : null,
         semana_trabajo: selectedSemana !== 'TODAS' ? parseInt(String(selectedSemana).replace(/\D/g, '')) || null : null,
         segmento: selectedSegmento !== 'TODOS' ? selectedSegmento : null,
         campana: selectedCampana !== 'TODAS' ? selectedCampana : null,
         grupo_codigo: selectedGrupo !== 'TODOS' ? selectedGrupo : null,
         cerrado_por: userProfile?.username || userProfile?.email || null,
-        notas_lote: null,
+        notas_lote: selectedMesPago !== 'TODOS' ? `Liquidación Mes ${selectedMesPago}` : null,
       }
-      const lote_id = await saveLiquidacionPagos(filasQueCalifican, meta)
-      setLoteMsg({ type: 'success', text: `✓ Lote guardado correctamente. ID: ${lote_id.substring(0, 8)}...` })
+      const lote_id = await saveLiquidacionPagos(cuotasALiquidar, meta)
+      setLoteMsg({ type: 'success', text: `✓ Lote cerrado correctamente (${cuotasALiquidar.length} cuotas liquidadas). ID: ${lote_id.substring(0, 8)}...` })
+
+      // Recargar histórico para que la matriz se actualice inmediatamente a PAGADO
+      const updatedLiqs = await fetchLiquidacionesHistoricas().catch(() => [])
+      setLiquidacionesHistoricas(updatedLiqs)
+      loadLotes()
+
       setTimeout(() => setLoteMsg(null), 8000)
     } catch (e) {
       setLoteMsg({ type: 'error', text: `Error al guardar lote: ${e.message}` })
     } finally {
       setSavingLote(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filasQueCalifican, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo, userProfile])
+  }, [vistaModo, matrizFilasFiltradas, todasMatrizFilas, selectedMesPago, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo, userProfile, loadLotes])
 
   // Ver detalle de lote histórico
   const handleVerDetalleLote = useCallback(async (lote_id) => {
@@ -1848,25 +2403,121 @@ export default function PagosCapacitacion({ userProfile }) {
             </div>
           </div>
 
-          {/* KPIs de resumen */}
-          {calculoReady && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              <KpiCard icon={Users} label="Califican" value={resumen.personas_calificadas} sub={resumen.personas_bajas > 0 ? `${resumen.personas_bajas} bajas excluidas` : undefined} color="blue" />
-              <KpiCard icon={DollarSign} label="Total Días Capa" value={soles(resumen.total_monto_dias)} color="green" />
-              <KpiCard icon={TrendingUp} label="Bono Bienvenida" value={soles(resumen.total_bono_bienvenida)} color="amber" />
-              <KpiCard icon={Star} label="Asist. Perfecta" value={soles(resumen.total_bono_asistencia_perfecta)} sub={`${resumen.personas_asistencia_perfecta} personas`} color="rose" />
-              <KpiCard icon={BanknoteIcon} label="Permanencia" value={soles(resumen.total_bono_permanencia)} color="violet" />
-              <KpiCard icon={BanknoteIcon} label="TOTAL GENERAL" value={soles(resumen.total_general)} color="green" highlight />
+          {/* Barra de Modo de Vista y Filtros Específicos de la Matriz */}
+          {calculoReady && filasQueCalifican.length > 0 && (
+            <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-4">
+              {/* Selector de modo */}
+              <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setVistaModo('matriz')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                    vistaModo === 'matriz'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                  }`}
+                >
+                  <FileSpreadsheet size={13} /> Matriz de Pagos (Mes a Mes)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVistaModo('resumen_postulantes')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                    vistaModo === 'resumen_postulantes'
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                  }`}
+                >
+                  <Users size={13} /> Trazabilidad por Postulante
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVistaModo('clasica')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                    vistaModo === 'clasica'
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                  }`}
+                >
+                  <Layers size={13} /> Vista Consolidada
+                </button>
+              </div>
+
+              {/* Filtros específicos de la Matriz */}
+              <div className="flex flex-wrap items-center gap-3">
+                {vistaModo === 'matriz' && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                        <Clock size={12} className="text-amber-400" /> Mes de Pago:
+                      </label>
+                      <select
+                        value={selectedMesPago}
+                        onChange={e => setSelectedMesPago(e.target.value)}
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        {mesesDePagoDisponibles.map(m => (
+                          <option key={m} value={m}>{m === 'TODOS' ? 'TODOS LOS MESES' : m}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase">
+                        Estado:
+                      </label>
+                      <select
+                        value={selectedEstadoPago}
+                        onChange={e => setSelectedEstadoPago(e.target.value)}
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="TODOS">TODOS</option>
+                        <option value="PENDIENTE">⏳ PENDIENTES</option>
+                        <option value="PAGADO">✓ PAGADOS</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Tabla de pagos */}
+          {/* KPIs de resumen dinámicos según el modo */}
+          {calculoReady && (
+            vistaModo === 'matriz' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <KpiCard icon={Users} label="Cuotas en Vista" value={resumenMatriz.total_cuotas} sub={`${resumenPorPersona.length} personas`} color="blue" />
+                <KpiCard icon={DollarSign} label="Total Programado" value={soles(resumenMatriz.total_programado)} color="cyan" />
+                <KpiCard icon={CheckCircle2} label="Total Pagado" value={soles(resumenMatriz.total_pagado)} sub={`${resumenMatriz.cuotas_pagadas} cuotas liquidadas`} color="green" />
+                <KpiCard icon={Clock} label="Saldo Pendiente" value={soles(resumenMatriz.total_pendiente)} sub={`${resumenMatriz.cuotas_pendientes} cuotas por pagar`} color="amber" highlight />
+                <KpiCard icon={BanknoteIcon} label="Importe Capa" value={soles(resumenMatriz.total_capa)} color="emerald" />
+                <KpiCard icon={TrendingUp} label="Total Bonos" value={soles(resumenMatriz.total_bienvenida + resumenMatriz.total_permanencia + resumenMatriz.total_asistencia_perfecta)} color="violet" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <KpiCard icon={Users} label="Califican" value={resumen.personas_calificadas} sub={resumen.personas_bajas > 0 ? `${resumen.personas_bajas} bajas excluidas` : undefined} color="blue" />
+                <KpiCard icon={DollarSign} label="Total Días Capa" value={soles(resumen.total_monto_dias)} color="green" />
+                <KpiCard icon={TrendingUp} label="Bono Bienvenida" value={soles(resumen.total_bono_bienvenida)} color="amber" />
+                <KpiCard icon={Star} label="Asist. Perfecta" value={soles(resumen.total_bono_asistencia_perfecta)} sub={`${resumen.personas_asistencia_perfecta} personas`} color="rose" />
+                <KpiCard icon={BanknoteIcon} label="Permanencia" value={soles(resumen.total_bono_permanencia)} color="violet" />
+                <KpiCard icon={BanknoteIcon} label="TOTAL GENERAL" value={soles(resumen.total_general)} color="green" highlight />
+              </div>
+            )
+          )}
+
+          {/* Tablas según modo seleccionado */}
           {calculoReady && (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
                   <CheckCircle2 size={14} className="text-emerald-400" />
-                  {filasQueCalifican.length} personas califican para pago
+                  {vistaModo === 'matriz' ? (
+                    <span>Matriz Oficial de Cronograma de Pagos por Mes ({matrizFilasFiltradas.length} cuotas)</span>
+                  ) : vistaModo === 'resumen_postulantes' ? (
+                    <span>Resumen y Trazabilidad por Postulante ({resumenPorPersona.length} personas)</span>
+                  ) : (
+                    <span>{filasQueCalifican.length} personas califican para pago</span>
+                  )}
                   {resumen.personas_bajas > 0 && (
                     <button
                       type="button"
@@ -1883,7 +2534,14 @@ export default function PagosCapacitacion({ userProfile }) {
                   )}
                 </h3>
               </div>
-              <TablaPagos filas={filasParaTabla} maxCuotas={maxCuotas} />
+
+              {vistaModo === 'matriz' ? (
+                <TablaMatrizPagos filas={matrizFilasFiltradas} />
+              ) : vistaModo === 'resumen_postulantes' ? (
+                <TablaResumenPostulantes personas={resumenPorPersona} />
+              ) : (
+                <TablaPagos filas={filasParaTabla} maxCuotas={maxCuotas} />
+              )}
             </div>
           )}
 

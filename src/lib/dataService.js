@@ -291,7 +291,7 @@ export function normalizarMotivo(motivoCrudo) {
   return m;
 }
 
-const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad', 'gestor_experiencia']
+const VALID_ROLES = ['admin', 'reclutador', 'formador', 'visor', 'supervisor_capacitacion', 'coordinador_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion', 'calidad', 'gestor_experiencia']
 
 function profileFromSession(sessionUser) {
   const meta = sessionUser?.user_metadata || {}
@@ -482,12 +482,34 @@ export async function fetchUserProfile(userId, sessionUser = null) {
 // ─────────────────────────────────────────────
 // ROLES DINÁMICOS
 // ─────────────────────────────────────────────
+export const DEFAULT_CONFIG_ROLES = [
+  { id: 'admin', label: 'Admin', short_label: 'A', description: 'Acceso total a todos los módulos y configuraciones.', color: 'bg-rose-500/10 text-rose-500 border-rose-500/20', dot_color: 'bg-rose-500', icon: 'Crown' },
+  { id: 'reclutador', label: 'Reclutador', short_label: 'R', description: 'Gestión de nóminas, ingresos y KPIs de reclutamiento.', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20', dot_color: 'bg-blue-500', icon: 'Briefcase' },
+  { id: 'formador', label: 'Formador', short_label: 'F', description: 'Gestión de aulas, asistencias y reportes de deserción.', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20', dot_color: 'bg-emerald-500', icon: 'BookOpen' },
+  { id: 'visor', label: 'Directivo', short_label: 'V', description: 'Acceso exclusivo a dashboards y reportes gerenciales.', color: 'bg-purple-500/10 text-purple-500 border-purple-500/20', dot_color: 'bg-purple-500', icon: 'TrendingUp' },
+  { id: 'supervisor_capacitacion', label: 'Supervisor Cap.', short_label: 'SC', description: 'Gestión y supervisión de equipos de formación.', color: 'bg-orange-500/10 text-orange-500 border-orange-500/20', dot_color: 'bg-orange-500', icon: 'Users' },
+  { id: 'coordinador_capacitacion', label: 'Coordinador Cap.', short_label: 'CC', description: 'Coordinación operativa y seguimiento de capacitación / formación.', color: 'bg-amber-600/10 text-amber-500 border-amber-600/20', dot_color: 'bg-amber-600', icon: 'GraduationCap' },
+  { id: 'coordinador_rys', label: 'Coordinador RYS', short_label: 'CR', description: 'Coordinación operativa de reclutamiento y selección.', color: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20', dot_color: 'bg-cyan-500', icon: 'UserPlus' },
+  { id: 'jefe_rys', label: 'Jefe RYS', short_label: 'JR', description: 'Jefatura general de reclutamiento y selección.', color: 'bg-sky-500/10 text-sky-500 border-sky-500/20', dot_color: 'bg-sky-500', icon: 'Shield' },
+  { id: 'jefe_capacitacion', label: 'Jefe Cap.', short_label: 'JC', description: 'Jefatura general de formación y capacitación.', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20', dot_color: 'bg-amber-500', icon: 'BookOpen' },
+  { id: 'calidad', label: 'Calidad', short_label: 'Q', description: 'Monitoreo, control de calidad y auditoría de procesos en modo visor.', color: 'bg-teal-500/10 text-teal-500 border-teal-500/20', dot_color: 'bg-teal-500', icon: 'CheckSquare' },
+  { id: 'gestor_experiencia', label: 'Gestor de Experiencia', short_label: 'GE', description: 'Gestión y recuperación de personas desertadas. Acceso a mapa, motivos de baja, nóminas y dispersión.', color: 'bg-violet-500/10 text-violet-400 border-violet-500/20', dot_color: 'bg-violet-400', icon: 'HeartHandshake' }
+];
+
 export function fetchAppRoles() {
   return withCache('config_roles', 600000, async () => {
-    if (DB_MODE !== 'supabase') return []
+    if (DB_MODE !== 'supabase') return DEFAULT_CONFIG_ROLES
     const { data, error } = await supabase.from('config_roles').select('*').order('created_at', { ascending: true })
-    if (error) throw error
-    return data
+    if (error) {
+      console.warn('Error fetching config_roles, using defaults:', error.message)
+      return DEFAULT_CONFIG_ROLES
+    }
+    if (!data || data.length === 0) return DEFAULT_CONFIG_ROLES
+
+    // Merge default roles if any (e.g. coordinador_capacitacion) is not yet in the DB
+    const existingIds = new Set(data.map(r => r.id))
+    const missing = DEFAULT_CONFIG_ROLES.filter(r => !existingIds.has(r.id))
+    return [...data, ...missing]
   });
 }
 
@@ -964,8 +986,8 @@ export async function updateUserRole(userId, newRole, segmento = null) {
   if (!VALID_ROLES.includes(newRole)) throw new Error('Rol inválido')
   
   const payload = { rol: newRole }
-  if (newRole === 'supervisor_capacitacion' && segmento) {
-    payload.segmento = segmento
+  if ((newRole === 'supervisor_capacitacion' || newRole === 'coordinador_capacitacion') && segmento !== undefined) {
+    payload.segmento = segmento || null
   }
 
   const { error } = await supabase
@@ -8975,8 +8997,15 @@ export async function fetchConfigPagosGrupo() {
               mesAfectacionCapa: p.mesAfectacionCapa || current.mesAfectacionCapa,
               mesAfectacionBonos: p.mesAfectacionBonos || current.mesAfectacionBonos,
               bonoBienvenidaM1: m1Bvda || current.bonoBienvenidaM1,
+              bonoBienvenidaM2: m2Bvda || current.bonoBienvenidaM2,
+              bonoBienvenidaM3: m3Bvda || current.bonoBienvenidaM3,
               bonoPermanenciaM1: m1Perm || current.bonoPermanenciaM1,
+              bonoPermanenciaM2: m2Perm || current.bonoPermanenciaM2,
+              bonoPermanenciaM3: m3Perm || current.bonoPermanenciaM3,
+              bonoPermanenciaM4: m4Perm || current.bonoPermanenciaM4,
               bonoAsistenciaM1: m1Asis || current.bonoAsistenciaM1,
+              bonoAsistenciaM2: m2Asis || current.bonoAsistenciaM2,
+              bonoAsistenciaM3: m3Asis || current.bonoAsistenciaM3,
             });
           } else {
             configsMap.set(key, {
@@ -9518,39 +9547,67 @@ export async function fetchGruposPagosDisponibles() {
 
 /**
  * Guarda un lote de pagos cerrado en la tabla de trazabilidad.
- * Todas las filas del lote comparten el mismo lote_id (UUID).
+ * Soporta tanto filas de la Matriz de Pagos (desglosadas por mes_pago)
+ * como filas consolidadas con cuotas_permanencia.
  *
- * @param {Object[]} filas - Resultado de calcularPagosCapacitacion()
- * @param {Object} meta - { periodo, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, notas_lote }
+ * @param {Object[]} filas - Filas a liquidar (de matriz de pagos o calificados)
+ * @param {Object} meta - { periodo, mes_pago, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, notas_lote }
  * @returns {string} lote_id generado
  */
 export async function saveLiquidacionPagos(filas = [], meta = {}) {
   if (!filas.length) throw new Error('No hay filas para liquidar');
 
-  // Generar UUID del lote en el cliente (el servidor también tiene DEFAULT gen_random_uuid())
+  // Generar UUID del lote en el cliente
   const lote_id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   const rows = filas.flatMap(f => {
-    // Una fila por cuota de permanencia (mínimo 1 fila)
+    // Si la fila ya viene desglosada por mes_pago de la Matriz de Pagos:
+    if (f.mes_pago != null && f.mes_pago !== '') {
+      return [{
+        lote_id,
+        periodo: meta.periodo || f.periodo_reclutado || f.periodo || '',
+        mes_pago: String(f.mes_pago).trim(),
+        semana_trabajo: meta.semana_trabajo ? parseInt(meta.semana_trabajo) : (f.semana_trabajo ? parseInt(f.semana_trabajo) : null),
+        segmento: meta.segmento || f.segmento || null,
+        campana: meta.campana || f.campana || null,
+        grupo_codigo: meta.grupo_codigo || f.grupo_codigo || null,
+        documento: String(f.documento).trim(),
+        nombre_completo: f.nombre_completo || null,
+        dias_asistidos: f.dias_asistidos || 0,
+        asistencia_perfecta: Boolean(f.asistencia_perfecta),
+        monto_dias_capa: Number(f.importe_capa ?? f.monto_dias_capa ?? 0),
+        bono_bienvenida: Number(f.bono_bienvenida ?? 0),
+        bono_asistencia_perfecta: Number(f.bono_asistencia_perfecta ?? 0),
+        bono_permanencia_total: Number(f.bono_permanencia ?? f.bono_permanencia_total ?? 0),
+        cuota_numero: f.cuota_numero || f.mes_numero || 1,
+        monto_cuota_permanencia: Number(f.bono_permanencia ?? f.monto_cuota_permanencia ?? 0),
+        total_general: Number(f.total_mes ?? f.total_general ?? 0),
+        cerrado_por: meta.cerrado_por || null,
+        notas_lote: meta.notas_lote || null,
+      }];
+    }
+
+    // Si es una fila consolidada con cuotas_permanencia (fallback clásico):
     const cuotas = f.cuotas_permanencia?.length ? f.cuotas_permanencia : [{ numero: 1, monto: f.bono_permanencia_total || 0 }];
     return cuotas.map(cuota => ({
       lote_id,
       periodo: meta.periodo || f.periodo_reclutado || '',
+      mes_pago: String(meta.mes_pago || meta.periodo || f.periodo_reclutado || '').trim(),
       semana_trabajo: meta.semana_trabajo ? parseInt(meta.semana_trabajo) : (f.semana_trabajo ? parseInt(f.semana_trabajo) : null),
       segmento: meta.segmento || f.segmento || null,
       campana: meta.campana || f.campana || null,
       grupo_codigo: meta.grupo_codigo || f.grupo_codigo || null,
-      documento: f.documento,
+      documento: String(f.documento).trim(),
       nombre_completo: f.nombre_completo || null,
       dias_asistidos: f.dias_asistidos || 0,
-      asistencia_perfecta: f.asistencia_perfecta || false,
-      monto_dias_capa: f.monto_dias_capa || 0,
-      bono_bienvenida: f.bono_bienvenida || 0,
-      bono_asistencia_perfecta: f.bono_asistencia_perfecta || 0,
-      bono_permanencia_total: f.bono_permanencia_total || 0,
+      asistencia_perfecta: Boolean(f.asistencia_perfecta),
+      monto_dias_capa: Number(f.monto_dias_capa || 0),
+      bono_bienvenida: Number(f.bono_bienvenida || 0),
+      bono_asistencia_perfecta: Number(f.bono_asistencia_perfecta || 0),
+      bono_permanencia_total: Number(f.bono_permanencia_total || 0),
       cuota_numero: cuota.numero,
-      monto_cuota_permanencia: cuota.monto || 0,
-      total_general: f.total_general || 0,
+      monto_cuota_permanencia: Number(cuota.monto || 0),
+      total_general: Number(f.total_general || 0),
       cerrado_por: meta.cerrado_por || null,
       notas_lote: meta.notas_lote || null,
     }));
@@ -9573,6 +9630,31 @@ export async function saveLiquidacionPagos(filas = [], meta = {}) {
 }
 
 /**
+ * Retorna todos los registros históricos de liquidaciones para trazabilidad
+ * y mapeo de estado PAGADO vs PENDIENTE.
+ */
+export async function fetchLiquidacionesHistoricas() {
+  if (DB_MODE === 'supabase') {
+    const { data, error } = await withCache('liquidaciones_historicas_all', 30000, async () => {
+      const { data, error } = await supabase
+        .from('liquidaciones_pagos_capacitacion')
+        .select('*')
+        .order('cerrado_at', { ascending: false });
+      if (error) {
+        console.warn('Error fetching liquidaciones_pagos_capacitacion:', error);
+        return [];
+      }
+      return data || [];
+    });
+    if (error) throw error;
+    return data || [];
+  } else {
+    initLocalStorageDb();
+    return getFromStorage('liquidaciones_pagos_capacitacion') || [];
+  }
+}
+
+/**
  * Retorna la lista de lotes históricos cerrados (agrupados por lote_id).
  * Cada entrada tiene: lote_id, periodo, semana, campana, fecha cierre, usuario, nº personas, total.
  */
@@ -9581,7 +9663,7 @@ export async function fetchLiquidacionesLotes() {
     const { data, error } = await withCache('liquidaciones_lotes', 60000, async () => {
       const { data, error } = await supabase
         .from('liquidaciones_pagos_capacitacion')
-        .select('lote_id, periodo, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, cerrado_at, notas_lote, documento, total_general')
+        .select('lote_id, periodo, mes_pago, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, cerrado_at, notas_lote, documento, total_general')
         .order('cerrado_at', { ascending: false });
       if (error) throw error;
       return data || [];

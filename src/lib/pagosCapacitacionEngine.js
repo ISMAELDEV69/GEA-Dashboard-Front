@@ -23,6 +23,42 @@ const SIGLA_BAJA = 'B'
 
 const normPago = (v) => String(v || '').trim().toUpperCase()
 
+/**
+ * Suma N meses a un periodo en formato YYYYMM respetando el cambio de año.
+ * Ej: sumarMesesPeriodo('202611', 1) => '202612'
+ * Ej: sumarMesesPeriodo('202611', 2) => '202701'
+ * Ej: sumarMesesPeriodo('202611', 3) => '202702'
+ */
+export function sumarMesesPeriodo(periodoStr, meses = 0) {
+  if (!periodoStr) return ''
+  const clean = String(periodoStr).replace(/\D/g, '')
+  if (clean.length !== 6) return periodoStr
+  const year = parseInt(clean.slice(0, 4), 10)
+  const month = parseInt(clean.slice(4, 6), 10)
+  
+  const totalMonths = (year * 12 + (month - 1)) + Number(meses)
+  const newYear = Math.floor(totalMonths / 12)
+  const newMonth = (totalMonths % 12) + 1
+  
+  return `${newYear}${String(newMonth).padStart(2, '0')}`
+}
+
+/**
+ * Calcula la diferencia en meses entre dos periodos YYYYMM (pFin - pInicio).
+ * Ej: diferenciaMesesPeriodo('202611', '202701') => 2
+ */
+export function diferenciaMesesPeriodo(pInicio, pFin) {
+  if (!pInicio || !pFin) return 0
+  const cIni = String(pInicio).replace(/\D/g, '')
+  const cFin = String(pFin).replace(/\D/g, '')
+  if (cIni.length !== 6 || cFin.length !== 6) return 0
+  const y1 = parseInt(cIni.slice(0, 4), 10)
+  const m1 = parseInt(cIni.slice(4, 6), 10)
+  const y2 = parseInt(cFin.slice(0, 4), 10)
+  const m2 = parseInt(cFin.slice(4, 6), 10)
+  return (y2 - y1) * 12 + (m2 - m1)
+}
+
 /** SEM 35, 35 y SEM35 equivalen a la misma semana. */
 export function normalizarSemanaPago(val) {
   if (val == null || val === '') return ''
@@ -180,8 +216,12 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     const bClean = String(mesAfectacionBonos || '').replace(/\D/g, '')
     const cClean = String(config?.periodoCapa || config?.periodo || '').replace(/\D/g, '')
 
-    // Si coincide con el periodo de capacitación del grupo (cohorte) o con el mes de afectación, es Mes 1
-    if (!bClean || (cClean && pClean === cClean)) return 1
+    // El mes de afectación de bonos de la propuesta es la fuente de verdad (Mes 1).
+    // Solo si no está definido se usa el periodo de capacitación como respaldo.
+    if (!bClean) return (!cClean || pClean === cClean) ? 1 : (() => {
+      const d = diferenciaMesesPeriodo(cClean, pClean)
+      return d <= 0 ? 1 : d + 1
+    })()
     if (pClean === bClean) return 1
 
     if (pClean.length !== 6 || bClean.length !== 6) return 1
@@ -448,7 +488,7 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       const mesCapaClean = String(config.mesAfectacionCapa || '').replace(/\D/g, '')
       const periodoCapaClean = String(config.periodoCapa || config.periodo || '').replace(/\D/g, '')
 
-      const aplicaPagoCapa = !periodoConsulta || periodoConsulta === 'TODOS' || 
+      const aplicaPagoCapa = !periodoConsulta || periodoConsulta === 'TODOS' ||
         !mesCapaClean || mesCapaClean === pClean || periodoCapaClean === pClean
       
       if (aplicaPagoCapa) {
@@ -576,6 +616,306 @@ export function generarResumenPagos(filas = []) {
     max_dias_asistidos: calificados.length ? Math.max(...calificados.map(f => f.dias_asistidos)) : 0,
     promedio_dias: calificados.length ? +(calificados.reduce((s, f) => s + f.dias_asistidos, 0) / calificados.length).toFixed(1) : 0,
   }
+}
+
+/**
+ * Genera la MATRIZ MULTI-MES DE CRONOGRAMA DE PAGOS y cruza con trazabilidad de liquidaciones.
+ * Estructura idéntica a la maqueta Excel:
+ * DOCUMENTO | NOMBRE COMPLETO | CAMPAÑA | GPE | MES DE PAGO | IMPORTE DE CAPA | BIENVENIDA | PERMANENCIA | ASISTENCIA PERFECTA | TOTAL MES | ESTADO DE PAGO
+ *
+ * Mapea:
+ * - Mes de afectación de Capacitación: se paga el importe de días asistidos de capacitación
+ * - Mes de afectación de Bonos (M1..M4): se desglosan cuotas de Bienvenida, Permanencia y Asistencia Perfecta
+ * - Trazabilidad: cruza contra liquidaciones cerradas en BD para etiquetar PAGADO vs PENDIENTE
+ *
+ * @param {Object[]} filasCalculadas - Postulantes evaluados por calcularPagosCapacitacion()
+ * @param {Object[]} liquidacionesHistoricas - Registros cerrados de liquidaciones_pagos_capacitacion
+ * @returns {{ matrizFilas: Object[], resumenPorPersona: Object[] }}
+ */
+export function generarMatrizCronogramaPagos(filasCalculadas = [], liquidacionesHistoricas = []) {
+  // 1. Índice de liquidaciones pagadas por documento y mes_pago
+  const pagadasMap = new Map()
+  for (const liq of liquidacionesHistoricas) {
+    const doc = String(liq.documento || '').trim()
+    const mes = String(liq.mes_pago || liq.periodo || '').trim()
+    if (!doc || !mes) continue
+    const key = `${doc}|${mes}`
+    if (!pagadasMap.has(key)) pagadasMap.set(key, liq)
+
+    // Clave alternativa con grupo_codigo
+    if (liq.grupo_codigo) {
+      const keyGrp = `${doc}|${mes}|${String(liq.grupo_codigo).trim().toUpperCase()}`
+      if (!pagadasMap.has(keyGrp)) pagadasMap.set(keyGrp, liq)
+    }
+  }
+
+  const matrizFilas = []
+  const resumenPorPersona = []
+
+  for (const f of filasCalculadas) {
+    if (f.es_baja) continue // Las bajas no califican para programación de pagos
+
+    const doc = String(f.documento || '').trim()
+    const config = f.config_aplicada || {}
+
+    // Meses de afectación
+    const mesCapa = String(config.mesAfectacionCapa || config.periodoCapa || f.periodo_reclutado || '').replace(/\D/g, '') || f.periodo_reclutado || '202611'
+    const mesBonosBase = String(config.mesAfectacionBonos || config.mesAfectacionCapa || config.periodoCapa || f.periodo_reclutado || '').replace(/\D/g, '') || mesCapa
+
+    const cuotasMap = new Map()
+
+    const getOrCreateCuota = (mesStr, conceptoInicial = '') => {
+      if (!cuotasMap.has(mesStr)) {
+        cuotasMap.set(mesStr, {
+          documento: doc,
+          nombre_completo: f.nombre_completo,
+          apellido_paterno: f.apellido_paterno,
+          apellido_materno: f.apellido_materno,
+          nombres: f.nombres,
+          campana: f.campana,
+          grupo_codigo: f.grupo_codigo,
+          gpe: f.grupo_codigo,
+          reclutador: f.reclutador,
+          semana_trabajo: f.semana_trabajo,
+          periodo_reclutado: f.periodo_reclutado,
+          mes_pago: mesStr,
+          importe_capa: 0,
+          bono_bienvenida: 0,
+          bono_permanencia: 0,
+          bono_asistencia_perfecta: 0,
+          total_mes: 0,
+          dias_asistidos: f.dias_asistidos || 0,
+          asistencia_perfecta: Boolean(f.asistencia_perfecta),
+          es_agregado: Boolean(f.es_agregado),
+          asistio_dia_0: Boolean(f.asistio_dia_0),
+          dia_0_status: f.dia_0_status || (f.es_agregado && !f.asistio_dia_0 ? 'N/A' : (f.asistio_dia_0 ? 'ASISTIO' : 'FALTA')),
+          status_final: f.status_final || (f.tiene_iop ? 'I-OP' : (f.es_baja ? 'BAJA' : 'CALIFICA')),
+          tiene_iop: Boolean(f.tiene_iop),
+          total_iop: f.total_iop || 0,
+          fecha_primer_iop: f.fecha_primer_iop || null,
+          fecha_ingreso_ojt: f.fecha_ingreso_ojt || null,
+          es_baja: Boolean(f.es_baja),
+          sin_propuesta: Boolean(f.sin_propuesta),
+          pago_por_dia: f.pago_por_dia || 0,
+          dias_capacitacion: f.dias_capacitacion || 0,
+          estado_pago: 'PENDIENTE',
+          lote_id: null,
+          cerrado_at: null,
+          cerrado_por: null,
+          concepto_mes: conceptoInicial,
+        })
+      }
+      return cuotasMap.get(mesStr)
+    }
+
+    // A. Mes de Afectación de Capacitación: Importe de Días Asistidos
+    if (f.es_baja) {
+      const cBaja = getOrCreateCuota(mesCapa, 'BAJA')
+      cBaja.importe_capa = 0
+      cBaja.bono_bienvenida = 0
+      cBaja.bono_permanencia = 0
+      cBaja.bono_asistencia_perfecta = 0
+      cBaja.total_mes = 0
+      cBaja.estado_pago = 'NO APLICA'
+      matrizFilas.push(cBaja)
+      continue
+    }
+
+    const montoCapa = Number(f.monto_dias_capa || 0)
+    if (montoCapa > 0 || f.sin_propuesta) {
+      const cCapa = getOrCreateCuota(mesCapa, 'CAPACITACION')
+      cCapa.importe_capa = montoCapa
+    }
+
+    // B. Meses de Afectación de Bonos: M1, M2, M3, M4
+    const bonosConfig = [
+      {
+        mesNum: 1,
+        mesStr: sumarMesesPeriodo(mesBonosBase, 0),
+        bvda: parseFloat(config.bonoBienvenidaM1 ?? config.bono_bienvenida) || 0,
+        perm: parseFloat(config.bonoPermanenciaM1 ?? config.bono_permanencia_total) || 0,
+        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0) : 0,
+      },
+      {
+        mesNum: 2,
+        mesStr: sumarMesesPeriodo(mesBonosBase, 1),
+        bvda: parseFloat(config.bonoBienvenidaM2) || 0,
+        perm: parseFloat(config.bonoPermanenciaM2) || 0,
+        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM2) || 0) : 0,
+      },
+      {
+        mesNum: 3,
+        mesStr: sumarMesesPeriodo(mesBonosBase, 2),
+        bvda: parseFloat(config.bonoBienvenidaM3) || 0,
+        perm: parseFloat(config.bonoPermanenciaM3) || 0,
+        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM3) || 0) : 0,
+      },
+      {
+        mesNum: 4,
+        mesStr: sumarMesesPeriodo(mesBonosBase, 3),
+        bvda: 0,
+        perm: parseFloat(config.bonoPermanenciaM4) || 0,
+        asis: 0,
+      },
+    ]
+
+    for (const b of bonosConfig) {
+      const tieneBono = (b.bvda > 0 || b.perm > 0 || b.asis > 0)
+      if (tieneBono) {
+        const cBono = getOrCreateCuota(b.mesStr, `BONOS_M${b.mesNum}`)
+        cBono.bono_bienvenida += b.bvda
+        cBono.bono_permanencia += b.perm
+        cBono.bono_asistencia_perfecta += b.asis
+        cBono.cuota_numero = b.mesNum
+      }
+    }
+
+    // Si por alguna razón no se generó ninguna cuota, registrar al menos la cuota base
+    if (cuotasMap.size === 0) {
+      const cFallback = getOrCreateCuota(mesCapa, 'CAPACITACION')
+      cFallback.importe_capa = montoCapa
+    }
+
+    // C. Calcular total de cada mes y cruzar con trazabilidad de liquidaciones
+    const cuotasArray = Array.from(cuotasMap.values())
+    cuotasArray.sort((a, b) => String(a.mes_pago).localeCompare(String(b.mes_pago)))
+
+    let totalPersonaProgramado = 0
+    let totalPersonaPagado = 0
+    let totalPersonaPendiente = 0
+    const mesesPagados = []
+    const mesesPendientes = []
+
+    for (const row of cuotasArray) {
+      row.total_mes = +(row.importe_capa + row.bono_bienvenida + row.bono_permanencia + row.bono_asistencia_perfecta).toFixed(2)
+      totalPersonaProgramado += row.total_mes
+
+      // Trazabilidad de pago: verificar si ya existe liquidación cerrada
+      const keyDocMes = `${doc}|${row.mes_pago}`
+      const keyDocMesGrp = `${doc}|${row.mes_pago}|${String(row.grupo_codigo).trim().toUpperCase()}`
+      const liqExistente = pagadasMap.get(keyDocMesGrp) || pagadasMap.get(keyDocMes)
+
+      if (liqExistente) {
+        row.estado_pago = 'PAGADO'
+        row.lote_id = liqExistente.lote_id
+        row.cerrado_at = liqExistente.cerrado_at
+        row.cerrado_por = liqExistente.cerrado_por
+        totalPersonaPagado += row.total_mes
+        mesesPagados.push(row.mes_pago)
+      } else {
+        row.estado_pago = 'PENDIENTE'
+        totalPersonaPendiente += row.total_mes
+        mesesPendientes.push(row.mes_pago)
+      }
+
+      matrizFilas.push(row)
+    }
+
+    resumenPorPersona.push({
+      documento: doc,
+      nombre_completo: f.nombre_completo,
+      campana: f.campana,
+      grupo_codigo: f.grupo_codigo,
+      gpe: f.grupo_codigo,
+      reclutador: f.reclutador,
+      dias_asistidos: f.dias_asistidos,
+      asistencia_perfecta: f.asistencia_perfecta,
+      es_agregado: f.es_agregado,
+      asistio_dia_0: f.asistio_dia_0,
+      dia_0_status: f.dia_0_status,
+      tiene_iop: f.tiene_iop,
+      fecha_primer_iop: f.fecha_primer_iop,
+      es_baja: f.es_baja,
+      total_programado: +totalPersonaProgramado.toFixed(2),
+      total_pagado: +totalPersonaPagado.toFixed(2),
+      total_pendiente: +totalPersonaPendiente.toFixed(2),
+      meses_pagados: mesesPagados,
+      meses_pendientes: mesesPendientes,
+      proximo_mes_pago: mesesPendientes[0] || null,
+      cuotas_detalle: cuotasArray,
+    })
+  }
+
+  // Ordenar la matriz por Campaña -> GPE -> Nombre -> Mes de Pago
+  matrizFilas.sort((a, b) => {
+    if (a.campana !== b.campana) return String(a.campana).localeCompare(String(b.campana))
+    if (a.grupo_codigo !== b.grupo_codigo) return String(a.grupo_codigo).localeCompare(String(b.grupo_codigo))
+    if (a.nombre_completo !== b.nombre_completo) return String(a.nombre_completo).localeCompare(String(b.nombre_completo))
+    return String(a.mes_pago).localeCompare(String(b.mes_pago))
+  })
+
+  return {
+    matrizFilas,
+    resumenPorPersona,
+  }
+}
+
+export function generarResumenMatrizPagos(matrizFilas = []) {
+  const pagadas = matrizFilas.filter(f => f.estado_pago === 'PAGADO')
+  const pendientes = matrizFilas.filter(f => f.estado_pago === 'PENDIENTE')
+
+  return {
+    total_cuotas: matrizFilas.length,
+    cuotas_pagadas: pagadas.length,
+    cuotas_pendientes: pendientes.length,
+    total_programado: +matrizFilas.reduce((s, f) => s + f.total_mes, 0).toFixed(2),
+    total_pagado: +pagadas.reduce((s, f) => s + f.total_mes, 0).toFixed(2),
+    total_pendiente: +pendientes.reduce((s, f) => s + f.total_mes, 0).toFixed(2),
+    total_capa: +matrizFilas.reduce((s, f) => s + f.importe_capa, 0).toFixed(2),
+    total_bienvenida: +matrizFilas.reduce((s, f) => s + f.bono_bienvenida, 0).toFixed(2),
+    total_permanencia: +matrizFilas.reduce((s, f) => s + f.bono_permanencia, 0).toFixed(2),
+    total_asistencia_perfecta: +matrizFilas.reduce((s, f) => s + f.bono_asistencia_perfecta, 0).toFixed(2),
+  }
+}
+
+export function exportarCSVMatrizPagos(matrizFilas = []) {
+  const headers = [
+    'DOCUMENTO',
+    'NOMBRE COMPLETO',
+    'CONDICION',
+    'CAMPAÑA',
+    'GPE',
+    'RECLUTADOR',
+    'ESTADO / I-OP',
+    'DIA 0 (INDUCCION)',
+    'DIAS ASISTIDOS',
+    'ASISTENCIA PERFECTA',
+    'MES DE PAGO',
+    'IMPORTE DE CAPA',
+    'BIENVENIDA',
+    'PERMANENCIA',
+    'ASISTENCIA PERFECTA (BONO)',
+    'TOTAL MES',
+    'ESTADO DE PAGO',
+    'LOTE DE PAGO',
+    'FECHA PAGO',
+  ]
+
+  const rows = matrizFilas.map(f => [
+    f.documento,
+    f.nombre_completo,
+    f.es_agregado ? 'AGREGADO' : 'APTO',
+    f.campana,
+    f.grupo_codigo,
+    f.reclutador || '',
+    f.es_baja ? 'BAJA' : (f.tiene_iop ? `I-OP (${f.fecha_primer_iop || 'OK'})` : 'CALIFICA'),
+    f.asistio_dia_0 ? 'ASISTIO' : (f.es_agregado ? 'N/A' : 'FALTA'),
+    f.dias_asistidos,
+    f.asistencia_perfecta ? 'PERFECTA' : 'CON FALTAS',
+    f.mes_pago,
+    f.importe_capa,
+    f.bono_bienvenida,
+    f.bono_permanencia,
+    f.bono_asistencia_perfecta,
+    f.total_mes,
+    f.estado_pago,
+    f.lote_id || '',
+    f.cerrado_at ? new Date(f.cerrado_at).toLocaleDateString('es-PE') : '',
+  ])
+
+  return [headers, ...rows]
+    .map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n')
 }
 
 export function exportarCSVPagos(filas = [], maxCuotas = 3) {
