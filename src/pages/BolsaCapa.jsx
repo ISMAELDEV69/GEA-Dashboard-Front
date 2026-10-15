@@ -114,7 +114,7 @@ async function parseCapaExcel(file) {
               if (colMap.genero === undefined) colMap.genero = cIdx
             } else if (h.includes('FECHA DE NACIMIENTO') || h.includes('FECHA NACIMIENTO') || h.includes('FEC NAC') || h.includes('F NAC')) {
               if (colMap.fecha_nacimiento === undefined) colMap.fecha_nacimiento = cIdx
-            } else if (h === 'EDAD') {
+            } else if (h === 'EDAD' || h.startsWith('EDAD ') || h.includes('EDAD (') || h === 'AGE') {
               if (colMap.edad === undefined) colMap.edad = cIdx
             } else if (h.includes('ESTADO CIVIL') || h.includes('CIVIL')) {
               if (colMap.estado_civil === undefined) colMap.estado_civil = cIdx
@@ -180,7 +180,32 @@ async function parseCapaExcel(file) {
             correo: colMap.correo !== undefined ? String(row[colMap.correo] || '').trim() : '',
             genero: colMap.genero !== undefined ? String(row[colMap.genero] || '').trim() : '',
             fecha_nacimiento: colMap.fecha_nacimiento !== undefined ? String(row[colMap.fecha_nacimiento] || '').trim() : '',
-            edad: colMap.edad !== undefined ? String(row[colMap.edad] || '').trim() : '',
+            edad: (() => {
+              const rawEdad = colMap.edad !== undefined ? String(row[colMap.edad] ?? '').trim() : ''
+              const m = rawEdad.match(/\d{1,3}/)
+              if (m && Number(m[0]) >= 14 && Number(m[0]) <= 90) return m[0]
+              // Calcular desde fecha de nacimiento si no hay edad
+              const rawFn = colMap.fecha_nacimiento !== undefined ? row[colMap.fecha_nacimiento] : null
+              if (rawFn === null || rawFn === undefined || rawFn === '') return ''
+              let d = null
+              if (typeof rawFn === 'number' || /^\d{5}$/.test(String(rawFn).trim())) {
+                d = new Date(Math.round((Number(rawFn) - 25569) * 86400 * 1000))
+              } else if (rawFn instanceof Date) {
+                d = rawFn
+              } else {
+                const s = String(rawFn).trim()
+                const dm = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/)
+                const iso = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/)
+                if (dm) d = new Date(Number(dm[3]), Number(dm[2]) - 1, Number(dm[1]))
+                else if (iso) d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
+              }
+              if (!d || isNaN(d.getTime())) return ''
+              const hoy = new Date()
+              let a = hoy.getFullYear() - d.getFullYear()
+              const md = hoy.getMonth() - d.getMonth()
+              if (md < 0 || (md === 0 && hoy.getDate() < d.getDate())) a--
+              return a >= 14 && a <= 90 ? String(a) : ''
+            })(),
             estado_civil: colMap.estado_civil !== undefined ? String(row[colMap.estado_civil] || '').trim() : '',
             n_hijos: colMap.n_hijos !== undefined ? String(row[colMap.n_hijos] || '').trim() : '',
             nivel_academico: colMap.nivel_academico !== undefined ? String(row[colMap.nivel_academico] || '').trim() : '',
