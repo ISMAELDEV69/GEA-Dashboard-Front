@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { AREAS_BOLSA_CAPA, checkCalibracionDia1, fetchReclutadoresFull, invalidateCache, isAreaBolsaCapa } from '../../lib/dataService'
+import { resolveDistrictCoordinates } from '../../lib/geoMobilityService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
 import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock, MessageSquare, Copy, Check, Sparkles, FileSpreadsheet, FileWarning, CheckCheck, Send, Filter } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
@@ -155,7 +156,7 @@ export default function NominaGridEditor({
   // ── Role Permissions & Read-Only Mode ──
   // Reclutamiento y Administrador editan todo; Capacitación edita grupos de capacitación pero SOLO DE SU CAMPAÑA
   const isRecruitmentRole = ['admin', 'reclutador', 'coordinador_rys', 'jefe_rys'].includes(currentRole)
-  const isCapacitacionRole = ['supervisor_capacitacion', 'formador', 'jefe_capacitacion'].includes(currentRole)
+  const isCapacitacionRole = ['supervisor_capacitacion', 'coordinador_capacitacion', 'formador', 'jefe_capacitacion'].includes(currentRole)
 
   // Campaña asignada al usuario (en caso tenga restricción)
   const userCampana = useMemo(() => {
@@ -593,9 +594,29 @@ export default function NominaGridEditor({
 
       if (err) throw err
       
-      let finalRows = rows || []
+      let finalRows = (rows || []).map(r => {
+        let dist = r.distrito_residencia
+        if (!dist && (r.direccion_domicilio || r.lugar_residencia)) {
+          const geo = resolveDistrictCoordinates(r.lugar_residencia, r.direccion_domicilio, r.documento)
+          if (geo && geo.resolved && geo.distrito) {
+            dist = geo.distrito.toUpperCase()
+          }
+        }
+        return dist && dist !== r.distrito_residencia ? { ...r, distrito_residencia: dist, _auto_resolved_distrito: true } : r
+      })
 
       setData(finalRows)
+
+      // Auto-backfill en base de datos para registros históricos con distrito_residencia en null
+      const toBackfill = finalRows.filter(r => r._auto_resolved_distrito && r.id && r.distrito_residencia)
+      if (toBackfill.length > 0) {
+        Promise.allSettled(
+          toBackfill.map(r =>
+            supabase.from('nominas').update({ distrito_residencia: r.distrito_residencia }).eq('id', r.id)
+          )
+        ).catch(e => console.warn('Auto backfill distrito error:', e))
+      }
+
       lastLoadedAtRef.current = new Date().toISOString()
       const now = new Date()
       setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))

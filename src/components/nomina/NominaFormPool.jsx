@@ -8,6 +8,7 @@ import {
 } from '../../lib/dataService'
 import { NOMINA_DB_FIELDS } from '../../lib/nominaConsolidadoSchema'
 import { parseExcelDate } from '../../lib/capacidadRysSchema'
+import { resolveDistrictCoordinates } from '../../lib/geoMobilityService'
 import { supabase } from '../../lib/supabase'
 import {
   Loader2, Search, CheckSquare, Square, DownloadCloud,
@@ -1474,7 +1475,9 @@ export default function NominaFormPool({
 
                     {/* Distrito */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[130px]">
-                      <span className="text-[var(--text-secondary)]">{d.distrito_residencia || '—'}</span>
+                      <span className="text-[var(--text-secondary)]">
+                        {d.distrito_residencia || resolveDistrictCoordinates(d.lugar_residencia, d.direccion_domicilio, d.documento)?.distrito || '—'}
+                      </span>
                     </td>
 
                     {/* Dirección */}

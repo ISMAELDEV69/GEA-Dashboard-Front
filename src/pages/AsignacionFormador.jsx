@@ -26,7 +26,7 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
   const [equipoFormacionData, setEquipoFormacionData] = useState([])
   const [selectedGrupoForSplit, setSelectedGrupoForSplit] = useState(null)
 
-  const isSupervisor = userProfile?.rol === 'supervisor_capacitacion'
+  const isSupervisor = userProfile?.rol === 'supervisor_capacitacion' || userProfile?.rol === 'coordinador_capacitacion'
   const supervisorSegmento = isSupervisor && userProfile?.segmento ? String(userProfile.segmento).trim().toUpperCase() : null
 
   useEffect(() => {

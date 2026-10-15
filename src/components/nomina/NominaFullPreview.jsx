@@ -27,7 +27,7 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
   const [filters, setFilters] = useState({})
 
   const role = String(currentRole || '').toLowerCase().trim()
-  const isCapacitacionRole = ['supervisor_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
+  const isCapacitacionRole = ['supervisor_capacitacion', 'coordinador_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
@@ -131,7 +131,7 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
 
         // Control de permisos por rol: Formadores y Supervisores de Capacitación solo ven hasta cargo_contractual
         const role = String(currentRole || '').toLowerCase().trim()
-        const isCapacitacionRole = ['supervisor_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
+        const isCapacitacionRole = ['supervisor_capacitacion', 'coordinador_capacitacion', 'supervisor_formacion', 'formador', 'jefe_capacitacion', 'capacitacion', 'formacion', 'visor'].includes(role) || role.includes('formador') || role.includes('capacitacion')
 
         if (isCapacitacionRole) {
           // Para Formadores y Supervisores de Capacitación: Mostrar y Descargar ÚNICAMENTE hasta 'cargo_contractual'

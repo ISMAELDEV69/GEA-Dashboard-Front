@@ -48,6 +48,7 @@ function parseTimestamp(val) {
 }
 
 import { parseExcelDate } from './capacidadRysSchema.js'
+import { resolveDistrictCoordinates } from './geoMobilityService.js'
 
 export const NOMINA_DB_FIELDS = [
   'marca_temporal', 'periodo_reclutado', 'semana_trabajo', 'reclutador', 'sede', 'tipo_documento', 'documento',
@@ -101,9 +102,16 @@ const HEADER_ALIASES = {
   nivel_academico: ['NIVEL ACADÉMICO'],
   carrera: ['MENCIONAR CARREA', 'MENCIONAR CARRERA'],
   nacionalidad: ['NACIONALIDAD'],
-  lugar_residencia: ['LUGAR DE RESIDENCIA ACTUAL'],
-  distrito_residencia: ['DISTRITO DE RESIDENCIA'],
-  direccion_domicilio: ['DIRECCIÓN DE DOMICILIO ACTUAL'],
+  lugar_residencia: ['LUGAR DE RESIDENCIA ACTUAL', 'LUGAR DE RESIDENCIA', 'DEPARTAMENTO / PROVINCIA'],
+  distrito_residencia: [
+    'DISTRITO DE RESIDENCIA',
+    'DISTRITO DE RESIDENCIA ACTUAL',
+    'DISTRITO ACTUAL',
+    'DISTRITO',
+    'COMUNA',
+    'LOCALIDAD'
+  ],
+  direccion_domicilio: ['DIRECCIÓN DE DOMICILIO ACTUAL', 'DIRECCION DE DOMICILIO ACTUAL', 'DIRECCIÓN', 'DIRECCION', 'DOMICILIO ACTUAL', 'DONDE VIVES'],
   exp_call_center: ['¿CUENTAS CON EXPERIENCIA LABORAL EN CALL CENTER?'],
   exp_tipo_campana: ['¿QUE TIPO DE EXPERIENCIA TIENES? ( ORIENTADO A LA CAMPAÑA QUE POSTULAS)'],
   exp_tiempo_call: ['TIEMPO DE EXPERIENCIA'], // First occurrence
@@ -151,10 +159,17 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('NIVEL ACADÉMICO') || clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
     else if (clean.includes('CARREA') || clean.includes('CARRERA') || clean.includes('PROFESION') || clean.includes('PROFESIÓN')) colIdx['carrera'] = i
     else if (clean.includes('NACIONALIDAD') || clean.includes('PAÍS') || clean.includes('PAIS')) colIdx['nacionalidad'] = i
-    else if (clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA') || clean.includes('DEPARTAMENTO') || clean.includes('PROVINCIA') || clean.includes('REGIÓN') || clean.includes('REGION') || clean.includes('CIUDAD')) {
+    
+    // DISTRITO: Debe evaluarse estricta y prioritariamente ANTES de LUGAR DE RESIDENCIA para que "DISTRITO DE RESIDENCIA" no sea capturado por "RESIDENCIA"
+    else if (clean.includes('DISTRITO') || clean.includes('COMUNA') || clean.includes('LOCALIDAD') || clean.includes('MUNICIPIO') || clean.includes('BARRIO')) {
+      if (colIdx['distrito_residencia'] === undefined) colIdx['distrito_residencia'] = i
+    }
+    // LUGAR DE RESIDENCIA / DEPARTAMENTO / PROVINCIA (Excluyendo DISTRITO / COMUNA)
+    else if (!clean.includes('DISTRITO') && !clean.includes('COMUNA') && !clean.includes('LOCALIDAD') && (
+      clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA') || clean.includes('DEPARTAMENTO') || clean.includes('PROVINCIA') || clean.includes('REGIÓN') || clean.includes('REGION') || clean.includes('CIUDAD')
+    )) {
       if (colIdx['lugar_residencia'] === undefined) colIdx['lugar_residencia'] = i
     }
-    else if (clean.includes('DISTRITO') || clean.includes('COMUNA') || clean.includes('LOCALIDAD')) colIdx['distrito_residencia'] = i
     else if (clean.includes('DIRECCIÓN') || clean.includes('DIRECCION') || clean.includes('DOMICILIO') || clean.includes('DONDE VIVES') || clean.includes('CALLE') || clean.includes('AVENIDA')) colIdx['direccion_domicilio'] = i
     else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
     else if (clean.includes('TIPO DE EXPERIENCIA')) colIdx['exp_tipo_campana'] = i
@@ -387,6 +402,18 @@ export function parseGoogleFormRow(row, colIdx) {
     return val.replace(/[^\d+]/g, '').trim() || null
   }
 
+  let rawLugar = normUpper('lugar_residencia')
+  let rawDistrito = normUpper('distrito_residencia')
+  let rawDireccion = normUpper('direccion_domicilio')
+
+  // Fallback inteligente: Si distrito_residencia viene vacío, extraerlo desde la dirección o lugar
+  if (!rawDistrito && (rawDireccion || rawLugar)) {
+    const geo = resolveDistrictCoordinates(rawLugar, rawDireccion, rawDoc)
+    if (geo && geo.resolved && geo.distrito) {
+      rawDistrito = geo.distrito.toUpperCase()
+    }
+  }
+
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
     periodo_reclutado: normUpper('periodo_reclutado'),
@@ -410,9 +437,9 @@ export function parseGoogleFormRow(row, colIdx) {
     nivel_academico: normUpper('nivel_academico'),
     carrera: normUpper('carrera'),
     nacionalidad: normUpper('nacionalidad') || 'PERUANA',
-    lugar_residencia: normUpper('lugar_residencia'),
-    distrito_residencia: normUpper('distrito_residencia'),
-    direccion_domicilio: normUpper('direccion_domicilio'),
+    lugar_residencia: rawLugar,
+    distrito_residencia: rawDistrito,
+    direccion_domicilio: rawDireccion,
     modalidad: normUpper('modalidad') || (allRowText.includes('REMOT') || allRowText.includes('HOME OFFICE') || allRowText.includes('TELETRABAJO') ? 'REMOTO' : 'PRESENCIAL'),
     exp_call_center: normUpper('exp_call_center'),
     exp_tipo_campana: normUpper('exp_tipo_campana'),

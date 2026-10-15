@@ -26,12 +26,41 @@ const getEmptyRow = () => ({
   comentarios: ''
 })
 
+export const normalizeText = (text) => {
+  if (!text) return ''
+  return String(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+}
+
+export const isSandraCaveroName = (name) => {
+  if (!name) return false
+  const s = normalizeText(name)
+  return s.includes('CAVERO')
+}
+
+export const isSandraCaveroPermitted = (segmento, campana) => {
+  const normSeg = normalizeText(segmento)
+  const normCamp = normalizeText(campana)
+
+  // Debe ser estrictamente CLARO PERU (NO Claro Chile, NO otros)
+  const isClaroPeru = normSeg.includes('CLARO') && normSeg.includes('PERU') && !normSeg.includes('CHILE')
+
+  // Debe ser campaña RETENCIONES FIJA (ej. RETENCIONES FIJA, RETENCION FIJA, RETENCIONES FIJA INBOUND)
+  const isRetencionesFija = normCamp.includes('RETENCION') && normCamp.includes('FIJA')
+
+  return isClaroPeru && isRetencionesFija
+}
+
 export default function DescuentosForm({ userProfile, grupos = [], opcionesHomologadas = [], campanas = [], postulantes = [] }) {
   const todayPeruStr = useMemo(() => getTodayPeruString(), [])
 
   // Identificar supervisor si el usuario conectado tiene dicho perfil
   const loggedSupervisorName = useMemo(() => {
-    const raw = String(userProfile?.nombre || userProfile?.name || '').trim().toUpperCase()
+    const raw = normalizeText(userProfile?.nombre || userProfile?.name || '')
     if (raw === 'CAVEROSM' || raw.includes('CAVERO') || String(userProfile?.documento) === '43614771') {
       return 'SANDRA CAVERO'
     }
@@ -45,16 +74,26 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     return ''
   }, [userProfile])
 
-  const [dataRows, setDataRows] = useState(() => [{ ...getEmptyRow(), supervisor: loggedSupervisorName || '' }])
+  // Si el usuario conectado es Sandra Cavero, no auto-asignar en fila vacía hasta que se elija CLARO PERU y RETENCIONES FIJA
+  const [dataRows, setDataRows] = useState(() => {
+    const initialSup = (loggedSupervisorName && !isSandraCaveroName(loggedSupervisorName)) ? loggedSupervisorName : ''
+    return [{ ...getEmptyRow(), supervisor: initialSup }]
+  })
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState(null)
   const [validationErrors, setValidationErrors] = useState([])
 
-  // Si se detecta supervisor logueado y la fila está vacía de supervisor, autocompletar
+  // Si se detecta supervisor logueado y la fila está vacía de supervisor, autocompletar si corresponde
   React.useEffect(() => {
     if (loggedSupervisorName) {
-      setDataRows(prev => prev.map(r => (!r.supervisor ? { ...r, supervisor: loggedSupervisorName } : r)))
+      setDataRows(prev => prev.map(r => {
+        if (r.supervisor) return r
+        if (isSandraCaveroName(loggedSupervisorName)) {
+          return isSandraCaveroPermitted(r.segmento, r.campana) ? { ...r, supervisor: 'SANDRA CAVERO' } : r
+        }
+        return { ...r, supervisor: loggedSupervisorName }
+      }))
     }
   }, [loggedSupervisorName])
 
@@ -95,10 +134,14 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
   }, [grupos, campanas, opcionesHomologadas])
 
   const todosSupervisores = useMemo(() => {
-    const list = [...new Set(opcionesHomologadas.map(o => o.supervisor).filter(Boolean))]
-    if (!list.includes('SANDRA CAVERO')) list.push('SANDRA CAVERO')
-    if (loggedSupervisorName && !list.includes(loggedSupervisorName)) list.push(loggedSupervisorName)
-    return list.sort()
+    const list = [...new Set(opcionesHomologadas.map(o => String(o.supervisor || '').trim()).filter(Boolean))]
+    // Sandra Cavero solo debe figurar cuando corresponda a su segmento y campaña específicos (Claro Perú / Retenciones Fija)
+    // En la lista global genérica 'todosSupervisores', NUNCA debe incluirse
+    const filtered = list.filter(s => !isSandraCaveroName(s))
+    if (loggedSupervisorName && !isSandraCaveroName(loggedSupervisorName) && !filtered.includes(loggedSupervisorName)) {
+      filtered.push(loggedSupervisorName)
+    }
+    return filtered.sort()
   }, [opcionesHomologadas, loggedSupervisorName])
 
   const motivosUnicos = useMemo(() => {
@@ -112,7 +155,8 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
 
   // Manejo de Filas
   const addRow = () => {
-    setDataRows([...dataRows, { ...getEmptyRow(), supervisor: loggedSupervisorName || '' }])
+    const initialSup = (loggedSupervisorName && !isSandraCaveroName(loggedSupervisorName)) ? loggedSupervisorName : ''
+    setDataRows([...dataRows, { ...getEmptyRow(), supervisor: initialSup }])
   }
 
   // Replicar encabezados de la Fila 1 a todas las filas
@@ -185,15 +229,21 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     
     // Filtros en cascada inteligentes
     if (field === 'segmento') {
+      const isCaveroAllowed = isSandraCaveroPermitted(value, newRows[idx].campana)
+      if (isSandraCaveroName(newRows[idx].supervisor) && !isCaveroAllowed) {
+        newRows[idx].supervisor = ''
+      }
+
       if (newRows[idx].campana) {
-        const normSeg = String(value || '').trim().toUpperCase()
+        const normSeg = normalizeText(value)
+        const normCamp = normalizeText(newRows[idx].campana)
         const matchG = grupos.some(g => 
-          String(g.campana || '').trim().toUpperCase() === String(newRows[idx].campana).trim().toUpperCase() &&
-          (!normSeg || String(g.segmento || '').trim().toUpperCase() === normSeg)
+          normalizeText(g.campana) === normCamp &&
+          (!normSeg || normalizeText(g.segmento) === normSeg)
         )
         const matchH = opcionesHomologadas.some(o => 
-          String(o.campana || '').trim().toUpperCase() === String(newRows[idx].campana).trim().toUpperCase() &&
-          (!normSeg || String(o.segmento || '').trim().toUpperCase() === normSeg)
+          normalizeText(o.campana) === normCamp &&
+          (!normSeg || normalizeText(o.segmento) === normSeg)
         )
         if (!matchG && !matchH) {
           newRows[idx].campana = ''
@@ -206,16 +256,29 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     if (field === 'campana') {
       // Auto-inferir segmento desde Capacidad RYS si aún no fue seleccionado
       if (value && !newRows[idx].segmento) {
-        const normCamp = String(value).trim().toUpperCase()
-        const matchG = grupos.find(g => String(g.campana || '').trim().toUpperCase() === normCamp)
-        const matchC = (campanas || []).find(c => String(c.nombre || c.campana || c).trim().toUpperCase() === normCamp)
-        const matchH = opcionesHomologadas.find(o => String(o.campana || '').trim().toUpperCase() === normCamp)
+        const normCamp = normalizeText(value)
+        const matchG = grupos.find(g => normalizeText(g.campana) === normCamp)
+        const matchC = (campanas || []).find(c => normalizeText(c.nombre || c.campana || c) === normCamp)
+        const matchH = opcionesHomologadas.find(o => normalizeText(o.campana) === normCamp)
         const inferred = matchG?.segmento || matchC?.segmento || matchH?.segmento
         if (inferred) {
           newRows[idx].segmento = inferred
         }
       }
-      newRows[idx].supervisor = ''
+
+      // Si el supervisor actual es Sandra Cavero y la nueva combinación no lo permite, limpiarlo
+      const isCaveroAllowed = isSandraCaveroPermitted(newRows[idx].segmento, value)
+      if (isSandraCaveroName(newRows[idx].supervisor) && !isCaveroAllowed) {
+        newRows[idx].supervisor = ''
+      } else if (!newRows[idx].supervisor && loggedSupervisorName) {
+        if (isSandraCaveroName(loggedSupervisorName)) {
+          if (isCaveroAllowed) newRows[idx].supervisor = 'SANDRA CAVERO'
+        } else {
+          newRows[idx].supervisor = loggedSupervisorName
+        }
+      } else if (!newRows[idx].supervisor) {
+        newRows[idx].supervisor = ''
+      }
       newRows[idx].grupo_cap = ''
     }
 
@@ -429,30 +492,52 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
                   }
                 }
                 
-                // Supervisores disponibles: Filtra homologadas por la campaña elegida o todas
+                // Supervisores disponibles: Filtra homologadas por la campaña y segmento elegidos
+                const isCaveroPermitted = isSandraCaveroPermitted(row.segmento, row.campana)
+
                 let supFilt = [...new Set(
                   opcionesHomologadas
-                    .filter(o => row.campana ? String(o.campana).trim().toUpperCase() === String(row.campana).trim().toUpperCase() : true)
-                    .map(o => o.supervisor)
+                    .filter(o => {
+                      const oCamp = normalizeText(o.campana)
+                      const oSeg = normalizeText(o.segmento)
+                      const rCamp = normalizeText(row.campana)
+                      const rSeg = normalizeText(row.segmento)
+                      if (rCamp && oCamp !== rCamp) return false
+                      if (rSeg && oSeg && oSeg !== rSeg) return false
+                      return true
+                    })
+                    .map(o => String(o.supervisor || '').trim())
                     .filter(Boolean)
                 )]
 
-                // Garantizar supervisoras oficiales (SANDRA CAVERO en Claro Perú / Retenciones)
-                const isClaroPeruOrRetenciones = 
-                  (row.segmento && (String(row.segmento).toUpperCase().includes('CLARO') || String(row.segmento).toUpperCase().includes('RETENCIONES'))) ||
-                  (row.campana && (String(row.campana).toUpperCase().includes('CLARO') || String(row.campana).toUpperCase().includes('RETENCIONES'))) ||
-                  supFilt.some(s => s === 'JESUS NAVARRO' || s === 'LESLIE RIVERA')
-
-                if (isClaroPeruOrRetenciones && !supFilt.includes('SANDRA CAVERO')) {
-                  supFilt.push('SANDRA CAVERO')
+                // Regla estricta e inviolable para SANDRA CAVERO:
+                // ÚNICAMENTE permitida en segmento CLARO PERU y campaña RETENCIONES FIJA
+                if (isCaveroPermitted) {
+                  if (!supFilt.some(s => isSandraCaveroName(s))) {
+                    supFilt.push('SANDRA CAVERO')
+                  }
+                } else {
+                  // Si no está en Claro Perú y Retenciones Fija, garantizar que NO aparezca bajo ninguna circunstancia
+                  supFilt = supFilt.filter(s => !isSandraCaveroName(s))
                 }
 
-                if (loggedSupervisorName && !supFilt.includes(loggedSupervisorName)) {
-                  supFilt.push(loggedSupervisorName)
+                if (loggedSupervisorName) {
+                  if (isSandraCaveroName(loggedSupervisorName)) {
+                    if (isCaveroPermitted && !supFilt.some(s => isSandraCaveroName(s))) {
+                      supFilt.push('SANDRA CAVERO')
+                    }
+                  } else if (!supFilt.includes(loggedSupervisorName)) {
+                    supFilt.push(loggedSupervisorName)
+                  }
                 }
 
                 supFilt.sort()
-                const supervisoresDisponibles = supFilt.length > 0 ? supFilt : todosSupervisores
+                let supervisoresDisponibles = supFilt.length > 0 ? supFilt : todosSupervisores
+                
+                // Doble blindaje: Garantizar que bajo NINGÚN concepto aparezca si no está permitido
+                if (!isCaveroPermitted) {
+                  supervisoresDisponibles = supervisoresDisponibles.filter(s => !isSandraCaveroName(s))
+                }
                 
                 // Grupos disponibles: Filtra grupos (Capacidad RYS) por segmento y campaña
                 const gruposDisponibles = [...new Set(

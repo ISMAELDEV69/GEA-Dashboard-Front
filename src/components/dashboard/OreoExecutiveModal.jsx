@@ -1860,6 +1860,7 @@ export default function OreoExecutiveModal({
       'reclutador',
       'formador',
       'coordinador_rys',
+      'coordinador_capacitacion',
       'supervisor_capacitacion',
       'capacitador',
       'analista_rys',

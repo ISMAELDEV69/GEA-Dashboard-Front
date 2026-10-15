@@ -48,11 +48,11 @@ ON public.capacidad_rys FOR ALL
 TO authenticated 
 USING (
   public.is_admin() OR 
-  public.get_user_role() IN ('jefe_rys', 'coordinador_rys', 'jefe_capacitacion')
+  public.get_user_role() IN ('jefe_rys', 'coordinador_rys', 'jefe_capacitacion', 'coordinador_capacitacion')
 ) 
 WITH CHECK (
   public.is_admin() OR 
-  public.get_user_role() IN ('jefe_rys', 'coordinador_rys', 'jefe_capacitacion')
+  public.get_user_role() IN ('jefe_rys', 'coordinador_rys', 'jefe_capacitacion', 'coordinador_capacitacion')
 );
 
 -- ==============================================================================
@@ -70,6 +70,7 @@ USING (
     'jefe_rys', 
     'coordinador_rys', 
     'supervisor_capacitacion', 
+    'coordinador_capacitacion', 
     'jefe_capacitacion', 
     'formador', 
     'reclutador', 
@@ -88,6 +89,7 @@ USING (
     'coordinador_rys', 
     'reclutador', 
     'supervisor_capacitacion', 
+    'coordinador_capacitacion', 
     'jefe_capacitacion'
   )
 ) 
@@ -98,6 +100,7 @@ WITH CHECK (
     'coordinador_rys', 
     'reclutador', 
     'supervisor_capacitacion', 
+    'coordinador_capacitacion', 
     'jefe_capacitacion'
   )
 );

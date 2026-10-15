@@ -652,7 +652,7 @@ export default function AsistenciaForm({
 
   // ── Control de Permisos y Llave por Segmento ────────────────────
   const currentEffectiveRole = String(userRole || userProfile?.rol || 'admin').toLowerCase().trim()
-  const isSuperAdmin = ['admin', 'supervisor_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'calidad'].includes(currentEffectiveRole)
+  const isSuperAdmin = ['admin', 'supervisor_capacitacion', 'coordinador_capacitacion', 'jefe_capacitacion', 'coordinador_rys', 'jefe_rys', 'calidad'].includes(currentEffectiveRole)
   const isReclutador = currentEffectiveRole === 'reclutador'
   const isFormador = currentEffectiveRole === 'formador'
 

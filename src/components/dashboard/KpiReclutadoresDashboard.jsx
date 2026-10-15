@@ -612,6 +612,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
     'jefe_rys',
     'coordinador_rys',
     'supervisor_capacitacion',
+    'coordinador_capacitacion',
     'jefe_capacitacion',
   ].includes(userRole)
 

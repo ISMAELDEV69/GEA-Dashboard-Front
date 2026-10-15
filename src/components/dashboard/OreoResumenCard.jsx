@@ -180,7 +180,7 @@ export default function OreoResumenCard({
   // Roles autorizados a regenerar manualmente
   const canRegenerate = useMemo(() => {
     const r = String(userRole || '').toLowerCase()
-    return ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_rys', 'supervisor_capacitacion'].includes(r)
+    return ['admin', 'jefe_rys', 'jefe_capacitacion', 'coordinador_capacitacion', 'coordinador_rys', 'supervisor_capacitacion'].includes(r)
   }, [userRole])
 
   /**

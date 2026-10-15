@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import {
   Users, UserPlus, Shield, RefreshCw, Search,
   ChevronDown, Check, X, Loader2, AlertCircle, Edit2,
-  Crown, Mail, Lock, TrendingUp, BookOpen, Briefcase, Key, CheckSquare, HeartHandshake
+  Crown, Mail, Lock, TrendingUp, BookOpen, Briefcase, Key, CheckSquare, HeartHandshake, GraduationCap
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { createUserAccount, adminResetUserPassword, updateUserRole, getEquipoReclutamiento, getEquipoFormacion, updateEquipoFormacion, updateEquipoReclutamiento, fetchAppRoles } from '../lib/dataService'
@@ -35,7 +35,8 @@ function RoleBadge({ rol, appRoles }) {
     'Shield': Shield,
     'Key': Key,
     'CheckSquare': CheckSquare,
-    'HeartHandshake': HeartHandshake
+    'HeartHandshake': HeartHandshake,
+    'GraduationCap': GraduationCap
   }[r.icon] || Shield
 
   return (
@@ -49,7 +50,7 @@ function RoleBadge({ rol, appRoles }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
-export default function UserManagement({ navPermissions = [] }) {
+export default function UserManagement({ navPermissions = [], currentRole = 'admin', userProfile = null }) {
   const [employees,  setEmployees]  = useState([])
   const [perfiles,   setPerfiles]   = useState([])
   const [loading,    setLoading]    = useState(true)
@@ -60,13 +61,44 @@ export default function UserManagement({ navPermissions = [] }) {
   const [filterRol,  setFilterRol]  = useState('all')
   const [appRoles, setAppRoles] = useState([])
 
+  const isAdmin = currentRole === 'admin'
+  const isRysCoordinator = ['coordinador_rys', 'jefe_rys'].includes(currentRole)
+  const isCapaCoordinator = ['coordinador_capacitacion', 'jefe_capacitacion'].includes(currentRole)
+
+  const allowedAssignableRoleIds = useMemo(() => {
+    if (isAdmin) return appRoles.map(r => r.id)
+    if (isRysCoordinator) return ['reclutador', 'coordinador_rys', 'visor']
+    if (isCapaCoordinator) return ['formador', 'supervisor_capacitacion', 'coordinador_capacitacion', 'visor']
+    return []
+  }, [isAdmin, isRysCoordinator, isCapaCoordinator, appRoles])
+
+  const assignableAppRoles = useMemo(() => {
+    return appRoles.filter(r => allowedAssignableRoleIds.includes(r.id))
+  }, [appRoles, allowedAssignableRoleIds])
+
+  const canManageEmployee = (emp) => {
+    if (isAdmin) return true
+    if (emp.perfil?.rol === 'admin') return false
+    if (isRysCoordinator) {
+      if (emp.equipo === 'Reclutamiento') return true
+      if (emp.perfil && ['reclutador', 'coordinador_rys', 'visor'].includes(emp.perfil.rol)) return true
+      return false
+    }
+    if (isCapaCoordinator) {
+      if (emp.equipo === 'Formación') return true
+      if (emp.perfil && ['formador', 'supervisor_capacitacion', 'coordinador_capacitacion', 'visor'].includes(emp.perfil.rol)) return true
+      return false
+    }
+    return false
+  }
+
   const loadData = async () => {
     setLoading(true)
     try {
       const [formacionData, reclutamientoData, perfilesData, rolesData] = await Promise.all([
         getEquipoFormacion(),
         getEquipoReclutamiento(),
-        supabase.from('perfiles').select('id, nombre, rol, created_at').order('created_at', { ascending: false }),
+        supabase.from('perfiles').select('id, nombre, rol, segmento, created_at').order('created_at', { ascending: false }),
         fetchAppRoles()
       ])
 
@@ -159,6 +191,10 @@ export default function UserManagement({ navPermissions = [] }) {
   }
 
   const handleEditAlix = async (emp) => {
+    if (!canManageEmployee(emp)) {
+      alert('No tienes permisos para modificar este usuario.')
+      return
+    }
     const isExternal = emp.equipo === 'Externa / Otros'
     const promptMsg = isExternal ? `Nuevo Nombre Completo para ${emp.nombres}:` : `Nuevo usuario ALIX para ${emp.nombres}:`
     const newAlix = window.prompt(promptMsg, isExternal ? emp.nombres : (emp.usuario || ''))
@@ -224,14 +260,24 @@ export default function UserManagement({ navPermissions = [] }) {
     <PageLayout className="space-y-6">
       <PageHeader
         title="Directorio de Usuarios"
-        subtitle="Administra credenciales de acceso para Formación y Reclutamiento"
+        subtitle={
+          isAdmin 
+            ? "Administra credenciales de acceso para Formación y Reclutamiento"
+            : isRysCoordinator
+              ? "Gestión de credenciales y accesos para el equipo de Reclutamiento"
+              : isCapaCoordinator
+                ? "Gestión de credenciales y accesos para el equipo de Formación"
+                : "Directorio de usuarios"
+        }
         actions={
-          <button
-            onClick={() => setShowCreate({ equipo: 'Externa / Otros', nombres: '', documento: '—' })}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-500 text-white font-bold text-sm shadow-md hover:bg-indigo-600 transition-colors"
-          >
-            <UserPlus size={16} /> Agregar Usuario Externo
-          </button>
+          isAdmin ? (
+            <button
+              onClick={() => setShowCreate({ equipo: 'Externa / Otros', nombres: '', documento: '—' })}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-500 text-white font-bold text-sm shadow-md hover:bg-indigo-600 transition-colors"
+            >
+              <UserPlus size={16} /> Agregar Usuario Externo
+            </button>
+          ) : null
         }
       />
 
@@ -344,18 +390,30 @@ export default function UserManagement({ navPermissions = [] }) {
                     ) : (
                       <span className="text-[10px] text-[var(--text-muted)] italic">—</span>
                     )}
-                    <button 
-                      onClick={() => handleEditAlix(emp)}
-                      className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--border-subtle)] text-[var(--text-muted)]"
-                      title={emp.equipo === 'Externa / Otros' ? "Editar Nombre Completo" : "Editar usuario ALIX"}
-                    >
-                      <Edit2 size={12} />
-                    </button>
+                    {canManageEmployee(emp) && (
+                      <button 
+                        onClick={() => handleEditAlix(emp)}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--border-subtle)] text-[var(--text-muted)]"
+                        title={emp.equipo === 'Externa / Otros' ? "Editar Nombre Completo" : "Editar usuario ALIX"}
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                    )}
                   </div>
 
                   {/* Acciones */}
-                  <div className="flex justify-end gap-2">
-                    {hasAccount ? (
+                  <div className="flex justify-end gap-2 items-center">
+                    {!canManageEmployee(emp) ? (
+                      emp.perfil?.rol === 'admin' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20">
+                          <Lock size={11} /> Admin Protegido
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--text-muted)] italic">
+                          Sin acceso
+                        </span>
+                      )
+                    ) : hasAccount ? (
                       <>
                         <button
                           onClick={() => setShowEditRole(emp.perfil)}
@@ -430,7 +488,8 @@ export default function UserManagement({ navPermissions = [] }) {
       {showCreate && (
         <CreateUserModal 
           employee={showCreate} 
-          appRoles={appRoles} 
+          appRoles={assignableAppRoles} 
+          currentRole={currentRole}
           onCreated={loadData} 
           onClose={() => setShowCreate(null)} 
         />
@@ -439,7 +498,7 @@ export default function UserManagement({ navPermissions = [] }) {
       {showEditRole && (
         <EditRoleModal 
           perfil={showEditRole} 
-          appRoles={appRoles} 
+          appRoles={assignableAppRoles} 
           onUpdated={loadData} 
           onClose={() => setShowEditRole(null)} 
         />
@@ -458,10 +517,17 @@ export default function UserManagement({ navPermissions = [] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CreateUserModal
 // ─────────────────────────────────────────────────────────────────────────────
-function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
+function CreateUserModal({ employee, appRoles, currentRole, onClose, onCreated }) {
   const [usuario,  setUsuario]  = useState('')
   const [password, setPassword] = useState('')
-  const [rol,      setRol]      = useState(appRoles[0]?.id || 'visor')
+
+  const defaultInitialRole = useMemo(() => {
+    if (['coordinador_rys', 'jefe_rys'].includes(currentRole)) return 'reclutador'
+    if (['coordinador_capacitacion', 'jefe_capacitacion'].includes(currentRole)) return 'formador'
+    return appRoles[0]?.id || 'visor'
+  }, [currentRole, appRoles])
+
+  const [rol,      setRol]      = useState(defaultInitialRole)
   const [segmento, setSegmento] = useState(SEGMENTOS_SIU[0])
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState(null)
@@ -484,8 +550,8 @@ function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
       // Crear en supabase
       const resUser = await createUserAccount({ email: generatedEmail, password, nombre: displayName, rol })
       
-      if (rol === 'supervisor_capacitacion' && resUser?.id) {
-        await supabase.from('perfiles').update({ segmento }).eq('id', resUser.id)
+      if ((rol === 'supervisor_capacitacion' || rol === 'coordinador_capacitacion') && resUser?.id) {
+        await supabase.from('perfiles').update({ segmento: segmento || null }).eq('id', resUser.id)
       }
 
       // Actualizar tabla de recursos humanos correspondiente
@@ -608,23 +674,24 @@ function CreateUserModal({ employee, appRoles, onClose, onCreated }) {
             </div>
           </div>
 
-          {/* Selector de Segmento para Supervisor de Capacitación */}
-          {rol === 'supervisor_capacitacion' && (
+          {/* Selector de Segmento para Supervisor y Coordinador de Capacitación */}
+          {(rol === 'supervisor_capacitacion' || rol === 'coordinador_capacitacion') && (
             <div className="p-3.5 rounded-xl bg-teal-500/10 border border-teal-500/30 space-y-2 animate-fadeIn">
               <label className="block text-xs font-black text-teal-300">
-                Segmento Asignado al Supervisor:
+                Segmento Asignado:
               </label>
               <select
                 value={segmento}
                 onChange={e => setSegmento(e.target.value)}
                 className="form-input w-full px-3 py-2 rounded-lg text-xs font-bold bg-[var(--bg-surface)] text-[var(--text-primary)] border border-teal-500/40"
               >
+                <option value="">(Todos los Segmentos - Global)</option>
                 {SEGMENTOS_SIU.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
               <p className="text-[10px] text-teal-400/80">
-                El supervisor solo podrá ver y asignar formadores pertenecientes a este segmento.
+                Opcional: Si se deja en global, tendrá visibilidad sobre todas las campañas y formadores.
               </p>
             </div>
           )}
@@ -740,7 +807,10 @@ function ResetPasswordModal({ perfil, onClose }) {
 // MODAL: EditRoleModal
 // ─────────────────────────────────────────────────────────────────────────────
 function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
-  const [role, setRole] = useState(perfil.rol || 'visor')
+  const [role, setRole] = useState(() => {
+    if (appRoles.some(r => r.id === perfil.rol)) return perfil.rol
+    return appRoles[0]?.id || 'visor'
+  })
   const [segmento, setSegmento] = useState(perfil.segmento || SEGMENTOS_SIU[0])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -787,8 +857,8 @@ function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
             </div>
           </div>
 
-          {/* Selector de Segmento para Supervisor de Capacitación */}
-          {role === 'supervisor_capacitacion' && (
+          {/* Selector de Segmento para Supervisor y Coordinador de Capacitación */}
+          {(role === 'supervisor_capacitacion' || role === 'coordinador_capacitacion') && (
             <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/30 space-y-1.5 animate-fadeIn">
               <label className="block text-xs font-black text-teal-300">
                 Segmento Asignado:
@@ -798,12 +868,13 @@ function EditRoleModal({ perfil, appRoles, onClose, onUpdated }) {
                 onChange={e => setSegmento(e.target.value)}
                 className="form-input w-full px-3 py-2 rounded-lg text-xs font-bold bg-[var(--bg-surface)] text-[var(--text-primary)] border border-teal-500/40"
               >
+                <option value="">(Todos los Segmentos - Global)</option>
                 {SEGMENTOS_SIU.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
               <p className="text-[10px] text-teal-400/80">
-                El supervisor solo podrá ver y asignar formadores de este segmento.
+                Opcional: Si se deja en global, tendrá visibilidad sobre todas las campañas y formadores.
               </p>
             </div>
           )}

@@ -22,7 +22,7 @@ async function run() {
     console.log("Current app_role values:", res.rows.map(r => r.enumlabel));
 
     // Add new values
-    const newRoles = ['supervisor_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'];
+    const newRoles = ['supervisor_capacitacion', 'coordinador_capacitacion', 'coordinador_rys', 'jefe_rys', 'jefe_capacitacion'];
     
     for (const role of newRoles) {
       try {

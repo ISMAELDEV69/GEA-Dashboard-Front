@@ -13,7 +13,7 @@ Almacena las cuentas de usuario y roles de acceso a la plataforma.
 | :--- | :--- | :--- |
 | `id` | `UUID` (PK) | Identificador único vinculado a `auth.users.id` |
 | `nombre` | `VARCHAR(200)` | Nombre completo o alias del usuario |
-| `rol` | `VARCHAR(50)` | Rol en el sistema: `'admin'`, `'reclutador'`, `'formador'`, `'visor'`, `'supervisor_capacitacion'`, `'coordinador_rys'`, `'jefe_rys'`, `'jefe_capacitacion'` |
+| `rol` | `VARCHAR(50)` | Rol en el sistema: `'admin'`, `'reclutador'`, `'formador'`, `'visor'`, `'supervisor_capacitacion'`, `'coordinador_capacitacion'`, `'coordinador_rys'`, `'jefe_rys'`, `'jefe_capacitacion'` |
 | `segmento` | `VARCHAR(100)` | *(Columna opcional / requiere migración SQL)* Segmento asignado (ej. `'CLARO CHILE'`). |
 | `created_at` | `TIMESTAMPTZ` | Fecha de creación del perfil |
 

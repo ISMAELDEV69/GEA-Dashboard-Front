@@ -22,6 +22,7 @@ import {
 } from '../lib/dataService'
 import { cleanDocumento, NOMINA_DB_FIELDS } from '../lib/nominaConsolidadoSchema'
 import { inferSegmento } from '../lib/capacidadRysSync'
+import { supabase } from '../lib/supabase'
 
 const EMPTY_FORM = {
   codigo: '',
@@ -103,8 +104,48 @@ async function parseCapaExcel(file) {
               if (colMap.apellidos === undefined) colMap.apellidos = cIdx
             } else if (h.includes('NOMBRE COMPLETO') || h.includes('NOMBRES COMPLETOS') || h.includes('NOMBRE') || h.includes('NOMBRES')) {
               if (colMap.nombres === undefined) colMap.nombres = cIdx
+            } else if (h.includes('CELULAR REFERENCIA') || h.includes('TELEFONO REFERENCIA') || h.includes('TEL REF') || h.includes('CEL REF')) {
+              if (colMap.cel_ref === undefined) colMap.cel_ref = cIdx
             } else if (h.includes('CELULAR') || h.includes('TELEFONO') || h.includes('MOVIL') || h.includes('CEL')) {
               if (colMap.cel === undefined) colMap.cel = cIdx
+            } else if (h.includes('CORREO') || h.includes('EMAIL') || h.includes('MAIL')) {
+              if (colMap.correo === undefined) colMap.correo = cIdx
+            } else if (h.includes('GENERO') || h === 'SEXO') {
+              if (colMap.genero === undefined) colMap.genero = cIdx
+            } else if (h.includes('FECHA DE NACIMIENTO') || h.includes('FECHA NACIMIENTO') || h.includes('FEC NAC') || h.includes('F NAC')) {
+              if (colMap.fecha_nacimiento === undefined) colMap.fecha_nacimiento = cIdx
+            } else if (h === 'EDAD') {
+              if (colMap.edad === undefined) colMap.edad = cIdx
+            } else if (h.includes('ESTADO CIVIL') || h.includes('CIVIL')) {
+              if (colMap.estado_civil === undefined) colMap.estado_civil = cIdx
+            } else if (h.includes('HIJOS') || h.includes('NUMERO DE HIJOS') || h.includes('N HIJOS')) {
+              if (colMap.n_hijos === undefined) colMap.n_hijos = cIdx
+            } else if (h.includes('NIVEL ACADEMICO') || h.includes('GRADO') || h.includes('ESTUDIOS') || h.includes('NIVEL DE ESTUDIOS')) {
+              if (colMap.nivel_academico === undefined) colMap.nivel_academico = cIdx
+            } else if (h.includes('CARRERA') || h.includes('PROFESION')) {
+              if (colMap.carrera === undefined) colMap.carrera = cIdx
+            } else if (h.includes('NACIONALIDAD') || h.includes('PAIS')) {
+              if (colMap.nacionalidad === undefined) colMap.nacionalidad = cIdx
+            } else if (h.includes('LUGAR DE RESIDENCIA') || h.includes('LUGAR RESIDENCIA') || h.includes('DEPARTAMENTO')) {
+              if (colMap.lugar_residencia === undefined) colMap.lugar_residencia = cIdx
+            } else if (h.includes('DISTRITO DE RESIDENCIA') || h.includes('DISTRITO RESIDENCIA') || h.includes('DISTRITO')) {
+              if (colMap.distrito_residencia === undefined) colMap.distrito_residencia = cIdx
+            } else if (h.includes('DIRECCION DE DOMICILIO') || h.includes('DIRECCION DOMICILIO') || h.includes('DIRECCION') || h.includes('DOMICILIO')) {
+              if (colMap.direccion_domicilio === undefined) colMap.direccion_domicilio = cIdx
+            } else if (h.includes('CALL CENTER') || h.includes('EXP CALL')) {
+              if (colMap.exp_call_center === undefined) colMap.exp_call_center = cIdx
+            } else if (h.includes('FUENTE') || h.includes('MEDIO')) {
+              if (colMap.fuente_oferta === undefined) colMap.fuente_oferta = cIdx
+            } else if (h.includes('SEDE')) {
+              if (colMap.sede === undefined) colMap.sede = cIdx
+            } else if (h.includes('MODALIDAD')) {
+              if (colMap.modalidad === undefined) colMap.modalidad = cIdx
+            } else if (h.includes('CONDICION')) {
+              if (colMap.condicion === undefined) colMap.condicion = cIdx
+            } else if (h.includes('HORARIO')) {
+              if (colMap.horario_gestion === undefined) colMap.horario_gestion = cIdx
+            } else if (h.includes('DESCANSO')) {
+              if (colMap.descanso === undefined) colMap.descanso = cIdx
             }
           })
           break
@@ -134,7 +175,27 @@ async function parseCapaExcel(file) {
             apellido_paterno: apePat,
             apellido_materno: apeMat,
             nombres: nom,
-            celular: colMap.cel !== undefined ? String(row[colMap.cel] || '').trim() : ''
+            celular: colMap.cel !== undefined ? String(row[colMap.cel] || '').trim() : '',
+            celular_referencia: colMap.cel_ref !== undefined ? String(row[colMap.cel_ref] || '').trim() : '',
+            correo: colMap.correo !== undefined ? String(row[colMap.correo] || '').trim() : '',
+            genero: colMap.genero !== undefined ? String(row[colMap.genero] || '').trim() : '',
+            fecha_nacimiento: colMap.fecha_nacimiento !== undefined ? String(row[colMap.fecha_nacimiento] || '').trim() : '',
+            edad: colMap.edad !== undefined ? String(row[colMap.edad] || '').trim() : '',
+            estado_civil: colMap.estado_civil !== undefined ? String(row[colMap.estado_civil] || '').trim() : '',
+            n_hijos: colMap.n_hijos !== undefined ? String(row[colMap.n_hijos] || '').trim() : '',
+            nivel_academico: colMap.nivel_academico !== undefined ? String(row[colMap.nivel_academico] || '').trim() : '',
+            carrera: colMap.carrera !== undefined ? String(row[colMap.carrera] || '').trim() : '',
+            nacionalidad: colMap.nacionalidad !== undefined ? String(row[colMap.nacionalidad] || '').trim() : '',
+            lugar_residencia: colMap.lugar_residencia !== undefined ? String(row[colMap.lugar_residencia] || '').trim() : '',
+            distrito_residencia: colMap.distrito_residencia !== undefined ? String(row[colMap.distrito_residencia] || '').trim() : '',
+            direccion_domicilio: colMap.direccion_domicilio !== undefined ? String(row[colMap.direccion_domicilio] || '').trim() : '',
+            exp_call_center: colMap.exp_call_center !== undefined ? String(row[colMap.exp_call_center] || '').trim() : '',
+            fuente_oferta: colMap.fuente_oferta !== undefined ? String(row[colMap.fuente_oferta] || '').trim() : '',
+            sede: colMap.sede !== undefined ? String(row[colMap.sede] || '').trim() : '',
+            modalidad: colMap.modalidad !== undefined ? String(row[colMap.modalidad] || '').trim() : '',
+            condicion: colMap.condicion !== undefined ? String(row[colMap.condicion] || '').trim() : '',
+            horario_gestion: colMap.horario_gestion !== undefined ? String(row[colMap.horario_gestion] || '').trim() : '',
+            descanso: colMap.descanso !== undefined ? String(row[colMap.descanso] || '').trim() : '',
           })
         }
 
@@ -145,7 +206,7 @@ async function parseCapaExcel(file) {
     }
   }
 
-  // 3. Normalizar, estructurar nombres/apellidos y deduplicar por DNI
+  // 3. Normalizar, estructurar nombres/apellidos y deduplicar por DNI preservando todos los campos
   const seen = new Set()
   const cleanList = []
   for (const item of bestRows) {
@@ -171,6 +232,7 @@ async function parseCapaExcel(file) {
     }
 
     cleanList.push({
+      ...item,
       documento: doc,
       apellido_paterno: apePat,
       apellido_materno: apeMat,
@@ -715,19 +777,136 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       const tipo = tipoReclutador
       const semanaNum = parseInt(String(selectedGrupo.semana_trabajo || selectedGrupo.semana_label || '').replace(/\D/g, ''), 10) || null
       const validFields = new Set([...NOMINA_DB_FIELDS, 'activo'])
+
+      // ── Búsqueda de historial previo del postulante en la base de datos ──
+      // Permite que TRASLADOS y RECUPERADOS hereden automáticamente correo, fecha de nacimiento,
+      // estado civil, distrito, nivel académico, carrera, etc., de sus nóminas anteriores.
+      const docsList = seleccionados.map(p => cleanDocumento(p.documento)).filter(Boolean)
+      const histMap = new Map()
+
+      // 1. Primero del prop 'postulantes' que ya tenemos en memoria
+      ;(postulantes || []).forEach(post => {
+        const d = cleanDocumento(post.documento)
+        if (d && docsList.includes(d)) {
+          const prev = histMap.get(d)
+          if (!prev || (post.created_at && (!prev.created_at || post.created_at > prev.created_at))) {
+            histMap.set(d, post)
+          }
+        }
+      })
+
+      // 2. Para asegurar completitud al 100%, consultar Supabase por estos DNIs
+      try {
+        if (supabase && docsList.length > 0) {
+          const { data: dbRecords } = await supabase
+            .from('nominas')
+            .select('*')
+            .in('documento', docsList)
+            .order('created_at', { ascending: false })
+
+          if (dbRecords && dbRecords.length > 0) {
+            dbRecords.forEach(rec => {
+              const d = cleanDocumento(rec.documento)
+              if (d && !histMap.has(d)) {
+                histMap.set(d, rec)
+              } else if (d && histMap.has(d)) {
+                const existing = histMap.get(d)
+                const merged = { ...rec, ...existing }
+                Object.keys(rec).forEach(k => {
+                  if ((merged[k] === null || merged[k] === undefined || merged[k] === '') && rec[k] !== null && rec[k] !== undefined && rec[k] !== '') {
+                    merged[k] = rec[k]
+                  }
+                })
+                histMap.set(d, merged)
+              }
+            })
+          }
+        }
+      } catch (errDb) {
+        console.warn('No se pudo consultar historial adicional de nóminas:', errDb)
+      }
+
       const postulantesPayload = seleccionados.map((p) => {
+        const doc = cleanDocumento(p.documento)
+        const hist = histMap.get(doc) || {}
+
+        // Parámetros de la persona: preferir lo que viene del Excel p, luego historial hist
+        const apellido_paterno = p.apellido_paterno || hist.apellido_paterno || null
+        const apellido_materno = p.apellido_materno || hist.apellido_materno || null
+        const nombres = p.nombres || hist.nombres || null
+        const celular = p.celular || hist.celular || null
+
         const raw = {
-          documento: p.documento,
-          apellido_paterno: p.apellido_paterno || null,
-          apellido_materno: p.apellido_materno || null,
-          nombres: p.nombres || null,
-          celular: p.celular || null,
+          // Historial demográfico / biográfico heredado
+          ...hist,
+          // Datos del archivo Excel subido
+          ...p,
+
+          // Claves obligatorias y estandarizadas
+          documento: doc,
+          tipo_documento: p.tipo_documento || hist.tipo_documento || 'DNI ( DOCUMENTO NACIONAL DE IDENTIDAD)',
+          apellido_paterno,
+          apellido_materno,
+          nombres,
+          celular,
+          celular_referencia: p.celular_referencia || hist.celular_referencia || null,
+          correo: p.correo || hist.correo || null,
+          genero: p.genero || hist.genero || null,
+          fecha_nacimiento: p.fecha_nacimiento || hist.fecha_nacimiento || null,
+          edad: p.edad || hist.edad || null,
+          estado_civil: p.estado_civil || hist.estado_civil || null,
+          n_hijos: (p.n_hijos !== undefined && p.n_hijos !== null && p.n_hijos !== '') ? p.n_hijos : (hist.n_hijos ?? 0),
+          nivel_academico: p.nivel_academico || hist.nivel_academico || null,
+          carrera: p.carrera || hist.carrera || null,
+          nacionalidad: p.nacionalidad || hist.nacionalidad || 'PERUANA',
+          lugar_residencia: p.lugar_residencia || hist.lugar_residencia || null,
+          distrito_residencia: p.distrito_residencia || hist.distrito_residencia || null,
+          direccion_domicilio: p.direccion_domicilio || hist.direccion_domicilio || null,
+          exp_call_center: p.exp_call_center || hist.exp_call_center || null,
+          exp_tipo_campana: p.exp_tipo_campana || hist.exp_tipo_campana || null,
+          exp_tiempo_call: p.exp_tiempo_call || hist.exp_tiempo_call || null,
+          exp_otra: p.exp_otra || hist.exp_otra || null,
+          exp_tiempo_otra: p.exp_tiempo_otra || hist.exp_tiempo_otra || null,
+          exp_tiempo_campana: p.exp_tiempo_campana || hist.exp_tiempo_campana || null,
+          lugar_nacimiento: p.lugar_nacimiento || hist.lugar_nacimiento || null,
+          celular_emergencia: p.celular_emergencia || hist.celular_emergencia || null,
+          contacto_emergencia: p.contacto_emergencia || hist.contacto_emergencia || null,
+          parentesco: p.parentesco || hist.parentesco || null,
+          entidad: p.entidad || hist.entidad || null,
+          doc_cv: p.doc_cv || hist.doc_cv || null,
+          doc_dni_adjunto: p.doc_dni_adjunto || hist.doc_dni_adjunto || null,
+          doc_certijoven: p.doc_certijoven || hist.doc_certijoven || null,
+          doc_recibo_servicios: p.doc_recibo_servicios || hist.doc_recibo_servicios || null,
+          doc_ficha_datos: p.doc_ficha_datos || hist.doc_ficha_datos || null,
+          doc_autorizacion: p.doc_autorizacion || hist.doc_autorizacion || null,
+
+          // Parámetros operativos y económicos del grupo seleccionado
+          sede: p.sede || selectedGrupo.sede || hist.sede || 'JOCKEY',
           campana: getCampanaVal(selectedGrupo),
           segmento: selectedGrupo.segmento || inferSegmento(selectedGrupo.campana),
           grupo_codigo: getCodigoVal(selectedGrupo),
           periodo_reclutado: selectedGrupo.periodo_ingreso_op || selectedGrupo.periodo || null,
           semana_trabajo: semanaNum,
-          modalidad: selectedGrupo.modalidad || 'PRESENCIAL',
+          modalidad: selectedGrupo.modalidad || hist.modalidad || 'PRESENCIAL',
+          condicion: selectedGrupo.condicion || hist.condicion || 'FULL TIME',
+          horario_gestion: selectedGrupo.horario_gestion || hist.horario_gestion || null,
+          descanso: selectedGrupo.descanso || hist.descanso || null,
+          fecha_inicio_capacitacion: selectedGrupo.fecha_inicio_capacitacion || selectedGrupo.fecha_registro || null,
+          fecha_fin_capacitacion: selectedGrupo.fecha_fin_capacitacion || null,
+          fecha_conexion_ojt: selectedGrupo.fecha_inicio_ojt || selectedGrupo.fecha_conexion_ojt || null,
+          fecha_conexion_op: selectedGrupo.fecha_ingreso_op || selectedGrupo.fecha_conexion_op || null,
+          pago_capacitacion: selectedGrupo.pago_capacitacion ?? hist.pago_capacitacion ?? null,
+          tipo_contratacion: selectedGrupo.tipo_contratacion || hist.tipo_contratacion || 'RXH',
+          razon_social: selectedGrupo.razon_social || hist.razon_social || 'GEA',
+          remuneracion: selectedGrupo.remuneracion ?? hist.remuneracion ?? null,
+          bono_variable: selectedGrupo.bono_variable ?? hist.bono_variable ?? null,
+          bono_movilidad: selectedGrupo.bono_movilidad ?? hist.bono_movilidad ?? null,
+          bono_bienvenida: selectedGrupo.bono_bienvenida ?? hist.bono_bienvenida ?? null,
+          bono_permanencia: selectedGrupo.bono_permanencia ?? hist.bono_permanencia ?? null,
+          bono_asistencia_perfecta: selectedGrupo.bono_asistencia_perfecta ?? hist.bono_asistencia_perfecta ?? null,
+          cargo_contractual: selectedGrupo.cargo_contractual || hist.cargo_contractual || 'AGENTE TMK INBOUND',
+
+          // Control de proceso de reclutamiento / bolsa de capa
           reclutador: tipo,
           fuente_oferta: selectedGrupo.area_traslado || tipo,
           status_dia_1: tipo === 'CAPACITACION' ? tipoReclutadoFromAreaCapa(selectedGrupo.area_traslado) : tipo,
@@ -735,9 +914,12 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
           marca_temporal: new Date().toISOString(),
           activo: true,
         }
+
         const clean = {}
         Object.entries(raw).forEach(([k, v]) => {
-          if (validFields.has(k)) clean[k] = v
+          if (validFields.has(k) && k !== 'id' && k !== 'created_at' && k !== 'updated_at') {
+            clean[k] = v
+          }
         })
         return clean
       })

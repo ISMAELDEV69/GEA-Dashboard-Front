@@ -66,6 +66,7 @@ VALUES
     ('formador', 'Formador', 'F', 'Gestión de aulas, asistencias y reportes de deserción.', 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20', 'bg-emerald-500', 'BookOpen'),
     ('visor', 'Directivo', 'V', 'Acceso exclusivo a dashboards y reportes gerenciales.', 'bg-purple-500/10 text-purple-500 border-purple-500/20', 'bg-purple-500', 'TrendingUp'),
     ('supervisor_capacitacion', 'Supervisor Cap.', 'SC', 'Gestión y supervisión de equipos de formación.', 'bg-orange-500/10 text-orange-500 border-orange-500/20', 'bg-orange-500', 'Users'),
+    ('coordinador_capacitacion', 'Coordinador Cap.', 'CC', 'Coordinación operativa y seguimiento de capacitación / formación.', 'bg-amber-600/10 text-amber-500 border-amber-600/20', 'bg-amber-600', 'GraduationCap'),
     ('coordinador_rys', 'Coordinador RYS', 'CR', 'Coordinación operativa de reclutamiento y selección.', 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20', 'bg-cyan-500', 'UserPlus'),
     ('jefe_rys', 'Jefe RYS', 'JR', 'Jefatura general de reclutamiento y selección.', 'bg-sky-500/10 text-sky-500 border-sky-500/20', 'bg-sky-500', 'Shield'),
     ('jefe_capacitacion', 'Jefe Cap.', 'JC', 'Jefatura general de formación y capacitación.', 'bg-amber-500/10 text-amber-500 border-amber-500/20', 'bg-amber-500', 'BookOpen'),

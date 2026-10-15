@@ -71,6 +71,7 @@ const VIEW_ROLE_MODES = [
   { id: 'formador', label: 'F', title: 'Formador' },
   { id: 'visor', label: 'V', title: 'Directivo' },
   { id: 'supervisor_capacitacion', label: 'SC', title: 'Supervisor Capacitación' },
+  { id: 'coordinador_capacitacion', label: 'CC', title: 'Coordinador Capacitación' },
   { id: 'coordinador_rys', label: 'CR', title: 'Coordinador RYS' },
   { id: 'jefe_rys', label: 'JR', title: 'Jefe RYS' },
   { id: 'jefe_capacitacion', label: 'JC', title: 'Jefe Capacitación' },
