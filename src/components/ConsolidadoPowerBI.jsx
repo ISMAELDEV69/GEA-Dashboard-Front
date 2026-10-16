@@ -1150,6 +1150,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
       const hasDescuento = docState === 'DESCUENTO';
 
+      // REGLA OFICIAL: Los descuentos no asisten a sala (dejan filas vacías con guiones).
+      // Se visualizan y gestionan en 'Consolidado de Descuentos' dentro de Motivos de Bajas.
+      // En la matriz de asistencia solo se muestran si el usuario filtra explícitamente por estado 'DESCUENTO'.
+      if (hasDescuento && filters.estado !== 'DESCUENTO') {
+        continue;
+      }
+
       result.push({
         documento: doc,
         nombre_completo: `${normalizeText(lastRow.apellido_paterno)} ${normalizeText(lastRow.apellido_materno)} ${normalizeText(lastRow.nombres)}`.trim(),
@@ -1175,7 +1182,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       );
     }
     return result;
-  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, search]);
+  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, search, filters.estado]);
 
   const totalPages = pageSize === 'Todas' ? 1 : Math.max(1, Math.ceil(pivotRows.length / Number(pageSize)));
   const currentPage = Math.min(page, totalPages);
@@ -1573,8 +1580,16 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">
-              {pivotRows.length} postulantes
+              {pivotRows.length} en sala
             </span>
+            {kpis.descuentosAprobados > 0 && filters.estado !== 'DESCUENTO' && (
+              <span 
+                className="hidden sm:inline-flex items-center gap-1 text-[9.5px] bg-amber-500/10 border border-amber-500/25 text-amber-600 dark:text-amber-400 font-bold px-2 py-0.5 rounded-md"
+                title={`${kpis.descuentosAprobados} postulantes tienen descuento autorizado en esta cohorte (gestionados en Consolidado de Descuentos)`}
+              >
+                <span>{kpis.descuentosAprobados} desc. en cohorte</span>
+              </span>
+            )}
             <button
               onClick={handleExport}
               disabled={!pivotRows.length}

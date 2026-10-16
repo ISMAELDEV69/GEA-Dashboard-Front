@@ -29,10 +29,12 @@ import {
   ExternalLink,
   Phone,
   FileSpreadsheet,
-  RotateCcw
+  RotateCcw,
+  MessageSquare
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { fetchMotivosBajasData, invalidateCache, parseFechaAsistencia, isBajaCapacitacion, isBajaDia1, normalizarMotivo } from '../lib/dataService'
+import { isDescuentoVencido48h } from '../lib/businessHoursUtils'
 
 // Meta global de deserción corporativa (≤40%)
 const META_DESERCION = 40;
@@ -69,10 +71,10 @@ function normalizeSemana(label, trabajo, archivo) {
 export default function MotivosBajasBI() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [data, setData] = useState({ consolidado: [], capacidades: [], nominas: [], postulantes: [] });
+  const [data, setData] = useState({ consolidado: [], capacidades: [], nominas: [], postulantes: [], descuentos: [] });
 
   // Filtros
-  const [activeTab, setActiveTab] = useState('DASHBOARD'); // 'DASHBOARD' | 'CONSOLIDADO_BAJAS'
+  const [activeTab, setActiveTab] = useState('DASHBOARD'); // 'DASHBOARD' | 'CONSOLIDADO_BAJAS' | 'CONSOLIDADO_DESCUENTOS'
   const [selectedSegmento, setSelectedSegmento] = useState('TODAS');
   const [selectedCampana, setSelectedCampana] = useState('TODAS');
   const [selectedGrupo, setSelectedGrupo] = useState('TODAS');
@@ -98,7 +100,8 @@ export default function MotivosBajasBI() {
         consolidado: res?.consolidado || [],
         capacidades: res?.capacidades || [],
         nominas: res?.nominas || [],
-        postulantes: res?.postulantes || []
+        postulantes: res?.postulantes || [],
+        descuentos: res?.descuentos || []
       });
     } catch (err) {
       console.error('Error cargando motivos de bajas:', err);
@@ -424,6 +427,153 @@ export default function MotivosBajasBI() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Consolidado Bajas');
     XLSX.writeFile(wb, `Consolidado_Bajas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // ── 3. CONSOLIDADO DE DESCUENTOS (Enriquecimiento, Filtrado y Exportación) ──
+  const enrichedDescuentos = useMemo(() => {
+    const list = data.descuentos || [];
+    const result = [];
+
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i];
+      const rawDoc = d.dni_ce || d.documento;
+      const doc = normalizeText(rawDoc);
+      const digitsDoc = doc.replace(/\D/g, '');
+      const persona = candidatesMap.get(doc) || 
+                      candidatesMap.get(doc.toUpperCase()) || 
+                      (digitsDoc ? candidatesMap.get(digitsDoc) : null) || 
+                      (digitsDoc && digitsDoc.length === 8 ? candidatesMap.get(digitsDoc.replace(/^0+/, '')) : null);
+
+      const campana = normalizeCampana(d.campana);
+      const gpe = normalizeGpe(d.grupo_cap || d.grupo);
+      const cap = getCapInfo(campana, gpe);
+
+      const rowPeriodo = cap?.periodo || normalizeText(d.periodo);
+      const rowSemana = cap?.semana || normalizeSemana(d.semana_label, d.semana_trabajo);
+      const rowSegmento = cap?.segmento || normalizeSegmento(d.segmento);
+
+      const rawCel = persona?.celular || 
+                     persona?.celular_referencia || 
+                     persona?.celular_emergencia || 
+                     persona?.telefono || 
+                     d.celular;
+      const celular = rawCel ? String(rawCel).trim() : '-';
+
+      const nombreCompleto = d.postulante || 
+                            (persona ? `${persona.apellido_paterno || ''} ${persona.apellido_materno || ''} ${persona.nombres || ''}`.trim() : '') || 
+                            'SIN NOMBRE';
+
+      const procedeStr = String(d.procede || '').trim().toUpperCase();
+      const rysStr = String(d.autoriza_rys || '').trim().toUpperCase();
+      const regTime = d.fecha_registro || d.created_at || d.fecha_baja;
+      const isExpired = regTime && isDescuentoVencido48h(regTime);
+
+      let estadoFinal = 'PENDIENTE';
+      if (procedeStr === 'PROCEDE' || procedeStr === 'APROBADO' || rysStr === 'SI') {
+        estadoFinal = 'PROCEDE';
+      } else if (procedeStr === 'NO PROCEDE' || procedeStr === 'NO' || rysStr === 'NO') {
+        estadoFinal = 'NO PROCEDE';
+      } else if (isExpired) {
+        estadoFinal = 'PROCEDE (48H)';
+      }
+
+      let fechaFormatted = '-';
+      const rawF = d.fecha_baja || d.fecha_registro;
+      if (rawF) {
+        const str = String(rawF).trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+          const [y, m, d2] = str.slice(0, 10).split('-');
+          fechaFormatted = `${d2}/${m}/${y}`;
+        } else {
+          fechaFormatted = str;
+        }
+      }
+
+      // Limpiar dígitos para WhatsApp
+      const cleanPhoneDigits = celular.replace(/\D/g, '');
+      const validWaPhone = (cleanPhoneDigits.length === 9 && cleanPhoneDigits.startsWith('9')) 
+        ? `51${cleanPhoneDigits}` 
+        : (cleanPhoneDigits.length === 11 && cleanPhoneDigits.startsWith('519')) 
+          ? cleanPhoneDigits 
+          : null;
+
+      result.push({
+        ...d,
+        _doc: doc,
+        _nombre: String(nombreCompleto).trim().toUpperCase(),
+        _celular: celular,
+        _wa_phone: validWaPhone,
+        _campana: campana,
+        _gpe: gpe,
+        _periodo: rowPeriodo,
+        _semana: rowSemana,
+        _segmento: rowSegmento,
+        _formador: d.formador || cap?.formador || '—',
+        _supervisor: d.supervisor || '—',
+        _motivo: normalizarMotivo(d.motivo) || String(d.motivo || 'SIN ESPECIFICAR').trim().toUpperCase(),
+        _comentarios: d.comentarios || d.comentario_rys || '',
+        _fecha_formatted: fechaFormatted,
+        _estado_final: estadoFinal,
+        _fuera_de_plazo: d.fuera_de_plazo === 'SI' ? 'SI' : 'NO'
+      });
+    }
+
+    return result;
+  }, [data.descuentos, candidatesMap, getCapInfo]);
+
+  const consolidadoDescuentosFiltered = useMemo(() => {
+    return enrichedDescuentos.filter((d) => {
+      if (selectedSegmento !== 'TODAS' && d._segmento !== selectedSegmento) return false;
+      if (selectedCampana !== 'TODAS' && d._campana !== selectedCampana) return false;
+      if (selectedGrupo !== 'TODAS' && d._gpe !== selectedGrupo) return false;
+      if (selectedPeriodo !== 'TODAS' && selectedPeriodo !== 'PERIODO ACTIVO (60 DÍAS)' && selectedPeriodo !== 'HISTÓRICO COMPLETO') {
+        if (d._periodo && d._periodo !== selectedPeriodo) return false;
+      }
+      if (selectedSemana !== 'TODAS' && d._semana && d._semana !== selectedSemana) return false;
+
+      if (searchDocQuery) {
+        const q = searchDocQuery.trim().toLowerCase();
+        const matchDoc = String(d._doc || '').toLowerCase().includes(q);
+        const matchName = String(d._nombre || '').toLowerCase().includes(q);
+        const matchCel = String(d._celular || '').toLowerCase().includes(q);
+        const matchGpe = String(d._gpe || '').toLowerCase().includes(q);
+        const matchCamp = String(d._campana || '').toLowerCase().includes(q);
+        const matchMotivo = String(d._motivo || '').toLowerCase().includes(q);
+        const matchFormador = String(d._formador || '').toLowerCase().includes(q);
+        if (!matchDoc && !matchName && !matchCel && !matchGpe && !matchCamp && !matchMotivo && !matchFormador) return false;
+      }
+      return true;
+    });
+  }, [enrichedDescuentos, selectedSegmento, selectedCampana, selectedGrupo, selectedPeriodo, selectedSemana, searchDocQuery]);
+
+  const totalPagesDescuentos = Math.max(1, Math.ceil(consolidadoDescuentosFiltered.length / pageSize));
+  const paginatedDescuentos = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return consolidadoDescuentosFiltered.slice(start, start + pageSize);
+  }, [consolidadoDescuentosFiltered, currentPage, pageSize]);
+
+  const handleExportDescuentos = () => {
+    if (consolidadoDescuentosFiltered.length === 0) return;
+    const exportRows = consolidadoDescuentosFiltered.map((d) => ({
+      'NOMBRE_COMPLETO': d._nombre || 'SIN NOMBRE',
+      'DOCUMENTO': d._doc,
+      'CELULAR': d._celular || '-',
+      'CAMPAÑA': d._campana,
+      'GPE': d._gpe,
+      'SEGMENTO': d._segmento || '-',
+      'FORMADOR': d._formador || '-',
+      'SUPERVISOR': d._supervisor || '-',
+      'FECHA_BAJA': d._fecha_formatted || '-',
+      'MOTIVO_DESCUENTO': d._motivo,
+      'ESTADO_DESCUENTO': d._estado_final,
+      'AUTORIZA_RYS': d.autoriza_rys || '-',
+      'FUERA_DE_PLAZO': d._fuera_de_plazo,
+      'OBSERVACIONES': d._comentarios || '-'
+    }));
+    const ws = XLSX.utils.json_to_sheet(exportRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Consolidado Descuentos');
+    XLSX.writeFile(wb, `Consolidado_Descuentos_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // 1. DESERCIÓN EN CAPACITACIÓN: (Total bajas capacitación / Total participantes iniciales) * 100
@@ -769,10 +919,10 @@ export default function MotivosBajasBI() {
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] animate-pulse" />
           
-          {/* Switcher de Vistas: Dashboard vs Consolidado de Bajas */}
+          {/* Switcher de Vistas: Dashboard vs Consolidado de Bajas vs Consolidado de Descuentos */}
           <div className="flex items-center bg-[var(--bg-elevated)] p-1 rounded-xl border border-[var(--border-normal)] shadow-inner gap-1">
             <button
-              onClick={() => setActiveTab('DASHBOARD')}
+              onClick={() => { setActiveTab('DASHBOARD'); setCurrentPage(1); }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === 'DASHBOARD'
                   ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20'
@@ -784,7 +934,7 @@ export default function MotivosBajasBI() {
             </button>
 
             <button
-              onClick={() => setActiveTab('CONSOLIDADO_BAJAS')}
+              onClick={() => { setActiveTab('CONSOLIDADO_BAJAS'); setCurrentPage(1); }}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === 'CONSOLIDADO_BAJAS'
                   ? 'bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md shadow-emerald-500/20'
@@ -797,6 +947,23 @@ export default function MotivosBajasBI() {
                 activeTab === 'CONSOLIDADO_BAJAS' ? 'bg-white/20 text-white' : 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
               }`}>
                 {uniqueBajas.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('CONSOLIDADO_DESCUENTOS'); setCurrentPage(1); }}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                activeTab === 'CONSOLIDADO_DESCUENTOS'
+                  ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white shadow-md shadow-amber-500/20'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)]'
+              }`}
+            >
+              <Layers size={14} />
+              <span>CONSOLIDADO DE DESCUENTOS</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black ${
+                activeTab === 'CONSOLIDADO_DESCUENTOS' ? 'bg-white/20 text-white' : 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+              }`}>
+                {consolidadoDescuentosFiltered.length}
               </span>
             </button>
           </div>
@@ -880,8 +1047,212 @@ export default function MotivosBajasBI() {
         </div>
       </div>
 
-      {/* ── CONTENIDO PRINCIPAL: DASHBOARD O CONSOLIDADO DE BAJAS ── */}
-      {activeTab === 'CONSOLIDADO_BAJAS' ? (
+      {/* ── CONTENIDO PRINCIPAL: DASHBOARD, CONSOLIDADO DE BAJAS O CONSOLIDADO DE DESCUENTOS ── */}
+      {activeTab === 'CONSOLIDADO_DESCUENTOS' ? (
+        <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-hidden bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-3 shadow-xs">
+          
+          {/* Barra de Herramientas y Filtros Internos de Descuentos */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2 border-b border-[var(--border-subtle)] shrink-0">
+            {/* Buscador Rápido */}
+            <div className="flex items-center gap-2 flex-1 min-w-[260px] max-w-md">
+              <div className="relative w-full">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                <input
+                  type="text"
+                  placeholder="Buscar descuento por DNI, Nombres, Celular, GPE, Campaña, Formador..."
+                  value={searchDocQuery}
+                  onChange={(e) => { setSearchDocQuery(e.target.value); setCurrentPage(1); }}
+                  className="w-full pl-8 pr-8 py-1.5 bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-lg text-xs font-medium text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50 transition-all"
+                />
+                {searchDocQuery && (
+                  <button 
+                    onClick={() => { setSearchDocQuery(''); setCurrentPage(1); }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] hover:text-amber-500 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Acciones de Descuentos */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleExportDescuentos}
+                disabled={consolidadoDescuentosFiltered.length === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-bold uppercase tracking-wider shadow-sm transition-all cursor-pointer border border-amber-500/50"
+                title="Exportar descuentos filtrados a Excel"
+              >
+                <Download size={14} />
+                <span>Excel ({consolidadoDescuentosFiltered.length})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Badge Informativo */}
+          <div className="flex items-center justify-between text-[11px] px-1 text-[var(--text-muted)] shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-[var(--text-primary)]">
+                Mostrando <span className="text-amber-600 dark:text-amber-400 font-mono font-black">{paginatedDescuentos.length}</span> de <span className="text-amber-600 dark:text-amber-400 font-mono font-black">{consolidadoDescuentosFiltered.length}</span> descuentos registrados
+              </span>
+              <span className="text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold px-2 py-0.5 rounded-full">
+                ℹ️ Solicitudes y regularizaciones de descuento en cohorte (excluidos de la asistencia en sala)
+              </span>
+            </div>
+            <div className="text-[10px] text-[var(--text-muted)] font-mono">
+              Total base descuentos: {enrichedDescuentos.length} registros
+            </div>
+          </div>
+
+          {/* Tabla de Consolidado de Descuentos */}
+          <div className="flex-1 min-h-0 w-full overflow-auto rounded-xl border border-[var(--border-normal)] bg-[var(--bg-surface)] custom-scrollbar shadow-inner">
+            <table className="w-full text-left text-xs whitespace-nowrap border-collapse">
+              <thead className="sticky top-0 z-10 bg-[#3a2208] dark:bg-[#451a03] text-amber-100 font-black text-[11px] uppercase tracking-wider shadow-sm">
+                <tr>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">NOMBRE_COMPLETO</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">DOCUMENTO</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">CONTACTO / CELULAR</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">CAMPAÑA</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">GPE</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">FORMADOR</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60 text-center">FECHA_BAJA</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">MOTIVO_DESCUENTO</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60 text-center">ESTADO_DESCUENTO</th>
+                  <th className="py-2.5 px-3 border-b border-amber-800/60">OBSERVACIONES</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-subtle)] text-[11px]">
+                {paginatedDescuentos.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center text-[var(--text-muted)]">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <AlertCircle size={28} className="text-[var(--text-muted)] opacity-60" />
+                        <p className="font-bold text-xs uppercase tracking-wider">No se encontraron registros de descuentos con los filtros seleccionados</p>
+                        <p className="text-[10px]">Prueba ajustando el segmento, campaña, semana o término de búsqueda.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedDescuentos.map((d, idx) => {
+                    const isEven = idx % 2 === 0;
+                    const isProcede = d._estado_final.includes('PROCEDE');
+                    const isNoProcede = d._estado_final === 'NO PROCEDE';
+                    return (
+                      <tr 
+                        key={`${d._doc}-${d._gpe}-${idx}`}
+                        className={`transition-colors hover:bg-amber-500/10 ${isEven ? 'bg-[var(--bg-surface)]' : 'bg-[var(--bg-card)]/40'}`}
+                      >
+                        <td className="py-2 px-3 font-bold text-[var(--text-primary)] max-w-[220px] truncate" title={d._nombre}>
+                          {d._nombre || 'SIN NOMBRE'}
+                        </td>
+                        <td className="py-2 px-3 font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {d._doc}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-[var(--text-secondary)]">
+                          {d._celular && d._celular !== '-' ? (
+                            <div className="flex items-center gap-2">
+                              <span className="flex items-center gap-1 font-bold">
+                                <Phone size={11} className="text-[var(--text-muted)] opacity-70" />
+                                {d._celular}
+                              </span>
+                              {d._wa_phone && (
+                                <a
+                                  href={`https://wa.me/${d._wa_phone}?text=${encodeURIComponent(`Hola ${d._nombre}, te contactamos de GEA respecto a tu postulación en ${d._campana}.`)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-black text-[9px] border border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
+                                  title={`Contactar a ${d._nombre} por WhatsApp`}
+                                >
+                                  <MessageSquare size={10} />
+                                  <span>WhatsApp</span>
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[var(--text-muted)]">-</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-[var(--text-secondary)] max-w-[160px] truncate" title={d._campana}>
+                          {d._campana}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-xs font-bold text-[var(--text-primary)]">
+                          <span className="bg-[var(--bg-elevated)] border border-[var(--border-normal)] px-1.5 py-0.5 rounded">
+                            {d._gpe}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 font-medium text-[var(--text-secondary)] max-w-[160px] truncate" title={d._formador}>
+                          {d._formador}
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono font-bold text-[var(--text-secondary)]">
+                          {d._fecha_formatted || '-'}
+                        </td>
+                        <td className="py-2 px-3 font-semibold text-amber-600 dark:text-amber-400 max-w-[220px] truncate" title={d._motivo}>
+                          <span className="bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded text-[10.5px]">
+                            {d._motivo || 'DOCUMENTOS INCOMPLETOS'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <span className={`px-2 py-0.5 rounded text-[9.5px] font-black uppercase tracking-wider ${
+                            isProcede 
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' 
+                              : isNoProcede
+                                ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                          }`}>
+                            {d._estado_final}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-[var(--text-secondary)] max-w-[240px] truncate text-[10.5px]" title={d._comentarios}>
+                          {d._comentarios || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Paginación Descuentos */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1.5 border-t border-[var(--border-subtle)] shrink-0 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-[var(--text-muted)]">Filas por página:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-lg px-2 py-1 text-xs font-bold text-[var(--text-primary)] outline-none cursor-pointer"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-bold text-[var(--text-muted)] mr-2">
+                Página <span className="text-[var(--text-primary)] font-black">{currentPage}</span> de <span className="text-[var(--text-primary)] font-black">{totalPagesDescuentos}</span>
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-40 disabled:pointer-events-none text-[var(--text-primary)] transition-all cursor-pointer"
+                title="Página anterior"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPagesDescuentos, p + 1))}
+                disabled={currentPage >= totalPagesDescuentos}
+                className="p-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] hover:bg-[var(--bg-elevated)] disabled:opacity-40 disabled:pointer-events-none text-[var(--text-primary)] transition-all cursor-pointer"
+                title="Página siguiente"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'CONSOLIDADO_BAJAS' ? (
         <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-hidden bg-[var(--bg-card)] border border-[var(--border-normal)] rounded-xl p-3 shadow-xs">
           
           {/* Barra de Herramientas y Filtros Internos del Consolidado */}

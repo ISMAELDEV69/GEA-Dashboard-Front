@@ -282,8 +282,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
               title={item.isLockedBaja ? `Baja registrada en fecha anterior: ${item.motivo_baja}` : 'Motivo de baja'}
             >
               {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
-              {item.showBajaDia1Option && <option value="BAJA DIA 1">BAJA DIA 1</option>}
-              {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && (
+              {item.showBajaDia1Option && !item.isCorte3 && <option value="BAJA DIA 1">BAJA DIA 1</option>}
+              {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && !item.isCorte3 && (
                 <option value="BAJA DIA 1">BAJA DIA 1</option>
               )}
               {item.motivo_baja && item.motivo_baja !== 'BAJA DIA 1' && item.motivo_baja !== 'OBSERVADO' && item.motivo_baja !== 'SOBREDOTACIÓN' && !motivosBaja.some(m => m.motivo === item.motivo_baja) && (
@@ -346,6 +346,43 @@ function resolveFormadorDisplayName(formadoresList = [], doc = '', fallback = ''
   return 'SIN ASIGNAR'
 }
 
+/**
+ * Detecta el corte sugerido (1, 2 o 3) según el horario del grupo (mañana, tarde o noche)
+ * dividiendo la jornada en 3 momentos de corte operativo (Apertura, Seguimiento RyS, Cierre).
+ */
+function getSuggestedCorte(rangoHorario) {
+  if (!rangoHorario) {
+    const hour = new Date().getHours()
+    if (hour < 11) return 1
+    if (hour < 14) return 2
+    return 3
+  }
+  const matches = String(rangoHorario).match(/(\d{1,2}):(\d{2})/g)
+  if (!matches || matches.length < 2) {
+    const hour = new Date().getHours()
+    if (hour < 11) return 1
+    if (hour < 14) return 2
+    return 3
+  }
+  const [startH, startM] = matches[0].split(':').map(Number)
+  const [endH, endM] = matches[1].split(':').map(Number)
+  let startMin = startH * 60 + startM
+  let endMin = endH * 60 + endM
+  if (endMin <= startMin) endMin += 24 * 60
+
+  const now = new Date()
+  let currentMin = now.getHours() * 60 + now.getMinutes()
+  if (currentMin < startMin && endMin > 24 * 60) currentMin += 24 * 60
+
+  const duration = endMin - startMin
+  const c1 = startMin + duration * 0.35
+  const c2 = startMin + duration * 0.70
+
+  if (currentMin <= c1) return 1
+  if (currentMin <= c2) return 2
+  return 3
+}
+
 export default function AsistenciaForm({
   grupos = [],
   postulantes = [],
@@ -369,6 +406,7 @@ export default function AsistenciaForm({
   const [selectedModalidad, setSelectedModalidad] = useState(() => localStorage.getItem('wfm_asis_modalidad') || '')
   const [selectedGrupo, setSelectedGrupo] = useState(() => localStorage.getItem('wfm_asis_grupo') || '')
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+  const [selectedCorte, setSelectedCorte] = useState(1)
   const [searchTerm, setSearchTerm] = useState('')
   
   const [attendanceList, setAttendanceList] = useState([])
@@ -711,12 +749,30 @@ export default function AsistenciaForm({
     setSelectedGrupo('')
   }
   const handleGrupoChange = (val) => {
-    setSelectedGrupo(val)
+    if (val && val.includes(':::')) {
+      const [code, camp] = val.split(':::')
+      setSelectedGrupo(code)
+      if (camp) setSelectedCampana(camp)
+    } else {
+      setSelectedGrupo(val)
+      const match = gruposFiltrados.find(g => normalize(g.codigo) === normalize(val) || normalize(g.id) === normalize(val))
+      if (match?.campana && (!selectedCampana || selectedCampana === 'Todas')) {
+        setSelectedCampana(match.campana)
+      }
+    }
   }
 
   useEffect(() => {
     if (gruposFiltrados.length === 1 && !selectedGrupo) setSelectedGrupo(gruposFiltrados[0].id || gruposFiltrados[0].codigo)
   }, [gruposFiltrados, selectedGrupo])
+
+  // Auto-sugerir corte según el horario del grupo activo
+  useEffect(() => {
+    if (!activeGrupoObj) return
+    const rangoHorario = activeGrupoObj.rango_horario || activeGrupoObj.horario || activeGrupoObj.turno || ''
+    const suggested = getSuggestedCorte(rangoHorario)
+    setSelectedCorte(suggested)
+  }, [activeGrupoObj])
 
   useEffect(() => {
     if (!selectedGrupo) {
@@ -769,9 +825,9 @@ export default function AsistenciaForm({
           let q1 = supabase
             .from('v_nominas_consolidado')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
+            .eq('grupo_codigo', targetGrupoCodigo)
           if (targetPeriodo) {
-            q1 = q1.or(`periodo_reclutado.eq.${targetPeriodo},periodo_ingreso_op.eq.${targetPeriodo}`)
+            q1 = q1.eq('periodo_reclutado', targetPeriodo)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             q1 = q1.eq('semana_trabajo', targetSemanaNum)
@@ -783,9 +839,9 @@ export default function AsistenciaForm({
           let qNom = supabase
             .from('nominas')
             .select('*')
-            .or(`grupo_codigo.eq.${targetGrupoCodigo},grupo.eq.${targetGrupoCodigo}`)
+            .eq('grupo_codigo', targetGrupoCodigo)
           if (targetPeriodo) {
-            qNom = qNom.or(`periodo_reclutado.eq.${targetPeriodo},periodo_ingreso_op.eq.${targetPeriodo}`)
+            qNom = qNom.eq('periodo_reclutado', targetPeriodo)
           }
           if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
             qNom = qNom.eq('semana_trabajo', targetSemanaNum)
@@ -828,13 +884,16 @@ export default function AsistenciaForm({
           }
 
           const isRowMatchWeekAndPeriod = (row) => {
+            if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+              if (row.campana && normalize(row.campana) !== normalize(targetCampana)) return false
+            }
             if (!isNaN(targetSemanaNum) && targetSemanaNum > 0) {
               const rSem = parseInt(String(row.semana_trabajo || row.semana || '').replace(/\D/g, ''), 10)
               if (!isNaN(rSem) && rSem !== targetSemanaNum) return false
             }
             if (targetPeriodo) {
               const rPerRec = String(row.periodo_reclutado || '').replace(/\D/g, '')
-              const rPerIng = String(row.periodo_ingreso_op || '').replace(/\D/g, '')
+              const rPerIng = String(row.periodo_ingreso_op || row.grupo_periodo || '').replace(/\D/g, '')
               const matchRec = rPerRec && (rPerRec.includes(targetPeriodo) || targetPeriodo.includes(rPerRec))
               const matchIng = rPerIng && (rPerIng.includes(targetPeriodo) || targetPeriodo.includes(rPerIng))
               if (!matchRec && !matchIng) return false
@@ -899,7 +958,21 @@ export default function AsistenciaForm({
   }, [selectedGrupo, selectedCampana, selectedPeriodo, selectedSemana, activeGrupoObj]);
 
   const effectivePostulantes = useMemo(() => {
-    const list = groupPostulantesDirect.length > 0 ? groupPostulantesDirect : postulantes;
+    let list = groupPostulantesDirect.length > 0 ? groupPostulantesDirect : postulantes;
+    // Si caemos en el fallback global de postulantes, filtrar estrictamente por grupo y campaña
+    if (groupPostulantesDirect.length === 0 && selectedGrupo) {
+      const targetGrupoCodigo = String(activeGrupoObj?.codigo || selectedGrupo).trim();
+      const targetCampana = String(activeGrupoObj?.campana || selectedCampana || '').trim();
+      list = list.filter(p => {
+        const matchGrupo = normalize(p.grupo_codigo) === normalize(targetGrupoCodigo) || 
+                           normalize(p.grupo) === normalize(targetGrupoCodigo);
+        if (!matchGrupo) return false;
+        if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+          if (p.campana && normalize(p.campana) !== normalize(targetCampana)) return false;
+        }
+        return true;
+      });
+    }
     if (!descuentosAprobadosSet || descuentosAprobadosSet.size === 0) return list;
     return list.filter(p => {
       const doc = String(p.documento || '').trim();
@@ -908,7 +981,7 @@ export default function AsistenciaForm({
              String(p.estado || '').toUpperCase() !== 'DESCUENTO' &&
              !String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
     });
-  }, [postulantes, groupPostulantesDirect, descuentosAprobadosSet]);
+  }, [postulantes, groupPostulantesDirect, descuentosAprobadosSet, selectedGrupo, activeGrupoObj, selectedCampana]);
 
   useEffect(() => {
     if (!selectedGrupo) {
@@ -995,6 +1068,9 @@ export default function AsistenciaForm({
 
     for (const p of effectivePostulantes) {
       const doc = String(p.documento || '').trim();
+      if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+        if (p.campana && normalize(p.campana) !== normalize(targetCampana)) continue;
+      }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
                      descuentosAprobadosSet.has(doc) || 
@@ -1010,6 +1086,9 @@ export default function AsistenciaForm({
 
     for (const a of groupRecordsAll) {
       const doc = String(a.postulante_documento || '').trim();
+      if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+        if (a.campana && normalize(a.campana) !== normalize(targetCampana)) continue;
+      }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
                      descuentosAprobadosSet.has(doc) || 
@@ -1048,6 +1127,13 @@ export default function AsistenciaForm({
       const doc = String(p.documento || '').trim();
       const hasHistoryInGroup = mappedDocs.has(p.documento);
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
+
+      // Si se definió campaña objetivo para el grupo, filtrar estrictamente para evitar mezclar postulantes de grupos homónimos
+      if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
+        if (p.campana && normalize(p.campana) !== normalize(targetCampana)) {
+          return false;
+        }
+      }
 
       // Si ya tiene registros de asistencia en el grupo, siempre debe aparecer en el grupo
       if (hasHistoryInGroup || hasActiveInGroup) {
@@ -1196,14 +1282,17 @@ export default function AsistenciaForm({
         condicion: p.condicion,
         hadDia1Attendance,
       }
-      // Se permite BAJA DIA 1 en Día 1, o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1 (periodo de gracia)
+      // Se permite BAJA DIA 1 en Día 1 (Cortes 1-2), o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1 (periodo de gracia)
+      // En Corte 3: el formador debe registrar la baja con motivo propio de formación — NO se clasifica como BAJA DIA 1
+      const isCorte3 = selectedCorte === 3
       const isEligibleBajaD1 = canAssignBajaDia1({
         trainingDayIndex,
         row: profileRow,
         hadDia1Attendance,
         existingMotivo: '',
+        corte: selectedCorte,
       })
-      const showBajaDia1Option = isEligibleBajaD1
+      const showBajaDia1Option = isEligibleBajaD1 && !isCorte3
       const allowOtherMotivos = true
 
       const docFormador = String(p.formador_documento || effectiveGrupoObj?.formador_documento || '').trim()
@@ -1322,12 +1411,14 @@ export default function AsistenciaForm({
         pastMotive,
         pastBajaDate,
         isFirstRecordGroup,
-        isHistoricalBaja
+        isHistoricalBaja,
+        isCorte3,
+        corte: selectedCorte,
       }
     })
 
     setAttendanceList(list)
-  }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado, descuentosAprobadosSet])
+  }, [selectedGrupo, fecha, asistencias, effectivePostulantes, activeGrupoObj, formadores, dia1Calibrado, descuentosAprobadosSet, selectedCorte])
 
   // Casuística: Levantar baja de un postulante que asistió en un día posterior (ej. asistió Día 2)
   const handleLevantarBaja = useCallback(async (item) => {
@@ -1592,12 +1683,14 @@ export default function AsistenciaForm({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
           existingMotivo: '',
+          corte: item.corte ?? selectedCorte,
         })
       } else if (item.sigla === 'B' && !item.isLockedBaja) {
         motivo_baja = sanitizeBajaDia1Motivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
           motivo: motivo_baja,
+          corte: item.corte ?? selectedCorte,
         })
       }
       return { ...item, motivo_baja }
@@ -1642,6 +1735,7 @@ export default function AsistenciaForm({
           estado: r.sigla === 'B' ? 'CESADO' : 'ACTIVO',
           sigla: r.sigla,
           motivo_baja: r.motivo_baja || '',
+          corte: itemInfo?.corte ?? selectedCorte,
           fecha_hora_registro: nowStr,
           codigo_grupo: targetGroup
         });
@@ -2223,16 +2317,29 @@ export default function AsistenciaForm({
               <Building2 size={10} className="text-blue-500 shrink-0" /> GRUPO
             </span>
             <select
-              value={selectedGrupo}
+              value={(() => {
+                if (!selectedGrupo) return ''
+                const homonyms = gruposFiltrados.filter(x => normalize(x.codigo) === normalize(selectedGrupo))
+                if (homonyms.length > 1 && selectedCampana && selectedCampana !== 'Todas') {
+                  return `${selectedGrupo}:::${selectedCampana}`
+                }
+                return selectedGrupo
+              })()}
               onChange={e => handleGrupoChange(e.target.value)}
               className="w-full h-7 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-normal)] text-[var(--text-primary)] px-2 outline-none focus:border-cyan-500 transition-all cursor-pointer truncate"
             >
               <option value="">Seleccionar</option>
-              {gruposFiltrados.map((g, idx) => (
-                <option key={`${g.id || g.codigo}_${idx}`} value={g.codigo}>
-                  {String(g.codigo).startsWith('PROY-') ? '—' : (String(g.codigo).replace(/_\d+$/, '') || 'SIN CÓDIGO')}
-                </option>
-              ))}
+              {gruposFiltrados.map((g, idx) => {
+                const countSameCode = gruposFiltrados.filter(x => normalize(x.codigo) === normalize(g.codigo)).length
+                const baseLabel = String(g.codigo).startsWith('PROY-') ? '—' : (String(g.codigo).replace(/_\d+$/, '') || 'SIN CÓDIGO')
+                const displayLabel = countSameCode > 1 && g.campana ? `${baseLabel} · ${g.campana}` : baseLabel
+                const optVal = countSameCode > 1 && g.campana ? `${g.codigo}:::${g.campana}` : g.codigo
+                return (
+                  <option key={`${g.id || g.codigo}_${idx}`} value={optVal}>
+                    {displayLabel}
+                  </option>
+                )
+              })}
             </select>
           </div>
 
@@ -2354,7 +2461,48 @@ export default function AsistenciaForm({
             </div>
           </div>
 
+          {/* CORTE (solo visible en Día 1) */}
+          {(attendanceList[0]?.trainingDayIndex ?? 0) === 1 && (
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
+                <Radio size={10} className="text-violet-500 shrink-0" /> CORTE
+              </span>
+              <div className="flex gap-1 h-7 items-center">
+                {[1, 2, 3].map(c => {
+                  const isActive = selectedCorte === c
+                  const colors = c === 1
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/25'
+                    : c === 2
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-500 hover:bg-amber-500/25'
+                      : 'bg-rose-500/15 border-rose-500/40 text-rose-500 hover:bg-rose-500/25'
+                  const activeColors = c === 1
+                    ? 'bg-emerald-500 border-emerald-500 text-white shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                    : c === 2
+                      ? 'bg-amber-500 border-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                      : 'bg-rose-500 border-rose-500 text-white shadow-[0_0_8px_rgba(239,68,68,0.5)]'
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setSelectedCorte(c)}
+                      title={c === 3 ? 'Corte 3 — El formador debe registrar la baja con motivo propio. No aplica BAJA DIA 1.' : `Corte ${c}`}
+                      className={`flex-1 h-7 text-[10px] font-black rounded-lg border transition-all cursor-pointer select-none ${isActive ? activeColors : colors}`}
+                    >
+                      C{c}
+                    </button>
+                  )
+                })}
+              </div>
+              {selectedCorte === 3 && (
+                <span className="text-[8px] text-rose-500 font-bold mt-0.5 leading-tight">
+                  ⚠️ Corte 3: baja a cargo del formador
+                </span>
+              )}
+            </div>
+          )}
+
         </div>
+
       </div>
 
       {/* ── 3. COMPACT MICRO-KPIS STRIP (Height ~54px) ── */}

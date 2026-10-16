@@ -73,8 +73,17 @@ export function isDistintoAptoProfile(row = {}) {
   return false
 }
 
-export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMotivo = '', hadDia1Attendance = false } = {}) {
+export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMotivo = '', hadDia1Attendance = false, corte = null, corteIndex = null, hadAttendanceInEarlierCuts = false } = {}) {
   if (isRecuperadoCapProfile(row)) return false
+
+  // Regla Oficial de Calibración Día 1 con 3 Cortes:
+  // Reclutamiento hace seguimiento hasta el Corte 2.
+  // Si se está en Corte 3, o si el alumno ya tuvo asistencia (A / I-OP) en un corte previo del Día 1:
+  // NO se considera Baja Día 1. El formador debe registrar la baja con el motivo específico de formación.
+  const currentCorte = Number(corte ?? corteIndex ?? row?.corte ?? row?.corteIndex ?? 0)
+  if (currentCorte === 3) return false
+  if (hadAttendanceInEarlierCuts || row?.hadAttendanceInEarlierCuts) return false
+
   const day = Number(trainingDayIndex) || 0
   if (day === 1) return true
 
@@ -95,10 +104,13 @@ export function canAssignBajaDia1({ trainingDayIndex = 0, row = {}, existingMoti
 }
 
 export function defaultBajaMotivo(params = {}) {
+  const currentCorte = Number(params?.corte ?? params?.corteIndex ?? params?.row?.corte ?? params?.row?.corteIndex ?? 0)
+  const isCorte3 = currentCorte === 3
   const prev = params?.previousMotivo || params?.existingMotivo || params?.row?.pastMotive || params?.row?.motivo_baja || ''
+
   if (prev && String(prev).trim()) {
     const cleanPrev = String(prev).trim()
-    if (isBajaDia1Motivo(cleanPrev) && isRecuperadoCapProfile(params?.row)) {
+    if (isBajaDia1Motivo(cleanPrev) && (isRecuperadoCapProfile(params?.row) || isCorte3)) {
       return 'DESERCIÓN'
     }
     return cleanPrev
@@ -106,16 +118,20 @@ export function defaultBajaMotivo(params = {}) {
   const day = Number(params?.trainingDayIndex) || 0
   const row = params?.row || {}
   const hadDia1Attendance = Boolean(params?.hadDia1Attendance || row?.hadDia1Attendance)
-  if (canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance })) {
+  const hadAttendanceInEarlierCuts = Boolean(params?.hadAttendanceInEarlierCuts || row?.hadAttendanceInEarlierCuts)
+
+  if (canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance, corte: currentCorte, hadAttendanceInEarlierCuts })) {
     return 'BAJA DIA 1'
   }
   return 'DESERCIÓN'
 }
 
-export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previousMotivo = '', hadDia1Attendance = false } = {}) {
+export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previousMotivo = '', hadDia1Attendance = false, corte = null, corteIndex = null, hadAttendanceInEarlierCuts = false } = {}) {
   const day = Number(trainingDayIndex) || 0
+  const currentCorte = Number(corte ?? corteIndex ?? row?.corte ?? row?.corteIndex ?? 0)
   const hasDia1Att = Boolean(hadDia1Attendance || row?.hadDia1Attendance)
-  const isEligible = canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance: hasDia1Att })
+  const hasEarlierAtt = Boolean(hadAttendanceInEarlierCuts || row?.hadAttendanceInEarlierCuts)
+  const isEligible = canAssignBajaDia1({ trainingDayIndex: day, row, hadDia1Attendance: hasDia1Att, corte: currentCorte, hadAttendanceInEarlierCuts: hasEarlierAtt })
 
   // Si el usuario seleccionó o especificó un motivo explícito en la interfaz, se respeta ese motivo
   if (motivo && String(motivo).trim()) {
@@ -133,7 +149,7 @@ export function sanitizeBajaDia1Motivo({ trainingDayIndex, row, motivo, previous
   if (previousMotivo && String(previousMotivo).trim()) {
     const cleanPrev = String(previousMotivo).trim()
     if (isBajaDia1Motivo(cleanPrev)) {
-      if (isEligible || !isRecuperadoCapProfile(row)) {
+      if (isEligible && !isRecuperadoCapProfile(row)) {
         return cleanPrev
       }
       return 'DESERCIÓN'
@@ -150,3 +166,4 @@ export function countsInFormacionDesercion(row = {}, motivo = '') {
   if (isBajaDia1Motivo(motivo)) return false
   return true
 }
+

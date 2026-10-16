@@ -142,8 +142,17 @@ export function isBajaDia1(motivo, sigla, row) {
 
   if (t.includes('DESCUENTO') || stD1.includes('DESCUENTO')) return false;
 
+  // Regla de Calibración Día 1 con 3 Cortes:
+  // Reclutamiento hace seguimiento hasta el Corte 2.
+  // Si es Corte 3 o si el alumno ya tuvo asistencia en un corte anterior del Día 1, NUNCA es Baja Día 1
+  const corte = Number(row?.corte ?? row?.corteIndex ?? 0);
+  const isCorte3 = corte === 3 || String(row?.fecha_hora_registro || '').toUpperCase().includes('CORTE 3');
+  if (isCorte3 || row?.hadAttendanceInEarlierCuts === true) {
+    return false;
+  }
+
   // Si la persona ya asistió (ej. dia_1 === 'ASISTIO' o tiene registro confirmado de asistencia), NUNCA es Baja Día 1
-  if (dia1 === 'ASISTIO' || dia1 === 'A' || row?.hasAttendance === true || row?.hasPriorAttendance === true) {
+  if (dia1 === 'ASISTIO' || dia1 === 'A' || row?.hasAttendance === true || row?.hasPriorAttendance === true || row?.hadDia1Attendance === true) {
     if (!m.includes('BAJA DIA 1') && !m.includes('BAJA D1')) {
       return false;
     }
@@ -168,7 +177,9 @@ export function isBajaDia1(motivo, sigla, row) {
       m.includes('TRABAJO') || m.includes('DISPONIBILIDAD') ||
       m.includes('HORARIO') || m.includes('INCOMPATIBILIDAD') ||
       m.includes('DESISTIMIENTO') || m.includes('FALTA DOCUMENTACION') ||
-      m.includes('FALTA DOCUMENTACIÓN') || m.includes('ACTITUD') ||
+      m.includes('FALTA DOCUMENTACIÓN') || m.includes('DOCUMENTO') ||
+      m.includes('NO CONTACTO') || m.includes('DESERCION') ||
+      m.includes('DESERCIÓN') || m.includes('ACTITUD') ||
       m.includes('DESAPROBADO') || m.includes('FALTAS')
     ) {
       return false;
@@ -650,7 +661,7 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
     for (let from = 0; from < totalCount; from += step) {
       let dataQuery = supabase
         .from('consolidado_asistencias')
-        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen')
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro')
         .order('id', { ascending: true })
         .range(from, from + step - 1);
 
@@ -714,7 +725,7 @@ export async function fetchConsolidadoOnDemand({ semana = null, gpe = null, camp
     const buildBaseQuery = () => {
       let q = supabase
         .from('consolidado_asistencias')
-        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen');
+        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro');
 
       if (cleanGpe) {
         q = q.or(`codigo_grupo.ilike.%${cleanGpe}%,grupo.ilike.%${cleanGpe}%`);
@@ -2346,6 +2357,8 @@ export async function fetchAsistencias() {
           semana: semFromArchivo,
           semana_trabajo: semFromArchivo,
           semana_label: semFromArchivo,
+          corte: row.corte || null,
+          fecha_hora_registro: row.fecha_hora_registro || null,
         });
       }
     });
@@ -3978,11 +3991,12 @@ export async function fetchMotivosBajasData(options = {}) {
       return all;
     };
 
-    const [consData, capRes, nominasData, postulantesData] = await Promise.all([
+    const [consData, capRes, nominasData, postulantesData, descData] = await Promise.all([
       fetchAllConsolidado(options),
       supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_inicio_ojt, periodo, periodo_ingreso_op, segmento, semana_label, semana_trabajo, estado, modalidad'),
       fetchAllNominasPaginado(),
-      fetchAllPostulantesPaginado()
+      fetchAllPostulantesPaginado(),
+      fetchAllDescuentosBI()
     ]);
 
     if (capRes.error) console.warn('Error fetching capacidad_rys in fetchMotivosBajasData:', capRes.error);
@@ -3991,7 +4005,8 @@ export async function fetchMotivosBajasData(options = {}) {
       consolidado: consData || [],
       capacidades: capRes.data || [],
       nominas: nominasData || [],
-      postulantes: postulantesData || []
+      postulantes: postulantesData || [],
+      descuentos: descData || []
     };
   });
 }
@@ -4243,7 +4258,7 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   const recAsis = rawRecAsis || []
 
   let formQuery = supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, corte, fecha_hora_registro')
     .eq('codigo_grupo', grupo_codigo)
     .order('created_at', { ascending: true })
 
@@ -4261,7 +4276,9 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
-      fecha_asistencia: isoDate
+      fecha_asistencia: isoDate,
+      corte: row.corte,
+      fecha_hora_registro: row.fecha_hora_registro
     }
   }).filter(f => f.fecha_asistencia)
 
@@ -4298,11 +4315,35 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
+    const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
+    const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
+
+    // Regla Oficial de Calibración Día 1 con 3 Cortes:
+    // Reclutamiento hace seguimiento y valida hasta el Corte 2.
+    // Si el postulante asistió en Corte 1 o 2, o si la baja de formación se mandó en el Corte 3
+    // (o con motivo específico de formación: Deserción, Documentos Incompletos, etc.),
+    // se considera que Formación SÍ recibió al alumno en Día 1 (cuenta en sala de Formación).
+    const hadAttendanceInEarlierCuts = d1Records.some(r => {
+      const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
+      const c = Number(r.corte ?? r.corteIndex ?? 0);
+      return (s === 'A' || s === 'I-OP') && (c === 1 || c === 2 || !c);
+    });
+    const isCorte3Drop = exactD1Record && (
+      Number(exactD1Record.corte) === 3 || 
+      String(exactD1Record.fecha_hora_registro || '').toUpperCase().includes('CORTE 3')
+    ) && d1Sigla === 'B';
+    const isExplicitTrainingDrop = d1Sigla === 'B' && !isBajaDia1(d1Motivo, d1Sigla, exactD1Record);
+    const recValidatedD1 = recCandidate && (String(recCandidate.dia_1 || '').toUpperCase().trim() === 'ASISTIO');
+
+    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1')) && 
+      !hadAttendanceInEarlierCuts && !isCorte3Drop && !(isExplicitTrainingDrop && recValidatedD1);
+
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
     const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
     const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
                        studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
+    const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO') && !isCorte3Drop && !hadAttendanceInEarlierCuts;
+    const isBajaForm = droppedD1InSala || (isBajaRecord && !hadAttendanceInEarlierCuts) || isCeseRec || isCeseForm || isBajaDia1Rec;
     const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
 
     // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
@@ -4501,7 +4542,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
   const recAsis = rawRecAsis || [];
   
   let formQuery = supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado, nombres, apellido_paterno, apellido_materno')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado, nombres, apellido_paterno, apellido_materno, corte, fecha_hora_registro')
     .eq('codigo_grupo', grupo_codigo)
     .order('created_at', { ascending: true })
 
@@ -4522,7 +4563,9 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       apellido_paterno: row.apellido_paterno,
       apellido_materno: row.apellido_materno,
       tipo_reclutado: row.tipo_reclutado,
-      fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia)
+      fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia),
+      corte: row.corte,
+      fecha_hora_registro: row.fecha_hora_registro
     }
   })
 
@@ -4579,7 +4622,26 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
 
     const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
     const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
-    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1'));
+
+    // Regla Oficial de Calibración Día 1 con 3 Cortes:
+    // Reclutamiento hace seguimiento hasta el Corte 2.
+    // Si el postulante asistió en Corte 1 o Corte 2, o si la baja de formación se mandó en el Corte 3
+    // (o con motivo específico de formación: Deserción, Documentos Incompletos, etc.),
+    // se considera que Formación SÍ recibió al alumno en Día 1 (cuenta en sala de Formación).
+    const hadAttendanceInEarlierCuts = d1Records.some(r => {
+      const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
+      const c = Number(r.corte ?? r.corteIndex ?? 0);
+      return (s === 'A' || s === 'I-OP') && (c === 1 || c === 2 || !c);
+    });
+    const isCorte3Drop = exactD1Record && (
+      Number(exactD1Record.corte) === 3 || 
+      String(exactD1Record.fecha_hora_registro || '').toUpperCase().includes('CORTE 3')
+    ) && d1Sigla === 'B';
+    const isExplicitTrainingDrop = d1Sigla === 'B' && !isBajaDia1(d1Motivo, d1Sigla, exactD1Record);
+    const recValidatedD1 = recCandidate && (String(recCandidate.dia_1 || '').toUpperCase().trim() === 'ASISTIO');
+
+    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1')) && 
+      !hadAttendanceInEarlierCuts && !isCorte3Drop && !(isExplicitTrainingDrop && recValidatedD1);
 
     const hasLaterAttendance = studentRecords.some(r => {
       if (!fecha_dia1_ref || r.fecha_asistencia <= fecha_dia1_ref) return false;
@@ -4604,7 +4666,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       }
     } else {
       const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-      const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B');
+      const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B') && !isCorte3Drop && !hadAttendanceInEarlierCuts;
       isBajaForm = Boolean((isBajaRecord || isBajaDia1Rec || isCeseRec) && !hasLaterAttendance);
       isFormAsistencia = Boolean(formRecord && !isBajaForm);
     }
@@ -6872,7 +6934,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     if (activeAsistencias.length === 0) {
       promises.push(
         supabase.from('consolidado_asistencias')
-          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo')
+          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo, corte, fecha_hora_registro')
           .in('codigo_grupo', codigos)
       );
     } else {
@@ -7238,7 +7300,28 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
         const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
         const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
-        const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1'));
+
+        // Regla Oficial de Calibración Día 1 con 3 Cortes:
+        // Reclutamiento hace seguimiento hasta el Corte 2.
+        // Si el alumno tuvo asistencia (A / I-OP) en Corte 1 o Corte 2,
+        // o si la baja de formación se mandó en el Corte 3 (o con motivo específico de formación: Deserción, Documentos Incompletos, etc.),
+        // se considera que Formación SÍ recibió al alumno en Día 1 (isFormAsistencia = true, isBajaForm = false).
+        const hadAttendanceInEarlierCuts = d1Records.some(r => {
+          const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
+          const c = Number(r.corte ?? r.corteIndex ?? 0);
+          return (s === 'A' || s === 'I-OP') && (c === 1 || c === 2 || !c);
+        });
+
+        const isCorte3Drop = exactD1Record && (
+          Number(exactD1Record.corte) === 3 || 
+          String(exactD1Record.fecha_hora_registro || '').toUpperCase().includes('CORTE 3')
+        ) && d1Sigla === 'B';
+
+        const isExplicitTrainingDrop = d1Sigla === 'B' && !isBajaDia1(d1Motivo, d1Sigla, exactD1Record);
+        const recValidatedD1 = recCandidate && (String(recCandidate.dia_1 || '').toUpperCase().trim() === 'ASISTIO');
+
+        const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1')) &&
+          !hadAttendanceInEarlierCuts && !isCorte3Drop && !(isExplicitTrainingDrop && recValidatedD1);
 
         const hasLaterAttendance = studentRecords.some(r => {
           if (!fecha_dia1_ref || r.fecha_asistencia <= fecha_dia1_ref) return false;
@@ -7263,7 +7346,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
           }
         } else {
           const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.tipo_reclutado || '').toUpperCase().includes('CESE');
-          const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B');
+          const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.sigla === 'B') && !isCorte3Drop && !hadAttendanceInEarlierCuts;
           isBajaForm = Boolean((isBajaRecord || isBajaDia1Rec || isCeseRec) && !hasLaterAttendance);
           isFormAsistencia = Boolean(formRecord && !isBajaForm);
         }
