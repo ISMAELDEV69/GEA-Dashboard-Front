@@ -67,6 +67,20 @@ export const NOMINA_DB_FIELDS = [
   'estado', 'observacion_estado', 'activo'
 ]
 
+/** Edad en años cumplidos desde fecha YYYY-MM-DD (o DD/MM/YYYY). null si no es válida. */
+export function calcEdadFromFechaISO(fecha) {
+  if (!fecha) return null
+  const s = String(fecha).trim()
+  let y, m, d, mt
+  if ((mt = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) { y = +mt[1]; m = +mt[2]; d = +mt[3] }
+  else if ((mt = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/))) { d = +mt[1]; m = +mt[2]; y = +mt[3] }
+  else return null
+  const t = new Date()
+  let age = t.getFullYear() - y
+  if (t.getMonth() + 1 < m || (t.getMonth() + 1 === m && t.getDate() < d)) age--
+  return age >= 14 && age <= 90 ? age : null
+}
+
 // The exact column headers from the form to parse
 const HEADER_ALIASES = {
   periodo_reclutado: ['PERIODO RECLUTADO'],
@@ -413,6 +427,7 @@ export function parseGoogleFormRow(row, colIdx) {
       rawDistrito = geo.distrito.toUpperCase()
     }
   }
+  const fechaNacParsed = parseExcelDate(get('fecha_nacimiento'))
 
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
@@ -430,8 +445,13 @@ export function parseGoogleFormRow(row, colIdx) {
     usuario_whatsapp: rawUsuarioWhatsapp ? rawUsuarioWhatsapp.replace(/[\r\n]+/g, ' ').trim() : null,
     correo: normLower('correo'),
     genero: normUpper('genero'),
-    fecha_nacimiento: parseExcelDate(get('fecha_nacimiento')),
-    edad: parseInt(get('edad')) || null,
+    fecha_nacimiento: fechaNacParsed,
+    edad: (() => {
+      const m = String(get('edad') ?? '').match(/\d{1,3}/)
+      const fromForm = m ? parseInt(m[0], 10) : null
+      if (fromForm && fromForm >= 14 && fromForm <= 90) return fromForm
+      return calcEdadFromFechaISO(fechaNacParsed)
+    })(),
     estado_civil: normUpper('estado_civil'),
     n_hijos: parseInt(get('n_hijos')) || 0,
     nivel_academico: normUpper('nivel_academico'),

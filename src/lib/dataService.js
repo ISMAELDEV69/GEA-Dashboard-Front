@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from './supabase'
 import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
-import { parseCsvToMatrix, parseNominaRows, cleanDocumento } from './nominaConsolidadoSchema.js'
+import { parseCsvToMatrix, parseNominaRows, cleanDocumento, calcEdadFromFechaISO } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
 import { parseCapacidadRysCsv } from './capacidadRysSchema.js'
@@ -1132,6 +1132,7 @@ function buildNominaPayload(payload, ids) {
     correo: payload.correo,
     genero: payload.genero,
     fecha_nacimiento: payload.fecha_nacimiento,
+    edad: payload.edad || calcEdadFromFechaISO(payload.fecha_nacimiento) || null,
     estado_civil: payload.estado_civil,
     n_hijos: payload.n_hijos ?? 0,
     nivel_academico: payload.nivel_academico,
@@ -1472,6 +1473,7 @@ export async function updatePostulante(documento, payload) {
       correo: payload.correo,
       genero: payload.genero,
       fecha_nacimiento: payload.fecha_nacimiento,
+      edad: payload.edad || calcEdadFromFechaISO(payload.fecha_nacimiento) || undefined,
       estado_civil: payload.estado_civil,
       n_hijos: payload.n_hijos,
       nivel_academico: payload.nivel_academico,

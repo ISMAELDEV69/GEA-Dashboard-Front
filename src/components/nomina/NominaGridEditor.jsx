@@ -20,6 +20,21 @@ export function isRowBolsaCapa(row) {
   return false
 }
 
+// Calcula edad (años cumplidos) a partir de una fecha YYYY-MM-DD o DD/MM/YYYY
+function calcEdadFromFecha(fecha) {
+  if (!fecha) return null
+  const s = String(fecha).trim()
+  let y, m, d
+  let match = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (match) { y = +match[1]; m = +match[2]; d = +match[3] }
+  else if ((match = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/))) { d = +match[1]; m = +match[2]; y = +match[3] }
+  else return null
+  const today = new Date()
+  let age = today.getFullYear() - y
+  if (today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d)) age--
+  return age >= 0 && age < 120 ? age : null
+}
+
 function getHeaderColor(key, isSelected = false) {
   const group1 = ['celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
   const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final', 'revision_estado'];
@@ -594,7 +609,10 @@ export default function NominaGridEditor({
 
       if (err) throw err
       
-      let finalRows = (rows || []).map(r => {
+      let finalRows = (rows || []).map(raw => {
+        const r = (!raw.edad && raw.edad !== 0 && raw.fecha_nacimiento)
+          ? { ...raw, edad: calcEdadFromFecha(raw.fecha_nacimiento) }
+          : raw
         let dist = r.distrito_residencia
         if (!dist && (r.direccion_domicilio || r.lugar_residencia)) {
           const geo = resolveDistrictCoordinates(r.lugar_residencia, r.direccion_domicilio, r.documento)
@@ -698,6 +716,9 @@ export default function NominaGridEditor({
     const targetRow = data.find((r) => r.id === rowId)
     if (!canEditRow(targetRow) || key === 'reclutador') return
     const updateObj = { [key]: value || null }
+    if (key === 'fecha_nacimiento') {
+      updateObj.edad = calcEdadFromFecha(value)
+    }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
       updateObj.reclutador_id = recObj ? recObj.id : null

@@ -71,6 +71,7 @@ export default function DescuentosForm({ userProfile, grupos = [], opcionesHomol
     if (raw.includes('LUIS') || raw.includes('RIVAS')) return 'LUIS RIVAS'
     if (raw.includes('JHOJAN') || raw.includes('SALVADOR')) return 'JHOJAN SALVADOR'
     if (raw.includes('JUNIOR')) return 'JUNIOR SERNAQUE'
+    if (raw.includes('REILLY') || raw.includes('MANRIQUERC')) return 'REILLY MANRIQUE'
     return ''
   }, [userProfile])
 

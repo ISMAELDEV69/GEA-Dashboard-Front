@@ -514,8 +514,14 @@ export default function KpiFormadoresDashboard({
   }, [canSeeKpiFormadores, vista])
 
   useEffect(() => {
-    if (vista === 'kpi') setEjeTiempo('periodo')
-  }, [vista])
+    if (vista === 'kpi') {
+      if (periodoReclutado.length > 0 && (!periodo.length || periodo.includes('ALL'))) {
+        setEjeTiempo('inicio')
+      } else {
+        setEjeTiempo('periodo')
+      }
+    }
+  }, [vista, periodo, periodoReclutado])
 
   const options = useMemo(() => {
     const forPeriodosReclutado = filterFormadorRows(people, {
@@ -617,7 +623,9 @@ export default function KpiFormadoresDashboard({
     periodo, periodoReclutado, semana, segmento, campana, grupo, formador: effectiveFormador, modalidad, condicion,
   }), [people, periodo, periodoReclutado, semana, segmento, campana, grupo, effectiveFormador, modalidad, condicion])
 
-  const model = useMemo(() => buildFormadorModel(filtered), [filtered])
+  const model = useMemo(() => buildFormadorModel(filtered, {
+    periodAxisType: ejeTiempo === 'inicio' ? 'inicio' : 'periodo',
+  }), [filtered, ejeTiempo])
   const t = model.totals
   const motivosEtapa = useMemo(() => {
     const etapa = etapaMotivo === 'ojt' ? 'OJT' : 'CT'
@@ -963,7 +971,8 @@ export default function KpiFormadoresDashboard({
                   ))}
                   <span className="w-px h-4 bg-[var(--border-subtle)] mx-1" />
                   {[
-                    { id: 'periodo', label: 'Por periodo' },
+                    { id: 'periodo', label: 'Por periodo ingreso' },
+                    { id: 'inicio', label: 'Por periodo inicio' },
                     { id: 'semana', label: 'Por semana' },
                   ].map((tab) => (
                     <button
@@ -1009,7 +1018,13 @@ export default function KpiFormadoresDashboard({
                 </div>
               )}
               <FormadorMatrix
-                matrix={ejeTiempo === 'periodo' ? model.matrixPeriod : model.matrixWeek}
+                matrix={
+                  ejeTiempo === 'semana'
+                    ? model.matrixWeek
+                    : ejeTiempo === 'inicio'
+                      ? model.matrixPeriodoInicio
+                      : model.matrixPeriod
+                }
                 metric={gaugeMetric && GAUGE_METRICS[gaugeMetric]?.matrixKey ? GAUGE_METRICS[gaugeMetric].matrixKey : 'all'}
                 selected={selectedFormador}
                 onSelect={(name) => setSelectedFormador((cur) => (cur === name ? null : name))}
@@ -1036,6 +1051,7 @@ export default function KpiFormadoresDashboard({
                         <th className="py-2 px-2 text-right">Baja CT</th>
                         <th className="py-2 px-2 text-right">Baja OJT</th>
                         <th className="py-2 px-2 text-right">% Efect.</th>
+                        <th className="py-2 px-2 text-right">% Dotación</th>
                         <th className="py-2 px-2 text-right">% Deserción</th>
                       </tr>
                     </thead>
@@ -1051,7 +1067,8 @@ export default function KpiFormadoresDashboard({
                           <td className="py-2 px-2 text-right">{f.bajaCt}</td>
                           <td className="py-2 px-2 text-right">{f.bajaOjt}</td>
                           <td className="py-2 px-2 text-right">{f.pctEfectividad}%</td>
-                          <td className="py-2 px-2 text-right">{f.pctDesercion}%</td>
+                          <td className="py-2 px-2 text-right" style={{ color: theme.green }}>{f.pctDotacion}%</td>
+                          <td className="py-2 px-2 text-right" style={{ color: f.pctDesercion > 40 ? theme.red : f.pctDesercion >= 38.4 ? theme.amber : theme.green }}>{f.pctDesercion}%</td>
                         </tr>
                       ))}
                     </tbody>
