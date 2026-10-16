@@ -722,9 +722,8 @@ export default function ResumenCapacitacion({
       const convIop = s.d1 > 0 ? ((s.iop / s.d1) * 100) : 0;
       const cumplRq = s.rq > 0 ? ((s.iopFtes / s.rq) * 100) : 0;
       
-      const totalActivos = (s.activos_actuales || 0) + (s.ojt || 0);
-      const desertoresRegistrados = (s.desertores_ct || 0) + (s.desertores_ojt || 0);
-      const desertores = Math.max(desertoresRegistrados, Math.max(0, s.d1 - totalActivos - (s.iop || 0)));
+      // Alineado con kpiFormadoresAnalytics: suma directa sin Math.max
+      const desertores = (s.desertores_ct || 0) + (s.desertores_ojt || 0);
       const pctDesercion = s.d1 > 0 ? ((desertores / s.d1) * 100) : 0;
       const enTransito = Math.max(0, s.ojt);
 
@@ -1163,9 +1162,9 @@ export default function ResumenCapacitacion({
       item.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
       item.activosOjt += Number(g.activos_ojt) || 0;
       
-      const desertoresReg = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
-      const totalActivos = (g.activos_actuales || 0) + (g.activos_ojt || 0);
-      const desert = Math.max(desertoresReg, Math.max(0, (g.asistio_dia1 || 0) - totalActivos - (g.ingresos_iop || 0)));
+      // Usar directamente desertores_ct + desertores_ojt (alineado con kpiFormadoresAnalytics)
+      // El Math.max anterior inflaba cuando activos_actuales era inconsistente
+      const desert = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
       item.desertores += desert;
     });
 
@@ -1193,9 +1192,8 @@ export default function ResumenCapacitacion({
       target.d1 += Number(g.asistio_dia1) || 0;
       target.iop += Number(g.ingresos_iop) || 0;
       target.iopFtes += Number(g.ingresos_iop_ftes !== undefined ? g.ingresos_iop_ftes : g.ingresos_iop) || 0;
-      const desertoresReg = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
-      const totalActivos = (g.activos_actuales || 0) + (g.activos_ojt || 0);
-      const desert = Math.max(desertoresReg, Math.max(0, (g.asistio_dia1 || 0) - totalActivos - (g.ingresos_iop || 0)));
+      // Alineado con kpiFormadoresAnalytics: suma directa sin Math.max
+      const desert = (g.desertores_ct || 0) + (g.desertores_ojt || 0);
       target.desertores += desert;
     });
 

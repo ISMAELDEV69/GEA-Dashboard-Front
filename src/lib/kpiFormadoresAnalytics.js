@@ -20,6 +20,21 @@ function resolvePeriodoIngreso(g) {
   return null
 }
 
+function getGrupoPeriodo(g) {
+  if (!g) return null
+  const ingreso = resolvePeriodoIngreso(g)
+  if (ingreso) return ingreso
+  let per = normalize2026Period(g.periodo)
+  if (per) return per
+  const opDate = g.fecha_inicio_ojt || g.fecha_inicio || g.fecha_registro
+  if (opDate) {
+    per = normalize2026Period(opDate)
+    if (per) return per
+  }
+  return null
+}
+
+
 export const MIN_PERIODO_FORMADOR = '202608'
 
 export function currentOperativePeriodo() {
@@ -152,14 +167,16 @@ function resolveTipo(postulante, records = []) {
 function indexGrupos(grupos = []) {
   const byCodeCamp = new Map()
   const byCode = new Map()
+  const codeCount = new Map()
   for (const g of grupos || []) {
     const code = normKpi(g.codigo || g.grupo_codigo || g.grupo_capacitacion)
     if (!code) continue
     const camp = normKpi(g.campana || g.campana_nombre)
     byCode.set(code, g)
+    codeCount.set(code, (codeCount.get(code) || 0) + 1)
     if (camp) byCodeCamp.set(`${code}|${camp}`, g)
   }
-  return { byCodeCamp, byCode }
+  return { byCodeCamp, byCode, codeCount }
 }
 
 function findGrupo(index, code, camp) {
@@ -167,7 +184,9 @@ function findGrupo(index, code, camp) {
   if (!c) return null
   const campKey = normKpi(camp)
   if (campKey && index.byCodeCamp.has(`${c}|${campKey}`)) return index.byCodeCamp.get(`${c}|${campKey}`)
-  return index.byCode.get(c) || null
+  // Solo usar byCode si el código es único (no repetido en varias campañas)
+  if ((index.codeCount.get(c) || 0) <= 1) return index.byCode.get(c) || null
+  return null
 }
 
 function mergeGrupoSources(grupos = [], campanasMetas = []) {
@@ -179,16 +198,23 @@ function mergeGrupoSources(grupos = [], campanasMetas = []) {
     const camp = normKpi(g.campana || g.campana_nombre)
     const key = `${code}|${camp}`
     const prev = map.get(key) || {}
-    const rqQ = num(g.rq_solicitado ?? g.requerimiento)
-    const rqFte = num(g.rq_ftes_solicitado ?? g.rq_ftes)
+    const rawArea = String(g.area_traslado || prev.area_traslado || '').trim().toUpperCase()
+    const isCancelado = String(g.estado || prev.estado || '').toUpperCase().includes('CANCEL')
+    const isReclutamiento = !rawArea || rawArea === 'RECLUTAMIENTO'
+    const rqQRaw = num(g.rq_solicitado ?? g.requerimiento)
+    const rqFteRaw = num(g.rq_ftes_solicitado ?? g.rq_ftes)
+    const rqQ = (!isCancelado && isReclutamiento) ? (rqQRaw > 0 ? rqQRaw : num(prev.rq_solicitado)) : 0
+    const rqFte = (!isCancelado && isReclutamiento) ? (rqFteRaw > 0 ? rqFteRaw : num(prev.rq_ftes_solicitado)) : 0
     map.set(key, {
       ...prev,
       ...g,
       codigo: g.codigo || g.grupo_codigo || prev.codigo || prev.grupo_codigo,
       grupo_codigo: g.grupo_codigo || g.codigo || prev.grupo_codigo || prev.codigo,
       campana: g.campana || g.campana_nombre || prev.campana || prev.campana_nombre,
-      rq_solicitado: rqQ > 0 ? rqQ : num(prev.rq_solicitado),
-      rq_ftes_solicitado: rqFte > 0 ? rqFte : num(prev.rq_ftes_solicitado),
+      area_traslado: g.area_traslado || prev.area_traslado,
+      estado: g.estado || prev.estado,
+      rq_solicitado: rqQ,
+      rq_ftes_solicitado: rqFte,
       formador_nombre: g.formador_nombre || g.formador || prev.formador_nombre || prev.formador,
     })
   }
@@ -215,20 +241,27 @@ function indexAsistencias(asistencias = []) {
     const doc = String(a.postulante_documento || a.documento || '').trim()
     if (!doc) continue
     const code = normKpi(a.codigo_grupo || a.grupo_codigo || a.grupo)
+    if (!code) continue
     const camp = normKpi(a.campana)
-    const keys = [`${doc}|${code}|${camp}`, `${doc}|${code}`, doc]
-    for (const key of keys) {
-      if (!map.has(key)) map.set(key, [])
-      map.get(key).push(a)
-    }
+    // Solo indexar con campaña para evitar contaminación cruzada entre grupos
+    const key = camp ? `${doc}|${code}|${camp}` : `${doc}|${code}`
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(a)
   }
   return map
 }
 
 function recordsFor(index, doc, code, camp) {
   const c = normKpi(code)
+  if (!c || !doc) return []
   const campKey = normKpi(camp)
-  return index.get(`${doc}|${c}|${campKey}`) || index.get(`${doc}|${c}`) || index.get(doc) || []
+  // Buscar con campaña primero; si no hay match, solo usar doc|code como último recurso
+  // (sin campaña = registros sin campana, NO registros de otra campaña)
+  if (campKey && index.has(`${doc}|${c}|${campKey}`)) return index.get(`${doc}|${c}|${campKey}`)
+  // Solo caer a doc|code si NO existe ninguna clave con campaña para este doc+code
+  // (evita traer asistencias de otros grupos/periodos)
+  if (!campKey && index.has(`${doc}|${c}`)) return index.get(`${doc}|${c}`)
+  return []
 }
 
 function isDescuento(row) {
@@ -253,6 +286,8 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
   const aIndex = indexAsistencias(asistencias)
   const unique = new Map()
 
+  // 1. Postulantes de nómina mapeados a su grupo
+  const cohortPeople = new Map()
   for (const p of postulantes || []) {
     const doc = String(p.documento || p.postulante_documento || '').trim()
     if (!doc) continue
@@ -260,10 +295,44 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
     const camp = p.campana
     const grupo = findGrupo(gIndex, code, camp)
     if (!grupo) continue
+    const key = `${doc}|${normKpi(grupo.codigo || code)}|${normKpi(grupo.campana || camp)}`
+    cohortPeople.set(key, { p, grupo, doc, code, camp })
+  }
 
+  // 2. Incorporar participantes que registraron asistencia en el aula aunque no figuren en nómina
+  for (const a of asistencias || []) {
+    const doc = String(a.postulante_documento || a.documento || '').trim()
+    if (!doc) continue
+    const code = a.codigo_grupo || a.grupo_codigo || a.grupo
+    const camp = a.campana
+    const grupo = findGrupo(gIndex, code, camp)
+    if (!grupo) continue
+    const key = `${doc}|${normKpi(grupo.codigo || code)}|${normKpi(grupo.campana || camp)}`
+    if (!cohortPeople.has(key)) {
+      cohortPeople.set(key, {
+        p: {
+          documento: doc,
+          nombres: a.nombres || '',
+          apellido_paterno: a.apellido_paterno || '',
+          apellido_materno: a.apellido_materno || '',
+          condicion: a.condicion_laboral || a.condicion || grupo.condicion || 'FULL TIME',
+          campana: grupo.campana || camp,
+          grupo_codigo: grupo.codigo || code,
+          modalidad: grupo.modalidad,
+          segmento: grupo.segmento,
+        },
+        grupo,
+        doc,
+        code,
+        camp,
+      })
+    }
+  }
+
+  for (const { p, grupo, doc, code, camp } of cohortPeople.values()) {
     const records = recordsFor(aIndex, doc, code, camp)
     const formador = formadorName(grupo, records)
-    const periodo = resolvePeriodoIngreso(grupo) || normalize2026Period(p.periodo_ingreso_op || p.periodo_reclutado) || ''
+    const periodo = resolvePeriodoIngreso(grupo) || getGrupoPeriodo(grupo) || normalize2026Period(p.periodo_ingreso_op || p.periodo_reclutado) || ''
     const periodoReclutado = normalize2026Period(grupo.periodo || grupo.periodo_rys || p.periodo_reclutado || p.periodo) || ''
     if (!isPeriodoFormadorActivo(periodo) && !isPeriodoFormadorActivo(periodoReclutado)) continue
     const semana = Number(grupo.semana_trabajo || String(grupo.semana_label || p.semana_trabajo || '').replace(/\D/g, '') || 0) || null
@@ -272,55 +341,102 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
     const modalidad = cleanMod(grupo.modalidad || p.modalidad)
     const tipoReclutado = resolveTipo(p, records)
 
+    // Ordenamiento cronológico estricto: fecha del día + hora de corte (o created_at / id)
     const sorted = [...records].sort((a, b) => {
       const da = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || a.fecha) || ''
       const db = parseFechaAsistencia(b.fecha_registro_asistencia || b.fecha_asistencia || b.fecha) || ''
-      return da.localeCompare(db)
+      if (da !== db) return da.localeCompare(db)
+      const ha = String(a.fecha_hora_registro || a.created_at || a.id || '')
+      const hb = String(b.fecha_hora_registro || b.created_at || b.id || '')
+      return ha.localeCompare(hb)
     })
     const last = sorted[sorted.length - 1]
     const descuento = isDescuento(p) || isDescuento(last)
-    const hasAttendedAny = hasSiglaA(records) || sorted.some(r => {
-      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
-      return s === 'A' || s === 'I-OP'
-    })
 
-    const bajaD1 = !descuento && !hasAttendedAny && (
-      isBajaDia1(p.dia_1_obs || p.motivo_baja, p.status_dia_1 || p.sigla, p) ||
-      (last && isBajaDia1(last.motivo_baja, last.sigla || last.sigla_asistencia, last))
-    )
-
+    // 1. I-OP (Ingreso formal a operación)
     const iopRecord = sorted.find((r) => isIngresoOp(r))
-    const iop = Boolean(iopRecord) && !bajaD1 && !descuento
+    const tieneIngreso = Boolean(iopRecord) && !descuento
+    const iop = tieneIngreso
     const iopDate = iopRecord
       ? parseFechaAsistencia(iopRecord.fecha_registro_asistencia || iopRecord.fecha_asistencia || iopRecord.fecha)
       : ''
 
-    const dia1 = !bajaD1 && !descuento && hasSiglaA(records)
+    // 2. Presencia en aula / clase
+    const hasAttendanceInClass = sorted.some((r) => {
+      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'A' || s === 'FJ' || s === 'I-OP' || s === 'CAPACITACION' || s === 'OJT'
+    })
+    const dia1InNomina = ['ASISTIO', 'SI', 'OK'].includes(String(p.dia_1 || '').toUpperCase().trim())
 
-    let fechaBaja = ''
+    // 3. Baja Día 1
+    const txtEstado = String(last?.estado || '').toUpperCase()
+    const txtMotivo = String(last?.motivo_baja || '').toUpperCase()
+    const txtSigla = String(last?.sigla || last?.sigla_asistencia || '').toUpperCase().trim()
+    const txtObs = String(last?.observacion_estado || '').toUpperCase()
+
+    const isBajaDia1Record = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1') ||
+      isBajaDia1(p.dia_1_obs || p.motivo_baja, p.status_dia_1 || p.sigla, p) ||
+      (last && isBajaDia1(last.motivo_baja, last.sigla || last.sigla_asistencia, last))
+
+    const bajaD1 = !descuento && !hasAttendanceInClass && !tieneIngreso && isBajaDia1Record
+
+    // Día 1 oficial (idéntico a Resumen Capacitación & Dotación)
+    const dia1 = !descuento && !bajaD1 && (hasAttendanceInClass || dia1InNomina || tieneIngreso)
+
+    // 4. Baja general en formación
+    let isBajaGeneral = false
+    let fechaUltimaBaja = null
     let motivo = ''
-    let bajaFormacion = false
-    if (!descuento && last && isBajaCapacitacion(last)) {
-      bajaFormacion = true
-      fechaBaja = parseFechaAsistencia(last.fecha_registro_asistencia || last.fecha_asistencia || last.fecha)
-      motivo = String(last.motivo_baja || last.motivo || 'BAJA').trim()
-    } else if (!descuento && !bajaD1 && isBajaCapacitacion(p)) {
-      bajaFormacion = true
-      motivo = String(p.motivo_baja || p.dia_1_obs || 'BAJA').trim()
+    if (!descuento && !bajaD1) {
+      if (last && (txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO')) {
+        isBajaGeneral = true
+        fechaUltimaBaja = parseFechaAsistencia(last.fecha_registro_asistencia || last.fecha_asistencia || last.fecha)
+        motivo = String(last.motivo_baja || last.motivo || 'BAJA').trim()
+      } else if (isBajaCapacitacion(p)) {
+        isBajaGeneral = true
+        motivo = String(p.motivo_baja || p.dia_1_obs || 'BAJA').trim()
+      }
     }
 
-    const attendedOjt = records.some((r) => {
-      const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
-      const present = sigla === 'A' || sigla === 'FJ' || sigla === 'OJT' || sigla === 'I-OP' || sigla === 'CAPACITACION'
-      if (!present) return false
-      const rDate = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha)
-      if (fechaOjt) return Boolean(rDate && rDate >= fechaOjt)
-      return sigla === 'OJT' || sigla === 'I-OP'
-    }) || Boolean(iop && (!fechaOjt || !iopDate || iopDate >= fechaOjt))
+    // 5. OJT y clasificación deserción CT vs OJT (idéntico a Resumen Capacitación)
+    const fechaOjtTarget = fechaOjt && fechaOjt !== 'No definida' ? fechaOjt : null
+    const iopEnVentanaOjt = Boolean(tieneIngreso && (!fechaOjtTarget || !iopDate || iopDate >= fechaOjtTarget))
+    const bajaEnOjt = Boolean(isBajaGeneral && (!fechaOjtTarget ? false : (!fechaUltimaBaja || fechaUltimaBaja >= fechaOjtTarget)))
 
-    const bajaOjt = Boolean(dia1 && bajaFormacion && fechaOjt && fechaBaja && fechaBaja >= fechaOjt)
-    const bajaCt = Boolean(dia1 && bajaFormacion && !bajaD1 && !descuento && !bajaOjt)
-    const ojt = Boolean(dia1 && (attendedOjt || iop || bajaOjt))
+    let attendedInOjt = false
+    let isOjtDesertor = false
+    let isCtDesertor = false
+
+    if (dia1 || tieneIngreso) {
+      attendedInOjt = sorted.some((r) => {
+        const sigla = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+        const isPresence = sigla === 'A' || sigla === 'FJ' || sigla === 'OJT' || sigla === 'I-OP' || sigla === 'CAPACITACION' || sigla === 'ASISTIO'
+        if (!isPresence) return false
+        const rDate = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha)
+        if (fechaOjtTarget) return Boolean(rDate && rDate >= fechaOjtTarget)
+        return sigla === 'OJT' || sigla === 'I-OP'
+      }) || iopEnVentanaOjt
+
+      if (attendedInOjt) {
+        if (iopEnVentanaOjt) {
+          // Graduado I-OP: no inflar deserción
+        } else if (bajaEnOjt) {
+          isOjtDesertor = true
+        } else if (!isBajaGeneral) {
+          // Asesor activo en OJT
+        } else if (!isBajaDia1Record) {
+          isCtDesertor = true
+        }
+      } else {
+        if (isBajaGeneral && !isBajaDia1Record) {
+          isCtDesertor = true
+        }
+      }
+    }
+
+    const ojt = Boolean(dia1 && (attendedInOjt || iop || isOjtDesertor))
+    const bajaCt = isCtDesertor ? 1 : 0
+    const bajaOjt = isOjtDesertor ? 1 : 0
 
     const segmento = String(grupo.segmento || p.segmento || 'SIN SEGMENTO').trim()
     const campana = String(grupo.campana || grupo.campana_nombre || camp || '').trim()
@@ -347,8 +463,8 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
       ojt: ojt ? 1 : 0,
       iop: iop ? 1 : 0,
       iopFtes: iop ? resolveFteWeight(cond, p.condicion, p.condicion_laboral) : 0,
-      bajaCt: bajaCt ? 1 : 0,
-      bajaOjt: bajaOjt ? 1 : 0,
+      bajaCt,
+      bajaOjt,
       motivo: (bajaCt || bajaOjt) ? motivo : '',
       etapaBaja: bajaOjt ? 'OJT' : (bajaCt ? 'CT' : ''),
     }
@@ -573,13 +689,15 @@ function addUniqueRq(seen, acc, row) {
 }
 
 function packGauge(acc, nombre = 'Corte') {
+  const pctDot = acc.rqFte > 0 ? pct(acc.iopFtes, acc.rqFte) : (acc.iopFtes > 0 ? 100 : 0)
+  const pctOp = acc.rqQ > 0 ? pct(acc.iop, acc.rqQ) : (acc.iop > 0 ? 100 : 0)
   return {
     nombre,
     ...acc,
     pctDesercion: pct(acc.desercion, acc.dia1),
-    pctIngresoPers: pct(acc.iop, acc.rqQ),
-    pctIngresoFte: pct(acc.iopFtes, acc.rqFte),
-    pctDotacion: pct(acc.iopFtes, acc.rqFte),
+    pctIngresoPers: pctOp,
+    pctIngresoFte: pctDot,
+    pctDotacion: pctDot,
     pctOjtD1: pct(acc.ojt, acc.dia1),
     pctD1Rq: pct(acc.dia1, acc.rqQ),
   }
@@ -646,6 +764,8 @@ function emptyCell(key) {
 function packMatrixCell(key, raw) {
   if (!raw) return emptyCell(key)
   const iopFtes = Math.round(num(raw.iopFtes) * 10) / 10
+  const pctDot = raw.rqFte > 0 ? pct(raw.iopFtes, raw.rqFte) : (raw.iopFtes > 0 ? 100 : 0)
+  const pctOp = raw.rqQ > 0 ? pct(raw.iop, raw.rqQ) : (raw.iop > 0 ? 100 : 0)
   return {
     key,
     empty: raw.dia1 === 0 && raw.iop === 0 && raw.desercion === 0 && iopFtes === 0,
@@ -657,13 +777,13 @@ function packMatrixCell(key, raw) {
     rqFte: raw.rqFte,
     aulas: raw.aulas || 0,
     pctDesercion: pct(raw.desercion, raw.dia1),
-    pctDotacion: pct(raw.iopFtes, raw.rqFte),
-    pctOp: pct(raw.iop, raw.rqQ),
-    pctFte: pct(raw.iopFtes, raw.rqFte),
+    pctDotacion: pctDot,
+    pctOp,
+    pctFte: pctDot,
   }
 }
 
-function buildTimeMatrix(people, axis) {
+function buildTimeMatrix(people, axis, periodAxisType = 'periodo') {
   const colMap = new Map()
   const formadorTot = new Map()
   const formadorAulas = new Map()
@@ -674,8 +794,10 @@ function buildTimeMatrix(people, axis) {
   people.forEach((row) => {
     if (isJunkFormador(row.formador)) return
     const colKey = axis === 'semana'
-      ? (row.semana == null ? '' : String(row.semana))
-      : String(row.periodo || '')
+      ? (row.semana == null || String(row.semana).trim() === '' ? '' : String(row.semana))
+      : (periodAxisType === 'inicio'
+          ? String(row.periodoReclutado || row.periodo || '')
+          : String(row.periodo || row.periodoReclutado || ''))
     if (!colKey) return
 
     if (!colMap.has(colKey)) {
@@ -731,7 +853,8 @@ function buildTimeMatrix(people, axis) {
   return { columns, rows }
 }
 
-export function buildFormadorModel(rows) {
+export function buildFormadorModel(rows, options = {}) {
+  const { periodAxisType = 'periodo' } = options
   const people = (rows || []).filter((r) => r.dia1 || r.iop)
   const corteAcc = emptyTotals()
   const corteRq = new Set()
@@ -739,6 +862,9 @@ export function buildFormadorModel(rows) {
     addPersonTotals(corteAcc, row)
     addUniqueRq(corteRq, corteAcc, row)
   })
+
+  const pctDotacionTot = corteAcc.rqFte > 0 ? pct(corteAcc.iopFtes, corteAcc.rqFte) : (corteAcc.iopFtes > 0 ? 100 : 0)
+  const pctIngresoPersTot = corteAcc.rqQ > 0 ? pct(corteAcc.iop, corteAcc.rqQ) : (corteAcc.iop > 0 ? 100 : 0)
 
   const totals = {
     ...corteAcc,
@@ -748,8 +874,9 @@ export function buildFormadorModel(rows) {
     pctDesercion: pct(corteAcc.desercion, corteAcc.dia1),
     pctDesercionCt: pct(corteAcc.bajaCt, corteAcc.dia1),
     pctDesercionOjt: pct(corteAcc.bajaOjt, corteAcc.ojt),
-    pctIngresoPers: pct(corteAcc.iop, corteAcc.rqQ),
-    pctIngresoFte: pct(corteAcc.iopFtes, corteAcc.rqFte),
+    pctIngresoPers: pctIngresoPersTot,
+    pctIngresoFte: pctDotacionTot,
+    pctDotacion: pctDotacionTot,
   }
 
   const formadorMap = new Map()
@@ -776,12 +903,15 @@ export function buildFormadorModel(rows) {
   })
 
   const formadores = Array.from(formadorMap.values()).map((f) => {
+    const pctDot = f.rqFte > 0 ? pct(f.iopFtes, f.rqFte) : (f.iopFtes > 0 ? 100 : 0)
+    const pctOp = f.rqQ > 0 ? pct(f.iop, f.rqQ) : (f.iop > 0 ? 100 : 0)
     const packed = {
       ...f,
       pctDesercion: pct(f.desercion, f.dia1),
       pctEfectividad: pct(f.iop, f.dia1),
-      pctIngresoPers: pct(f.iop, f.rqQ),
-      pctIngresoFte: pct(f.iopFtes, f.rqFte),
+      pctIngresoPers: pctOp,
+      pctIngresoFte: pctDot,
+      pctDotacion: pctDot,
     }
     packed.semaforo = semaforoCaida(packed)
     return packed
@@ -803,7 +933,7 @@ export function buildFormadorModel(rows) {
   const weeklyMap = new Map()
   const periodMap = new Map()
   people.forEach((row) => {
-    if (row.semana != null) {
+    if (row.semana != null && String(row.semana).trim() !== '') {
       if (!weeklyMap.has(row.semana)) {
         weeklyMap.set(row.semana, { semana: row.semana, label: `Sem ${row.semana}`, dia1: 0, ojt: 0, iop: 0, desercion: 0 })
       }
@@ -813,11 +943,12 @@ export function buildFormadorModel(rows) {
       w.iop += row.iop
       w.desercion += row.bajaCt + row.bajaOjt
     }
-    if (row.periodo) {
-      if (!periodMap.has(row.periodo)) {
-        periodMap.set(row.periodo, { periodo: row.periodo, label: row.periodo, dia1: 0, ojt: 0, iop: 0, desercion: 0 })
+    const pKey = periodAxisType === 'inicio' ? (row.periodoReclutado || row.periodo) : (row.periodo || row.periodoReclutado)
+    if (pKey) {
+      if (!periodMap.has(pKey)) {
+        periodMap.set(pKey, { periodo: pKey, label: pKey, dia1: 0, ojt: 0, iop: 0, desercion: 0 })
       }
-      const p = periodMap.get(row.periodo)
+      const p = periodMap.get(pKey)
       p.dia1 += row.dia1
       p.ojt += row.ojt
       p.iop += row.iop
@@ -884,7 +1015,8 @@ export function buildFormadorModel(rows) {
   })
 
   const matrixWeek = buildTimeMatrix(people, 'semana')
-  const matrixPeriod = buildTimeMatrix(people, 'periodo')
+  const matrixPeriod = buildTimeMatrix(people, 'periodo', 'periodo')
+  const matrixPeriodoInicio = buildTimeMatrix(people, 'periodo', 'inicio')
 
   return {
     totals,
@@ -895,6 +1027,7 @@ export function buildFormadorModel(rows) {
     periods: Array.from(periodMap.values()).sort((a, b) => a.periodo.localeCompare(b.periodo)),
     matrixWeek,
     matrixPeriod,
+    matrixPeriodoInicio,
     tipos,
     motivos,
     aulas,
