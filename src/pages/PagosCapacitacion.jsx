@@ -38,6 +38,10 @@ import { formatFechaDDMMYYYY } from '../lib/propuestaParser'
 // ────────────────────────────────────────────────────────────────────────
 const soles = v => `S/. ${Number(v || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+const SELECT_GEA =
+  'w-full bg-[var(--bg-base)] border border-[var(--border-normal)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] font-medium'
+const LABEL_GEA = 'text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider'
+
 function semanaDeCapacidad(g) {
   return normalizarSemanaPago(g?.semana_label || (g?.semana_trabajo != null && g?.semana_trabajo !== '' ? `SEM ${g.semana_trabajo}` : '') || g?.semana)
 }
@@ -47,26 +51,27 @@ function semanaDeCapacidad(g) {
 // ────────────────────────────────────────────────────────────────────────
 function KpiCard({ icon: Icon, label, value, sub, color = 'blue', highlight = false }) {
   const colors = {
-    blue: 'from-blue-500/20 to-blue-600/10 border-blue-500/30 text-blue-400',
-    green: 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/30 text-emerald-400',
-    amber: 'from-amber-500/20 to-amber-600/10 border-amber-500/30 text-amber-400',
-    violet: 'from-violet-500/20 to-violet-600/10 border-violet-500/30 text-violet-400',
-    rose: 'from-rose-500/20 to-rose-600/10 border-rose-500/30 text-rose-400',
+    blue: 'border-blue-500/30 text-blue-400 bg-blue-500/10',
+    green: 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10',
+    emerald: 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10',
+    cyan: 'border-cyan-500/30 text-cyan-400 bg-cyan-500/10',
+    amber: 'border-amber-500/30 text-amber-400 bg-amber-500/10',
+    violet: 'border-violet-500/30 text-violet-400 bg-violet-500/10',
+    rose: 'border-rose-500/30 text-rose-400 bg-rose-500/10',
   }
   const cls = colors[color] || colors.blue
   return (
-    <div className={`rounded-xl border bg-gradient-to-br ${cls} p-4 flex flex-col gap-1 ${highlight ? 'ring-2 ring-offset-1 ring-offset-slate-900 ring-current shadow-lg shadow-emerald-950/40' : ''}`}>
+    <div className={`rounded-xl border ${cls} p-4 flex flex-col gap-1 ${highlight ? 'ring-1 ring-[var(--accent)]/40' : ''}`}>
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide opacity-80">
         <Icon size={14} />
         {label}
       </div>
-      <div className="text-2xl font-bold text-white mt-1">{value}</div>
-      {sub && <div className="text-xs opacity-60">{sub}</div>}
+      <div className="text-2xl font-bold text-[var(--text-primary)] mt-1">{value}</div>
+      {sub && <div className="text-xs text-[var(--text-muted)]">{sub}</div>}
     </div>
   )
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────────────────
 // Sub-componente: Formulario de configuración de grupo (26 Campos Completos)
 // ────────────────────────────────────────────────────────────────────────
@@ -2181,17 +2186,17 @@ export default function PagosCapacitacion({ userProfile }) {
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <BanknoteIcon className="text-emerald-400" />
+          <h1 className="text-2xl font-bold text-[var(--text-primary)] flex items-center gap-2">
+            <BanknoteIcon className="text-[var(--accent)]" />
             Pagos de Capacitación
           </h1>
-          <p className="text-slate-400 text-sm mt-1">
+          <p className="text-[var(--text-muted)] text-sm mt-1">
             Cruce de asistencias efectivas, pago por día y bonos (Bienvenida, Asistencia Perfecta y Permanencia).
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700 flex-wrap gap-1">
+        <div className="flex bg-[var(--bg-surface)] p-1 rounded-lg border border-[var(--border-normal)] flex-wrap gap-1">
           {[
             { id: 'calcular', label: 'Calcular Pagos', icon: Calculator },
             { id: 'configurar', label: 'Propuestas de Grupos', icon: Settings2 },
@@ -2203,10 +2208,10 @@ export default function PagosCapacitacion({ userProfile }) {
                 setActiveTab(id)
                 if (id === 'historico') loadLotes()
               }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                 activeTab === id
-                  ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                  ? 'bg-[var(--accent)] text-white shadow-sm font-bold'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
               }`}
             >
               <Icon size={15} /> {label}
@@ -2263,31 +2268,68 @@ export default function PagosCapacitacion({ userProfile }) {
       {/* ── TAB: CALCULAR PAGOS (5 FILTROS EN CASCADA) ────────────────── */}
       {activeTab === 'calcular' && (
         <div className="space-y-5">
-          {/* Barra de 5 Filtros Jerárquicos */}
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-4 shadow-sm space-y-3">
+          {/* Barra de Filtros Jerárquicos (shell visual; lógica sin cambios) */}
+          <div className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-xl p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                <Filter size={14} className="text-emerald-400" />
+              <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                <Filter size={14} className="text-[var(--accent)]" />
                 Filtros Jerárquicos de Consulta
               </div>
-              {(selectedPeriodo !== 'TODOS' || selectedSemana !== 'TODAS' || selectedSegmento !== 'TODOS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODOS' || selectedReclutador !== 'TODOS') && (
+              {(selectedPeriodo !== 'TODOS' || selectedSemana !== 'TODAS' || selectedSegmento !== 'TODOS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODOS' || selectedReclutador !== 'TODOS' || selectedMesPago !== 'TODOS' || selectedEstadoPago !== 'TODOS') && (
                 <button
-                  onClick={handleResetFilters}
-                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-rose-400 transition-colors"
+                  type="button"
+                  onClick={() => {
+                    handleResetFilters()
+                    setSelectedMesPago('TODOS')
+                    setSelectedEstadoPago('TODOS')
+                  }}
+                  className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-rose-400 transition-colors cursor-pointer"
                 >
                   <RotateCcw size={12} /> Limpiar filtros
                 </button>
               )}
             </div>
 
+            {/* Mes de Pago arriba: mismo control/estilo que Periodo (solo cuando hay matriz calculada) */}
+            {calculoReady && filasQueCalifican.length > 0 && vistaModo === 'matriz' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 pb-3 border-b border-[var(--border-subtle)]">
+                <div className="flex flex-col gap-1">
+                  <label className={`${LABEL_GEA} flex items-center gap-1`}>
+                    <Clock size={12} className="text-amber-400" /> Mes de Pago
+                  </label>
+                  <select
+                    value={selectedMesPago}
+                    onChange={e => setSelectedMesPago(e.target.value)}
+                    className={`${SELECT_GEA} font-mono`}
+                  >
+                    {mesesDePagoDisponibles.map(m => (
+                      <option key={m} value={m}>{m === 'TODOS' ? 'TODOS LOS MESES' : m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className={LABEL_GEA}>Estado</label>
+                  <select
+                    value={selectedEstadoPago}
+                    onChange={e => setSelectedEstadoPago(e.target.value)}
+                    className={SELECT_GEA}
+                  >
+                    <option value="TODOS">TODOS</option>
+                    <option value="PENDIENTE">PENDIENTES</option>
+                    <option value="PAGADO">PAGADOS</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
               {/* 1. PERIODO */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">1. Periodo</label>
+                <label className={LABEL_GEA}>1. Periodo</label>
                 <select
                   value={selectedPeriodo}
                   onChange={e => handlePeriodoChange(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+                  className={SELECT_GEA}
                 >
                   {periodosDisponibles.map(p => (
                     <option key={p} value={p}>{p}</option>
@@ -2297,11 +2339,11 @@ export default function PagosCapacitacion({ userProfile }) {
 
               {/* 2. SEMANA */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">2. Semana</label>
+                <label className={LABEL_GEA}>2. Semana</label>
                 <select
                   value={selectedSemana}
                   onChange={e => handleSemanaChange(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+                  className={SELECT_GEA}
                 >
                   {semanasDisponibles.map(s => (
                     <option key={s} value={s}>{s}</option>
@@ -2311,11 +2353,11 @@ export default function PagosCapacitacion({ userProfile }) {
 
               {/* 3. SEGMENTO */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">3. Segmento</label>
+                <label className={LABEL_GEA}>3. Segmento</label>
                 <select
                   value={selectedSegmento}
                   onChange={e => handleSegmentoChange(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+                  className={SELECT_GEA}
                 >
                   {segmentosDisponibles.map(seg => (
                     <option key={seg} value={seg}>{seg}</option>
@@ -2325,11 +2367,11 @@ export default function PagosCapacitacion({ userProfile }) {
 
               {/* 4. CAMPAÑA */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">4. Campaña</label>
+                <label className={LABEL_GEA}>4. Campaña</label>
                 <select
                   value={selectedCampana}
                   onChange={e => handleCampanaChange(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium"
+                  className={SELECT_GEA}
                 >
                   {campanasDisponibles.map(c => (
                     <option key={c} value={c}>{c}</option>
@@ -2339,11 +2381,11 @@ export default function PagosCapacitacion({ userProfile }) {
 
               {/* 5. CÓDIGO DE GRUPO */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">5. Código de Grupo</label>
+                <label className={LABEL_GEA}>5. Código de Grupo</label>
                 <select
                   value={selectedGrupo}
                   onChange={e => handleGrupoChange(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono font-bold"
+                  className={`${SELECT_GEA} font-mono font-bold`}
                 >
                   {codigosGruposDisponibles.map(g => (
                     <option key={g} value={g}>{g}</option>
@@ -2351,13 +2393,13 @@ export default function PagosCapacitacion({ userProfile }) {
                 </select>
               </div>
 
-              {/* 6. RECLUTADOR (Permite ver los propios o los de compañeros por delegación) */}
+              {/* 6. RECLUTADOR */}
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-400 uppercase">6. Reclutador</label>
+                <label className={LABEL_GEA}>6. Reclutador</label>
                 <select
                   value={selectedReclutador}
                   onChange={e => setSelectedReclutador(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-semibold"
+                  className={`${SELECT_GEA} text-[var(--accent)] font-semibold`}
                 >
                   {reclutadoresDisponibles.map(r => (
                     <option key={r} value={r}>{r}</option>
@@ -2366,16 +2408,17 @@ export default function PagosCapacitacion({ userProfile }) {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-700/60">
-              <div className="text-xs text-slate-400">
-                Selecciona los filtros y haz clic en <strong className="text-emerald-400">Calcular Pagos</strong> para cruzar con las asistencias.
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--border-subtle)]">
+              <div className="text-xs text-[var(--text-muted)]">
+                Selecciona los filtros y haz clic en <strong className="text-[var(--accent)]">Calcular Pagos</strong> para cruzar con las asistencias.
               </div>
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={handleCalcular}
                   disabled={loadingCalculo}
-                  className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all shadow-md shadow-emerald-950/40"
+                  className="flex items-center gap-2 px-5 py-2 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all cursor-pointer"
                 >
                   {loadingCalculo ? <RefreshCw size={14} className="animate-spin" /> : <Calculator size={14} />}
                   Calcular Pagos
@@ -2384,15 +2427,17 @@ export default function PagosCapacitacion({ userProfile }) {
                 {calculoReady && filasQueCalifican.length > 0 && (
                   <>
                     <button
+                      type="button"
                       onClick={handleExport}
-                      className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold rounded-lg transition-colors"
+                      className="flex items-center gap-2 px-4 py-2 bg-[var(--bg-elevated)] hover:opacity-90 border border-[var(--border-normal)] text-[var(--text-primary)] text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                     >
                       <Download size={14} /> Exportar CSV
                     </button>
                     <button
+                      type="button"
                       onClick={handleCerrarLote}
                       disabled={savingLote}
-                      className="flex items-center gap-2 px-4 py-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all shadow-md shadow-violet-950/40"
+                      className="flex items-center gap-2 px-4 py-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all cursor-pointer"
                     >
                       {savingLote ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
                       Cerrar Lote de Pagos
@@ -2403,18 +2448,17 @@ export default function PagosCapacitacion({ userProfile }) {
             </div>
           </div>
 
-          {/* Barra de Modo de Vista y Filtros Específicos de la Matriz */}
+          {/* Selector de modo de vista (matriz intacta) */}
           {calculoReady && filasQueCalifican.length > 0 && (
-            <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-4">
-              {/* Selector de modo */}
-              <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700 gap-1">
+            <div className="bg-[var(--bg-base)] border border-[var(--border-normal)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex bg-[var(--bg-surface)] p-1 rounded-lg border border-[var(--border-normal)] gap-1 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setVistaModo('matriz')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
                     vistaModo === 'matriz'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                      ? 'bg-[var(--accent)] text-white shadow-sm'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
                   }`}
                 >
                   <FileSpreadsheet size={13} /> Matriz de Pagos (Mes a Mes)
@@ -2422,10 +2466,10 @@ export default function PagosCapacitacion({ userProfile }) {
                 <button
                   type="button"
                   onClick={() => setVistaModo('resumen_postulantes')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
                     vistaModo === 'resumen_postulantes'
                       ? 'bg-cyan-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
                   }`}
                 >
                   <Users size={13} /> Trazabilidad por Postulante
@@ -2433,51 +2477,14 @@ export default function PagosCapacitacion({ userProfile }) {
                 <button
                   type="button"
                   onClick={() => setVistaModo('clasica')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
                     vistaModo === 'clasica'
-                      ? 'bg-slate-700 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-700/60'
+                      ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-sm border border-[var(--border-normal)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
                   }`}
                 >
                   <Layers size={13} /> Vista Consolidada
                 </button>
-              </div>
-
-              {/* Filtros específicos de la Matriz */}
-              <div className="flex flex-wrap items-center gap-3">
-                {vistaModo === 'matriz' && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase flex items-center gap-1">
-                        <Clock size={12} className="text-amber-400" /> Mes de Pago:
-                      </label>
-                      <select
-                        value={selectedMesPago}
-                        onChange={e => setSelectedMesPago(e.target.value)}
-                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      >
-                        {mesesDePagoDisponibles.map(m => (
-                          <option key={m} value={m}>{m === 'TODOS' ? 'TODOS LOS MESES' : m}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <label className="text-[11px] font-bold text-slate-400 uppercase">
-                        Estado:
-                      </label>
-                      <select
-                        value={selectedEstadoPago}
-                        onChange={e => setSelectedEstadoPago(e.target.value)}
-                        className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      >
-                        <option value="TODOS">TODOS</option>
-                        <option value="PENDIENTE">⏳ PENDIENTES</option>
-                        <option value="PAGADO">✓ PAGADOS</option>
-                      </select>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
           )}
@@ -2546,11 +2553,11 @@ export default function PagosCapacitacion({ userProfile }) {
           )}
 
           {!calculoReady && (
-            <div className="text-center py-20 text-slate-500 bg-slate-900/30 rounded-2xl border border-slate-800/80">
-              <BanknoteIcon size={48} className="mx-auto mb-4 opacity-20 text-emerald-400" />
-              <p className="font-semibold text-slate-300">Selecciona los filtros y presiona Calcular Pagos</p>
-              <p className="text-xs mt-2 text-slate-500">
-                El sistema cruzará automáticamente las marcaciones efectivas de asistencia ('A') con la tarifa y los 3 bonos de cada propuesta por grupo.
+            <div className="text-center py-20 text-[var(--text-muted)] bg-[var(--bg-surface)]/50 rounded-2xl border border-[var(--border-normal)] border-dashed">
+              <BanknoteIcon size={48} className="mx-auto mb-4 opacity-30 text-[var(--accent)]" />
+              <p className="font-semibold text-[var(--text-primary)]">Selecciona los filtros y presiona Calcular Pagos</p>
+              <p className="text-xs mt-2 max-w-md mx-auto text-[var(--text-muted)]">
+                El sistema cruzará las marcaciones efectivas de asistencia con la tarifa y los bonos de cada propuesta por grupo. La matriz oficial conservará todas sus columnas.
               </p>
             </div>
           )}
