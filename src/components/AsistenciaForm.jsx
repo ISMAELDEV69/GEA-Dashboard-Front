@@ -28,10 +28,10 @@ import * as XLSX from 'xlsx'
 import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado, levantarBajaPostulante, autocompletarDiasFaltantesGrupo } from '../lib/dataService'
 import {
   canAssignBajaDia1,
-  defaultBajaMotivo,
   sanitizeBajaDia1Motivo,
   isBajaDia1Motivo,
   countsInFormacionDesercion,
+  analyzeDia1CorteRecords,
 } from '../lib/bajaDia1Rules'
 import { resolveFormadorSegment } from '../lib/flujoOperativo'
 import { resolveGrupoPais, isFeriadoNacional } from '../lib/businessHoursUtils'
@@ -833,7 +833,7 @@ export default function AsistenciaForm({
             q1 = q1.eq('semana_trabajo', targetSemanaNum)
           }
           if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
-            q1 = q1.ilike('campana', `%${targetCampana}%`)
+            q1 = q1.eq('campana', targetCampana)
           }
 
           let qNom = supabase
@@ -847,7 +847,7 @@ export default function AsistenciaForm({
             qNom = qNom.eq('semana_trabajo', targetSemanaNum)
           }
           if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
-            qNom = qNom.ilike('campana', `%${targetCampana}%`)
+            qNom = qNom.eq('campana', targetCampana)
           }
 
           let qCap = supabase
@@ -999,7 +999,8 @@ export default function AsistenciaForm({
 
     const groupRecordsAll = []
     const mappedDocs = new Set()
-    const recordsByDocOnDate = new Map()
+    /** Misma fecha: varios cortes (C1/C2/C3) por documento */
+    const sameDayRecordsByDoc = new Map()
     const previousRecordsByDoc = new Map()
 
     for (let i = 0; i < asistencias.length; i++) {
@@ -1031,7 +1032,12 @@ export default function AsistenciaForm({
       mappedDocs.add(a.postulante_documento)
 
       if (recFecha === fecha) {
-        recordsByDocOnDate.set(a.postulante_documento, a)
+        let dayArr = sameDayRecordsByDoc.get(a.postulante_documento)
+        if (!dayArr) {
+          dayArr = []
+          sameDayRecordsByDoc.set(a.postulante_documento, dayArr)
+        }
+        dayArr.push(a)
       } else if (recFecha < fecha) {
         let arr = previousRecordsByDoc.get(a.postulante_documento)
         if (!arr) {
@@ -1240,9 +1246,34 @@ export default function AsistenciaForm({
     const allDates = Array.from(new Set([...groupDates, fecha])).sort()
     const trainingDayIndex = allDates.indexOf(fecha) + 1
 
+    // Corte legacy (null/0/vacío) = Corte 1 del Día 1 (datos guardados antes del multi-corte)
+    const normCorteVal = (raw) => {
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n <= 0) return 1
+      return n
+    }
+
     const list = uniquePostulantes.map(p => {
       const isLateInclusion = false
-      const existing = recordsByDocOnDate.get(p.documento)
+      const dayRecs = sameDayRecordsByDoc.get(p.documento) || []
+      const currentCorte = Number(selectedCorte) || 1
+
+      // Registro del corte activo
+      const existing = dayRecs.find(r => normCorteVal(r.corte) === currentCorte) || null
+
+      // Último registro de un corte ANTERIOR del mismo día (C1 → C2/C3)
+      const earlierSameDay = [...dayRecs]
+        .filter(r => normCorteVal(r.corte) < currentCorte)
+        .sort((a, b) => normCorteVal(b.corte) - normCorteVal(a.corte))
+
+      const sameDayEarlierBaja = earlierSameDay.find(r => {
+        const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim()
+        return s === 'B'
+      }) || null
+      const latestEarlierSameDay = earlierSameDay[0] || null
+
+      const corteFlagsToday = analyzeDia1CorteRecords(dayRecs, existing || latestEarlierSameDay)
+      const hadAttendanceInEarlierCuts = Boolean(corteFlagsToday.hadAttendanceInEarlierCuts)
       
       let rawTipo = (existing?.tipo_reclutado || p.tipo_reclutado || p.status_dia_1 || p.tipo || '').toString().toUpperCase().trim() || 'APTO'
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
@@ -1255,12 +1286,14 @@ export default function AsistenciaForm({
       }
 
       const prevList = previousRecordsByDoc.get(p.documento) || []
-      const pastBajaRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
+      const pastBajaRecord = sameDayEarlierBaja || prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
       const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
-      const pastMotiveFromRecords = prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja || ''
+      const pastMotiveFromRecords = pastBajaRecord?.motivo_baja
+        || prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja
+        || ''
 
-      // Verificar si tuvo asistencia activa efectiva en el Día 1
-      const hadDia1Attendance = prevList.some(r => {
+      // Verificar si tuvo asistencia activa efectiva en el Día 1 (días previos o cortes C1/C2 de hoy)
+      const hadDia1Attendance = hadAttendanceInEarlierCuts || prevList.some(r => {
         const s = (r.sigla_asistencia || r.sigla || '').toUpperCase().trim()
         return s === 'A' || s === 'I-OP'
       })
@@ -1281,6 +1314,7 @@ export default function AsistenciaForm({
         estado: p.estado,
         condicion: p.condicion,
         hadDia1Attendance,
+        hadAttendanceInEarlierCuts,
       }
       // Se permite BAJA DIA 1 en Día 1 (Cortes 1-2), o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1 (periodo de gracia)
       // En Corte 3: el formador debe registrar la baja con motivo propio de formación — NO se clasifica como BAJA DIA 1
@@ -1289,6 +1323,7 @@ export default function AsistenciaForm({
         trainingDayIndex,
         row: profileRow,
         hadDia1Attendance,
+        hadAttendanceInEarlierCuts,
         existingMotivo: '',
         corte: selectedCorte,
       })
@@ -1302,25 +1337,26 @@ export default function AsistenciaForm({
       let inheritedMotivo = ''
 
       if (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) {
-        // 1. Registro explícito de baja guardado en la base de datos para esta fecha
+        // 1. Registro explícito de baja del corte actual
         inheritedSigla = 'B'
         inheritedMotivo = existing.motivo_baja || pastMotiveFromRecords || ''
       } else if (pastBajaRecord) {
-        // 2. Si en CUALQUIER fecha anterior de este grupo ya fue dado de baja (ej. Día 1 o Día 2):
-        // La persona permanece en estado de BAJA con su motivo registrado en todos los días posteriores
+        // 2. Baja en corte anterior del mismo día (C1→C2/C3) o en fecha previa del grupo
         inheritedSigla = 'B'
         inheritedMotivo = pastBajaRecord.motivo_baja || pastMotiveFromRecords || ''
       } else if (existing) {
-        // 3. Registro explícito guardado (activo/falta/I-OP) para esta fecha
+        // 3. Registro explícito del corte actual (A / FI / FJ / I-OP)
         inheritedSigla = existing.sigla_asistencia || existing.sigla || 'A'
         inheritedMotivo = existing.motivo_baja || ''
+      } else if (latestEarlierSameDay) {
+        // 4. Sin guardado en este corte: heredar estado del corte previo del mismo día (no resetear a A)
+        const earlierSigla = String(latestEarlierSameDay.sigla_asistencia || latestEarlierSameDay.sigla || 'A').toUpperCase().trim()
+        inheritedSigla = earlierSigla || 'A'
+        inheritedMotivo = earlierSigla === 'B' ? (latestEarlierSameDay.motivo_baja || '') : ''
       } else if (pastIopRecord) {
-        // 4. Si el candidato ya pasó a Ingreso a Operación (I-OP) en cualquier fecha anterior del grupo:
-        // Permanece en I-OP en todos los días posteriores de capacitación
         inheritedSigla = 'I-OP'
         inheritedMotivo = ''
       } else if (prevList && prevList.length > 0) {
-        // 5. En días posteriores sin guardar: heredar del día previo más reciente (I-OP, FI, FJ, etc.)
         const lastPrev = prevList[0]
         const lastSigla = lastPrev.sigla_asistencia || lastPrev.sigla || 'A'
         if (lastSigla === 'B') {
@@ -1337,51 +1373,54 @@ export default function AsistenciaForm({
           inheritedMotivo = ''
         }
       } else if (isIngresoEspecial && isFirstRecordGroup && !isAsistioStr(dia1Val) && !isAsistioStr(dia0Val)) {
-        // 6. Ingreso especial no confirmado en su primer día del grupo
         inheritedSigla = 'FI'
         inheritedMotivo = ''
       } else {
-        // 7. Pizarra limpia: Todo nuevo postulante aprobado en Nómina parte como ACTIVO / A en su día 1
+        // Pizarra limpia solo si no hay historial del día ni de días previos
         inheritedSigla = 'A'
         inheritedMotivo = ''
       }
 
-      // Si la persona tiene sigla B, garantizar que tenga motivo de baja no vacío para no bloquear la pantalla
-      if (inheritedSigla === 'B' && !inheritedMotivo) {
-        if (pastMotiveFromRecords) {
-          inheritedMotivo = pastMotiveFromRecords
-        } else if (isEligibleBajaD1) {
-          inheritedMotivo = 'BAJA DIA 1'
-        } else {
-          inheritedMotivo = 'DESERCIÓN'
-        }
+      if (inheritedSigla === 'B' && !inheritedMotivo && pastMotiveFromRecords) {
+        inheritedMotivo = pastMotiveFromRecords
+      }
+
+      // Baja heredada de C1/C2 conserva su motivo (incl. BAJA DIA 1).
+      // Solo al MARCAR baja nueva en C3 se exige motivo de formación (sanitize en handleMotiveChange/save).
+      const isLockedFromEarlierCorte = Boolean(sameDayEarlierBaja)
+      if (inheritedSigla === 'B' && inheritedMotivo && !isLockedFromEarlierCorte && !pastBajaRecord) {
+        inheritedMotivo = sanitizeBajaDia1Motivo({
+          trainingDayIndex,
+          row: profileRow,
+          motivo: inheritedMotivo,
+          hadDia1Attendance,
+          hadAttendanceInEarlierCuts,
+          corte: selectedCorte,
+        })
       }
       
       let sigla = inheritedSigla
       let motivo_baja = inheritedMotivo
 
-      // Si la persona ya tiene una baja registrada en CUALQUIER fecha anterior del grupo,
-      // su estado de baja y su motivo quedan estrictamente bloqueados en los días posteriores.
-      const isLockedBaja = Boolean(pastBajaRecord)
-      const pastMotive = pastBajaRecord?.motivo_baja || pastMotiveFromRecords || ''
-      const pastBajaDate = pastBajaRecord ? (pastBajaRecord.fecha_asistencia || pastBajaRecord.fecha_registro_asistencia || pastBajaRecord.fecha) : ''
+      // Bloquear baja: corte anterior del mismo día O fecha previa del grupo
+      const isLockedBaja = Boolean(sameDayEarlierBaja || (pastBajaRecord && pastBajaRecord !== existing))
+      const pastMotive = (sameDayEarlierBaja || pastBajaRecord)?.motivo_baja || pastMotiveFromRecords || ''
+      const pastBajaDate = (sameDayEarlierBaja || pastBajaRecord)
+        ? ((sameDayEarlierBaja || pastBajaRecord).fecha_asistencia
+          || (sameDayEarlierBaja || pastBajaRecord).fecha_registro_asistencia
+          || (sameDayEarlierBaja || pastBajaRecord).fecha)
+        : ''
 
-      // Priorizar ediciones manuales pendientes solo si la fila NO está bloqueada por baja previa
-      if (userEditsRef.current.has(p.documento) && !isLockedBaja) {
-        const localEdit = userEditsRef.current.get(p.documento)
+      // Edits locales solo aplican al corte activo; no sangrar C1→C2
+      const editKey = `${p.documento}|${currentCorte}`
+      if (userEditsRef.current.has(editKey) && !isLockedBaja) {
+        const localEdit = userEditsRef.current.get(editKey)
         sigla = localEdit.sigla
         motivo_baja = localEdit.motivo_baja
       } else if (isLockedBaja) {
         sigla = 'B'
-        motivo_baja = pastMotive || inheritedMotivo || (isEligibleBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN')
-      } else if (sigla === 'B' && !motivo_baja) {
-        motivo_baja = defaultBajaMotivo({
-          trainingDayIndex,
-          row: profileRow,
-          hadDia1Attendance,
-          existingMotivo: pastMotive || '',
-          previousMotivo: pastMotive || '',
-        })
+        // Conservar motivo histórico de la baja (BAJA DIA 1 de C1 debe verse en C2/C3 bloqueada)
+        motivo_baja = pastMotive || inheritedMotivo || ''
       }
 
       const isHistoricalBaja = (existing && (existing.sigla_asistencia === 'B' || existing.sigla === 'B')) || (!existing && inheritedSigla === 'B')
@@ -1404,6 +1443,7 @@ export default function AsistenciaForm({
         isEligibleBajaD1,
         showBajaDia1Option,
         allowOtherMotivos,
+        hadAttendanceInEarlierCuts,
         sigla,
         motivo_baja,
         isLateInclusion,
@@ -1478,7 +1518,7 @@ export default function AsistenciaForm({
         }
       }))
 
-      userEditsRef.current.set(doc, { sigla: 'A', motivo_baja: '' })
+      userEditsRef.current.set(`${doc}|${selectedCorte}`, { sigla: 'A', motivo_baja: '' })
 
       toast.success('¡Baja levantada con éxito!', `${item.nombres} ahora tiene Falta Injustificada (FI) en el día previo y Asistencia (A) el día de hoy.`)
     } catch (err) {
@@ -1487,7 +1527,7 @@ export default function AsistenciaForm({
     } finally {
       setSaving(false)
     }
-  }, [isReadOnly, activeGrupoObj, selectedGrupo, selectedCampana, effectiveGrupoObj, fecha, toast])
+  }, [isReadOnly, activeGrupoObj, selectedGrupo, selectedCampana, effectiveGrupoObj, fecha, toast, selectedCorte])
 
   const handleStatusChange = useCallback((doc, newSigla) => {
     if (isReadOnly) return
@@ -1498,24 +1538,14 @@ export default function AsistenciaForm({
       }
       return
     }
+    const editKey = `${doc}|${selectedCorte}`
     setAttendanceList(prev => prev.map(item => {
       if (item.documento !== doc) return item
-      let newMotivo = item.motivo_baja
-      if (newSigla !== 'B') {
-        newMotivo = ''
-      } else if (!newMotivo) {
-        newMotivo = defaultBajaMotivo({
-          trainingDayIndex: item.trainingDayIndex,
-          row: item,
-          hadDia1Attendance: item.hadDia1Attendance,
-          existingMotivo: item.pastMotive || '',
-          previousMotivo: item.pastMotive || '',
-        })
-      }
-      userEditsRef.current.set(doc, { sigla: newSigla, motivo_baja: newMotivo })
-      return { ...item, sigla: newSigla, motivo_baja: newMotivo }
+      // Al marcar B: motivo vacío → el formador elige de la lista predeterminada
+      userEditsRef.current.set(editKey, { sigla: newSigla, motivo_baja: '' })
+      return { ...item, sigla: newSigla, motivo_baja: '' }
     }))
-  }, [isReadOnly, attendanceList, handleLevantarBaja])
+  }, [isReadOnly, attendanceList, handleLevantarBaja, selectedCorte])
 
   const handleMotiveChange = useCallback((doc, newMotivo) => {
     if (isReadOnly) return
@@ -1526,19 +1556,28 @@ export default function AsistenciaForm({
         trainingDayIndex: item.trainingDayIndex,
         row: item,
         hadDia1Attendance: item.hadDia1Attendance,
+        hadAttendanceInEarlierCuts: item.hadAttendanceInEarlierCuts,
         motivo: newMotivo,
+        corte: item.corte ?? selectedCorte,
       })
-      userEditsRef.current.set(doc, { sigla: item.sigla, motivo_baja: nextMotivo })
+      if (isBajaDia1Motivo(newMotivo) && !nextMotivo) {
+        toast.info(
+          'Elige motivo de Formación',
+          'En Corte 3 (o con A en C1/C2) no aplica BAJA DIA 1. Selecciona un motivo de la lista.'
+        )
+      }
+      const editKey = `${doc}|${selectedCorte}`
+      userEditsRef.current.set(editKey, { sigla: item.sigla, motivo_baja: nextMotivo })
       return { ...item, motivo_baja: nextMotivo }
     }))
-  }, [isReadOnly])
+  }, [isReadOnly, selectedCorte, toast])
 
   // Fast 1-click bulk mark as attended
   const handleMarkAllAttended = () => {
     if (isReadOnly) return
     setAttendanceList(prev => prev.map(item => {
       if (item.isLateInclusion || item.isLockedBaja || item.sigla === 'B' || item.sigla === 'I-OP') return item;
-      userEditsRef.current.set(item.documento, { sigla: 'A', motivo_baja: '' })
+      userEditsRef.current.set(`${item.documento}|${selectedCorte}`, { sigla: 'A', motivo_baja: '' })
       return { ...item, sigla: 'A', motivo_baja: '' }
     }))
   }
@@ -1672,34 +1711,34 @@ export default function AsistenciaForm({
   }, [fecha, activeGrupoObj, selectedGrupo, selectedCampana, onRefresh])
 
   const executeActualSave = async () => {
-    // Auto-sanitizar bajas históricas para que no bloqueen la marcación del día si venían sin motivo
+    let clearedBajaDia1Count = 0
+    // Sanitizar solo BAJA DIA 1 inválida; nunca rellenar motivo automático
     const sanitizedList = attendanceList.map(item => {
       let motivo_baja = item.motivo_baja
-      // Si la persona ya tiene una baja previa consolidada, preservamos su motivo original inmutable
+      const corte = item.corte ?? selectedCorte
       if (item.isLockedBaja && item.pastMotive) {
         motivo_baja = item.pastMotive
-      } else if (item.sigla === 'B' && !motivo_baja && !item.isLateInclusion) {
-        motivo_baja = defaultBajaMotivo({
-          trainingDayIndex: item.trainingDayIndex,
-          row: item,
-          existingMotivo: '',
-          corte: item.corte ?? selectedCorte,
-        })
-      } else if (item.sigla === 'B' && !item.isLockedBaja) {
+      } else if (item.sigla === 'B' && !item.isLateInclusion && motivo_baja) {
+        const before = motivo_baja
         motivo_baja = sanitizeBajaDia1Motivo({
           trainingDayIndex: item.trainingDayIndex,
           row: item,
           motivo: motivo_baja,
-          corte: item.corte ?? selectedCorte,
+          hadDia1Attendance: item.hadDia1Attendance,
+          hadAttendanceInEarlierCuts: item.hadAttendanceInEarlierCuts,
+          corte,
         })
+        if (isBajaDia1Motivo(before) && !motivo_baja) {
+          clearedBajaDia1Count++
+        }
       }
-      return { ...item, motivo_baja }
+      return { ...item, motivo_baja, corte }
     })
 
     const invalidItems = sanitizedList.filter(item => item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion)
     if (invalidItems.length > 0) {
-      const names = invalidItems.map(i => i.nombres).join(', ')
-      return alert(`Por favor, seleccione un motivo de baja para los siguientes candidatos:\n\n${names}`)
+      const names = invalidItems.map(i => `${i.nombres || i.documento}`).join(', ')
+      return alert(`Selecciona un motivo de baja de la lista para:\n\n${names}`)
     }
 
     const recordsToSave = sanitizedList.filter(item => !item.isLateInclusion).map(item => ({
@@ -1716,7 +1755,7 @@ export default function AsistenciaForm({
       const drivePayload = [];
       
       recordsToSave.forEach(r => {
-        const itemInfo = attendanceList.find(i => i.documento === r.documento);
+        const itemInfo = sanitizedList.find(i => i.documento === r.documento);
         
         drivePayload.push({
           archivo_origen: weekNum ? `SEM${weekNum}` : '',
@@ -1745,6 +1784,7 @@ export default function AsistenciaForm({
         await insertConsolidado(drivePayload);
       } catch (dbErr) {
         console.error('Consolidado Supabase error:', dbErr);
+        throw dbErr
       }
 
       await onSave({
@@ -1760,8 +1800,15 @@ export default function AsistenciaForm({
       })
 
       userEditsRef.current.clear()
+      setAttendanceList(sanitizedList)
 
-      toast.success('¡Asistencia guardada!', 'Los registros se sincronizaron con el consolidado en tiempo real.')
+      if (clearedBajaDia1Count > 0) {
+        toast.info(
+          'Motivo de Formación requerido',
+          `${clearedBajaDia1Count} fila(s) tenían BAJA DIA 1 no aplicable (C3 o con A en C1/C2). Elige un motivo de la lista.`
+        )
+      }
+      toast.success('¡Asistencia guardada!', `Corte ${selectedCorte} sincronizado. Los cortes previos del día se conservan.`)
     } catch (err) {
       toast.error('Error al guardar', err.message || 'No se pudo guardar la asistencia.')
     } finally {
@@ -1893,8 +1940,10 @@ export default function AsistenciaForm({
     
     const total = attendanceList.length;
     const isB1 = (r) => isBajaDia1Motivo(r.motivo_baja)
+    const isBajaC3 = (r) => Number(r.corte ?? selectedCorte) === 3 && r.sigla === 'B' && !isB1(r)
     const desertores = attendanceList.filter(r => r.sigla === 'B' && countsInFormacionDesercion(r, r.motivo_baja)).length
     const bajasDia1 = attendanceList.filter(r => r.sigla === 'B' && isB1(r)).length
+    const bajasC3Formacion = attendanceList.filter(r => isBajaC3(r) || (r.sigla === 'B' && r.hadAttendanceInEarlierCuts && !isB1(r))).length
     const qDia1 = Math.max(0, total - bajasDia1);
     const activos = Math.max(0, qDia1 - desertores);
     const enSala = attendanceList.filter(r => {
@@ -1908,7 +1957,7 @@ export default function AsistenciaForm({
     const faltas = listaFaltas.length;
     const diaCapLabel = String(diaCapacitacion).padStart(2, '0');
 
-    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapLabel}\n📄 Q Día 1: ${qDia1}\n👥 Q Activos al corte: ${activos}\n🟢 Q en sala: ${enSala}\n❌ Q Desertores: ${desertores}${bajasDia1 > 0 ? `\n⚠️ Q Bajas Día 1 (Reclutamiento): ${bajasDia1}` : ''}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
+    let text = `Buenas tardes con todos, se comparte estatus de la capacitación. ACTUALIZACIÓN\n\n📊 Campaña: ${campana}\n👤 Formadora: ${formador}\n💡 Grupo: ${grupo}\n📚 Día de Capacitación: ${diaCapLabel}\n⏱️ Corte actual: ${selectedCorte} (C1–C2 RyS · C3 Formación)\n📄 Q Día 1 (entrega): ${qDia1}\n👥 Q Activos al corte: ${activos}\n🟢 Q en sala: ${enSala}\n❌ Q Desertores Formación: ${desertores}${bajasDia1 > 0 ? `\n⚠️ Q Bajas Día 1 (Reclutamiento / C1–C2): ${bajasDia1}` : ''}${bajasC3Formacion > 0 ? `\n🔻 Q Bajas post-corte RyS (C3 Formación; no descalibran entrega): ${bajasC3Formacion}` : ''}\n⚠️ Q Faltas: ${faltas}\n📢 Observaciones: `;
 
     if (listaFaltas.length > 0) {
       text += `\n\n⚠️ LISTA DE FALTAS (SEGUIMIENTO):\n`;
@@ -1957,6 +2006,9 @@ export default function AsistenciaForm({
 
     const bajas = displayedList.filter(item => item.sigla === 'B' && countsInFormacionDesercion(item, item.motivo_baja)).length
     const bajasDia1 = displayedList.filter(item => item.sigla === 'B' && isBajaDia1Item(item)).length
+    const bajasC3 = displayedList.filter(item =>
+      item.sigla === 'B' && !isBajaDia1Item(item) && (Number(item.corte) === 3 || item.hadAttendanceInEarlierCuts)
+    ).length
     const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
     const pctAsistencia = total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0'
 
@@ -1965,6 +2017,7 @@ export default function AsistenciaForm({
       asistieron,
       bajas,
       bajasDia1,
+      bajasC3,
       faltas,
       pctAsistencia
     }
@@ -2461,9 +2514,9 @@ export default function AsistenciaForm({
             </div>
           </div>
 
-          {/* CORTE (solo visible en Día 1) */}
+          {/* CORTE (solo visible en Día 1): C1–C2 ventana RyS · C3 cierre Formación */}
           {(attendanceList[0]?.trainingDayIndex ?? 0) === 1 && (
-            <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex flex-col gap-0.5 min-w-0" title="Cortes 1–2: seguimiento RyS · Corte 3: cierre Formación (baja no es BAJA DIA 1)">
               <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
                 <Radio size={10} className="text-violet-500 shrink-0" /> CORTE
               </span>
@@ -2480,12 +2533,17 @@ export default function AsistenciaForm({
                     : c === 2
                       ? 'bg-amber-500 border-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.5)]'
                       : 'bg-rose-500 border-rose-500 text-white shadow-[0_0_8px_rgba(239,68,68,0.5)]'
+                  const tip = c === 1
+                    ? 'Corte 1 — Ventana RyS (inicio de jornada). Baja sin A previa = BAJA DIA 1.'
+                    : c === 2
+                      ? 'Corte 2 — Cierre seguimiento RyS. Si ya hubo A en C1, la baja es de Formación.'
+                      : 'Corte 3 — Cierre Formación. No aplica BAJA DIA 1; no descalibra entrega RyS si hubo A en C1/C2.'
                   return (
                     <button
                       key={c}
                       type="button"
                       onClick={() => setSelectedCorte(c)}
-                      title={c === 3 ? 'Corte 3 — El formador debe registrar la baja con motivo propio. No aplica BAJA DIA 1.' : `Corte ${c}`}
+                      title={tip}
                       className={`flex-1 h-7 text-[10px] font-black rounded-lg border transition-all cursor-pointer select-none ${isActive ? activeColors : colors}`}
                     >
                       C{c}
@@ -2493,9 +2551,13 @@ export default function AsistenciaForm({
                   )
                 })}
               </div>
-              {selectedCorte === 3 && (
+              {selectedCorte <= 2 ? (
+                <span className="text-[8px] text-amber-500 font-bold mt-0.5 leading-tight">
+                  C{selectedCorte}: seguimiento RyS
+                </span>
+              ) : (
                 <span className="text-[8px] text-rose-500 font-bold mt-0.5 leading-tight">
-                  ⚠️ Corte 3: baja a cargo del formador
+                  C3: baja = Formación (no BAJA DIA 1)
                 </span>
               )}
             </div>
@@ -2553,9 +2615,18 @@ export default function AsistenciaForm({
                 </span>
                 <span 
                   className="text-[9px] text-rose-600/80 dark:text-rose-400/80 font-semibold truncate"
-                  title={kpis.bajasDia1 > 0 ? `${kpis.bajasDia1} bajas Día 1 (Periodo Gracia) asignadas a Reclutamiento` : 'Bajas ocurridas durante la capacitación'}
+                  title={[
+                    kpis.bajasDia1 > 0 ? `${kpis.bajasDia1} Baja Día 1 (RyS C1–C2)` : null,
+                    kpis.bajasC3 > 0 ? `${kpis.bajasC3} baja C3 Formación (no descalibra entrega)` : null,
+                    'Deserciones de formación',
+                  ].filter(Boolean).join(' · ')}
                 >
-                  {kpis.bajasDia1 > 0 ? `(+${kpis.bajasDia1} D1 RyS)` : 'deserciones'}
+                  {kpis.bajasDia1 > 0 || kpis.bajasC3 > 0
+                    ? [
+                        kpis.bajasDia1 > 0 ? `+${kpis.bajasDia1} D1 RyS` : null,
+                        kpis.bajasC3 > 0 ? `${kpis.bajasC3} C3` : null,
+                      ].filter(Boolean).join(' · ')
+                    : 'deserciones'}
                 </span>
               </div>
             </div>

@@ -15,7 +15,7 @@ import {
   UserCheck
 } from 'lucide-react'
 import { regularizarAsistenciaPostulante, parseFechaAsistencia } from '../lib/dataService'
-import { canAssignBajaDia1, defaultBajaMotivo, sanitizeBajaDia1Motivo, isBajaDia1Motivo } from '../lib/bajaDia1Rules'
+import { canAssignBajaDia1, sanitizeBajaDia1Motivo, isBajaDia1Motivo } from '../lib/bajaDia1Rules'
 import { useToast } from '../context/ToastContext'
 
 const SIGLAS = [
@@ -374,26 +374,11 @@ export default function AsistenciaRegularizacionModal({
     setRecordsState(prev => {
       const targetIndex = prev.findIndex(r => r.fecha === fecha)
       if (targetIndex === -1) return prev
-      const targetDayIndex = prev[targetIndex].dayIndex || (targetIndex + 1)
-      const dia1Rec = prev[0]
-      const hadDia1Att = targetIndex > 0 && dia1Rec ? (dia1Rec.sigla === 'A' || dia1Rec.sigla === 'I-OP') : false
-      const canBajaD1 = canAssignBajaDia1({
-        trainingDayIndex: targetDayIndex,
-        row: profileRow,
-        hadDia1Attendance: hadDia1Att
-      })
 
       return prev.map((r, idx) => {
         if (r.fecha === fecha) {
-          let newMotivo = r.motivo_baja
-          if (newSigla !== 'B') {
-            newMotivo = ''
-          } else if (!newMotivo) {
-            newMotivo = canBajaD1 ? 'BAJA DIA 1' : 'DESERCIÓN'
-          } else if (!canBajaD1 && isBajaDia1Motivo(newMotivo)) {
-            newMotivo = 'DESERCIÓN'
-          }
-          return { ...r, sigla: newSigla, motivo_baja: newMotivo }
+          // Sin motivo predeterminado: el formador elige de la lista
+          return { ...r, sigla: newSigla, motivo_baja: '' }
         }
 
         // Si estamos poniendo Asistencia ('A' o 'I-OP') y un día anterior tenía 'B' (Baja),
@@ -402,11 +387,9 @@ export default function AsistenciaRegularizacionModal({
           return { ...r, sigla: 'FI', motivo_baja: '' }
         }
 
-        // Si marcamos 'B' en un día, los días posteriores no pueden quedar como asistentes ('A' o 'I-OP')
-        // Heredan la sigla 'B' y el MISMO motivo de baja del día de origen (evitando cambiar erróneamente a 'DESERCIÓN')
+        // Si marcamos 'B' en un día, los días posteriores heredan B y el motivo que el formador elija en el día origen
         if (newSigla === 'B' && idx > targetIndex) {
-          const originMotivo = canBajaD1 ? 'BAJA DIA 1' : (prev[targetIndex].motivo_baja || 'DESERCIÓN')
-          return { ...r, sigla: 'B', motivo_baja: originMotivo }
+          return { ...r, sigla: 'B', motivo_baja: '' }
         }
 
         return r
@@ -422,23 +405,19 @@ export default function AsistenciaRegularizacionModal({
       const targetDayIndex = prev[targetIndex].dayIndex || (targetIndex + 1)
       const dia1Rec = prev[0]
       const hadDia1Att = targetIndex > 0 && dia1Rec ? (dia1Rec.sigla === 'A' || dia1Rec.sigla === 'I-OP') : false
-      const canBajaD1 = canAssignBajaDia1({
+
+      const safeMotivo = sanitizeBajaDia1Motivo({
         trainingDayIndex: targetDayIndex,
         row: profileRow,
-        hadDia1Attendance: hadDia1Att
+        motivo: newMotivo,
+        hadDia1Attendance: hadDia1Att,
       })
-
-      let safeMotivo = newMotivo
-      // Si no es elegible para Baja Día 1, no permitir BAJA DIA 1
-      if (!canBajaD1 && isBajaDia1Motivo(safeMotivo)) {
-        safeMotivo = 'DESERCIÓN'
-      }
 
       return prev.map((r, idx) => {
         if (r.fecha === fecha) {
           return { ...r, motivo_baja: safeMotivo }
         }
-        // Si este día es posterior al cese y también es 'B', sincronizar su motivo
+        // Si este día es posterior al cese y también es 'B', sincronizar su motivo elegido
         if (idx > targetIndex && r.sigla === 'B') {
           return { ...r, motivo_baja: safeMotivo }
         }

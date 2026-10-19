@@ -11,6 +11,7 @@ import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
 import { parseCsvToMatrix, parseNominaRows, cleanDocumento, calcEdadFromFechaISO } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
+import { analyzeDia1CorteRecords, isBajaDia1Motivo } from './bajaDia1Rules.js'
 import { parseCapacidadRysCsv } from './capacidadRysSchema.js'
 import {
   getFromStorage,
@@ -2294,6 +2295,19 @@ export async function syncGoogleSheets({ sourceIds = null, onProgress } = {}) {
   return result
 }
 
+/**
+ * Aísla updates de nómina a la cohorte correcta (documento + grupo + campaña).
+ * Evita cruzar el mismo DNI en otra campaña/grupo homónimo.
+ */
+function scopeNominasCohorte(query, { grupo_codigo, campana } = {}) {
+  let q = query;
+  const cleanGrupo = String(grupo_codigo || '').trim();
+  const cleanCampana = String(campana || '').trim();
+  if (cleanGrupo) q = q.eq('grupo_codigo', cleanGrupo);
+  if (cleanCampana) q = q.eq('campana', cleanCampana);
+  return q;
+}
+
 export async function saveAsistenciaSession({ grupoMeta, grupo_codigo, fecha_asistencia, records }) {
   const codigoFinal = grupoMeta?.codigo?.trim().toUpperCase() || grupo_codigo
   const campanaFinal = grupoMeta?.campana_nombre || grupoMeta?.campana || ''
@@ -2317,18 +2331,22 @@ export async function fetchAsistencias() {
   if (DB_MODE === 'supabase') {
     const data = await fetchAllConsolidado({ since: '2026-07-01' });
 
-    // Map consolidado_asistencias back to standard asistencias structure
-    // We keep the latest record per document+date, but always protect I-OP records
+    // Map consolidado_asistencias → estructura estándar.
+    // Clave con campaña para no pisar cohortes homónimas (mismo código de grupo).
+    // Se conserva el último registro por clave, protegiendo siempre I-OP.
     const map = new Map();
     data.forEach(row => {
       let isoDate = parseFechaAsistencia(row.fecha_registro_asistencia);
       const cleanDoc = String(row.documento || '').trim();
       const cleanGrupo = String(row.codigo_grupo || row.grupo || '').trim();
+      const cleanCampana = String(row.campana || '').trim().toUpperCase();
+      const corteKey = row.corte != null && row.corte !== '' ? String(Number(row.corte)) : '0';
       const semNum = String(row.archivo_origen || '').replace(/\D/g, '');
       const semFromArchivo = semNum ? `SEM ${parseInt(semNum, 10)}` : '';
       
       if (isoDate && cleanDoc) {
-        const key = `${cleanGrupo}_${cleanDoc}_${isoDate}`;
+        // Incluir corte en la clave: C1 A y C3 B del mismo día deben coexistir
+        const key = `${cleanGrupo}|${cleanCampana}|${cleanDoc}|${isoDate}|${corteKey}`;
         const existing = map.get(key);
         const isCurrentIop = String(row.sigla || '').trim().toUpperCase() === 'I-OP';
         if (existing && !isCurrentIop && String(existing.sigla || '').trim().toUpperCase() === 'I-OP') {
@@ -2357,7 +2375,7 @@ export async function fetchAsistencias() {
           semana: semFromArchivo,
           semana_trabajo: semFromArchivo,
           semana_label: semFromArchivo,
-          corte: row.corte || null,
+          corte: row.corte != null && row.corte !== '' ? Number(row.corte) : null,
           fecha_hora_registro: row.fecha_hora_registro || null,
         });
       }
@@ -2369,18 +2387,15 @@ export async function fetchAsistencias() {
   return getFromStorage('asistencias') || []
 }
 
+/**
+ * Side-effects post-guardado de asistencia.
+ * SoT de marcación = consolidado_asistencias (ya escrito por insertConsolidado).
+ * Aquí solo sincronizamos estado de nómina aislado por cohorte; no tocamos asistencias_capacitacion.
+ */
 export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asistencia, records }) {
   if (DB_MODE === 'supabase') {
     grupo_codigo = grupo_codigo || grupoMeta?.codigo;
-    
-    // First, delete existing records for this group and date
-    const { error: delErr } = await supabase
-      .from('asistencias_capacitacion')
-      .delete()
-      .eq('grupo_codigo', grupo_codigo)
-      .eq('fecha_asistencia', fecha_asistencia)
-
-    if (delErr) console.warn('Error borrando asistencias previas:', delErr.message);
+    const campana = String(grupoMeta?.campana_nombre || grupoMeta?.campana || '').trim();
 
     // 1. Agrupar bajas por motivo de baja para actualizar en lote por grupo de motivo
     const bajasByMotivo = new Map();
@@ -2399,38 +2414,45 @@ export async function upsertAsistencias({ grupo_codigo, grupoMeta, fecha_asisten
       .filter(x => x.sigla !== 'B' && x.documento)
       .map(x => x.documento);
 
-    // 3. Ejecutar updates de forma concurrente con Promise.all
+    // 3. Ejecutar updates de forma concurrente con Promise.all (scoped a cohorte)
     const updatePromises = [];
+    const cohortScope = { grupo_codigo, campana };
 
     for (const [obs, { motivo, docs }] of bajasByMotivo.entries()) {
       if (docs.length > 0) {
         updatePromises.push(
-          supabase
-            .from('nominas')
-            .update({
-              estado: 'BAJA',
-              motivo_baja: motivo,
-              observacion_estado: obs,
-              updated_at: new Date().toISOString(),
-            })
-            .in('documento', docs)
-            .eq('activo', true)
+          scopeNominasCohorte(
+            supabase
+              .from('nominas')
+              .update({
+                estado: 'BAJA',
+                motivo_baja: motivo,
+                observacion_estado: obs,
+                updated_at: new Date().toISOString(),
+              })
+              .in('documento', docs)
+              .eq('activo', true),
+            cohortScope
+          )
         );
       }
     }
 
     if (activeDocs.length > 0) {
       updatePromises.push(
-        supabase
-          .from('nominas')
-          .update({
-            estado: 'ACTIVO',
-            observacion_estado: null,
-            updated_at: new Date().toISOString(),
-          })
-          .in('documento', activeDocs)
-          .eq('activo', true)
-          .in('estado', ['BAJA', 'CESADO', 'INACTIVO', 'DESERTO'])
+        scopeNominasCohorte(
+          supabase
+            .from('nominas')
+            .update({
+              estado: 'ACTIVO',
+              observacion_estado: null,
+              updated_at: new Date().toISOString(),
+            })
+            .in('documento', activeDocs)
+            .eq('activo', true)
+            .in('estado', ['BAJA', 'CESADO', 'INACTIVO', 'DESERTO']),
+          cohortScope
+        )
       );
     }
 
@@ -2981,10 +3003,16 @@ export async function insertConsolidado(payloads) {
 
   if (incompleteDocs.length > 0) {
     try {
-      const { data: nomBackup } = await supabase
+      const sampleGrupo = String(payloads[0]?.codigo_grupo || payloads[0]?.grupo || '').trim();
+      const sampleCampana = String(payloads[0]?.campana || '').trim();
+      let nomBackupQuery = supabase
         .from('nominas')
-        .select('documento, nombres, apellido_paterno, apellido_materno, celular, celular_referencia, condicion, campana')
+        .select('documento, nombres, apellido_paterno, apellido_materno, celular, celular_referencia, condicion, campana, grupo_codigo')
         .in('documento', incompleteDocs);
+      if (sampleGrupo) nomBackupQuery = nomBackupQuery.eq('grupo_codigo', sampleGrupo);
+      if (sampleCampana) nomBackupQuery = nomBackupQuery.eq('campana', sampleCampana);
+
+      const { data: nomBackup } = await nomBackupQuery;
 
       if (nomBackup && nomBackup.length > 0) {
         const nomMap = new Map(nomBackup.map(n => [String(n.documento).trim(), n]));
@@ -3006,11 +3034,15 @@ export async function insertConsolidado(payloads) {
     }
   }
 
-  // Limpiar duplicados previos de esa misma fecha, grupo Y CAMPAÑA antes de insertar el estado más fresco
+  // Limpiar solo el CORTE actual (grupo + fecha + campaña + corte).
+  // Así un guardado de Corte 3 no borra la evidencia de A/I-OP de Cortes 1–2 del mismo día.
   const sample = payloads[0];
   const targetGroup = sample.codigo_grupo || sample.grupo;
   const targetFecha = sample.fecha_registro_asistencia;
   const targetCampana = sample.campana;
+  const targetCorte = sample.corte !== undefined && sample.corte !== null && sample.corte !== ''
+    ? Number(sample.corte)
+    : null;
   
   if (targetGroup && targetFecha) {
     try {
@@ -3024,11 +3056,14 @@ export async function insertConsolidado(payloads) {
       if (targetCampana) {
         delQuery = delQuery.eq('campana', targetCampana);
       }
+      if (Number.isFinite(targetCorte) && targetCorte > 0) {
+        delQuery = delQuery.eq('corte', targetCorte);
+      }
 
       const { error: delErr } = await delQuery;
-      if (delErr) console.warn('Aviso al limpiar registros previos del día:', delErr);
+      if (delErr) console.warn('Aviso al limpiar registros previos del corte:', delErr);
     } catch (cleanErr) {
-      console.warn('Aviso al limpiar registros previos del día:', cleanErr);
+      console.warn('Aviso al limpiar registros previos del corte:', cleanErr);
     }
   }
 
@@ -3152,16 +3187,18 @@ export async function regularizarAsistenciaPostulante({
       const spreadsheetDate2 = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
       const isBaja = r.sigla === 'B';
 
-      // 1. Verificar si ya existe registro en consolidado_asistencias para esta fecha y grupo
+      // 1. Verificar si ya existe registro en consolidado_asistencias para esta fecha, grupo y campaña
       let existingId = null;
       try {
-        const { data: exRows } = await supabase
+        let exQuery = supabase
           .from('consolidado_asistencias')
           .select('id')
           .eq('documento', cleanDoc)
           .in('fecha_registro_asistencia', [spreadsheetDate1, spreadsheetDate2, isoDate])
           .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
           .limit(1);
+        if (finalCampana) exQuery = exQuery.eq('campana', finalCampana);
+        const { data: exRows } = await exQuery;
         if (exRows && exRows.length > 0) {
           existingId = exRows[0].id;
         }
@@ -3217,40 +3254,33 @@ export async function regularizarAsistenciaPostulante({
         }
       }
 
-      // 2. Insertar o actualizar registro en asistencias_capacitacion con upsert
-      try {
-        await supabase
-          .from('asistencias_capacitacion')
-          .upsert([{
-            grupo_codigo: targetGroup,
-            postulante_documento: cleanDoc,
-            fecha_asistencia: isoDate,
-            sigla_asistencia: r.sigla,
-            motivo_baja: isBaja ? (r.motivo_baja || 'DESERCIÓN') : null,
-            usuario_registro: formadorNombre || 'REGULARIZACION'
-          }], { onConflict: 'grupo_codigo,postulante_documento,fecha_asistencia' });
-      } catch (insAsisErr) {
-        console.warn('Aviso sincronizando en asistencias_capacitacion:', insAsisErr);
-      }
+      // SoT = consolidado_asistencias. No se escribe asistencias_capacitacion (legacy).
     }
 
-    // 5. Sincronizar estado en nóminas si fue reactivado o quedó como baja
+    // 2. Sincronizar estado en nóminas si fue reactivado o quedó como baja (scoped a cohorte)
     const hasActiveAttendance = records.some(r => r.sigla === 'A' || r.sigla === 'I-OP');
     const lastRecord = records.length > 0 ? records[records.length - 1] : null;
     const isLatestBaja = Boolean(lastRecord && lastRecord.sigla === 'B');
     const latestMotive = isLatestBaja ? (lastRecord.motivo_baja || 'DESERCIÓN') : null;
 
     try {
+      const cohortScope = { grupo_codigo: targetGroup, campana: finalCampana };
       if (hasActiveAttendance && !isLatestBaja) {
-        await supabase
-          .from('nominas')
-          .update({ estado: 'ACTIVO', activo: true, tipo_reclutado: 'APTO', motivo_baja: null, updated_at: new Date().toISOString() })
-          .eq('documento', cleanDoc);
+        await scopeNominasCohorte(
+          supabase
+            .from('nominas')
+            .update({ estado: 'ACTIVO', activo: true, tipo_reclutado: 'APTO', motivo_baja: null, updated_at: new Date().toISOString() })
+            .eq('documento', cleanDoc),
+          cohortScope
+        );
       } else if (isLatestBaja) {
-        await supabase
-          .from('nominas')
-          .update({ estado: 'CESADO', activo: false, tipo_reclutado: 'CESE', motivo_baja: latestMotive, updated_at: new Date().toISOString() })
-          .eq('documento', cleanDoc);
+        await scopeNominasCohorte(
+          supabase
+            .from('nominas')
+            .update({ estado: 'CESADO', activo: false, tipo_reclutado: 'CESE', motivo_baja: latestMotive, updated_at: new Date().toISOString() })
+            .eq('documento', cleanDoc),
+          cohortScope
+        );
       }
     } catch (errNomSync) {
       console.warn('Aviso sincronizando estado en nómina:', errNomSync);
@@ -3302,11 +3332,12 @@ export async function levantarBajaPostulante({
   const spreadsheetDate2 = year ? `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}` : fechaBaja;
 
   if (DB_MODE === 'supabase') {
-    // 1. Modificar el registro en consolidado_asistencias para la fecha en la que se le dio de baja:
+    const cleanCampana = String(campana || '').trim();
+
+    // 1. Modificar el registro en consolidado_asistencias (SoT) para la fecha de baja:
     // Pasa de Baja ('B') a Falta Injustificada ('FI'), motivo vacío y estado ACTIVO.
-    // .update() en Supabase solo modifica las columnas especificadas, preservando nombres, celular, etc.
     try {
-      await supabase
+      let consQuery = supabase
         .from('consolidado_asistencias')
         .update({
           sigla: 'FI',
@@ -3317,57 +3348,48 @@ export async function levantarBajaPostulante({
         .eq('documento', cleanDoc)
         .in('fecha_registro_asistencia', [spreadsheetDate1, spreadsheetDate2, isoBaja, fechaBaja])
         .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`);
+      if (cleanCampana) consQuery = consQuery.eq('campana', cleanCampana);
+      await consQuery;
     } catch (errConsolidado) {
       console.warn('Error actualizando consolidado en levantarBajaPostulante:', errConsolidado);
     }
 
-    // 2. Modificar registro en asistencias_capacitacion para esa fecha:
-    // Pasa a sigla_asistencia 'FI' y motivo_baja null
+    // 2. Reactivar en nominas aislado por cohorte (documento + grupo + campaña)
     try {
-      await supabase
-        .from('asistencias_capacitacion')
-        .update({
-          sigla_asistencia: 'FI',
-          motivo_baja: null
-        })
-        .eq('postulante_documento', cleanDoc)
-        .eq('grupo_codigo', targetGroup)
-        .eq('fecha_asistencia', isoBaja);
-    } catch (errAsis) {
-      console.warn('Error actualizando asistencias_capacitacion en levantarBajaPostulante:', errAsis);
-    }
-
-    // 3. Reactivar en nominas: limpiar motivo_baja y marcar como ACTIVO y APTO
-    try {
-      await supabase
-        .from('nominas')
-        .update({
-          estado: 'ACTIVO',
-          activo: true,
-          tipo_reclutado: 'APTO',
-          motivo_baja: null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('documento', cleanDoc);
+      await scopeNominasCohorte(
+        supabase
+          .from('nominas')
+          .update({
+            estado: 'ACTIVO',
+            activo: true,
+            tipo_reclutado: 'APTO',
+            motivo_baja: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('documento', cleanDoc),
+        { grupo_codigo: targetGroup, campana: cleanCampana }
+      );
     } catch (errNom) {
       console.warn('Error reactivando postulante en nominas:', errNom);
     }
 
-    // 4. Si se especificó fechaHoy (el día en que se presenta, ej. Día 2), registrar Asistencia ('A') sin perder datos
+    // 3. Si se especificó fechaHoy (el día en que se presenta, ej. Día 2), registrar Asistencia ('A') en consolidado (SoT)
     if (fechaHoy && parseFechaAsistencia(fechaHoy) !== isoBaja) {
       const isoHoy = parseFechaAsistencia(fechaHoy) || fechaHoy;
       const [hY, hM, hD] = isoHoy.includes('-') ? isoHoy.split('-') : ['', '', ''];
       const sheetHoy = hY ? `${parseInt(hD, 10)}/${parseInt(hM, 10)}/${hY}` : fechaHoy;
 
       try {
-        // Actualizar si ya existía en consolidado
-        const { data: existingHoy } = await supabase
+        let existingHoyQuery = supabase
           .from('consolidado_asistencias')
           .select('id, nombres, apellido_paterno, apellido_materno, celular, condicion_laboral, campana, archivo_origen')
           .eq('documento', cleanDoc)
           .in('fecha_registro_asistencia', [sheetHoy, isoHoy, fechaHoy])
           .or(`codigo_grupo.eq.${targetGroup},grupo.eq.${targetGroup}`)
           .limit(1);
+        if (cleanCampana) existingHoyQuery = existingHoyQuery.eq('campana', cleanCampana);
+
+        const { data: existingHoy } = await existingHoyQuery;
 
         if (existingHoy && existingHoy.length > 0) {
           await supabase
@@ -3380,19 +3402,28 @@ export async function levantarBajaPostulante({
               fecha_hora_registro: new Date().toLocaleString('es-PE')
             })
             .eq('id', existingHoy[0].id);
+        } else {
+          const info = postulanteInfo || {};
+          await supabase.from('consolidado_asistencias').insert([{
+            documento: cleanDoc,
+            apellido_materno: info.apellido_materno || '',
+            apellido_paterno: info.apellido_paterno || '',
+            nombres: info.nombres || '',
+            celular: info.celular || '',
+            condicion_laboral: info.condicion_laboral || '',
+            campana: cleanCampana || info.campana || '',
+            grupo: targetGroup,
+            codigo_grupo: targetGroup,
+            documento_formador: formadorDoc || '',
+            nombre_formador: formadorNombre || '',
+            fecha_registro_asistencia: sheetHoy,
+            tipo_reclutado: 'APTO',
+            estado: 'ACTIVO',
+            sigla: 'A',
+            motivo_baja: '',
+            fecha_hora_registro: new Date().toLocaleString('es-PE'),
+          }]);
         }
-
-        // Actualizar o insertar en asistencias_capacitacion para fechaHoy
-        await supabase
-          .from('asistencias_capacitacion')
-          .upsert([{
-            grupo_codigo: targetGroup,
-            postulante_documento: cleanDoc,
-            fecha_asistencia: isoHoy,
-            sigla_asistencia: 'A',
-            motivo_baja: null,
-            usuario_registro: formadorNombre || 'LEVANTAR_BAJA'
-          }], { onConflict: 'grupo_codigo,postulante_documento,fecha_asistencia' });
       } catch (errHoy) {
         console.warn('Aviso sincronizando fecha de asistencia actual en levantarBajaPostulante:', errHoy);
       }
@@ -4145,11 +4176,14 @@ export async function saveAsistenciasReclutador(grupo_codigo, campana, registros
   const { error } = await supabase.from('asistencias_dia1_reclutador').insert(payload)
   if (error) throw error
 
-  // Actualizar estado en nóminas si hubo bajas
+  // Actualizar estado en nóminas si hubo bajas (aislado por cohorte)
   if (bajas.length > 0) {
-    await supabase.from('nominas')
-      .update({ estado: 'CESADO', activo: false, updated_at: new Date().toISOString() })
-      .in('documento', bajas)
+    await scopeNominasCohorte(
+      supabase.from('nominas')
+        .update({ estado: 'CESADO', activo: false, updated_at: new Date().toISOString() })
+        .in('documento', bajas),
+      { grupo_codigo, campana }
+    )
   }
   
   // Llamar a check calibracion
@@ -4297,6 +4331,8 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
   let isCalibrated = true
   let countRec = 0
   let countForm = 0
+  let countBajasC3 = 0
+  let countBajasDia1Rys = 0
   for (const doc of allDocs) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
@@ -4315,36 +4351,25 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue
     }
 
-    const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
-    const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
+    // Regla oficial 3 cortes: RyS hasta C2; C3 = formación (no descalibra si hubo A en C1/C2)
+    const corteFlags = analyzeDia1CorteRecords(d1Records, exactD1Record)
+    const {
+      hadAttendanceInEarlierCuts,
+      isCorte3Drop,
+      isBajaDia1Rys,
+      receivedByFormacion,
+    } = corteFlags
 
-    // Regla Oficial de Calibración Día 1 con 3 Cortes:
-    // Reclutamiento hace seguimiento y valida hasta el Corte 2.
-    // Si el postulante asistió en Corte 1 o 2, o si la baja de formación se mandó en el Corte 3
-    // (o con motivo específico de formación: Deserción, Documentos Incompletos, etc.),
-    // se considera que Formación SÍ recibió al alumno en Día 1 (cuenta en sala de Formación).
-    const hadAttendanceInEarlierCuts = d1Records.some(r => {
-      const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
-      const c = Number(r.corte ?? r.corteIndex ?? 0);
-      return (s === 'A' || s === 'I-OP') && (c === 1 || c === 2 || !c);
-    });
-    const isCorte3Drop = exactD1Record && (
-      Number(exactD1Record.corte) === 3 || 
-      String(exactD1Record.fecha_hora_registro || '').toUpperCase().includes('CORTE 3')
-    ) && d1Sigla === 'B';
-    const isExplicitTrainingDrop = d1Sigla === 'B' && !isBajaDia1(d1Motivo, d1Sigla, exactD1Record);
-    const recValidatedD1 = recCandidate && (String(recCandidate.dia_1 || '').toUpperCase().trim() === 'ASISTIO');
-
-    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1')) && 
-      !hadAttendanceInEarlierCuts && !isCorte3Drop && !(isExplicitTrainingDrop && recValidatedD1);
+    if (isCorte3Drop) countBajasC3++
+    if (isBajaDia1Rys) countBajasDia1Rys++
 
     const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
-    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaRecord = formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO') && !isCorte3Drop && !hadAttendanceInEarlierCuts;
-    const isBajaForm = droppedD1InSala || (isBajaRecord && !hadAttendanceInEarlierCuts) || isCeseRec || isCeseForm || isBajaDia1Rec;
-    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+    const isBajaDia1Rec = recCandidate && isBajaDia1Motivo(recCandidate.motivo_baja);
+    // Solo no-show RyS (C1/C2 sin A previo) resta de la entrega Formación — NUNCA una baja C3 con A previa
+    const isBajaForm = Boolean(
+      (isBajaDia1Rys || isBajaDia1Rec || isCeseRec) && !hadAttendanceInEarlierCuts && !isCorte3Drop
+    );
+    const isBajaDia1Direct = Boolean(isBajaForm || isBajaDia1Rec);
 
     // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
     // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
@@ -4367,9 +4392,8 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
       continue;
     }
     
-    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
-    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
-    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
+    // Entrega Formación: presencia C1/C2 o registro no-B; baja C3 con A previa SÍ cuenta
+    const isFormAsistencia = Boolean(receivedByFormacion || (formRecord && !isBajaForm && !isCorte3Drop));
 
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
@@ -4426,7 +4450,7 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
   const recAsis = rawRecAsis || []
 
   let formQuery = supabase.from('consolidado_asistencias')
-    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado')
+    .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, corte, fecha_hora_registro')
     .eq('codigo_grupo', grupo_codigo)
     .order('created_at', { ascending: true })
 
@@ -4444,7 +4468,9 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
       sigla_asistencia: row.sigla,
       motivo_baja: row.motivo_baja,
       estado: row.estado,
-      fecha_asistencia: isoDate
+      fecha_asistencia: isoDate,
+      corte: row.corte,
+      fecha_hora_registro: row.fecha_hora_registro
     }
   }).filter(f => f.fecha_asistencia)
 
@@ -4462,6 +4488,8 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
 
   let countRec = 0
   let countForm = 0
+  let bajas_c3 = 0
+  let bajas_dia1_rys = 0
   for (const doc of allDocs) {
     const studentRecords = formRecordsByDoc.get(doc) || []
     const recCandidate = mapRec.get(doc)
@@ -4475,20 +4503,21 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
     }
 
     if (!recCandidate) {
-      // Alumno agregado directamente por Capacitación / Formación (no provino de la nómina de Reclutamiento).
-      // Regla de Negocio: No cuenta en la entrega de Día 1 de Reclutamiento ni genera descalibración.
       continue
     }
 
-    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
-    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
-    const isCeseForm = (formRecord && String(formRecord.tipo_reclutado || formRecord.estado || formRecord.motivo_baja || '').toUpperCase().includes('CESE')) ||
-                       studentRecords.some(r => isBajaDia1(r.motivo_baja, r.sigla_asistencia, r) || String(r.motivo_baja || '').toUpperCase().includes('BAJA DIA 1'));
-    const isBajaForm = (formRecord && (formRecord.sigla_asistencia === 'B' || formRecord.estado === 'CESADO')) || isCeseRec || isCeseForm || isBajaDia1Rec;
-    const isBajaDia1Direct = Boolean(isBajaForm || isCeseRec || isBajaDia1Rec);
+    const corteFlags = analyzeDia1CorteRecords(d1Records, exactD1Record)
+    const { hadAttendanceInEarlierCuts, isCorte3Drop, isBajaDia1Rys, receivedByFormacion } = corteFlags
+    if (isCorte3Drop) bajas_c3++
+    if (isBajaDia1Rys) bajas_dia1_rys++
 
-    // Regla Oficial: En Día 1 NO hay Descuentos para la cohorte que inicia (son Bajas Día 1).
-    // Y los descuentos NUNCA se heredan de capacitaciones pasadas.
+    const isCeseRec = recCandidate && String(recCandidate.status_dia_1 || recCandidate.estado || recCandidate.tipo_reclutado || recCandidate.motivo_baja || '').toUpperCase().includes('CESE');
+    const isBajaDia1Rec = recCandidate && isBajaDia1Motivo(recCandidate.motivo_baja);
+    const isBajaForm = Boolean(
+      (isBajaDia1Rys || isBajaDia1Rec || isCeseRec) && !hadAttendanceInEarlierCuts && !isCorte3Drop
+    );
+    const isBajaDia1Direct = Boolean(isBajaForm || isBajaDia1Rec);
+
     const isDescuentoDoc = !isBajaDia1Direct && (
       (descSet && (
         descSet.has(doc) ||
@@ -4508,16 +4537,13 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
       continue;
     }
     
-    // Regla de Negocio Oficial: En Formación cuentan todos los postulantes activos/aptos (así tengan falta FI/FJ),
-    // descontando únicamente a quienes son BAJA DÍA 1 / CESADOS.
-    const isFormAsistencia = Boolean(formRecord && !isBajaForm);
-
+    const isFormAsistencia = Boolean(receivedByFormacion || (formRecord && !isBajaForm && !isCorte3Drop));
     const isRecAsistencia = recCandidate ? isCandidateActiveRec(recCandidate) : false;
     
     if (isRecAsistencia) countRec++
     if (isFormAsistencia) countForm++
   }
-  return { rec: countRec, form: countForm }
+  return { rec: countRec, form: countForm, bajas_c3, bajas_dia1_rys }
 }
 
 export async function getDetalleCalibracion(grupo_codigo, campana, periodo = null, semana_label = null) {
@@ -4620,28 +4646,8 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       continue
     }
 
-    const d1Sigla = exactD1Record ? String(exactD1Record.sigla_asistencia || exactD1Record.sigla || '').toUpperCase().trim() : '';
-    const d1Motivo = exactD1Record ? String(exactD1Record.motivo_baja || '').toUpperCase().trim() : '';
-
-    // Regla Oficial de Calibración Día 1 con 3 Cortes:
-    // Reclutamiento hace seguimiento hasta el Corte 2.
-    // Si el postulante asistió en Corte 1 o Corte 2, o si la baja de formación se mandó en el Corte 3
-    // (o con motivo específico de formación: Deserción, Documentos Incompletos, etc.),
-    // se considera que Formación SÍ recibió al alumno en Día 1 (cuenta en sala de Formación).
-    const hadAttendanceInEarlierCuts = d1Records.some(r => {
-      const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim();
-      const c = Number(r.corte ?? r.corteIndex ?? 0);
-      return (s === 'A' || s === 'I-OP') && (c === 1 || c === 2 || !c);
-    });
-    const isCorte3Drop = exactD1Record && (
-      Number(exactD1Record.corte) === 3 || 
-      String(exactD1Record.fecha_hora_registro || '').toUpperCase().includes('CORTE 3')
-    ) && d1Sigla === 'B';
-    const isExplicitTrainingDrop = d1Sigla === 'B' && !isBajaDia1(d1Motivo, d1Sigla, exactD1Record);
-    const recValidatedD1 = recCandidate && (String(recCandidate.dia_1 || '').toUpperCase().trim() === 'ASISTIO');
-
-    const droppedD1InSala = exactD1Record && (d1Sigla === 'B' || d1Motivo.includes('BAJA DIA 1')) && 
-      !hadAttendanceInEarlierCuts && !isCorte3Drop && !(isExplicitTrainingDrop && recValidatedD1);
+    const corteFlags = analyzeDia1CorteRecords(d1Records, exactD1Record)
+    const { hadAttendanceInEarlierCuts, isCorte3Drop, isBajaDia1Rys, receivedByFormacion, d1Sigla } = corteFlags
 
     const hasLaterAttendance = studentRecords.some(r => {
       if (!fecha_dia1_ref || r.fecha_asistencia <= fecha_dia1_ref) return false;
@@ -4649,19 +4655,23 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       return s === 'A' || s === 'I-OP';
     });
 
-    const isBajaDia1Rec = recCandidate && String(recCandidate.motivo_baja || '').toUpperCase().includes('BAJA DIA 1');
+    const isBajaDia1Rec = recCandidate && isBajaDia1Motivo(recCandidate.motivo_baja);
 
     let isBajaForm = false;
     let isFormAsistencia = false;
 
     if (exactD1Record) {
-      if (droppedD1InSala && !hasLaterAttendance) {
+      if (isBajaDia1Rys && !hasLaterAttendance) {
+        // No-show RyS (C1/C2 sin A): no cuenta en entrega Formación
+        isFormAsistencia = false;
+        isBajaForm = true;
+      } else if (isCorte3Drop && !hadAttendanceInEarlierCuts && !hasLaterAttendance) {
+        // Solo aparece como B en C3 sin evidencia C1/C2: no entrega (motivo formación, no RyS)
         isFormAsistencia = false;
         isBajaForm = true;
       } else {
-        // Regla Oficial: En Día 1 tanto la asistencia (A, I-OP) como las faltas (FI, FJ)
-        // de alumnos matriculados cuentan en sala/cohorte de Formación para conciliar con Reclutamiento.
-        isFormAsistencia = true;
+        // A/FI/FJ/I-OP, o baja C3 con A previa en C1/C2 → cuenta entrega Formación
+        isFormAsistencia = Boolean(receivedByFormacion || hadAttendanceInEarlierCuts || (d1Sigla && d1Sigla !== 'B'));
         isBajaForm = false;
       }
     } else {
