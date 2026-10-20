@@ -324,7 +324,18 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         periodo: editingGrupo.periodo,
         semana: editingGrupo.semana_label || editingGrupo.semana,
         segmento: editingGrupo.segmento,
-        campana: editingGrupo.campana_nombre || editingGrupo.campana
+        campana: editingGrupo.campana_nombre || editingGrupo.campana,
+        sede: editingGrupo.sede,
+        modalidad: editingGrupo.modalidad,
+        horario: editingGrupo.horario,
+        fecha: editingGrupo.fecha_inicio || editingGrupo.fecha_registro,
+        fecha_ingreso_op: editingGrupo.fecha_ingreso_op,
+        rq: editingGrupo.rq_solicitado,
+        meta_dia_0: editingGrupo.meta_dia_0,
+        meta_dia_1: editingGrupo.meta_dia_1,
+        lista_actual: editingGrupo.lista_actual,
+        conectados_dia_0: editingGrupo.conectados_dia_0,
+        conectados_dia_1_grupal: editingGrupo.conectados_dia_1_grupal,
       })
       setSaveSuccess('Metas de grupo guardadas con éxito!')
       setTimeout(() => {

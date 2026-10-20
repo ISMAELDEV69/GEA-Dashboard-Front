@@ -2786,6 +2786,45 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas, grupoContex
         .from('grupo_reclutadores')
         .insert(rows)
       if (insErr) throw insErr
+
+      // 3. Sync to new dedicated metas_equipos table
+      try {
+        await supabase.from('metas_equipos').delete().eq('grupo', grupo_codigo)
+        const metasEquiposRows = reclutadoresMetas.map(rm => ({
+          semana: grupoContext.semana || null,
+          periodo: grupoContext.periodo || null,
+          grupo: grupo_codigo,
+          campana: grupoContext.campana || null,
+          sede: grupoContext.sede || null,
+          modalidad: grupoContext.modalidad || null,
+          horario: grupoContext.horario || null,
+          fecha: grupoContext.fecha || null,
+          fecha_ingreso_op: grupoContext.fecha_ingreso_op || null,
+          rq: grupoContext.rq || 0,
+          responsable: rm.nombre_completo || null,
+          documento_responsable: rm.documento || null,
+          rq_individual: rm.meta_rq_individual || 0,
+          conteo_individual: rm.conteo_individual || 0,
+          lista_actual: grupoContext.lista_actual || 0,
+          meta_dia_0: grupoContext.meta_dia_0 || 0,
+          conectados_dia_0: grupoContext.conectados_dia_0 || 0,
+          meta_dia_1_individual: rm.meta_dia_1_individual || 0,
+          conectados_dia_1: rm.conectados_dia_1_individual || 0,
+          meta_dia_1_grupal: grupoContext.meta_dia_1 || 0,
+          total_dia_1: grupoContext.conectados_dia_1_grupal || 0,
+          updated_at: new Date().toISOString()
+        }))
+        await supabase.from('metas_equipos').insert(metasEquiposRows)
+      } catch (syncErr) {
+        console.warn('Sync to metas_equipos table warning:', syncErr)
+      }
+    } else {
+      // Si se removieron todos los reclutadores del grupo
+      try {
+        await supabase.from('metas_equipos').delete().eq('grupo', grupo_codigo)
+      } catch (syncErr) {
+        console.warn('Sync delete metas_equipos warning:', syncErr)
+      }
     }
     await invalidateCache('grupos_con_metas')
     return true
