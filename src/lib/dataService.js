@@ -2613,8 +2613,8 @@ export function fetchGruposConMetas(bypassCache = false) {
   }
   return withCache('grupos_con_metas', 60000, async () => {
     if (DB_MODE === 'supabase') {
-      // 1. Fetch groups and recruiters in parallel (consultando solo columnas necesarias de nominas activas)
-      const [gruposRes, relRes, nominasRes, equipoRes, asisRes] = await Promise.all([
+      // 1. Fetch groups, recruiters and dedicated metas_equipos in parallel
+      const [gruposRes, relRes, nominasRes, equipoRes, asisRes, metasEquiposRes] = await Promise.all([
         supabase
           .from('capacidad_rys')
           .select('codigo, periodo, periodo_ingreso_op, semana_label, semana_trabajo, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, area_traslado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
@@ -2633,19 +2633,96 @@ export function fetchGruposConMetas(bypassCache = false) {
         supabase
           .from('consolidado_asistencias')
           .select('documento, motivo_baja, estado, codigo_grupo, campana')
-          .limit(10000)
+          .limit(10000),
+        supabase
+          .from('metas_equipos')
+          .select('*')
+          .order('id')
       ])
 
-    if (gruposRes.error) throw gruposRes.error
-    if (relRes.error) throw relRes.error
-    if (nominasRes.error) throw nominasRes.error
+    if (gruposRes.error) console.warn('capacidad_rys error:', gruposRes.error)
+    if (metasEquiposRes.error) console.warn('metas_equipos error:', metasEquiposRes.error)
 
     const equipoMap = {}
     for (const eq of (equipoRes.data || [])) {
       const full = `${eq.apellido_paterno || ''} ${eq.apellido_materno || ''} ${eq.nombres_completos || ''}`.trim().replace(/\s+/g, ' ').toUpperCase()
       equipoMap[full] = { documento: eq.documento, alias: eq.alias }
+      if (eq.documento) {
+        equipoMap[eq.documento] = { documento: eq.documento, alias: eq.alias, full }
+      }
     }
 
+    // ── Mapeo primario desde la tabla dedicada metas_equipos ──
+    const metasEquiposRows = metasEquiposRes.data || []
+    const meMap = {}
+    for (const me of metasEquiposRows) {
+      const key = `${me.grupo}|${me.campana || ''}`
+      if (!meMap[key]) meMap[key] = []
+      meMap[key].push(me)
+    }
+
+    const processedKeys = new Set()
+    const resultList = []
+
+    // Si hay datos en metas_equipos, construir grupos con la información exacta guardada
+    for (const key of Object.keys(meMap)) {
+      const rows = meMap[key]
+      if (!rows || rows.length === 0) continue
+      processedKeys.add(key)
+      const first = rows[0]
+
+      const reclutadoresConStats = rows.map(r => {
+        const nomUpper = (r.responsable || '').trim().toUpperCase()
+        const eqData = equipoMap[nomUpper] || (r.documento_responsable ? equipoMap[r.documento_responsable] : null) || {}
+        return {
+          reclutador_id: r.documento_responsable || r.responsable,
+          nombre_completo: r.responsable || 'Sin Asignar',
+          documento: r.documento_responsable || eqData.documento || null,
+          alias: eqData.alias || r.responsable?.split(' ')[0] || null,
+          meta_rq_individual: Number(r.rq_individual || 0),
+          conteo_individual: Number(r.conteo_individual || 0),
+          meta_dia_1_individual: Number(r.meta_dia_1_individual || 0),
+          conectados_dia_1_individual: Number(r.conectados_dia_1 || 0)
+        }
+      })
+
+      resultList.push({
+        grupo_codigo: first.grupo,
+        codigo: first.grupo,
+        periodo: first.periodo || '',
+        periodo_ingreso_op: '',
+        campana_nombre: first.campana || 'Sin Campaña',
+        campana: first.campana || 'Sin Campaña',
+        segmento: first.segmento || '',
+        supervisor: '',
+        estado: 'ACTIVO',
+        area_traslado: 'RECLUTAMIENTO',
+        condicion: '',
+        semana: first.semana || '',
+        semana_label: first.semana || '',
+        semana_trabajo: null,
+        modalidad: first.modalidad || '',
+        horario: first.horario || '',
+        fecha_inicio: first.fecha || '',
+        fecha_registro: first.fecha || '',
+        fecha_inicio_ojt: '',
+        fecha_ingreso_op: first.fecha_ingreso_op || '',
+        meta_dia_0: Number(first.meta_dia_0 || 0),
+        meta_dia_1: Number(first.meta_dia_1_grupal || 0),
+        meta_dia_0_grupal: Number(first.meta_dia_0 || 0),
+        meta_dia_1_grupal: Number(first.meta_dia_1_grupal || 0),
+        rq_solicitado: Number(first.rq || 0),
+        rq_ftes_solicitado: Number(first.rq || 0),
+        reclutadores_metas: reclutadoresConStats,
+        sede: first.sede || '-',
+        lista_actual: Number(first.lista_actual || 0),
+        conectados_dia_0: Number(first.conectados_dia_0 || 0),
+        conectados_dia_1_grupal: Number(first.total_dia_1 || 0),
+        from_metas_equipos: true
+      })
+    }
+
+    // ── Para grupos de capacidad_rys que no estén aún en metas_equipos ──
     const relMap = {}
     for (const r of (relRes.data || [])) {
       if (!relMap[r.grupo_codigo]) relMap[r.grupo_codigo] = []
@@ -2665,7 +2742,6 @@ export function fetchGruposConMetas(bypassCache = false) {
     const nominas = nominasRes.data || []
     const asisData = asisRes.data || []
     
-    // Group asistencias by group and doc
     const bajaDia1Set = new Set()
     for (const a of asisData) {
       const m = String(a.motivo_baja || '').toUpperCase()
@@ -2675,15 +2751,15 @@ export function fetchGruposConMetas(bypassCache = false) {
       }
     }
 
-    return (gruposRes.data || []).map(g => {
+    for (const g of (gruposRes.data || [])) {
       const gCodigo = g.codigo || ''
       const gCampana = g.campana || ''
+      const key = `${gCodigo}|${gCampana}`
+      if (processedKeys.has(key)) continue // Ya procesado desde metas_equipos
+
       const reclutadoresAsignados = relMap[gCodigo] || []
-      
-      // Filter nominas for this specific group + campaign
       const nominasGrupo = nominas.filter(n => n.grupo_codigo === gCodigo && n.campana === gCampana)
 
-      // Get sede from capacidad_rys or fallback to most frequent sede in nominas
       let sede = (g.sede && g.sede.trim() && g.sede.trim() !== '-') ? g.sede.trim() : '-'
       if (sede === '-' && nominasGrupo.length > 0) {
         const sedeCounts = {}
@@ -2699,12 +2775,10 @@ export function fetchGruposConMetas(bypassCache = false) {
         })
       }
 
-      // Group totals
       const listaActual = nominasGrupo.length
       const conectadosDia0 = nominasGrupo.filter(n => n.dia_0 === 'ASISTIO').length
       const conectadosDia1 = nominasGrupo.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${gCampana}|${n.documento}`)).length
 
-      // Map over recruiters to add their individual counts
       const reclutadoresConStats = reclutadoresAsignados.map(r => {
         const nominasReclutador = nominasGrupo.filter(n => n.reclutador_id === r.reclutador_id)
         return {
@@ -2714,7 +2788,7 @@ export function fetchGruposConMetas(bypassCache = false) {
         }
       })
 
-      return {
+      resultList.push({
         grupo_codigo: gCodigo,
         codigo: gCodigo,
         periodo: g.periodo || '',
@@ -2745,12 +2819,14 @@ export function fetchGruposConMetas(bypassCache = false) {
         sede,
         lista_actual: listaActual,
         conectados_dia_0: conectadosDia0,
-        conectados_dia_1_grupal: conectadosDia1
-      }
-    })
+        conectados_dia_1_grupal: conectadosDia1,
+        from_metas_equipos: false
+      })
+    }
+
+    return resultList
   }
 
-  // Local fallback
   return []
   })
 }
@@ -6506,8 +6582,15 @@ export async function updateGrupoCapacidadField(grupo_codigo, campana, field, va
     const { error } = await query;
       
     if (error) {
-      console.error(`Error actualizando ${field} del grupo:`, error);
-      throw error;
+      console.warn(`Aviso actualizando ${field} en capacidad_rys:`, error);
+    }
+
+    // Also update metas_equipos
+    try {
+      const meField = field === 'rango_horario' ? 'horario' : field;
+      await supabase.from('metas_equipos').update({ [meField]: value || null }).eq('grupo', grupo_codigo);
+    } catch (meErr) {
+      console.warn('Sync field update to metas_equipos warning:', meErr);
     }
     
     invalidateCache('grupos_capacidad');

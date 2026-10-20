@@ -336,6 +336,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         lista_actual: editingGrupo.lista_actual,
         conectados_dia_0: editingGrupo.conectados_dia_0,
         conectados_dia_1_grupal: editingGrupo.conectados_dia_1_grupal,
+        total_dia_1: editingGrupo.conectados_dia_1_grupal,
       })
       setSaveSuccess('Metas de grupo guardadas con éxito!')
       setTimeout(() => {
@@ -483,19 +484,26 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
               const recsRaw = g.reclutadores_metas || []
               const recs = recsRaw.map(r => {
                  const recName = r.nombre_completo || '';
-                 const recPostulantes = postulantes.filter(p => 
-                   p.grupo_codigo === g.grupo_codigo && 
-                   p.campana === g.campana_nombre && 
-                   (p.reclutador_id === r.reclutador_id || p.reclutador === recName)
-                 );
-                 const rqReal = recPostulantes.length;
-                 const dia1Real = recPostulantes.filter(p => {
-                    const asisGroup = asistencias.filter(a => a.postulante_documento === p.documento && a.grupo_codigo === g.grupo_codigo && a.campana === g.campana_nombre);
-                    if (asisGroup.length === 0) return false;
-                    const earliest = asisGroup.map(a => a.fecha_asistencia).sort()[0];
-                    const asis = asisGroup.find(a => a.fecha_asistencia === earliest);
-                    return asis && (asis.sigla_asistencia === 'A' || asis.sigla_asistencia === 'I-OP');
-                 }).length;
+                 const isFromMetasEquipos = g.from_metas_equipos || (r.conteo_individual !== undefined && r.conteo_individual !== null);
+                 
+                 let rqReal = r.conteo_individual;
+                 let dia1Real = r.conectados_dia_1_individual;
+
+                 if (!isFromMetasEquipos) {
+                   const recPostulantes = postulantes.filter(p => 
+                     p.grupo_codigo === g.grupo_codigo && 
+                     p.campana === g.campana_nombre && 
+                     (p.reclutador_id === r.reclutador_id || p.reclutador === recName)
+                   );
+                   rqReal = recPostulantes.length;
+                   dia1Real = recPostulantes.filter(p => {
+                      const asisGroup = asistencias.filter(a => a.postulante_documento === p.documento && a.grupo_codigo === g.grupo_codigo && a.campana === g.campana_nombre);
+                      if (asisGroup.length === 0) return false;
+                      const earliest = asisGroup.map(a => a.fecha_asistencia).sort()[0];
+                      const asis = asisGroup.find(a => a.fecha_asistencia === earliest);
+                      return asis && (asis.sigla_asistencia === 'A' || asis.sigla_asistencia === 'I-OP');
+                   }).length;
+                 }
                  
                  const parts = recName.split(' ');
                  let alias = r.alias || parts[0];
