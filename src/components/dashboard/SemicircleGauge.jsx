@@ -14,7 +14,8 @@ function SemicircleGaugeComponent({
   target = null,
   type = 'desercion',
   subMetrics = [],
-  maxVal = 100
+  maxVal = 100,
+  compact = false,
 }) {
   const numericVal = Math.max(0, Number(value) || 0)
   const displayVal = numericVal.toFixed(2)
@@ -72,112 +73,115 @@ function SemicircleGaugeComponent({
   // Identificador único para el gradiente
   const gradId = `gaugeGrad_${title.replace(/[^a-zA-Z0-9]/g, '')}`
 
+  const strokeW = compact ? 12 : strokeWidth
+
   return (
-    <div className="flex flex-col items-center justify-between p-4 rounded-2xl bg-[var(--surface-elevated)] border border-[var(--border-normal)] shadow-md relative overflow-hidden transition-colors duration-300">
-      
-      {/* Cabecera del Gauge: Meta de referencia */}
-      <div className="w-full flex items-center justify-between text-[10.5px] font-mono mb-1 px-1">
+    <div
+      className={`flex flex-col items-center justify-between relative overflow-hidden transition-colors duration-300 ${
+        compact
+          ? 'p-3.5 rounded-xl bg-[var(--surface-elevated)]/80 border border-[var(--border-normal)] shadow-sm shadow-black/10'
+          : 'p-4 rounded-2xl bg-[var(--surface-elevated)] border border-[var(--border-normal)] shadow-md'
+      }`}
+    >
+      <div className="w-full flex items-center justify-between text-[10px] font-mono mb-0.5 px-0.5">
         {targetMarker ? (
           <>
-            <span className="font-bold text-[var(--text-primary)]">{targetMarker.val.toFixed(2)} %</span>
-            <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-sans">Meta Ref.</span>
+            <span className="font-semibold text-[var(--text-primary)] tabular-nums">
+              {targetMarker.val.toFixed(1)}%
+            </span>
+            <span className="text-[var(--text-muted)] uppercase tracking-wide font-sans">Meta</span>
           </>
         ) : (
-          <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-sans ml-auto">Estándar</span>
+          <span className="text-[var(--text-muted)] uppercase tracking-wide font-sans ml-auto">—</span>
         )}
       </div>
 
-      {/* Tacómetro Semicircular SVG con Arco Grueso y Neón */}
-      <div className="relative w-[190px] h-[100px] flex items-center justify-center my-1">
+      <div className={`relative flex items-center justify-center ${compact ? 'w-[160px] h-[88px]' : 'w-[190px] h-[100px] my-1'}`}>
         <svg viewBox="0 0 190 105" className="w-full h-full overflow-visible">
           <defs>
             <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor={fillColor} stopOpacity="0.75" />
               <stop offset="100%" stopColor={fillColor} stopOpacity="1" />
             </linearGradient>
-            <filter id={`glow_${gradId}`} x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="3" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
           </defs>
 
-          {/* Arco de Fondo (Track de pista) */}
           <path
             d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
             fill="none"
             stroke="var(--border-normal)"
-            strokeWidth={strokeWidth}
+            strokeWidth={strokeW}
             strokeLinecap="round"
-            className="opacity-80"
+            className="opacity-70"
           />
 
-          {/* Arco Relleno de Valor Actual con Glow */}
           <path
             d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`}
             fill="none"
             stroke={`url(#${gradId})`}
-            strokeWidth={strokeWidth}
+            strokeWidth={strokeW}
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             strokeLinecap="round"
             className="transition-all duration-700 ease-out"
-            style={{ filter: `drop-shadow(0 0 6px ${glowColor})` }}
+            style={compact ? undefined : { filter: `drop-shadow(0 0 6px ${glowColor})` }}
           />
 
-          {/* Marcador de Meta (Línea/Punto sobre el arco) */}
           {targetMarker && (
-            <g className="cursor-pointer">
-              <circle
-                cx={targetMarker.x}
-                cy={targetMarker.y}
-                r="4.5"
-                fill="#FFFFFF"
-                stroke={fillColor}
-                strokeWidth="2"
-                style={{ filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.3))' }}
-              />
-            </g>
+            <circle
+              cx={targetMarker.x}
+              cy={targetMarker.y}
+              r={compact ? 3.5 : 4.5}
+              fill="#FFFFFF"
+              stroke={fillColor}
+              strokeWidth="2"
+            />
           )}
 
-          {/* Marcas de Extremos (0.00% y 100.00%) */}
           <text x={cx - radius - 2} y={cy + 15} textAnchor="start" className="fill-[var(--text-muted)] text-[9px] font-mono">
-            0,00 %
+            0%
           </text>
           <text x={cx + radius + 2} y={cy + 15} textAnchor="end" className="fill-[var(--text-muted)] text-[9px] font-mono">
-            {effectiveMax},00 %
+            {effectiveMax}%
           </text>
         </svg>
 
-        {/* Valor Central Numérico */}
         <div className="absolute bottom-1 left-0 right-0 flex flex-col items-center justify-center pointer-events-none">
           <span
-            className="text-2xl font-black font-mono tracking-tight tabular-nums"
+            className={`font-bold font-mono tracking-tight tabular-nums ${compact ? 'text-xl' : 'text-2xl'}`}
             style={{
               color: fillColor,
-              textShadow: `0 0 12px ${glowColor}`
+              ...(compact ? {} : { textShadow: `0 0 12px ${glowColor}` }),
             }}
           >
-            {displayVal} %
+            {displayVal}%
           </span>
         </div>
       </div>
 
-      {/* Título Central / Badge de Indicador */}
-      <div className="w-full mt-2 mb-2 text-center">
-        <span className="inline-block px-3 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider bg-[var(--surface)] text-[var(--accent)] border border-[var(--border-normal)] shadow-xs">
+      <div className={`w-full text-center ${compact ? 'mt-1 mb-1' : 'mt-2 mb-2'}`}>
+        <span
+          className={`inline-block px-2.5 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider border ${
+            compact
+              ? 'bg-[var(--surface)] text-cyan-300/90 border-cyan-500/20'
+              : 'bg-[var(--surface)] text-[var(--accent)] border-[var(--border-normal)] shadow-xs'
+          }`}
+        >
           {title}
         </span>
       </div>
 
-      {/* Métricas Inferiores (Ej: Q Día 1 vs Desertores) */}
       {subMetrics && subMetrics.length > 0 && (
-        <div className="w-full grid grid-cols-2 gap-2 pt-2.5 mt-1 border-t border-[var(--border-normal)] text-center font-mono">
+        <div
+          className={`w-full grid grid-cols-2 gap-2 border-t border-[var(--border-subtle)] text-center font-mono ${
+            compact ? 'pt-2 mt-0.5' : 'pt-2.5 mt-1 border-[var(--border-normal)]'
+          }`}
+        >
           {subMetrics.map((m, idx) => (
-            <div key={idx} className="flex flex-col">
-              <span className="text-sm font-black text-[var(--text-primary)] tabular-nums">
+            <div key={idx} className="flex flex-col min-w-0">
+              <span className={`font-bold text-[var(--text-primary)] tabular-nums ${compact ? 'text-xs' : 'text-sm'}`}>
                 {m.value}
               </span>
-              <span className="text-[9.5px] font-bold text-[var(--text-muted)] uppercase tracking-tight font-sans">
+              <span className="text-[9px] font-medium text-[var(--text-muted)] uppercase tracking-tight font-sans truncate">
                 {m.label}
               </span>
             </div>

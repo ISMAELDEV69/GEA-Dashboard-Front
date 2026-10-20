@@ -37,7 +37,6 @@ import {
   Table as TableIcon,
   PieChart as PieIcon,
   Compass,
-  Zap,
   Target,
   Clock,
   Flame,
@@ -280,7 +279,7 @@ function MultiSelectFilter({
   );
 }
 
-/** KPI unificado Fase 2 — misma altura/layout; accent solo para semáforo de riesgo */
+/** KPI unificado — misma estructura; tone da color de marca, accent = semáforo de riesgo */
 function KpiCard({
   label,
   icon: Icon,
@@ -289,68 +288,91 @@ function KpiCard({
   subtitle,
   microLeft,
   microRight,
-  accent = null, // null | 'ok' | 'caution' | 'critical'
+  tone = 'cyan', // indigo | cyan | amber | rose | emerald
+  accent = null, // null | 'ok' | 'caution' | 'critical' — pisa tone en semáforo
 }) {
-  const accentStyles = {
-    ok: {
-      card: 'border-emerald-500/35 hover:border-emerald-500/50',
-      value: 'text-emerald-400',
-      badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',
-      icon: 'text-emerald-400',
+  const tones = {
+    indigo: {
+      card: 'border-indigo-500/30 hover:border-indigo-400/50 from-[var(--surface)] via-[var(--surface)] to-indigo-950/35',
+      orb: 'bg-indigo-500/15',
+      label: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/25',
+      iconBox: 'bg-indigo-500/15 text-indigo-300',
+      unit: 'text-indigo-400',
+      value: 'text-[var(--text-primary)]',
     },
-    caution: {
-      card: 'border-amber-500/35 hover:border-amber-500/50',
-      value: 'text-amber-400',
-      badge: 'bg-amber-500/10 text-amber-400 border-amber-500/25',
-      icon: 'text-amber-400',
+    cyan: {
+      card: 'border-cyan-500/30 hover:border-cyan-400/50 from-[var(--surface)] via-[var(--surface)] to-cyan-950/35',
+      orb: 'bg-cyan-500/15',
+      label: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/25',
+      iconBox: 'bg-cyan-500/15 text-cyan-300',
+      unit: 'text-cyan-400',
+      value: 'text-[var(--text-primary)]',
     },
-    critical: {
-      card: 'border-rose-500/40 hover:border-rose-500/55',
+    amber: {
+      card: 'border-amber-500/30 hover:border-amber-400/50 from-[var(--surface)] via-[var(--surface)] to-amber-950/30',
+      orb: 'bg-amber-500/15',
+      label: 'text-amber-300 bg-amber-500/10 border-amber-500/25',
+      iconBox: 'bg-amber-500/15 text-amber-300',
+      unit: 'text-amber-400',
+      value: 'text-[var(--text-primary)]',
+    },
+    rose: {
+      card: 'border-rose-500/40 hover:border-rose-400/55 from-[var(--surface)] via-[var(--surface)] to-rose-950/40',
+      orb: 'bg-rose-500/20',
+      label: 'text-rose-300 bg-rose-500/15 border-rose-500/30',
+      iconBox: 'bg-rose-500/15 text-rose-400',
+      unit: 'text-rose-400',
       value: 'text-rose-400',
-      badge: 'bg-rose-500/10 text-rose-400 border-rose-500/25',
-      icon: 'text-rose-400',
+    },
+    emerald: {
+      card: 'border-emerald-500/35 hover:border-emerald-400/50 from-[var(--surface)] via-[var(--surface)] to-emerald-950/35',
+      orb: 'bg-emerald-500/15',
+      label: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25',
+      iconBox: 'bg-emerald-500/15 text-emerald-300',
+      unit: 'text-emerald-400',
+      value: 'text-emerald-400',
     },
   };
-  const a = accent ? accentStyles[accent] : null;
+
+  const resolvedTone =
+    accent === 'critical' ? 'rose' : accent === 'caution' ? 'amber' : accent === 'ok' ? 'emerald' : tone;
+  const t = tones[resolvedTone] || tones.cyan;
 
   return (
     <div
-      className={`flex flex-col h-full min-h-[148px] p-4 rounded-xl border bg-[var(--surface)] transition-colors ${
-        a ? a.card : 'border-[var(--border-subtle)] hover:border-[var(--border-normal)]'
-      }`}
+      className={`relative overflow-hidden flex flex-col h-full min-h-[156px] p-4 rounded-2xl border bg-gradient-to-br shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-0.5 ${t.card}`}
     >
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <span className="text-[10px] font-bold text-[var(--text-muted)] tracking-wider uppercase truncate">
+      <div
+        className={`pointer-events-none absolute -top-8 -right-8 w-28 h-28 rounded-full blur-2xl opacity-80 ${t.orb}`}
+      />
+
+      <div className="relative flex items-center justify-between gap-2 mb-3">
+        <span
+          className={`inline-flex items-center text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-md border truncate max-w-[85%] ${t.label}`}
+        >
           {label}
         </span>
         {Icon && (
-          <Icon
-            className={`w-3.5 h-3.5 shrink-0 ${a ? a.icon : 'text-[var(--text-muted)]'}`}
-            strokeWidth={2}
-          />
+          <div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${t.iconBox}`}>
+            <Icon className="w-4 h-4" strokeWidth={2} />
+          </div>
         )}
       </div>
 
-      <div className="flex items-baseline gap-1.5 flex-wrap min-h-[2.25rem]">
-        <span
-          className={`text-3xl font-bold tracking-tight tabular-nums ${
-            a ? a.value : 'text-[var(--text-primary)]'
-          }`}
-        >
+      <div className="relative flex items-baseline gap-1.5 flex-wrap min-h-[2.35rem]">
+        <span className={`text-3xl font-black tracking-tight tabular-nums ${t.value}`}>
           {value}
         </span>
-        {unit && (
-          <span className="text-sm font-semibold text-[var(--text-muted)]">{unit}</span>
-        )}
+        {unit && <span className={`text-base font-bold ${t.unit}`}>{unit}</span>}
       </div>
 
-      <p className="text-xs text-[var(--text-secondary)] mt-1 leading-snug">{subtitle}</p>
+      <p className="relative text-xs font-medium text-[var(--text-secondary)] mt-1.5 leading-snug">
+        {subtitle}
+      </p>
 
-      <div className="mt-auto pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 text-[11px]">
+      <div className="relative mt-auto pt-3 border-t border-white/5 flex items-center justify-between gap-2 text-[11px]">
         <span className="text-[var(--text-muted)] truncate min-w-0">{microLeft}</span>
-        <span className="shrink-0 font-semibold text-[var(--text-primary)] tabular-nums">
-          {microRight}
-        </span>
+        <span className="shrink-0 font-bold text-[var(--text-primary)] tabular-nums">{microRight}</span>
       </div>
     </div>
   );
@@ -1430,17 +1452,17 @@ export default function ResumenCapacitacion({
   return (
     <div className="space-y-5 pb-12 animate-fade-in">
       {/* ── HEADER ── */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-[var(--surface)] px-4 py-3.5 rounded-xl border border-[var(--border-subtle)]">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 shrink-0 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-            <Activity className="w-4 h-4" />
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-gradient-to-r from-[var(--surface)] via-[var(--surface)] to-cyan-950/20 px-4 py-4 rounded-2xl border border-cyan-500/15 shadow-lg shadow-black/25">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 shrink-0 rounded-xl bg-gradient-to-br from-cyan-500/25 to-indigo-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.15)]">
+            <Activity className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg font-bold tracking-tight text-[var(--text-primary)]">
+              <h1 className="text-xl font-black tracking-tight text-[var(--text-primary)]">
                 Resumen Capacitación
               </h1>
-              <span className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--surface-elevated)] text-[var(--text-muted)] border border-[var(--border-subtle)] font-semibold uppercase tracking-wide">
+              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/25 font-bold uppercase tracking-wide">
                 Dotación
               </span>
             </div>
@@ -1451,13 +1473,13 @@ export default function ResumenCapacitacion({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-elevated)] p-0.5">
+          <div className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-elevated)]/80 p-1 backdrop-blur-sm">
             <button
               type="button"
               onClick={() => setActiveTab('DASHBOARD')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 activeTab === 'DASHBOARD'
-                  ? 'bg-[var(--surface)] text-cyan-400 shadow-sm border border-[var(--border-subtle)]'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/35 shadow-[0_0_12px_rgba(34,211,238,0.12)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
             >
@@ -1467,9 +1489,9 @@ export default function ResumenCapacitacion({
             <button
               type="button"
               onClick={() => setActiveTab('MATRIZ_TABLA')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 activeTab === 'MATRIZ_TABLA'
-                  ? 'bg-[var(--surface)] text-cyan-400 shadow-sm border border-[var(--border-subtle)]'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/35 shadow-[0_0_12px_rgba(34,211,238,0.12)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
             >
@@ -1482,7 +1504,7 @@ export default function ResumenCapacitacion({
             type="button"
             onClick={() => loadData(true)}
             disabled={loading || isRefreshing}
-            className="p-2 rounded-lg bg-[var(--surface-elevated)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            className="p-2.5 rounded-xl bg-[var(--surface-elevated)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-cyan-300 transition-colors"
             title="Refrescar datos"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
@@ -1491,7 +1513,7 @@ export default function ResumenCapacitacion({
           <button
             type="button"
             onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-xs font-semibold transition-colors"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all shadow-sm shadow-emerald-900/20"
           >
             <Download className="w-3.5 h-3.5" />
             Excel
@@ -1500,8 +1522,8 @@ export default function ResumenCapacitacion({
       </div>
 
       {/* ── FILTROS: primarios siempre visibles · secundarios en panel ── */}
-      <div data-filter-bar className="bg-[var(--surface)] rounded-xl border border-[var(--border-subtle)]">
-        <div className="p-3 flex flex-wrap items-end gap-2.5">
+      <div data-filter-bar className="bg-[var(--surface)] rounded-2xl border border-[var(--border-subtle)] shadow-md shadow-black/15">
+        <div className="p-3.5 flex flex-wrap items-end gap-2.5">
           <MultiSelectFilter
             label="Periodo ingreso"
             allLabel="Todos los Periodos"
@@ -1665,8 +1687,9 @@ export default function ResumenCapacitacion({
       ) : activeTab === 'DASHBOARD' ? (
         <>
           {/* ── SCORECARD: 4 KPIs unificados ── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
             <KpiCard
+              tone="indigo"
               label="Cantidad de grupos"
               icon={Layers}
               value={kpiGrupos.total.toLocaleString()}
@@ -1677,6 +1700,7 @@ export default function ResumenCapacitacion({
             />
 
             <KpiCard
+              tone="cyan"
               label="Aging OJT"
               icon={Clock}
               value={kpiAging.avgDays}
@@ -1684,7 +1708,13 @@ export default function ResumenCapacitacion({
               subtitle="Permanencia promedio en nesting"
               microLeft={`${kpiAging.totalTransito} en OJT`}
               microRight={
-                <span className={kpiAging.countEstancados > 0 ? 'text-amber-400' : 'text-[var(--text-primary)]'}>
+                <span
+                  className={
+                    kpiAging.countEstancados > 0
+                      ? 'text-amber-400 bg-amber-500/10 border border-amber-500/25 px-1.5 py-0.5 rounded-md'
+                      : 'text-emerald-400'
+                  }
+                >
                   {kpiAging.countEstancados} &gt;15d
                 </span>
               }
@@ -1719,7 +1749,7 @@ export default function ResumenCapacitacion({
                     <button
                       type="button"
                       onClick={() => setShowRiskModal(true)}
-                      className="font-semibold text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                      className="font-bold text-amber-400 hover:text-amber-300 underline underline-offset-2"
                       title="Ver formadores en fuga crítica"
                     >
                       {kpiAlertas.countFormadoresCriticos} form. &gt;35%
@@ -1730,6 +1760,7 @@ export default function ResumenCapacitacion({
             })()}
 
             <KpiCard
+              tone="amber"
               label="Run-rate cierre"
               icon={Target}
               value={
@@ -1748,127 +1779,176 @@ export default function ResumenCapacitacion({
             />
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════════ */}
-          {/* NIVEL 2: EMBUDO A LA IZQUIERDA (5 COLS) + MATRIZ 2X2 TACÓMETROS (7 COLS) */}
-          {/* ═══════════════════════════════════════════════════════════════════ */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
-            
-            {/* LADO IZQUIERDO: EMBUDO DE CONVERSIÓN LINEAL (4 ETAPAS) */}
-            <div className="xl:col-span-5 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-normal)] shadow-md flex flex-col justify-between transition-colors duration-300">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-black text-[var(--text-primary)] flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-cyan-400" />
-                    EMBUDO DE CONVERSIÓN LINEAL
+          {/* ── Embudo + Indicadores ── */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
+            {/* Embudo */}
+            <div className="xl:col-span-5 relative overflow-hidden bg-gradient-to-br from-[var(--surface)] to-slate-950/40 p-5 rounded-2xl border border-cyan-500/15 shadow-lg shadow-black/20 flex flex-col">
+              <div className="pointer-events-none absolute top-0 right-0 w-40 h-40 bg-cyan-500/5 rounded-full blur-3xl" />
+              <div className="relative mb-4 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-black text-[var(--text-primary)] tracking-tight flex items-center gap-2">
+                    <span className="w-1.5 h-4 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+                    Embudo de conversión
                   </h3>
-                  <span className="text-xs font-bold text-cyan-400 font-mono">4 Etapas</span>
+                  <p className="text-xs text-[var(--text-secondary)] mt-1 ml-3.5">
+                    Nómina → Día 1 → OJT → I-OP
+                  </p>
                 </div>
-                <p className="text-xs text-[var(--text-secondary)] mb-5">
-                  Monitoreo secuencial de caída y retención neta desde Nómina hasta Pase a Operación
-                </p>
-
-                {/* Steps Visuales en Cascada Vertical apegado a la izquierda */}
-                <div className="space-y-3">
-                  {funnelData.map((step, idx) => (
-                    <div key={step.etapa} className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-1.5 truncate max-w-[200px]">
-                          <span className="font-black text-[var(--text-primary)]">{step.etapa}:</span>
-                          <span className="text-[var(--text-secondary)] truncate">{step.nombre}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-[var(--text-primary)] text-xs font-mono">{step.valor.toLocaleString()}</span>
-                          <span className="font-bold px-2 py-0.5 rounded-md text-[10.5px] font-mono" style={{ backgroundColor: `${step.fill}20`, color: step.fill }}>
-                            {step.pct}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Barra de Embudo */}
-                      <div className="w-full h-3 bg-[var(--surface-elevated)] rounded-full overflow-hidden p-0.5 border border-[var(--border-normal)]">
-                        <div
-                          className="h-full rounded-full transition-all duration-700"
-                          style={{
-                            width: `${kpis.total_nomina > 0 ? (step.valor / kpis.total_nomina) * 100 : 0}%`,
-                            backgroundColor: step.fill,
-                            boxShadow: `0 0 10px ${step.fill}60`
-                          }}
-                        />
-                      </div>
-
-                      {idx < funnelData.length - 1 && (
-                        <div className="flex items-center justify-center my-0.5">
-                          <span className="inline-flex items-center gap-1 text-[10px] text-rose-400 font-bold px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 font-mono">
-                            ↓ {funnelData[idx + 1].drop}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-[var(--border-normal)] flex flex-wrap items-center justify-between text-xs text-[var(--text-secondary)] gap-2">
-                <span>Total Evaluados: <strong className="text-[var(--text-primary)]">{kpis.total_nomina.toLocaleString()}</strong></span>
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] text-[var(--text-muted)] font-mono">
-                    Activos al Corte: <strong className="text-cyan-400">{kpis.activos_actuales.toLocaleString()}</strong>
-                  </span>
-                  <span className="text-[11px] text-[var(--text-muted)] font-mono">
-                    En OJT: <strong className="text-teal-400">{kpis.activos_ojt.toLocaleString()}</strong>
-                  </span>
-                  <span>Graduación: <strong className="text-amber-400 font-mono">{kpis.ingresos_iop.toLocaleString()} I-OP</strong></span>
-                </div>
-              </div>
-            </div>
-
-            {/* LADO DERECHO: 4 TACÓMETROS EN MATRIZ DE 2x2 */}
-            <div className="xl:col-span-7 bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border-normal)] shadow-md flex flex-col justify-between space-y-4 transition-colors duration-300">
-              <div className="flex items-center justify-between border-b border-[var(--border-normal)] pb-3">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00E5FF]" />
-                  <span className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-                    INDICADORES GLOBALES - CAPACITACIÓN
-                  </span>
-                </div>
-                <span className="text-[11px] font-bold text-[var(--text-muted)] font-mono">
-                  Semáforo Dinámico
+                <span className="text-[10px] font-bold text-cyan-300/80 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-md">
+                  4 etapas
                 </span>
               </div>
 
-              {/* Matriz 2x2 de Tacómetros */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Gauge 1: % Deserción Global */}
+              <div className="relative flex-1 space-y-0.5">
+                {funnelData.map((step, idx) => {
+                  const prev = idx > 0 ? funnelData[idx - 1] : null;
+                  const pasoPct =
+                    prev && prev.valor > 0
+                      ? ((step.valor / prev.valor) * 100).toFixed(1)
+                      : null;
+                  const barPct =
+                    kpis.total_nomina > 0
+                      ? Math.min(100, (step.valor / kpis.total_nomina) * 100)
+                      : 0;
+                  const dropNum = String(funnelData[idx].drop || '').replace('% caída', '').trim();
+
+                  return (
+                    <div key={step.etapa}>
+                      {pasoPct !== null && (
+                        <div className="flex items-center justify-center gap-2 py-1.5">
+                          <span
+                            className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full border tabular-nums"
+                            style={{
+                              color: step.fill,
+                              backgroundColor: `${step.fill}14`,
+                              borderColor: `${step.fill}35`,
+                            }}
+                          >
+                            ↓ {pasoPct}% pasan
+                            <span className="opacity-60 font-medium">· caída {dropNum}%</span>
+                          </span>
+                        </div>
+                      )}
+
+                      <div
+                        className="rounded-xl px-3.5 py-3 border bg-[var(--surface-elevated)]/60 backdrop-blur-sm transition-colors"
+                        style={{ borderColor: `${step.fill}28` }}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span
+                              className="w-6 h-6 shrink-0 rounded-lg flex items-center justify-center text-[11px] font-black"
+                              style={{
+                                backgroundColor: `${step.fill}22`,
+                                color: step.fill,
+                                boxShadow: `0 0 12px ${step.fill}33`,
+                              }}
+                            >
+                              {idx + 1}
+                            </span>
+                            <span className="text-xs font-bold text-[var(--text-primary)] truncate">
+                              {step.nombre}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-black text-[var(--text-primary)] tabular-nums">
+                              {Number(step.valor || 0).toLocaleString()}
+                            </span>
+                            <span
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums"
+                              style={{ backgroundColor: `${step.fill}20`, color: step.fill }}
+                            >
+                              {step.pct}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full h-2.5 bg-[var(--surface)] rounded-full overflow-hidden border border-[var(--border-subtle)]">
+                          <div
+                            className="h-full rounded-full transition-all duration-700 ease-out"
+                            style={{
+                              width: `${barPct}%`,
+                              backgroundColor: step.fill,
+                              boxShadow: `0 0 10px ${step.fill}55`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="relative mt-4 pt-3 border-t border-[var(--border-subtle)] flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-[var(--text-muted)]">
+                <span>
+                  Activos{' '}
+                  <strong className="text-cyan-300 font-bold tabular-nums">
+                    {kpis.activos_actuales.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  OJT{' '}
+                  <strong className="text-teal-300 font-bold tabular-nums">
+                    {kpis.activos_ojt.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  I-OP{' '}
+                  <strong className="text-amber-300 font-bold tabular-nums">
+                    {kpis.ingresos_iop.toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            {/* Gauges */}
+            <div className="xl:col-span-7 relative overflow-hidden bg-gradient-to-br from-[var(--surface)] to-indigo-950/25 p-5 rounded-2xl border border-indigo-500/15 shadow-lg shadow-black/20 flex flex-col">
+              <div className="pointer-events-none absolute -bottom-10 -right-10 w-48 h-48 bg-indigo-500/8 rounded-full blur-3xl" />
+              <div className="relative flex items-center justify-between mb-4 pb-3 border-b border-[var(--border-subtle)]">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]" />
+                  <div>
+                    <h3 className="text-sm font-black text-[var(--text-primary)] tracking-tight uppercase">
+                      Indicadores globales
+                    </h3>
+                    <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                      Deserción y dotación vs meta
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-[var(--text-muted)] bg-[var(--surface-elevated)] border border-[var(--border-subtle)] px-2 py-0.5 rounded-md">
+                  Semáforo
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
                 <SemicircleGauge
-                  title="% Deserción"
+                  compact
+                  title="Deserción"
                   value={executiveGaugesData.desercionGlobal.value}
                   target={executiveGaugesData.desercionGlobal.target}
                   type="desercion"
                   subMetrics={executiveGaugesData.desercionGlobal.subMetrics}
                 />
-
-                {/* Gauge 2: % Deserción CT */}
                 <SemicircleGauge
-                  title="% Deserción CT"
+                  compact
+                  title="Deserción CT"
                   value={executiveGaugesData.desercionCT.value}
                   target={executiveGaugesData.desercionCT.target}
                   type="desercion"
                   subMetrics={executiveGaugesData.desercionCT.subMetrics}
                 />
-
-                {/* Gauge 3: % Dotación */}
                 <SemicircleGauge
-                  title="% Dotación"
+                  compact
+                  title="Dotación"
                   value={executiveGaugesData.dotacion.value}
                   target={executiveGaugesData.dotacion.target}
                   type="dotacion"
                   maxVal={100}
                   subMetrics={executiveGaugesData.dotacion.subMetrics}
                 />
-
-                {/* Gauge 4: % Deserción OJT */}
                 <SemicircleGauge
-                  title="% Deserción OJT"
+                  compact
+                  title="Deserción OJT"
                   value={executiveGaugesData.desercionOJT.value}
                   target={executiveGaugesData.desercionOJT.target}
                   type="desercion"
@@ -1876,7 +1956,6 @@ export default function ResumenCapacitacion({
                 />
               </div>
             </div>
-
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════ */}

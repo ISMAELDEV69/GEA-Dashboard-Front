@@ -6,7 +6,13 @@ import {
   invalidateCache,
   adjudicarPostulantesPoolBulk
 } from '../../lib/dataService'
-import { NOMINA_DB_FIELDS } from '../../lib/nominaConsolidadoSchema'
+import {
+  NOMINA_DB_FIELDS,
+  parseFechaNacimiento,
+  parseEdadValue,
+  normalizeTiempoExperiencia,
+  extractPhonesFromText
+} from '../../lib/nominaConsolidadoSchema'
 import { parseExcelDate } from '../../lib/capacidadRysSchema'
 import { resolveDistrictCoordinates } from '../../lib/geoMobilityService'
 import { supabase } from '../../lib/supabase'
@@ -825,16 +831,24 @@ export default function NominaFormPool({
           ? new Date(d.marca_temporal).toISOString()
           : new Date().toISOString()
 
-        const fechaNac = parseExcelDate(d.fecha_nacimiento) || d.fecha_nacimiento || null
-        const expTiempo = d.exp_tiempo_campana || d.exp_tiempo_call || null
+        const fechaNac = parseFechaNacimiento(d.fecha_nacimiento) || d.fecha_nacimiento || null
+        const edadVal = parseEdadValue(d.edad, fechaNac)
+        const expTiempo = normalizeTiempoExperiencia(d.exp_tiempo_campana || d.exp_tiempo_call) || d.exp_tiempo_campana || d.exp_tiempo_call || null
+        const phonesCel = extractPhonesFromText(d.celular)
+        const phonesRef = extractPhonesFromText(d.celular_referencia)
+        const phonesWsp = extractPhonesFromText(d.usuario_whatsapp)
+
+        const finalCelular = phonesCel.primary || phonesRef.primary || phonesWsp.primary || d.celular || null
+        const finalCelularRef = phonesCel.secondary || phonesRef.secondary || (phonesCel.primary && phonesRef.primary && phonesRef.primary !== phonesCel.primary ? phonesRef.primary : null) || d.celular_referencia || null
+
         const rawPayload = {
           ...d,
           marca_temporal: safeMarcaTemporal,
           fecha_nacimiento: fechaNac,
-          edad: d.edad ?? null,
+          edad: edadVal ?? d.edad ?? null,
           n_hijos: d.n_hijos ?? 0,
-          celular: d.celular || null,
-          celular_referencia: d.celular_referencia || null,
+          celular: finalCelular,
+          celular_referencia: finalCelularRef,
           exp_tiempo_call: expTiempo,
           exp_tiempo_campana: expTiempo,
           periodo_reclutado: bulkPeriodo ? String(bulkPeriodo).trim() : (matchedGrupoObj?.periodo || null),

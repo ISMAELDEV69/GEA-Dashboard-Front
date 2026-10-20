@@ -81,6 +81,320 @@ export function calcEdadFromFechaISO(fecha) {
   return age >= 14 && age <= 90 ? age : null
 }
 
+/**
+ * Parsea fechas de nacimiento garantizando el formato estándar DÍA / MES / AÑO (DD/MM/YYYY).
+ * Soporta seriales de Excel, Date objects, texto en español (ej: "15 de mayo de 1998")
+ * y separadores /, -, ., retornando siempre el formato ISO YYYY-MM-DD.
+ */
+export function parseFechaNacimiento(val) {
+  if (val === null || val === undefined || val === '') return null
+
+  const currentYear = new Date().getFullYear()
+  const minYear = 1935
+  const maxYear = currentYear - 14
+
+  // 1. Si viene como Date object (evitar desfase de zona horaria UTC-5 de Perú)
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const yUtc = val.getUTCFullYear()
+    const mUtc = String(val.getUTCMonth() + 1).padStart(2, '0')
+    const dUtc = String(val.getUTCDate()).padStart(2, '0')
+    if (yUtc >= minYear && yUtc <= maxYear) return `${yUtc}-${mUtc}-${dUtc}`
+    const yLocal = val.getFullYear()
+    const mLocal = String(val.getMonth() + 1).padStart(2, '0')
+    const dLocal = String(val.getDate()).padStart(2, '0')
+    if (yLocal >= minYear && yLocal <= maxYear) return `${yLocal}-${mLocal}-${dLocal}`
+  }
+
+  let s = String(val).trim()
+  if (!s || s === '-' || s === '0' || s.toUpperCase() === 'NULL' || s === 'undefined' || s === '...') return null
+
+  // Limpiar comillas, apóstrofes y prefijos
+  s = s.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
+
+  // 2. Número serial de Excel (ej. 36525 = 31/12/1999)
+  if (/^\d{4,6}(?:\.\d+)?$/.test(s)) {
+    const serial = parseFloat(s)
+    if (serial >= 12000 && serial <= 50000) {
+      const d = new Date(Math.round((serial - 25569) * 86400 * 1000))
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear()
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const day = String(d.getUTCDate()).padStart(2, '0')
+        if (y >= minYear && y <= maxYear) return `${y}-${m}-${day}`
+      }
+    }
+  }
+
+  // 3. Formato en texto español: "15 de mayo de 1998", "24 de agosto del 2000", "5 mayo 2001"
+  const MESES_MAP = {
+    enero: 1, ene: 1,
+    febrero: 2, feb: 2,
+    marzo: 3, mar: 3,
+    abril: 4, abr: 4,
+    mayo: 5, may: 5,
+    junio: 6, jun: 6,
+    julio: 7, jul: 7,
+    agosto: 8, ago: 8,
+    setiembre: 9, septiembre: 9, set: 9, sep: 9,
+    octubre: 10, oct: 10,
+    noviembre: 11, nov: 11,
+    diciembre: 12, dic: 12
+  }
+  const matchTexto = s.toLowerCase().match(/^(\d{1,2})\s*(?:de)?\s*([a-záéíóúñ]+)\s*(?:del?|de)?\s*(\d{2,4})/i)
+  if (matchTexto) {
+    const d = parseInt(matchTexto[1], 10)
+    const mStr = matchTexto[2].normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+    const yRaw = parseInt(matchTexto[3], 10)
+    const m = MESES_MAP[mStr]
+    let y = yRaw < 100 ? (yRaw >= 35 ? 1900 + yRaw : 2000 + yRaw) : yRaw
+    if (m && d >= 1 && d <= 31 && y >= minYear && y <= maxYear) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+  }
+
+  // 4. Formato ISO estricto si vino como YYYY-MM-DD o YYYY/MM/DD
+  const matchIso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
+  if (matchIso) {
+    const y = parseInt(matchIso[1], 10)
+    const m = parseInt(matchIso[2], 10)
+    const d = parseInt(matchIso[3], 10)
+    if (y >= minYear && y <= maxYear && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+  }
+
+  // 5. Formato DÍA / MES / AÑO (el estándar estricto de postulantes: DD/MM/YYYY o DD-MM-YYYY o DD.MM.YYYY o "DD MM YYYY")
+  const matchDma = s.match(/^(\d{1,2})[\s\-_/.]+(\d{1,2})[\s\-_/.]+(\d{2,4})/)
+  if (matchDma) {
+    const d = parseInt(matchDma[1], 10)
+    const m = parseInt(matchDma[2], 10)
+    let y = parseInt(matchDma[3], 10)
+    if (y < 100) {
+      y = y >= 35 ? 1900 + y : 2000 + y
+    }
+    // Caso 1: d > 12 y m <= 12 -> Ej: 25/08/1999 -> Día=25, Mes=08
+    if (d > 12 && m <= 12) {
+      if (y >= minYear && y <= maxYear && d <= 31 && m >= 1) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      }
+    }
+    // Caso 2: m > 12 y d <= 12 -> Ej: 08/25/1999 -> El usuario ingresó MM/DD/YYYY por error, corregir
+    else if (m > 12 && d <= 12) {
+      if (y >= minYear && y <= maxYear && m <= 31 && d >= 1) {
+        return `${y}-${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}`
+      }
+    }
+    // Caso 3: Ambos <= 12 -> Ej: 05/11/1998 -> Prioridad estándar DÍA / MES: Día=05, Mes=11
+    else if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      if (y >= minYear && y <= maxYear) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      }
+    }
+  }
+
+  // 6. Fallback clásico parseExcelDate
+  const fallback = parseExcelDate(s)
+  if (fallback) {
+    const y = parseInt(fallback.split('-')[0], 10)
+    if (y >= minYear && y <= maxYear) return fallback
+  }
+
+  return null
+}
+
+/**
+ * Extrae y valida la edad del postulante a partir de números ("24"), combinaciones de texto
+ * ("23 años", "tengo 22", "25 AÑOS DE EDAD") o palabras en español ("veinticuatro").
+ * Si no viene o no es válida, la calcula automáticamente a partir de la fecha de nacimiento.
+ */
+export function parseEdadValue(val, fechaNacISO = null) {
+  if (val !== null && val !== undefined && val !== '') {
+    const s = String(val).trim().toLowerCase()
+
+    // 1. Extraer números de edad válidos (14 a 85 años)
+    const mNum = s.match(/\b(1[4-9]|[2-8][0-9])\b/) || s.match(/(\d{1,2})\s*(?:año|ano|a|$)/i) || s.match(/\d{1,2}/)
+    if (mNum) {
+      const n = parseInt(mNum[1] || mNum[0], 10)
+      if (n >= 14 && n <= 85) return n
+    }
+
+    // 2. Extraer edad expresada en palabras en español
+    const TEXTO_EDAD = {
+      'catorce': 14, 'quince': 15, 'dieciseis': 16, 'dieciséis': 16, 'diecisiete': 17,
+      'dieciocho': 18, 'diecinueve': 19, 'veinte': 20, 'veintiuno': 21, 'veintidos': 22,
+      'veintidós': 22, 'veintitres': 23, 'veintitrés': 23, 'veinticuatro': 24, 'veinticinco': 25,
+      'veintiseis': 26, 'veintiséis': 26, 'veintisiete': 27, 'veintiocho': 28, 'veintinueve': 29,
+      'treinta': 30, 'treinta y uno': 31, 'treinta y dos': 32, 'treinta y tres': 33,
+      'treinta y cuatro': 34, 'treinta y cinco': 35, 'treinta y seis': 36, 'treinta y siete': 37,
+      'treinta y ocho': 38, 'treinta y nueve': 39, 'cuarenta': 40, 'cuarenta y cinco': 45, 'cincuenta': 50
+    }
+    const cleanWord = s.replace(/años?|anos?|de\s+edad/g, '').trim()
+    if (TEXTO_EDAD[cleanWord]) {
+      return TEXTO_EDAD[cleanWord]
+    }
+  }
+
+  // 3. Fallback automático: Calcular edad exacta desde fecha_nacimiento
+  if (fechaNacISO) {
+    const calculated = calcEdadFromFechaISO(fechaNacISO)
+    if (calculated) return calculated
+  }
+
+  return null
+}
+
+/**
+ * Normaliza textos de tiempo de experiencia que combinan números con letras
+ * (ej: "3mese", "3meses", "6 m", "1año", "1 a 3 meses", "12 meses a mas").
+ */
+export function normalizeTiempoExperiencia(val) {
+  if (val === null || val === undefined || val === '') return null
+  let s = String(val).trim()
+  if (!s || s === '-' || s === '...' || s.toUpperCase() === 'NULL' || s === 'undefined') return null
+
+  // 1. Mayúsculas y sin tildes para estandarizar
+  s = s.toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+
+  // 2. Si es 0 / sin experiencia / ninguno
+  if (
+    s === '0' || s === '0M' || s === '0 MESES' || s === '0 MESE' || s === '0 ANOS' || s === '0 AÑOS' ||
+    s.includes('SIN EXP') || s.includes('NINGUN') || s === 'NO' || s === 'NINGUNA' ||
+    s.includes('NO TENGO') || s.includes('NO CUENTO') || s.includes('SIN EXPERIENCIA')
+  ) {
+    return 'SIN EXPERIENCIA'
+  }
+
+  // 3. Casos numéricos aislados (ej. "3" -> "3 MESES", "6" -> "6 MESES", "1" -> "1 MES")
+  if (s === '1') return '1 MES'
+  if (s === '3') return '3 MESES'
+  if (s === '6') return '6 MESES'
+  if (s === '12') return '1 AÑO'
+  if (s === '24') return '2 AÑOS'
+
+  // 4. Separar números pegados a letras: "3MESE" -> "3 MESE", "6MESES" -> "6 MESES", "1ANO" -> "1 AÑO"
+  s = s.replace(/(\d+)([A-Z]+)/g, '$1 $2')
+  s = s.replace(/([A-Z]+)(\d+)/g, '$1 $2')
+
+  // Normalizar palabras clave
+  s = s.replace(/\bMESES?\b|\bMESE\b|\bMES\b|\bM\b/g, 'MESES')
+  s = s.replace(/\bANOS?\b|\bANIOS?\b|\bA\b/g, 'AÑOS')
+  s = s.replace(/\s+/g, ' ').trim()
+
+  // 5. Mapeo a rangos estándar de Call Center
+  if (s.match(/1\s*(?:-|A|\/)\s*3\s*MESES?/i) || s === '1 - 3' || s === '1-3' || s === '1 A 3') {
+    return '1 - 3 MESES'
+  }
+  if (s.match(/3\s*(?:-|A|\/)\s*6\s*MESES?/i) || s === '3 - 6' || s === '3-6' || s === '3 A 6') {
+    return '3 - 6 MESES'
+  }
+  if (s.match(/6\s*(?:-|A|\/)\s*9\s*MESES?/i) || s === '6 - 9' || s === '6-9') {
+    return '6 - 9 MESES'
+  }
+  if (s.match(/6\s*(?:-|A|\/)\s*12\s*MESES?/i) || s.match(/9\s*(?:-|A|\/)\s*12\s*MESES?/i) || s === '6 - 12' || s === '6-12') {
+    return '6 - 12 MESES'
+  }
+  if (
+    s.includes('12 MESES A MAS') || s.includes('12 A MAS') || s.includes('1 ANO A MAS') ||
+    s.includes('1 AÑO A MAS') || s.includes('MAS DE 1') || s.includes('12 MESES A MÁS') ||
+    s.includes('+12') || s.includes('1 AÑO A MÁS') || s.includes('2 AÑOS A MAS')
+  ) {
+    return '12 MESES A MÁS'
+  }
+
+  // Casos simples: "3 MESES", "6 MESES", "1 AÑO", "2 AÑOS"
+  if (s.match(/^1\s*AÑO|^1\s*ANO/i)) return '1 AÑO'
+  if (s.match(/^2\s*AÑO|^2\s*ANO/i)) return '2 AÑOS'
+  if (s.match(/^3\s*MESES?/i)) return '3 MESES'
+  if (s.match(/^6\s*MESES?/i)) return '6 MESES'
+
+  // Cualquier otro "X MESES"
+  const mSoloMeses = s.match(/^(\d+)\s*MESES?$/i)
+  if (mSoloMeses) {
+    const num = parseInt(mSoloMeses[1], 10)
+    return `${num} ${num === 1 ? 'MES' : 'MESES'}`
+  }
+
+  return s.replace(/\bANOS\b/g, 'AÑOS').replace(/\bANO\b/g, 'AÑO')
+}
+
+/**
+ * Extrae números de teléfono peruanos y referencias desde cadenas de texto o números,
+ * manejando notación científica, prefijos (+51 / 51), múltiples números en una celda
+ * (ej: "920521426 LLAMADA 943354239 WHATSAPP"), y separadores de espacios o guiones.
+ */
+export function extractPhonesFromText(val) {
+  if (val === null || val === undefined || val === '') return { primary: null, secondary: null }
+
+  // 1. Número numérico de Excel
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    const asInt = Math.round(val)
+    if (asInt > 0) {
+      let s = String(asInt)
+      if (s.startsWith('51') && s.length === 11 && s[2] === '9') s = s.substring(2)
+      return { primary: s, secondary: null }
+    }
+  }
+
+  let s = String(val).trim()
+  if (!s || s === '-' || s === '...' || s.toUpperCase() === 'NULL' || s === 'undefined') {
+    return { primary: null, secondary: null }
+  }
+
+  // 2. Notación científica de Excel (ej. 9.87654E+08)
+  if (/e\+?\d+/i.test(s)) {
+    const n = Number(s)
+    if (Number.isFinite(n) && n > 0) {
+      let sNum = String(Math.round(n))
+      if (sNum.startsWith('51') && sNum.length === 11 && sNum[2] === '9') sNum = sNum.substring(2)
+      return { primary: sNum, secondary: null }
+    }
+  }
+
+  const phonesFound = []
+
+  // 3. Dividir por separadores habituales de múltiples teléfonos (slash, comas, guiones dobles, palabras clave)
+  const tokens = s.split(/[\/,;\n\r|]|\b(?:LLAMADA|LLAMADAS|WSP|WTSP|WHATSAPP|WHATS|PERSONAL|REF|REFERENCIA|CASA|MAMA|PAPA|HERMANO|FIJO|MOVIL|CEL|CELULAR|O|Y)\b/i)
+  for (const token of tokens) {
+    let digits = token.replace(/\D/g, '')
+    if (digits.startsWith('51') && digits.length === 11 && digits[2] === '9') {
+      digits = digits.substring(2)
+    }
+    if (digits.length === 9 && digits.startsWith('9')) {
+      if (!phonesFound.includes(digits)) phonesFound.push(digits)
+    }
+  }
+
+  // 4. Si aún no encontramos o solo encontramos 1, buscar secuencias de 9 dígitos continuos o con espacios/guiones
+  if (phonesFound.length < 2) {
+    let cleaned = s.replace(/(?:\+51|51)\s*(9[\d\s.-]{8,14})/g, '$1')
+    const matches = cleaned.matchAll(/(?:^|[^\d])(9[\d\s.-]{8,12}\d)(?:$|[^\d])/g)
+    for (const m of matches) {
+      let d = m[1].replace(/\D/g, '')
+      if (d.startsWith('51') && d.length === 11 && d[2] === '9') d = d.substring(2)
+      if (d.length === 9 && d.startsWith('9') && !phonesFound.includes(d)) {
+        phonesFound.push(d)
+      }
+    }
+  }
+
+  // 5. Fallback si no hubo match que inicie con 9 (fijos o internacionales)
+  if (phonesFound.length === 0) {
+    const allDigits = s.replace(/[^\d]/g, '')
+    if (allDigits.length >= 7 && allDigits.length <= 15) {
+      let f = allDigits
+      if (f.startsWith('51') && f.length === 11 && f[2] === '9') f = f.substring(2)
+      phonesFound.push(f)
+    }
+  }
+
+  return {
+    primary: phonesFound[0] || null,
+    secondary: phonesFound[1] || null
+  }
+}
+
 // The exact column headers from the form to parse
 const HEADER_ALIASES = {
   periodo_reclutado: ['PERIODO RECLUTADO'],
@@ -192,15 +506,23 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (
       clean.includes('CELULAR') || clean.includes('MOVIL') || clean.includes('TELEFONO') ||
       clean.includes('TELF') || clean.includes('NRO DE CEL') || clean.includes('NUMERO DE CEL') ||
+      clean.includes('NUMERO PERSONAL') || clean.includes('CELULAR PERSONAL') ||
+      clean.includes('TELEFONO PERSONAL') || clean.includes('TELEFONO DE CONTACTO') || clean.includes('NUMERO DE CONTACTO') ||
+      (clean.includes('WHATSAPP') && !clean.includes('USUARIO') && !clean.includes('HALLAS') && !clean.includes('HAYAS') && !clean.includes('MODIFICADO')) ||
       (clean.includes('NUMERO') && (clean.includes('CEL') || clean.includes('WHATS') || clean.includes('CONTACTO')))
     ) {
-      if (clean.includes('REFERENCIA') || clean.includes('EMERGENCIA') || clean.includes('FAMILIAR')) colIdx['celular_referencia'] = i
-      else if (colIdx['celular'] === undefined) colIdx['celular'] = i
+      if (clean.includes('REFERENCIA') || clean.includes('EMERGENCIA') || clean.includes('FAMILIAR') || clean.includes('SEGUNDO') || clean.includes('OPCIONAL')) {
+        colIdx['celular_referencia'] = i
+      } else if (colIdx['celular'] === undefined) {
+        colIdx['celular'] = i
+      } else if (colIdx['celular_referencia'] === undefined) {
+        colIdx['celular_referencia'] = i
+      }
     }
     else if (clean.includes('CORREO') || clean.includes('EMAIL') || clean.includes('E-MAIL')) colIdx['correo'] = i
     else if (clean.includes('GENERO') || clean.includes('SEXO')) colIdx['genero'] = i
-    else if (clean.includes('FECHA DE NACIMIENTO') || clean.includes('F. NACIMIENTO') || (clean.includes('NACIMIENTO') && !clean.includes('LUGAR'))) colIdx['fecha_nacimiento'] = i
-    else if (clean === 'EDAD' || clean.startsWith('EDAD ') || clean.includes(' TU EDAD') || clean.includes('CUANTOS ANOS') || clean.includes('CUANTOS ANOS')) colIdx['edad'] = i
+    else if (clean.includes('FECHA DE NACIMIENTO') || clean.includes('F. NACIMIENTO') || clean.includes('F.NACIMIENTO') || clean.includes('FECHA NAC') || (clean.includes('NACIMIENTO') && !clean.includes('LUGAR'))) colIdx['fecha_nacimiento'] = i
+    else if (clean === 'EDAD' || clean.startsWith('EDAD ') || clean.includes(' TU EDAD') || clean.includes('CUANTOS ANOS') || clean.includes('CUANTOS AÑOS') || clean.includes('EDAD DEL POSTULANTE') || clean.includes('INDICA TU EDAD')) colIdx['edad'] = i
     else if (clean.includes('ESTADO CIVIL')) colIdx['estado_civil'] = i
     else if (clean.includes('HIJOS')) colIdx['n_hijos'] = i
     else if (clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
@@ -341,22 +663,10 @@ function normalizeAsistencia(val) {
   return s
 }
 
-/** Normaliza teléfonos (Sheets a veces manda number / notación científica). */
+/** Normaliza teléfonos (Sheets a veces manda number / notación científica / múltiples teléfonos). */
 export function normalizePhoneValue(val) {
-  if (val === null || val === undefined || val === '') return null
-  if (typeof val === 'number' && Number.isFinite(val)) {
-    // Evitar 9.87e8 → string científica
-    const asInt = Math.round(val)
-    if (asInt > 0 && String(asInt).length <= 15) return String(asInt)
-  }
-  let s = String(val).trim()
-  if (!s || s === '-' || s === '...' || s.toUpperCase() === 'NULL') return null
-  if (/e\+?\d+/i.test(s)) {
-    const n = Number(s)
-    if (Number.isFinite(n) && n > 0) s = String(Math.round(n))
-  }
-  const digits = s.replace(/[^\d+]/g, '').trim()
-  return digits || null
+  const { primary } = extractPhonesFromText(val)
+  return primary
 }
 
 export function parseGoogleFormRow(row, colIdx) {
@@ -473,15 +783,36 @@ export function parseGoogleFormRow(row, colIdx) {
       rawDistrito = geo.distrito.toUpperCase()
     }
   }
-  const fechaNacParsed = parseExcelDate(get('fecha_nacimiento'))
-  const celularNorm = normPhone('celular')
-  const celularRefNorm = normPhone('celular_referencia')
-  const edadParsed = (() => {
-    const m = String(get('edad') ?? '').match(/\d{1,3}/)
-    const fromForm = m ? parseInt(m[0], 10) : null
-    if (fromForm && fromForm >= 14 && fromForm <= 90) return fromForm
-    return calcEdadFromFechaISO(fechaNacParsed)
-  })()
+  // 1. Fecha de Nacimiento en formato Día Mes Año / ISO / Serials
+  const fechaNacParsed = parseFechaNacimiento(get('fecha_nacimiento'))
+
+  // 2. Edad: parsear texto ("24", "23 años", "tengo 22", "veinticuatro") o calcular desde fecha_nacimiento
+  const edadParsed = parseEdadValue(get('edad'), fechaNacParsed)
+
+  // 3. Extracción robusta de celulares (personal y referencia)
+  const phonesFromCel = extractPhonesFromText(get('celular'))
+  const phonesFromRef = extractPhonesFromText(get('celular_referencia'))
+  const phonesFromWsp = extractPhonesFromText(rawUsuarioWhatsapp)
+
+  let celularNorm = phonesFromCel.primary || (phonesFromRef.primary && phonesFromRef.primary !== phonesFromCel.secondary ? phonesFromRef.primary : null) || phonesFromWsp.primary || null
+  let celularRefNorm = phonesFromCel.secondary || phonesFromRef.secondary || (phonesFromCel.primary && phonesFromRef.primary && phonesFromRef.primary !== phonesFromCel.primary ? phonesFromRef.primary : null) || null
+
+  // Fallback exhaustivo para celular si sigue vacío: buscar en toda la fila un número de 9 dígitos que inicie en 9
+  if (!celularNorm) {
+    for (let cIdx = 0; cIdx < row.length; cIdx++) {
+      const cellVal = String(row[cIdx] || '').trim()
+      if (!cellVal || cellVal === rawDoc) continue
+      const candidate = extractPhonesFromText(cellVal)
+      if (candidate.primary && candidate.primary !== rawDoc) {
+        celularNorm = candidate.primary
+        if (candidate.secondary && candidate.secondary !== rawDoc) {
+          celularRefNorm = candidate.secondary
+        }
+        break
+      }
+    }
+  }
+
   const nHijosParsed = (() => {
     const raw = get('n_hijos')
     if (raw === null || raw === undefined || raw === '') return 0
@@ -490,7 +821,10 @@ export function parseGoogleFormRow(row, colIdx) {
     const n = parseInt(m[0], 10)
     return Number.isFinite(n) && n >= 0 && n <= 20 ? n : 0
   })()
-  const expTiempo = normUpper('exp_tiempo_call')
+
+  // 4. Normalización de tiempo de experiencia (separa números de letras: "3mese" -> "3 MESES")
+  const expTiempoCall = normalizeTiempoExperiencia(get('exp_tiempo_call')) || normUpper('exp_tiempo_call')
+  const expTiempoOtra = normalizeTiempoExperiencia(get('exp_tiempo_otra')) || normUpper('exp_tiempo_otra')
 
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
@@ -521,11 +855,11 @@ export function parseGoogleFormRow(row, colIdx) {
     modalidad: normUpper('modalidad') || (allRowText.includes('REMOT') || allRowText.includes('HOME OFFICE') || allRowText.includes('TELETRABAJO') ? 'REMOTO' : 'PRESENCIAL'),
     exp_call_center: normUpper('exp_call_center'),
     exp_tipo_campana: normUpper('exp_tipo_campana'),
-    exp_tiempo_call: expTiempo,
+    exp_tiempo_call: expTiempoCall,
     // Alias BD (RPC adjudicar usa exp_tiempo_campana)
-    exp_tiempo_campana: expTiempo,
+    exp_tiempo_campana: expTiempoCall,
     exp_otra: normUpper('exp_otra'),
-    exp_tiempo_otra: normUpper('exp_tiempo_otra'),
+    exp_tiempo_otra: expTiempoOtra,
     fuente_oferta: normUpper('fuente_oferta'),
     observacion_reclutamiento: rawObs ? rawObs.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
     cargo_contractual: normUpper('cargo_contractual'),

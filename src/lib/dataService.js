@@ -8,7 +8,17 @@ import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from './supabase'
 import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
-import { parseCsvToMatrix, parseNominaRows, cleanDocumento, calcEdadFromFechaISO, normalizePhoneValue } from './nominaConsolidadoSchema.js'
+import {
+  parseCsvToMatrix,
+  parseNominaRows,
+  cleanDocumento,
+  calcEdadFromFechaISO,
+  normalizePhoneValue,
+  parseFechaNacimiento,
+  parseEdadValue,
+  normalizeTiempoExperiencia,
+  extractPhonesFromText
+} from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
 import { analyzeDia1CorteRecords, isBajaDia1Motivo } from './bajaDia1Rules.js'
@@ -6641,19 +6651,26 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
  * e inserta el nuevo registro activo en nóminas.
  */
 /** Asegura campos numéricos/alias que el form parsea pero el RPC/BD espera con otro nombre. */
+/** Asegura campos numéricos/alias que el form parsea pero el RPC/BD espera con otro nombre. */
 function normalizePostulanteForAdjudicar(p = {}) {
-  const celular = normalizePhoneValue(p.celular)
-  const celularRef = normalizePhoneValue(p.celular_referencia)
-  const fechaNac = p.fecha_nacimiento || null
-  let edad = p.edad
-  if (edad === '' || edad === undefined) edad = null
-  if (edad != null) edad = parseInt(edad, 10)
-  if (!Number.isFinite(edad)) edad = calcEdadFromFechaISO(fechaNac)
+  const phonesCel = extractPhonesFromText(p.celular)
+  const phonesRef = extractPhonesFromText(p.celular_referencia)
+  const phonesWsp = extractPhonesFromText(p.usuario_whatsapp)
+
+  const celular = phonesCel.primary || (phonesRef.primary && phonesRef.primary !== phonesCel.secondary ? phonesRef.primary : null) || phonesWsp.primary || normalizePhoneValue(p.celular)
+  const celularRef = phonesCel.secondary || phonesRef.secondary || (phonesCel.primary && phonesRef.primary && phonesRef.primary !== phonesCel.primary ? phonesRef.primary : null) || normalizePhoneValue(p.celular_referencia)
+
+  const fechaNac = parseFechaNacimiento(p.fecha_nacimiento) || p.fecha_nacimiento || null
+  const edad = parseEdadValue(p.edad, fechaNac)
+
   let nHijos = p.n_hijos
   if (nHijos === '' || nHijos === undefined || nHijos === null) nHijos = 0
   else nHijos = parseInt(nHijos, 10)
   if (!Number.isFinite(nHijos) || nHijos < 0) nHijos = 0
-  const expTiempo = p.exp_tiempo_campana || p.exp_tiempo_call || null
+
+  const rawExp = p.exp_tiempo_campana || p.exp_tiempo_call || null
+  const expTiempo = normalizeTiempoExperiencia(rawExp) || rawExp
+
   return {
     ...p,
     celular: celular || null,
