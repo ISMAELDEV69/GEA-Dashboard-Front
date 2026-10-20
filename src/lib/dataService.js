@@ -2755,6 +2755,7 @@ export function fetchGruposConMetas(bypassCache = false) {
 
     for (const g of (gruposRes.data || [])) {
       const gCodigo = g.codigo || ''
+      const gCampana = g.campana || ''
       const gKey = gCodigo.trim().toUpperCase()
       if (processedGroupCodes.has(gKey)) continue // Ya procesado desde metas_equipos con datos oficiales
 
@@ -10500,7 +10501,7 @@ export async function guardarMaquetaBaseOperativa(records = []) {
     try {
       const { data, error } = await supabase
         .from('maqueta_reclutadores_base')
-        .upsert(records, { onConflict: 'periodo_efectivo,codigo_gpe,analista_reclutador' })
+        .upsert(records, { onConflict: 'periodo_efectivo,codigo_gpe,campana,semana,analista_reclutador' })
       if (error) throw error
       return { success: true, count: records.length, data }
     } catch (err) {
@@ -10512,20 +10513,36 @@ export async function guardarMaquetaBaseOperativa(records = []) {
 }
 
 /**
- * Sincroniza automáticamente la base operativa de 16 columnas desde el consolidado de nóminas y asistencias
+ * Sincroniza automáticamente la base operativa de 16 columnas desde metas_equipos, capacidad_rys y nominas
  */
 export async function sincronizarMaquetaBaseDesdeConsolidado(periodo = '') {
   const pStr = String(periodo || '').trim()
   const pNorm = pStr.replace(/\D/g, '').slice(0, 6)
   
-  // Obtener filas consolidadas de operaciones
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase.rpc('sincronizar_maqueta_base', {
+        p_periodo: pNorm || (pStr !== 'TODOS' ? pStr : null)
+      })
+      if (!error && typeof data === 'number') {
+        return { success: true, count: data }
+      }
+      if (error) {
+        console.warn('[MaquetaBase] RPC sincronizar_maqueta_base fallback error:', error)
+      }
+    } catch (err) {
+      console.warn('[MaquetaBase] Error calling RPC sincronizar_maqueta_base:', err)
+    }
+  }
+
+  // Fallback si RPC no estuviese disponible
   const kpiRows = await fetchKpiReclutadoresConsolidado({ periodo: pStr || pNorm })
   if (!kpiRows || !kpiRows.length) return { success: false, count: 0, message: 'No hay filas consolidadas en este periodo' }
 
-  // Mapear al esquema exacto de 16 columnas de maqueta_reclutadores_base
   const mapped = kpiRows.map((r) => ({
     periodo_efectivo: pStr || r.periodo_efectivo || pNorm,
     codigo_gpe: r.grupo_g || r.codigo_gpe || 'GPE-S/C',
+    semana: r.semana ? `SEM ${r.semana}` : null,
     fecha_inicio_capa: r.fecha_inicio || null,
     fecha_fin_capa: r.fecha_ingreso_op || null,
     segmento: r.segmento || '',

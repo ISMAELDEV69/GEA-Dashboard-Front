@@ -187,8 +187,8 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         setFilterCampana('Todos')
       }
     } catch (err) {
-      console.error(err)
-      setError('Error al cargar metas de grupos y reclutadores.')
+      console.error('Error al cargar metas:', err)
+      setError(`Error al cargar metas de grupos y reclutadores: ${err.message || err}`)
     } finally {
       setLoading(false)
     }
