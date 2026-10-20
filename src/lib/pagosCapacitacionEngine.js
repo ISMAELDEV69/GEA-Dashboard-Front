@@ -137,6 +137,44 @@ function lookupPorClaves(map, n) {
   })
   if (map.has(soloCampCod)) return map.get(soloCampCod)
 
+  // 5. Fallback con prefijo alternativo (GPR- vs GPE-)
+  const cod = String(n.grupo_codigo || n.codigo_grupo || n.grupo || '').trim().toUpperCase()
+  const altCod = cod.startsWith('GPR-')
+    ? cod.replace('GPR-', 'GPE-')
+    : (cod.startsWith('GPE-') ? cod.replace('GPE-', 'GPR-') : null)
+
+  if (altCod) {
+    const fullAlt = claveGrupoPago({
+      periodo: n.periodo_reclutado || n.periodo,
+      semana: n.semana_trabajo || n.semana,
+      segmento: n.segmento,
+      campana: n.campana,
+      codigo: altCod,
+    })
+    if (map.has(fullAlt)) return map.get(fullAlt)
+
+    const sinSegAlt = claveGrupoPago({
+      periodo: n.periodo_reclutado || n.periodo,
+      semana: n.semana_trabajo || n.semana,
+      campana: n.campana,
+      codigo: altCod,
+    })
+    if (map.has(sinSegAlt)) return map.get(sinSegAlt)
+
+    const sinSemAlt = claveGrupoPago({
+      periodo: n.periodo_reclutado || n.periodo,
+      campana: n.campana,
+      codigo: altCod,
+    })
+    if (map.has(sinSemAlt)) return map.get(sinSemAlt)
+
+    const soloCampAlt = claveGrupoPago({
+      campana: n.campana,
+      codigo: altCod,
+    })
+    if (map.has(soloCampAlt)) return map.get(soloCampAlt)
+  }
+
   return null
 }
 

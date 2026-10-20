@@ -9630,9 +9630,17 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
         if (segSet && !segSet.has(seg)) return;
         if (campSet && camp && !campSet.has(camp)) return;
         if (grpSet && codigo && !grpSet.has(codigo)) return;
-        if (codigo) targetGrupos.push(codigo);
+        if (codigo) {
+          targetGrupos.push(codigo);
+          const altG = codigo.startsWith('GPR-') ? codigo.replace('GPR-', 'GPE-') : (codigo.startsWith('GPE-') ? codigo.replace('GPE-', 'GPR-') : null);
+          if (altG) targetGrupos.push(altG);
+        }
         if (camp) campsFromCap.push(camp);
-        if (codigo && camp) targetPairs.add(`${codigo}|${camp}`);
+        if (codigo && camp) {
+          targetPairs.add(`${codigo}|${camp}`);
+          const altG = codigo.startsWith('GPR-') ? codigo.replace('GPR-', 'GPE-') : (codigo.startsWith('GPE-') ? codigo.replace('GPE-', 'GPR-') : null);
+          if (altG) targetPairs.add(`${altG}|${camp}`);
+        }
       });
 
       targetGrupos = [...new Set(targetGrupos)];
@@ -9663,7 +9671,10 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     const g = String(codigo || '').trim().toUpperCase();
     const c = String(campanaVal || '').trim().toUpperCase();
     if (!g || !c) return false;
-    return targetPairs.has(`${g}|${c}`);
+    if (targetPairs.has(`${g}|${c}`)) return true;
+    const altG = g.startsWith('GPR-') ? g.replace('GPR-', 'GPE-') : (g.startsWith('GPE-') ? g.replace('GPE-', 'GPR-') : null);
+    if (altG && targetPairs.has(`${altG}|${c}`)) return true;
+    return false;
   };
 
   const campanaOk = (campanaVal) => {
@@ -9681,8 +9692,8 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     ;(rows || []).forEach((r) => asisRows.push(r));
   };
 
-  const ASIS_PAGE = 1500;
-  const MAX_GRUPO_CHUNKS = 4; // máx ~160 grupos por cálculo
+  const ASIS_PAGE = 3000;
+  const CHUNK_SIZE = 15;
 
   const runAsisQuery = async (grupoChunk) => {
     if (!grupoChunk?.length) return [];
@@ -9717,11 +9728,10 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     // Se complementará vía nóminas más abajo si hay periodo/campaña.
     console.warn('Pagos: sin grupos objetivo; se omite scan de consolidado_asistencias.');
   } else {
-    const limited = targetGrupos.slice(0, MAX_GRUPO_CHUNKS * 40);
-    for (let i = 0; i < limited.length; i += 40) {
-      const chunk = limited.slice(i, i + 40);
-      pushAsis(await runAsisQuery(chunk));
-      if (asisRows.length >= ASIS_PAGE * 2) break;
+    for (let i = 0; i < targetGrupos.length; i += CHUNK_SIZE) {
+      const chunk = targetGrupos.slice(i, i + CHUNK_SIZE);
+      const rows = await runAsisQuery(chunk);
+      pushAsis(rows);
     }
   }
 
@@ -9876,13 +9886,13 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
       const { data: extraNoms } = await nomTargetQ.limit(3000);
       ingestExtraNoms(extraNoms);
     } else {
-      for (let i = 0; i < targetGrupos.length; i += 40) {
-        const chunk = targetGrupos.slice(i, i + 40);
+      for (let i = 0; i < targetGrupos.length; i += 30) {
+        const chunk = targetGrupos.slice(i, i + 30);
         let nomTargetQ = supabase.from('nominas').select(nomSelect);
         if (chunk.length === 1) nomTargetQ = nomTargetQ.eq('grupo_codigo', chunk[0]);
         else nomTargetQ = nomTargetQ.in('grupo_codigo', chunk);
         nomTargetQ = applyCampanaToNomQ(applyPeriodoToNomQ(nomTargetQ));
-        const { data: extraNoms } = await nomTargetQ.limit(2000);
+        const { data: extraNoms } = await nomTargetQ.limit(4000);
         ingestExtraNoms(extraNoms);
       }
     }
@@ -9914,26 +9924,33 @@ export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null)
   const gruposFiltro = normalizePagosFilterList(grupoCodigo);
   if (DB_MODE === 'supabase') {
     let allRows = [];
-    for (let i = 0; i < documentos.length; i += 100) {
-      const chunk = documentos.slice(i, i + 100);
-      let q = supabase
-        .from('consolidado_asistencias')
-        .select('documento, fecha_registro_asistencia, sigla, estado, codigo_grupo, grupo, fecha_hora_registro, created_at')
-        .in('documento', chunk)
-        .neq('sigla', 'DESC')
-        .neq('estado', 'DESCUENTO');
+    const chunks = [];
+    for (let i = 0; i < documentos.length; i += 120) {
+      chunks.push(documentos.slice(i, i + 120));
+    }
+    for (let i = 0; i < chunks.length; i += 4) {
+      const batch = chunks.slice(i, i + 4);
+      const results = await Promise.all(
+        batch.map(async (chunk) => {
+          let q = supabase
+            .from('consolidado_asistencias')
+            .select('documento, fecha_registro_asistencia, sigla, estado, codigo_grupo, grupo, fecha_hora_registro, created_at')
+            .in('documento', chunk)
+            .neq('sigla', 'DESC')
+            .neq('estado', 'DESCUENTO');
 
-      if (gruposFiltro.length === 1) {
-        q = q.or(`codigo_grupo.eq.${gruposFiltro[0]},grupo.eq.${gruposFiltro[0]}`);
-      } else if (gruposFiltro.length > 1) {
-        const list = gruposFiltro.slice(0, 50).map(g => `"${g}"`).join(',');
-        q = q.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
-      }
+          if (gruposFiltro.length === 1) {
+            q = q.or(`codigo_grupo.eq.${gruposFiltro[0]},grupo.eq.${gruposFiltro[0]}`);
+          } else if (gruposFiltro.length > 1) {
+            const list = gruposFiltro.slice(0, 50).map(g => `"${g}"`).join(',');
+            q = q.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
+          }
 
-      const { data, error } = await q.order('created_at', { ascending: true });
-      if (!error && data) {
-        allRows.push(...data);
-      }
+          const { data, error } = await q.order('created_at', { ascending: true });
+          return (!error && data) ? data : [];
+        })
+      );
+      results.forEach(rows => allRows.push(...rows));
     }
 
     return allRows.map(r => ({
