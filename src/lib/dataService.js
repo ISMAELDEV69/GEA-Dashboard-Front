@@ -2656,20 +2656,22 @@ export function fetchGruposConMetas(bypassCache = false) {
     const metasEquiposRows = metasEquiposRes.data || []
     const meMap = {}
     for (const me of metasEquiposRows) {
-      const key = `${me.grupo}|${me.campana || ''}`
-      if (!meMap[key]) meMap[key] = []
-      meMap[key].push(me)
+      const gKey = (me.grupo || '').trim().toUpperCase()
+      if (!gKey) continue
+      if (!meMap[gKey]) meMap[gKey] = []
+      meMap[gKey].push(me)
     }
 
-    const processedKeys = new Set()
+    const processedGroupCodes = new Set()
     const resultList = []
 
     // Si hay datos en metas_equipos, construir grupos con la información exacta guardada
-    for (const key of Object.keys(meMap)) {
-      const rows = meMap[key]
+    for (const gKey of Object.keys(meMap)) {
+      const rows = meMap[gKey]
       if (!rows || rows.length === 0) continue
-      processedKeys.add(key)
+      processedGroupCodes.add(gKey)
       const first = rows[0]
+      const capGroup = (gruposRes.data || []).find(cg => (cg.codigo || '').trim().toUpperCase() === gKey)
 
       const reclutadoresConStats = rows.map(r => {
         const nomUpper = (r.responsable || '').trim().toUpperCase()
@@ -2689,32 +2691,32 @@ export function fetchGruposConMetas(bypassCache = false) {
       resultList.push({
         grupo_codigo: first.grupo,
         codigo: first.grupo,
-        periodo: first.periodo || '',
-        periodo_ingreso_op: '',
-        campana_nombre: first.campana || 'Sin Campaña',
-        campana: first.campana || 'Sin Campaña',
-        segmento: first.segmento || '',
+        periodo: first.periodo || capGroup?.periodo || '',
+        periodo_ingreso_op: capGroup?.periodo_ingreso_op || '',
+        campana_nombre: first.campana || capGroup?.campana || 'Sin Campaña',
+        campana: first.campana || capGroup?.campana || 'Sin Campaña',
+        segmento: capGroup?.segmento || first.segmento || '',
         supervisor: '',
-        estado: 'ACTIVO',
-        area_traslado: 'RECLUTAMIENTO',
-        condicion: '',
-        semana: first.semana || '',
-        semana_label: first.semana || '',
-        semana_trabajo: null,
-        modalidad: first.modalidad || '',
-        horario: first.horario || '',
-        fecha_inicio: first.fecha || '',
-        fecha_registro: first.fecha || '',
-        fecha_inicio_ojt: '',
-        fecha_ingreso_op: first.fecha_ingreso_op || '',
+        estado: capGroup?.estado || 'ACTIVO',
+        area_traslado: capGroup?.area_traslado || 'RECLUTAMIENTO',
+        condicion: capGroup?.condicion || '',
+        semana: first.semana || capGroup?.semana_label || '',
+        semana_label: first.semana || capGroup?.semana_label || '',
+        semana_trabajo: capGroup?.semana_trabajo || null,
+        modalidad: first.modalidad || capGroup?.modalidad || '',
+        horario: first.horario || capGroup?.rango_horario || '',
+        fecha_inicio: first.fecha || capGroup?.fecha_inicio || capGroup?.fecha_registro || '',
+        fecha_registro: capGroup?.fecha_registro || first.fecha || '',
+        fecha_inicio_ojt: capGroup?.fecha_inicio_ojt || '',
+        fecha_ingreso_op: first.fecha_ingreso_op || capGroup?.fecha_ingreso_op || '',
         meta_dia_0: Number(first.meta_dia_0 || 0),
         meta_dia_1: Number(first.meta_dia_1_grupal || 0),
         meta_dia_0_grupal: Number(first.meta_dia_0 || 0),
         meta_dia_1_grupal: Number(first.meta_dia_1_grupal || 0),
-        rq_solicitado: Number(first.rq || 0),
-        rq_ftes_solicitado: Number(first.rq || 0),
+        rq_solicitado: Number(first.rq || capGroup?.rq_solicitado || 0),
+        rq_ftes_solicitado: Number(first.rq || capGroup?.rq_ftes_solicitado || 0),
         reclutadores_metas: reclutadoresConStats,
-        sede: first.sede || '-',
+        sede: first.sede || capGroup?.sede || '-',
         lista_actual: Number(first.lista_actual || 0),
         conectados_dia_0: Number(first.conectados_dia_0 || 0),
         conectados_dia_1_grupal: Number(first.total_dia_1 || 0),
@@ -2753,9 +2755,8 @@ export function fetchGruposConMetas(bypassCache = false) {
 
     for (const g of (gruposRes.data || [])) {
       const gCodigo = g.codigo || ''
-      const gCampana = g.campana || ''
-      const key = `${gCodigo}|${gCampana}`
-      if (processedKeys.has(key)) continue // Ya procesado desde metas_equipos
+      const gKey = gCodigo.trim().toUpperCase()
+      if (processedGroupCodes.has(gKey)) continue // Ya procesado desde metas_equipos con datos oficiales
 
       const reclutadoresAsignados = relMap[gCodigo] || []
       const nominasGrupo = nominas.filter(n => n.grupo_codigo === gCodigo && n.campana === gCampana)

@@ -61,18 +61,30 @@ const normalizeSegmento = (rawSeg, campana) => {
   return 'CLARO PERU'
 }
 
-// Extracción canónica del periodo de Capacidad R&S
+// Extracción canónica del periodo de inicio (Capacitación / Registro)
 const getCapacidadPeriodo = (g) => {
   if (!g) return ''
-  const pIngreso = resolvePeriodoIngreso(g)
-  if (pIngreso) return pIngreso
-  const pDirect = normalize2026Period(g.periodo_ingreso_op || g.fecha_ingreso_op || g.periodo_ingreso)
-  if (pDirect) return pDirect
+  // 1. Priorizar periodo de inicio oficial de capacidad_rys o metas_equipos
   const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
   if (pRaw) return pRaw
   if (g.periodo) {
     const clean = String(g.periodo).replace(/\D/g, '').slice(0, 6)
-    if (clean) return clean
+    if (clean && clean.length === 6) return clean
+  }
+  // 2. Extraer a partir de la fecha de inicio / fecha_registro
+  const fIni = g.fecha_inicio || g.fecha_registro || g.fecha
+  if (fIni) {
+    const dStr = String(fIni).trim()
+    const dmy = dStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/)
+    if (dmy) {
+      const y = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3]
+      const m = dmy[2].padStart(2, '0')
+      return `${y}${m}`
+    }
+    const ymd = dStr.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/)
+    if (ymd) {
+      return `${ymd[1]}${ymd[2].padStart(2, '0')}`
+    }
   }
   return ''
 }
@@ -85,7 +97,6 @@ const isGrupoPeriodoMatch = (g, targetPeriodo) => {
   const pRaw = normalize2026Period(g.periodo || g.periodo_rys)
   if (pRaw === cleanTarget) return true
   if (String(g.periodo).trim() === cleanTarget) return true
-  if (String(g.periodo_ingreso_op).trim() === cleanTarget) return true
   return false
 }
 
@@ -140,15 +151,15 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
       setError(null)
     }
     try {
-      // Forzar lectura fresca de capacidad_rys
+      // Forzar lectura fresca de grupos con metas
       const [gData, rData] = await Promise.all([
         fetchGruposConMetas(true),
         fetchReclutadoresFull()
       ])
-      // Filtrar estrictamente: solo grupos traídos por RECLUTAMIENTO (excluyendo RECUPERADO, CAPACITACIÓN, etc.)
+      // Filtrar estrictamente: solo grupos traídos por RECLUTAMIENTO o RECUPERADO
       const recluGrupos = (gData || []).filter(g => {
         const area = String(g.area_traslado || '').trim().toUpperCase()
-        return area === 'RECLUTAMIENTO'
+        return area === 'RECLUTAMIENTO' || area === 'RECUPERADO'
       })
       setGrupos(recluGrupos)
       setReclutadores((rData || []).filter(r => r.activo))
@@ -379,7 +390,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         actions={
           <div className="flex items-center gap-2">
             <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              Área: Exclusivo Reclutamiento
+              Áreas: Reclutamiento y Recuperado
             </span>
             <button
               type="button"
