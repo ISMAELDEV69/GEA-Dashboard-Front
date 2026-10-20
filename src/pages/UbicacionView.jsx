@@ -66,7 +66,20 @@ const normalizeSegmento = (rawSeg, campana) => {
   const c = String(campana || '').toUpperCase()
 
   // 1. Campañas exclusivas de CLARO CHILE
-  if (c.includes('TUVES') || c.includes('CHILE') || s === 'CLARO CHILE' || s.includes('CHILE')) {
+  if (
+    c.includes('TUVES') ||
+    c.includes('CHILE') ||
+    s === 'CLARO CHILE' ||
+    s.includes('CHILE') ||
+    c === 'POSTPAGO' ||
+    c === 'ANULACIÓN' ||
+    c === 'ANULACION' ||
+    c === 'CONTENCIÓN' ||
+    c === 'CONTENCION' ||
+    c === 'DESCUENTO' ||
+    c.startsWith('BO ') ||
+    c.includes('BLINDAJE')
+  ) {
     return 'CLARO CHILE'
   }
 
@@ -91,8 +104,6 @@ const normalizeSegmento = (rawSeg, campana) => {
     s.includes('RETENCION') || 
     c.includes('RETENCION') || 
     c.includes('CONTACTADOS') || 
-    c.includes('CONTENCI') || 
-    c.includes('DESCUENTO') || 
     c.includes('BABYSTING') || 
     c.includes('CONSULTA PREVIA') || 
     c.includes('MI CLARO') || 

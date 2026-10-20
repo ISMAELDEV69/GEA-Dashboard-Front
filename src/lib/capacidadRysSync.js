@@ -10,13 +10,62 @@ export function normalizeKey(val) {
 export const SEGMENTOS_SIU = ['CLARO PERU', 'CLARO PERU RETENCIONES', 'CLARO CHILE', 'CLARO PERU OUT', 'LIPIGAS']
 
 export function inferSegmento(campana) {
-  const c = (campana || '').toUpperCase()
-  if (c.includes('LIPIGAS')) return 'LIPIGAS'
-  if (c.includes('TUVES') || c.includes('CHILE') || c.includes('VTR')) return 'CLARO CHILE'
-  if (c.includes('RETENCIONES FIJA') || c.includes('RETENCION FIJA') || c.includes('FIJA INBOUND')) return 'CLARO PERU'
-  if (c.includes('CLARO POSTPAGO')) return 'CLARO PERU'
-  if (c.includes('RETENCION')) return 'CLARO PERU RETENCIONES'
-  if (c.includes('OUT') || c.includes('UPGRADE')) return 'CLARO PERU OUT'
+  const c = String(campana || '').trim().toUpperCase()
+  if (!c) return 'CLARO PERU'
+  if (c.includes('LIPIGAS') || c.includes('LIMAGAS')) return 'LIPIGAS'
+  if (
+    c.includes('TUVES') ||
+    c.includes('CHILE') ||
+    c.includes('VTR') ||
+    c === 'POSTPAGO' ||
+    c.startsWith('POSTPAGO CHILE') ||
+    c === 'ANULACIÓN' ||
+    c === 'ANULACION' ||
+    c === 'CONTENCIÓN' ||
+    c === 'CONTENCION' ||
+    c === 'DESCUENTO' ||
+    c.includes('BO TÉCNICO') ||
+    c.includes('BO TECNICO') ||
+    c.includes('BLINDAJE')
+  ) {
+    return 'CLARO CHILE'
+  }
+  if (
+    c.includes('CLARO POSTPAGO') ||
+    c.includes('RETENCIONES FIJA') ||
+    c.includes('RETENCION FIJA') ||
+    c.includes('FIJA INBOUND') ||
+    c.includes('HFC') ||
+    c.includes('FULL CLARO PERÚ') ||
+    c.includes('FULL CLARO PERU') ||
+    c.includes('CLOSE THE LOOP')
+  ) {
+    return 'CLARO PERU'
+  }
+  if (
+    c.includes('OUT') ||
+    c.includes('UPGRADE') ||
+    c.includes('LA FIJA + PORTABILIDAD') ||
+    c.includes('MIGRACIONES') ||
+    c.includes('RENOVACIONES') ||
+    c.includes('OLAS') ||
+    c.includes('PORTABILIDAD') ||
+    c.includes('MULTISERVICIOS') ||
+    c.includes('LIVE CHAT')
+  ) {
+    return 'CLARO PERU OUT'
+  }
+  if (
+    c.includes('RETENCION') ||
+    c.includes('CONTACTADOS') ||
+    c.includes('CONSULTA PREVIA') ||
+    c.includes('PREVENTIVA') ||
+    c.includes('MI CLARO') ||
+    c.includes('BABYSTING') ||
+    c.includes('CANAL DIGITAL')
+  ) {
+    return 'CLARO PERU RETENCIONES'
+  }
   return 'CLARO PERU'
 }
 

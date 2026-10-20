@@ -110,7 +110,13 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
       }
 
       if (campana) {
-        query = query.ilike('campana', `%${String(campana).trim()}%`)
+        const cleanCamp = String(campana).trim()
+        const baseCamp = cleanCamp.replace(/\s*[-–—]?\s*(PERU|PERÚ|CHILE|COLOMBIA)$/i, '').trim()
+        if (baseCamp && baseCamp !== cleanCamp) {
+          query = query.or(`campana.ilike.%${cleanCamp}%,campana.ilike.%${baseCamp}%`)
+        } else {
+          query = query.ilike('campana', `%${cleanCamp}%`)
+        }
       }
 
       const { data: rows, error: err } = await query

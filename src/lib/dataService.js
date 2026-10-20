@@ -2652,79 +2652,39 @@ export function fetchGruposConMetas(bypassCache = false) {
       }
     }
 
-    // ── Mapeo primario desde la tabla dedicada metas_equipos ──
+    // ── Mapeo primario: Capacidad R&S es la fuente oficial del catálogo ──
     const metasEquiposRows = metasEquiposRes.data || []
-    const meMap = {}
+    const normK = (v) => String(v || '').trim().toUpperCase()
+    const normSemNum = (v) => String(v || '').replace(/\D/g, '')
+
+    // Indexar metas_equipos por clave compuesta exacta (código, periodo, semana)
+    const meExactMap = new Map()
+    const meCodeSemMap = new Map()
+    const meCodePerMap = new Map()
+
     for (const me of metasEquiposRows) {
-      const gKey = (me.grupo || '').trim().toUpperCase()
-      if (!gKey) continue
-      if (!meMap[gKey]) meMap[gKey] = []
-      meMap[gKey].push(me)
+      const cod = normK(me.grupo)
+      if (!cod) continue
+      const per = normK(me.periodo)
+      const sem = normSemNum(me.semana)
+
+      const exactKey = `${cod}|${per}|${sem}`
+      if (!meExactMap.has(exactKey)) meExactMap.set(exactKey, [])
+      meExactMap.get(exactKey).push(me)
+
+      if (sem) {
+        const csKey = `${cod}|${sem}`
+        if (!meCodeSemMap.has(csKey)) meCodeSemMap.set(csKey, [])
+        meCodeSemMap.get(csKey).push(me)
+      }
+
+      if (per) {
+        const cpKey = `${cod}|${per}`
+        if (!meCodePerMap.has(cpKey)) meCodePerMap.set(cpKey, [])
+        meCodePerMap.get(cpKey).push(me)
+      }
     }
 
-    const processedGroupCodes = new Set()
-    const resultList = []
-
-    // Si hay datos en metas_equipos, construir grupos con la información exacta guardada
-    for (const gKey of Object.keys(meMap)) {
-      const rows = meMap[gKey]
-      if (!rows || rows.length === 0) continue
-      processedGroupCodes.add(gKey)
-      const first = rows[0]
-      const capGroup = (gruposRes.data || []).find(cg => (cg.codigo || '').trim().toUpperCase() === gKey)
-
-      const reclutadoresConStats = rows.map(r => {
-        const nomUpper = (r.responsable || '').trim().toUpperCase()
-        const eqData = equipoMap[nomUpper] || (r.documento_responsable ? equipoMap[r.documento_responsable] : null) || {}
-        return {
-          reclutador_id: r.documento_responsable || r.responsable,
-          nombre_completo: r.responsable || 'Sin Asignar',
-          documento: r.documento_responsable || eqData.documento || null,
-          alias: eqData.alias || r.responsable?.split(' ')[0] || null,
-          meta_rq_individual: Number(r.rq_individual || 0),
-          conteo_individual: Number(r.conteo_individual || 0),
-          meta_dia_1_individual: Number(r.meta_dia_1_individual || 0),
-          conectados_dia_1_individual: Number(r.conectados_dia_1 || 0)
-        }
-      })
-
-      resultList.push({
-        grupo_codigo: first.grupo,
-        codigo: first.grupo,
-        periodo: first.periodo || capGroup?.periodo || '',
-        periodo_ingreso_op: capGroup?.periodo_ingreso_op || '',
-        campana_nombre: first.campana || capGroup?.campana || 'Sin Campaña',
-        campana: first.campana || capGroup?.campana || 'Sin Campaña',
-        segmento: capGroup?.segmento || first.segmento || '',
-        supervisor: '',
-        estado: capGroup?.estado || 'ACTIVO',
-        area_traslado: capGroup?.area_traslado || 'RECLUTAMIENTO',
-        condicion: capGroup?.condicion || '',
-        semana: first.semana || capGroup?.semana_label || '',
-        semana_label: first.semana || capGroup?.semana_label || '',
-        semana_trabajo: capGroup?.semana_trabajo || null,
-        modalidad: first.modalidad || capGroup?.modalidad || '',
-        horario: first.horario || capGroup?.rango_horario || '',
-        fecha_inicio: first.fecha || capGroup?.fecha_inicio || capGroup?.fecha_registro || '',
-        fecha_registro: capGroup?.fecha_registro || first.fecha || '',
-        fecha_inicio_ojt: capGroup?.fecha_inicio_ojt || '',
-        fecha_ingreso_op: first.fecha_ingreso_op || capGroup?.fecha_ingreso_op || '',
-        meta_dia_0: Number(first.meta_dia_0 || 0),
-        meta_dia_1: Number(first.meta_dia_1_grupal || 0),
-        meta_dia_0_grupal: Number(first.meta_dia_0 || 0),
-        meta_dia_1_grupal: Number(first.meta_dia_1_grupal || 0),
-        rq_solicitado: Number(first.rq || capGroup?.rq_solicitado || 0),
-        rq_ftes_solicitado: Number(first.rq || capGroup?.rq_ftes_solicitado || 0),
-        reclutadores_metas: reclutadoresConStats,
-        sede: first.sede || capGroup?.sede || '-',
-        lista_actual: Number(first.lista_actual || 0),
-        conectados_dia_0: Number(first.conectados_dia_0 || 0),
-        conectados_dia_1_grupal: Number(first.total_dia_1 || 0),
-        from_metas_equipos: true
-      })
-    }
-
-    // ── Para grupos de capacidad_rys que no estén aún en metas_equipos ──
     const relMap = {}
     for (const r of (relRes.data || [])) {
       if (!relMap[r.grupo_codigo]) relMap[r.grupo_codigo] = []
@@ -2753,76 +2713,193 @@ export function fetchGruposConMetas(bypassCache = false) {
       }
     }
 
+    const resultList = []
+    const processedMeExactKeys = new Set()
+
+    // 1. Recorrer capacidad_rys (catálogo maestro de planificación)
     for (const g of (gruposRes.data || [])) {
-      const gCodigo = g.codigo || ''
-      const gCampana = g.campana || ''
-      const gKey = gCodigo.trim().toUpperCase()
-      if (processedGroupCodes.has(gKey)) continue // Ya procesado desde metas_equipos con datos oficiales
+      const gCodigo = (g.codigo || '').trim()
+      if (!gCodigo) continue
+      const cod = normK(gCodigo)
+      const per = normK(g.periodo)
+      const sem = normSemNum(g.semana_label || g.semana_trabajo)
 
-      const reclutadoresAsignados = relMap[gCodigo] || []
-      const nominasGrupo = nominas.filter(n => n.grupo_codigo === gCodigo && n.campana === gCampana)
+      const exactKey = `${cod}|${per}|${sem}`
+      const csKey = `${cod}|${sem}`
+      const cpKey = `${cod}|${per}`
 
-      let sede = (g.sede && g.sede.trim() && g.sede.trim() !== '-') ? g.sede.trim() : '-'
-      if (sede === '-' && nominasGrupo.length > 0) {
-        const sedeCounts = {}
-        let maxCount = 0
-        nominasGrupo.forEach(n => {
-          if (n.sede) {
-            sedeCounts[n.sede] = (sedeCounts[n.sede] || 0) + 1
-            if (sedeCounts[n.sede] > maxCount) {
-              maxCount = sedeCounts[n.sede]
-              sede = n.sede
-            }
+      let matchingMeRows = null
+      let matchedExactKey = null
+      if (meExactMap.has(exactKey)) {
+        matchingMeRows = meExactMap.get(exactKey)
+        matchedExactKey = exactKey
+        processedMeExactKeys.add(exactKey)
+      } else if (sem && meCodeSemMap.has(csKey)) {
+        matchingMeRows = meCodeSemMap.get(csKey)
+        const firstMe = matchingMeRows[0]
+        matchedExactKey = `${normK(firstMe.grupo)}|${normK(firstMe.periodo)}|${normSemNum(firstMe.semana)}`
+        processedMeExactKeys.add(matchedExactKey)
+      } else if (per && meCodePerMap.has(cpKey)) {
+        matchingMeRows = meCodePerMap.get(cpKey)
+        const firstMe = matchingMeRows[0]
+        matchedExactKey = `${normK(firstMe.grupo)}|${normK(firstMe.periodo)}|${normSemNum(firstMe.semana)}`
+        processedMeExactKeys.add(matchedExactKey)
+      }
+
+      let reclutadoresConStats = []
+      let metaDia0 = g.meta_dia_0 || 0
+      let metaDia1 = g.meta_dia_1 || 0
+      let rqSolicitado = (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_solicitado || 0) : 0
+      let rqFtes = (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_ftes_solicitado || 0) : 0
+      let listaActual = 0
+      let conectadosDia0 = 0
+      let conectadosDia1 = 0
+      let fromMetasEquipos = false
+
+      if (matchingMeRows && matchingMeRows.length > 0) {
+        fromMetasEquipos = true
+        const firstMe = matchingMeRows[0]
+        metaDia0 = Number(firstMe.meta_dia_0 || g.meta_dia_0 || 0)
+        metaDia1 = Number(firstMe.meta_dia_1_grupal || g.meta_dia_1 || 0)
+        rqSolicitado = Number(firstMe.rq || rqSolicitado || 0)
+        listaActual = Number(firstMe.lista_actual || 0)
+        conectadosDia0 = Number(firstMe.conectados_dia_0 || 0)
+        conectadosDia1 = Number(firstMe.total_dia_1 || 0)
+
+        reclutadoresConStats = matchingMeRows.map(r => {
+          const nomUpper = (r.responsable || '').trim().toUpperCase()
+          const eqData = equipoMap[nomUpper] || (r.documento_responsable ? equipoMap[r.documento_responsable] : null) || {}
+          return {
+            reclutador_id: r.documento_responsable || r.responsable,
+            nombre_completo: r.responsable || 'Sin Asignar',
+            documento: r.documento_responsable || eqData.documento || null,
+            alias: eqData.alias || r.responsable?.split(' ')[0] || null,
+            meta_rq_individual: Number(r.rq_individual || 0),
+            conteo_individual: Number(r.conteo_individual || 0),
+            meta_dia_1_individual: Number(r.meta_dia_1_individual || 0),
+            conectados_dia_1_individual: Number(r.conectados_dia_1 || 0)
+          }
+        })
+      } else {
+        const reclutadoresAsignados = relMap[gCodigo] || []
+        const nominasGrupo = nominas.filter(n => n.grupo_codigo === gCodigo && (!g.campana || n.campana === g.campana))
+        listaActual = nominasGrupo.length
+        conectadosDia0 = nominasGrupo.filter(n => n.dia_0 === 'ASISTIO').length
+        conectadosDia1 = nominasGrupo.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${g.campana}|${n.documento}`)).length
+
+        reclutadoresConStats = reclutadoresAsignados.map(r => {
+          const nominasReclutador = nominasGrupo.filter(n => n.reclutador_id === r.reclutador_id)
+          return {
+            ...r,
+            conteo_individual: nominasReclutador.length,
+            conectados_dia_1_individual: nominasReclutador.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${g.campana}|${n.documento}`)).length
           }
         })
       }
 
-      const listaActual = nominasGrupo.length
-      const conectadosDia0 = nominasGrupo.filter(n => n.dia_0 === 'ASISTIO').length
-      const conectadosDia1 = nominasGrupo.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${gCampana}|${n.documento}`)).length
+      let sede = (g.sede && g.sede.trim() && g.sede.trim() !== '-') ? g.sede.trim() : '-'
+      if (sede === '-' && matchingMeRows?.[0]?.sede) {
+        sede = matchingMeRows[0].sede
+      }
 
-      const reclutadoresConStats = reclutadoresAsignados.map(r => {
-        const nominasReclutador = nominasGrupo.filter(n => n.reclutador_id === r.reclutador_id)
-        return {
-          ...r,
-          conteo_individual: nominasReclutador.length,
-          conectados_dia_1_individual: nominasReclutador.filter(n => n.dia_1 === 'ASISTIO' && !bajaDia1Set.has(`${gCodigo}|${gCampana}|${n.documento}`)).length
-        }
-      })
+      // Segmento y campaña oficiales vienen de capacidad_rys
+      const officialCampana = g.campana || matchingMeRows?.[0]?.campana || 'Sin Campaña'
+      const officialSegmento = g.segmento || inferSegmento(officialCampana)
 
       resultList.push({
         grupo_codigo: gCodigo,
         codigo: gCodigo,
-        periodo: g.periodo || '',
+        periodo: g.periodo || '', // Periodo de inicio oficial de capacidad_rys
         periodo_ingreso_op: g.periodo_ingreso_op || '',
-        campana_nombre: gCampana || 'Sin Campaña',
-        campana: gCampana || 'Sin Campaña',
-        segmento: g.segmento || '',
+        campana_nombre: officialCampana,
+        campana: officialCampana,
+        segmento: officialSegmento,
         supervisor: '',
-        estado: g.estado || '',
-        area_traslado: g.area_traslado || '',
+        estado: g.estado || 'ACTIVO',
+        area_traslado: g.area_traslado || 'RECLUTAMIENTO',
         condicion: g.condicion || '',
-        semana: g.semana_label || '',
-        semana_label: g.semana_label || '',
+        semana: g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : ''),
+        semana_label: g.semana_label || (g.semana_trabajo ? `SEM ${g.semana_trabajo}` : ''),
         semana_trabajo: g.semana_trabajo || null,
-        modalidad: g.modalidad || '',
-        horario: g.rango_horario || '',
-        fecha_inicio: g.fecha_inicio || g.fecha_registro || '',
+        modalidad: g.modalidad || matchingMeRows?.[0]?.modalidad || '',
+        horario: g.rango_horario || matchingMeRows?.[0]?.horario || '',
+        fecha_inicio: g.fecha_inicio || g.fecha_registro || matchingMeRows?.[0]?.fecha || '',
         fecha_registro: g.fecha_registro || '',
         fecha_inicio_ojt: g.fecha_inicio_ojt || '',
-        fecha_ingreso_op: g.fecha_ingreso_op || '',
-        meta_dia_0: g.meta_dia_0 || 0,
-        meta_dia_1: g.meta_dia_1 || 0,
-        meta_dia_0_grupal: g.meta_dia_0 || 0,
-        meta_dia_1_grupal: g.meta_dia_1 || 0,
-        rq_solicitado: (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_solicitado || 0) : 0,
-        rq_ftes_solicitado: (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_ftes_solicitado || 0) : 0,
+        fecha_ingreso_op: g.fecha_ingreso_op || matchingMeRows?.[0]?.fecha_ingreso_op || '',
+        meta_dia_0: metaDia0,
+        meta_dia_1: metaDia1,
+        meta_dia_0_grupal: metaDia0,
+        meta_dia_1_grupal: metaDia1,
+        rq_solicitado: rqSolicitado,
+        rq_ftes_solicitado: rqFtes || rqSolicitado,
         reclutadores_metas: reclutadoresConStats,
         sede,
         lista_actual: listaActual,
         conectados_dia_0: conectadosDia0,
         conectados_dia_1_grupal: conectadosDia1,
-        from_metas_equipos: false
+        from_metas_equipos: fromMetasEquipos
+      })
+    }
+
+    // 2. Para registros adicionales en metas_equipos que no estuvieran en capacidad_rys
+    for (const [exactKey, rows] of meExactMap.entries()) {
+      if (processedMeExactKeys.has(exactKey)) continue
+      if (!rows || rows.length === 0) continue
+      const first = rows[0]
+      const gCodigo = (first.grupo || '').trim()
+      if (!gCodigo) continue
+
+      const reclutadoresConStats = rows.map(r => {
+        const nomUpper = (r.responsable || '').trim().toUpperCase()
+        const eqData = equipoMap[nomUpper] || (r.documento_responsable ? equipoMap[r.documento_responsable] : null) || {}
+        return {
+          reclutador_id: r.documento_responsable || r.responsable,
+          nombre_completo: r.responsable || 'Sin Asignar',
+          documento: r.documento_responsable || eqData.documento || null,
+          alias: eqData.alias || r.responsable?.split(' ')[0] || null,
+          meta_rq_individual: Number(r.rq_individual || 0),
+          conteo_individual: Number(r.conteo_individual || 0),
+          meta_dia_1_individual: Number(r.meta_dia_1_individual || 0),
+          conectados_dia_1_individual: Number(r.conectados_dia_1 || 0)
+        }
+      })
+
+      const seg = first.segmento || inferSegmento(first.campana)
+
+      resultList.push({
+        grupo_codigo: gCodigo,
+        codigo: gCodigo,
+        periodo: first.periodo || '',
+        periodo_ingreso_op: '',
+        campana_nombre: first.campana || 'Sin Campaña',
+        campana: first.campana || 'Sin Campaña',
+        segmento: seg,
+        supervisor: '',
+        estado: 'ACTIVO',
+        area_traslado: 'RECLUTAMIENTO',
+        condicion: '',
+        semana: first.semana || '',
+        semana_label: first.semana || '',
+        semana_trabajo: first.semana ? Number(String(first.semana).replace(/\D/g, '')) || null : null,
+        modalidad: first.modalidad || '',
+        horario: first.horario || '',
+        fecha_inicio: first.fecha || '',
+        fecha_registro: first.fecha || '',
+        fecha_inicio_ojt: '',
+        fecha_ingreso_op: first.fecha_ingreso_op || '',
+        meta_dia_0: Number(first.meta_dia_0 || 0),
+        meta_dia_1: Number(first.meta_dia_1_grupal || 0),
+        meta_dia_0_grupal: Number(first.meta_dia_0 || 0),
+        meta_dia_1_grupal: Number(first.meta_dia_1_grupal || 0),
+        rq_solicitado: Number(first.rq || 0),
+        rq_ftes_solicitado: Number(first.rq || 0),
+        reclutadores_metas: reclutadoresConStats,
+        sede: first.sede || '-',
+        lista_actual: Number(first.lista_actual || 0),
+        conectados_dia_0: Number(first.conectados_dia_0 || 0),
+        conectados_dia_1_grupal: Number(first.total_dia_1 || 0),
+        from_metas_equipos: true
       })
     }
 

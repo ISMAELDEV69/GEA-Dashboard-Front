@@ -196,12 +196,19 @@ export default function NominaCompletar({
           if (!isNaN(semanaNum)) query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
         }
         if (bulkCampana) {
-          query = query.ilike('campana', `%${String(bulkCampana).trim()}%`)
+          const cleanCamp = String(bulkCampana).trim()
+          const baseCamp = cleanCamp.replace(/\s*[-–—]?\s*(PERU|PERÚ|CHILE|COLOMBIA)$/i, '').trim()
+          if (baseCamp && baseCamp !== cleanCamp) {
+            query = query.or(`campana.ilike.%${cleanCamp}%,campana.ilike.%${baseCamp}%`)
+          } else {
+            query = query.ilike('campana', `%${cleanCamp}%`)
+          }
         }
         const { data, error } = await query
         if (error) throw error
         
         const rows = data || []
+        const normC = s => String(s || '').trim().toUpperCase().replace(/\s*[-–—]?\s*(PERU|PERÚ|CHILE|COLOMBIA)$/i, '')
         setStatsMap(prev => {
           const upd = {}
           groupsBatch.forEach(g => {
@@ -214,7 +221,11 @@ export default function NominaCompletar({
               const rCod = String(r.grupo_codigo || '').trim().toUpperCase()
               const rCamp = String(r.campana || '').trim().toUpperCase()
               if (rCod !== cod) return false
-              if (camp && rCamp && !rCamp.includes(camp) && !camp.includes(rCamp)) return false
+              if (camp && rCamp) {
+                const nCamp = normC(camp)
+                const nRCamp = normC(rCamp)
+                if (!rCamp.includes(camp) && !camp.includes(rCamp) && !nCamp.includes(nRCamp) && !nRCamp.includes(nCamp)) return false
+              }
               return true
             })
             upd[key] = { ...calcCompleteness(matchedRows), loading: false }
@@ -253,7 +264,13 @@ export default function NominaCompletar({
         if (!isNaN(semanaNum)) query = query.or(`semana_trabajo.eq.${semanaNum},semana_trabajo.is.null`)
       }
       if (campana || bulkCampana) {
-        query = query.ilike('campana', `%${String(campana || bulkCampana).trim()}%`)
+        const targetCamp = String(campana || bulkCampana).trim()
+        const baseCamp = targetCamp.replace(/\s*[-–—]?\s*(PERU|PERÚ|CHILE|COLOMBIA)$/i, '').trim()
+        if (baseCamp && baseCamp !== targetCamp) {
+          query = query.or(`campana.ilike.%${targetCamp}%,campana.ilike.%${baseCamp}%`)
+        } else {
+          query = query.ilike('campana', `%${targetCamp}%`)
+        }
       }
       const { data, error } = await query
       if (error) throw error

@@ -1616,7 +1616,12 @@ export default function NominaForm({
                 <div className="mb-4 p-3 bg-blue-50/50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 rounded-xl text-blue-700 dark:text-blue-300 text-xs flex items-center space-x-2">
                   <User size={16} className="text-blue-500 flex-shrink-0" />
                   <span>
-                    El grupo seleccionado ya tiene <strong>{postulantes.filter(p => p.grupo_codigo === bulkGrupo && p.campana === bulkCampana).length}</strong> persona(s) inscrita(s). Al cargar el archivo, solo se agregarán las personas nuevas.
+                    El grupo seleccionado ya tiene <strong>{postulantes.filter(p => {
+                      if (String(p.grupo_codigo || '').trim().toUpperCase() !== String(bulkGrupo || '').trim().toUpperCase()) return false
+                      if (!bulkCampana) return true
+                      const norm = s => String(s || '').trim().toUpperCase().replace(/\s*[-–—]?\s*(PERU|PERÚ|CHILE|COLOMBIA)$/i, '')
+                      return norm(p.campana) === norm(bulkCampana) || String(p.campana || '').includes(bulkCampana) || String(bulkCampana).includes(String(p.campana || ''))
+                    }).length}</strong> persona(s) inscrita(s). Al cargar el archivo, solo se agregarán las personas nuevas.
                   </span>
                 </div>
               )}
