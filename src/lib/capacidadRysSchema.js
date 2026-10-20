@@ -97,9 +97,16 @@ export function parseEuropeanNumber(val) {
 }
 
 export function parseExcelDate(val) {
-  if (!val) return null
+  if (val === null || val === undefined || val === '') return null
+  // Date object (XLSX / Sheets)
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const yyyy = val.getFullYear()
+    const mm = String(val.getMonth() + 1).padStart(2, '0')
+    const dd = String(val.getDate()).padStart(2, '0')
+    if (yyyy >= 1900 && yyyy <= 2100) return `${yyyy}-${mm}-${dd}`
+  }
   const s = String(val).trim()
-  if (!s || s === '-' || s === '0' || s === 'NULL' || s === 'undefined') return null
+  if (!s || s === '-' || s === '0' || s === 'NULL' || s === 'undefined' || s === '...') return null
 
   // 1. Excel serial number (e.g. 37171)
   if (/^\d{4,6}(?:\.\d+)?$/.test(s)) {

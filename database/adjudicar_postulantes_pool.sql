@@ -68,6 +68,11 @@ BEGIN
           THEN (v_item->>'fecha_nacimiento')::DATE 
           ELSE fecha_nacimiento 
         END,
+        edad = CASE 
+          WHEN v_item->>'edad' IS NOT NULL AND v_item->>'edad' <> '' 
+          THEN (v_item->>'edad')::INTEGER 
+          ELSE edad 
+        END,
         estado_civil = COALESCE(NULLIF(TRIM(v_item->>'estado_civil'), ''), estado_civil),
         n_hijos = CASE 
           WHEN v_item->>'n_hijos' IS NOT NULL AND v_item->>'n_hijos' <> '' 
@@ -82,6 +87,10 @@ BEGIN
         direccion_domicilio = COALESCE(NULLIF(TRIM(v_item->>'direccion_domicilio'), ''), direccion_domicilio),
         exp_call_center = COALESCE(NULLIF(TRIM(v_item->>'exp_call_center'), ''), exp_call_center),
         exp_tipo_campana = COALESCE(NULLIF(TRIM(v_item->>'exp_tipo_campana'), ''), exp_tipo_campana),
+        exp_tiempo_campana = COALESCE(
+          NULLIF(TRIM(COALESCE(v_item->>'exp_tiempo_campana', v_item->>'exp_tiempo_call')), ''),
+          exp_tiempo_campana
+        ),
         fuente_oferta = COALESCE(NULLIF(TRIM(v_item->>'fuente_oferta'), ''), fuente_oferta),
         sede = COALESCE(NULLIF(TRIM(v_item->>'sede'), ''), sede),
         modalidad = COALESCE(NULLIF(TRIM(v_item->>'modalidad'), ''), modalidad),
@@ -105,6 +114,7 @@ BEGIN
         correo,
         genero,
         fecha_nacimiento,
+        edad,
         estado_civil,
         n_hijos,
         nivel_academico,
@@ -180,6 +190,7 @@ BEGIN
         NULLIF(TRIM(v_item->>'correo'), ''),
         NULLIF(TRIM(v_item->>'genero'), ''),
         CASE WHEN v_item->>'fecha_nacimiento' IS NOT NULL AND v_item->>'fecha_nacimiento' <> '' THEN (v_item->>'fecha_nacimiento')::DATE ELSE NULL END,
+        CASE WHEN v_item->>'edad' IS NOT NULL AND v_item->>'edad' <> '' THEN (v_item->>'edad')::INTEGER ELSE NULL END,
         NULLIF(TRIM(v_item->>'estado_civil'), ''),
         CASE WHEN v_item->>'n_hijos' IS NOT NULL AND v_item->>'n_hijos' <> '' THEN (v_item->>'n_hijos')::INTEGER ELSE 0 END,
         NULLIF(TRIM(v_item->>'nivel_academico'), ''),
@@ -190,7 +201,7 @@ BEGIN
         NULLIF(TRIM(v_item->>'direccion_domicilio'), ''),
         NULLIF(TRIM(v_item->>'exp_call_center'), ''),
         NULLIF(TRIM(v_item->>'exp_tipo_campana'), ''),
-        NULLIF(TRIM(v_item->>'exp_tiempo_campana'), ''),
+        NULLIF(TRIM(COALESCE(v_item->>'exp_tiempo_campana', v_item->>'exp_tiempo_call')), ''),
         NULLIF(TRIM(v_item->>'exp_otra'), ''),
         NULLIF(TRIM(v_item->>'exp_tiempo_otra'), ''),
         NULLIF(TRIM(v_item->>'fuente_oferta'), ''),

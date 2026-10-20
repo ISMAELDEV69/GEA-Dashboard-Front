@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   BanknoteIcon, Settings2, Calculator, Download, RefreshCw,
   CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Star,
@@ -30,7 +31,28 @@ import {
   generarMatrizCronogramaPagos,
   generarResumenMatrizPagos,
   exportarCSVMatrizPagos,
+  sumarMesesPeriodo,
 } from '../lib/pagosCapacitacionEngine'
+
+const normMesPagoKey = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '')
+  return digits.length >= 6 ? digits.slice(0, 6) : ''
+}
+
+/** Meses de cronograma cubiertos por una propuesta (capa + bonos M1–M4) */
+function mesesCronogramaDeConfig(c) {
+  const set = new Set()
+  const add = (raw) => {
+    const m = normMesPagoKey(raw)
+    if (m) set.add(m)
+  }
+  add(c?.mesAfectacionCapa)
+  const baseBonos = normMesPagoKey(c?.mesAfectacionBonos || c?.mesAfectacionCapa)
+  if (baseBonos) {
+    for (let i = 0; i < 4; i++) add(sumarMesesPeriodo(baseBonos, i))
+  }
+  return set
+}
 import { formatFechaDDMMYYYY } from '../lib/propuestaParser'
 
 // ────────────────────────────────────────────────────────────────────────
@@ -41,6 +63,181 @@ const soles = v => `S/. ${Number(v || 0).toLocaleString('es-PE', { minimumFracti
 const SELECT_GEA =
   'w-full bg-[var(--bg-base)] border border-[var(--border-normal)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] font-medium'
 const LABEL_GEA = 'text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider'
+
+/** Nunca mostrar dumps JSON/arrays en el banner de error del analista */
+function formatPagosUiError(err, fallback = 'Ocurrió un error. Intenta de nuevo.') {
+  if (err == null) return fallback
+  if (Array.isArray(err) || (typeof err === 'object' && !err.message && !err.error && !err.details)) {
+    return fallback
+  }
+  const raw = typeof err === 'string'
+    ? err
+    : (err.message || err.error_description || err.details || err.hint || err.error || '')
+  const text = String(raw || '').trim()
+  if (!text) return fallback
+  // Evitar pegar respuestas/tablas enteras en pantalla
+  if (text.startsWith('[') || text.startsWith('{') || text.length > 400) {
+    const short = text.length > 180 ? `${text.slice(0, 180)}…` : text
+    if (short.startsWith('[') || short.startsWith('{')) return fallback
+    return short
+  }
+  return text
+}
+
+/** Multiselect compacto (vacío = todos). Menú en portal para no quedar cortado por overflow. */
+function FilterMultiSelect({
+  options = [],
+  values = [],
+  onChange,
+  disabled = false,
+  loading = false,
+  allLabel = 'TODOS',
+  pluralLabel = 'seleccionados',
+  emptyHint = 'Sin opciones',
+  mono = false,
+}) {
+  const btnRef = useRef(null)
+  const menuRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 200 })
+  const selected = Array.isArray(values) ? values : []
+  const all = selected.length === 0
+
+  const updatePos = useCallback(() => {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (!r) return
+    const width = Math.max(r.width, 180)
+    let left = r.left
+    if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8)
+    const spaceBelow = window.innerHeight - r.bottom
+    const menuH = Math.min(224, 40 + options.length * 28)
+    const top = spaceBelow < menuH && r.top > menuH ? r.top - menuH - 4 : r.bottom + 4
+    setPos({ top, left, width })
+  }, [options.length])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updatePos()
+  }, [open, updatePos])
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => {
+      if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const onScroll = () => updatePos()
+    document.addEventListener('mousedown', onDoc)
+    window.addEventListener('resize', onScroll)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('resize', onScroll)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [open, updatePos])
+
+  const toggle = (opt) => {
+    if (selected.includes(opt)) onChange(selected.filter((v) => v !== opt))
+    else onChange([...selected, opt])
+  }
+
+  const summary = loading
+    ? 'Cargando…'
+    : all
+      ? allLabel
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} ${pluralLabel}`
+
+  const menu = open && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        ref={menuRef}
+        style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999 }}
+        className="max-h-56 overflow-auto rounded-lg border border-[var(--border-normal)] bg-[var(--bg-surface)] shadow-xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => { onChange([]); setOpen(false) }}
+          className={`w-full text-left px-3 py-2 text-[11px] font-bold border-b border-[var(--border-subtle)] cursor-pointer ${
+            all ? 'text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          }`}
+        >
+          {allLabel}
+        </button>
+        {options.map((opt) => (
+          <label
+            key={opt}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer ${mono ? 'font-mono' : ''}`}
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(opt)}
+              onChange={() => toggle(opt)}
+              className="accent-[var(--accent)]"
+            />
+            <span>{opt}</span>
+          </label>
+        ))}
+        {!loading && options.length === 0 && (
+          <p className="px-3 py-2 text-[11px] text-[var(--text-muted)]">{emptyHint}</p>
+        )}
+        {loading && (
+          <p className="px-3 py-2 text-[11px] text-[var(--text-muted)] flex items-center gap-1">
+            <Loader2 size={12} className="animate-spin" /> Cargando opciones…
+          </p>
+        )}
+      </div>,
+      document.body,
+    )
+    : null
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        disabled={disabled || loading}
+        onClick={() => setOpen((v) => !v)}
+        className={`w-full ${SELECT_GEA} text-left flex items-center gap-1.5 ${
+          mono ? 'font-mono' : ''
+        } ${disabled || loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${all ? '' : 'border-[var(--accent)]/50'}`}
+      >
+        <span className="truncate flex-1">{summary}</span>
+        {!all && !loading && (
+          <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)]">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown size={14} className={`shrink-0 text-[var(--text-muted)] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {menu}
+    </div>
+  )
+}
+
+/** Segmento exacto de capacidad_rys (sin inferir). */
+function segmentoDeCapacidad(row = {}) {
+  return String(row?.segmento || '').trim().toUpperCase()
+}
+
+function mapCapacidadToGrupoFiltro(row) {
+  const campana = row?.campana ? String(row.campana).trim().toUpperCase() : ''
+  const codigo = row?.grupo_codigo || row?.codigo || row?.grupo_capacitacion || ''
+  const segmento = segmentoDeCapacidad(row)
+  const semNum = row?.semana_trabajo ?? (parseInt(String(row?.semana_label || '').replace(/\D/g, ''), 10) || null)
+  return {
+    grupo_codigo: codigo ? String(codigo).trim().toUpperCase() : '',
+    campana,
+    segmento,
+    semana_label: row?.semana_label,
+    semana_trabajo: semNum,
+    periodo_reclutado: row?.periodo_reclutado || row?.periodo || '',
+    periodo: row?.periodo || row?.periodo_reclutado || '',
+  }
+}
 
 function semanaDeCapacidad(g) {
   return normalizarSemanaPago(g?.semana_label || (g?.semana_trabajo != null && g?.semana_trabajo !== '' ? `SEM ${g.semana_trabajo}` : '') || g?.semana)
@@ -160,7 +357,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     })
   }, [gruposCapacidad, form.periodoCapa, form.semana])
 
-  // 3. Segmentos filtrados por Periodo + Semana
+  // 3. Segmentos filtrados por Periodo + Semana (exacto de capacidad_rys)
   const segmentosCapaDisponibles = useMemo(() => {
     if (!form.periodoCapa || !form.semana) return []
     const pSel = String(form.periodoCapa).trim().toUpperCase()
@@ -169,7 +366,8 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     gruposCapacidad.forEach(g => {
       if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
       if (semanaDeCapacidad(g) !== sSel) return
-      if (g.segmento) set.add(String(g.segmento).trim().toUpperCase())
+      const seg = segmentoDeCapacidad(g)
+      if (seg) set.add(seg)
     })
     if (form.segmento) set.add(String(form.segmento).trim().toUpperCase())
     return Array.from(set).sort()
@@ -185,7 +383,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     gruposCapacidad.forEach(g => {
       if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
       if (semanaDeCapacidad(g) !== sSel) return
-      if (String(g.segmento || '').trim().toUpperCase() !== segSel) return
+      if (segmentoDeCapacidad(g) !== segSel) return
       if (g.campana) set.add(String(g.campana).trim().toUpperCase())
     })
     if (form.campana) set.add(String(form.campana).trim().toUpperCase())
@@ -203,7 +401,7 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
     gruposCapacidad.forEach(g => {
       if (String(g.periodo || '').trim().toUpperCase() !== pSel) return
       if (semanaDeCapacidad(g) !== sSel) return
-      if (String(g.segmento || '').trim().toUpperCase() !== segSel) return
+      if (segmentoDeCapacidad(g) !== segSel) return
       if (String(g.campana || '').trim().toUpperCase() !== cSel) return
       if (g.codigo) set.add(String(g.codigo).trim().toUpperCase())
     })
@@ -1326,8 +1524,6 @@ function TablaMatrizPagos({ filas = [] }) {
                   <td className="px-3 py-2 text-right">
                     {r.bono_asistencia_perfecta > 0 ? (
                       renderMonto(r.bono_asistencia_perfecta, 'text-rose-400')
-                    ) : !r.asistencia_perfecta ? (
-                      <span className="text-rose-400/50 text-[10px]" title="No aplica por registrar inasistencia">S/. 0.00</span>
                     ) : (
                       <span className="text-slate-600 font-mono text-[11px]">—</span>
                     )}
@@ -1778,19 +1974,15 @@ export default function PagosCapacitacion({ userProfile }) {
   const [asistencias, setAsistencias] = useState([])
   const [editingPropuesta, setEditingPropuesta] = useState(null)
 
-  // ── 6 FILTROS DE CONSULTA ──────────────────────────────────────────────
-  // 1. Periodo -> 2. Semana -> 3. Segmento -> 4. Campaña -> 5. Código de Grupo -> 6. Reclutador
-  const [selectedPeriodo, setSelectedPeriodo] = useState('TODOS')
-  const [selectedSemana, setSelectedSemana] = useState('TODAS')
-  const [selectedSegmento, setSelectedSegmento] = useState('TODOS')
-  const [selectedCampana, setSelectedCampana] = useState('TODAS')
-  const [selectedGrupo, setSelectedGrupo] = useState('TODOS')
-  const [selectedReclutador, setSelectedReclutador] = useState('TODOS')
+  // ── FILTROS DE PAGO (multi; [] = todos) ─────────────────────────────────
+  // Mes de Pago (a quién liquidar) + Segmento → Campaña → Código de Grupo
+  const [selectedSegmentos, setSelectedSegmentos] = useState([])
+  const [selectedCampanas, setSelectedCampanas] = useState([])
+  const [selectedGrupos, setSelectedGrupos] = useState([])
+  const [selectedMesesPago, setSelectedMesesPago] = useState([])
 
-  // ── MODO DE VISTA & FILTROS DE MATRIZ CRONOGRAMA ─────────────────────────
-  const [vistaModo, setVistaModo] = useState('matriz') // 'matriz' (exacta a Excel) | 'resumen_postulantes' | 'clasica'
-  const [selectedMesPago, setSelectedMesPago] = useState('TODOS')
-  const [selectedEstadoPago, setSelectedEstadoPago] = useState('TODOS') // 'TODOS' | 'PENDIENTE' | 'PAGADO'
+  // ── MODO DE VISTA ───────────────────────────────────────────────────────
+  const [vistaModo, setVistaModo] = useState('matriz') // 'matriz' | 'resumen_postulantes' | 'clasica'
 
   // Estado
   const [loadingConfigs, setLoadingConfigs] = useState(false)
@@ -1827,25 +2019,35 @@ export default function PagosCapacitacion({ userProfile }) {
     setErrMsg(null)
     try {
       const [cfgs, grps, caps, liqs] = await Promise.all([
-        fetchConfigPagosGrupo(),
-        fetchGruposPagosDisponibles(),
-        fetchCapacidadRysOperativo(),
+        fetchConfigPagosGrupo().catch((e) => { console.warn(e); return [] }),
+        fetchGruposPagosDisponibles().catch((e) => { console.warn(e); return [] }),
+        fetchCapacidadRysOperativo().catch((e) => { console.warn(e); return [] }),
         fetchLiquidacionesHistoricas().catch(() => []),
       ])
-      setConfigs(cfgs)
+      setConfigs(cfgs || [])
       setGruposCapacidad(caps || [])
       setLiquidacionesHistoricas(liqs || [])
-      // Deduplicar por grupo_codigo+campana+segmento+semana para evitar filas repetidas
+
+      // Catálogo de filtros: capacidad operativa + grupos pagos (con segmento inferido si falta)
+      const merged = [
+        ...(Array.isArray(grps) ? grps : []),
+        ...(Array.isArray(caps) ? caps : []),
+      ].map(mapCapacidadToGrupoFiltro).filter(g => g.grupo_codigo || g.campana || g.segmento)
+
       const seen = new Set()
-      const grpsUnicos = grps.filter(g => {
+      const grpsUnicos = merged.filter(g => {
         const key = `${g.grupo_codigo}|${g.campana}|${g.segmento}|${g.semana_trabajo}|${g.periodo_reclutado}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
       })
       setGruposDisponibles(grpsUnicos)
+      if (!grpsUnicos.length) {
+        console.warn('PagosCapacitacion: catálogo de filtros vacío (capacidad_rys sin filas o sin acceso).')
+      }
     } catch (e) {
       console.warn("Error cargando configs iniciales:", e)
+      setErrMsg(formatPagosUiError(e, 'No se pudo cargar el catálogo de filtros.'))
     } finally {
       setLoadingConfigs(false)
     }
@@ -1855,201 +2057,207 @@ export default function PagosCapacitacion({ userProfile }) {
     loadInitialData()
   }, [loadInitialData])
 
-  // Helper para normalizar semana
-  const formatSem = (val) => {
-    if (!val) return ''
-    const str = String(val).trim().toUpperCase()
-    const num = str.replace(/\D/g, '')
-    return num ? `SEM ${num}` : str
-  }
-
-  // 1. Periodos
-  const periodosDisponibles = useMemo(() => {
-    const set = new Set()
-    gruposDisponibles.forEach(g => {
-      const p = g.periodo_reclutado || g.periodo
-      if (p) set.add(String(p).trim().toUpperCase())
-    })
-    return ['TODOS', ...Array.from(set).sort().reverse()]
-  }, [gruposDisponibles])
-
-  // 2. Semanas (filtradas por Periodo)
-  const semanasDisponibles = useMemo(() => {
-    const set = new Set()
-    gruposDisponibles.forEach(g => {
-      const p = (g.periodo_reclutado || g.periodo || '').toUpperCase().trim()
-      if (selectedPeriodo !== 'TODOS' && p !== selectedPeriodo) return
-
-      const s = formatSem(g.semana_trabajo || g.semana_label || g.semana)
-      if (s) set.add(s)
-    })
-    return ['TODAS', ...Array.from(set).sort((a, b) => {
-      const na = parseInt(a.replace(/\D/g, '')) || 0
-      const nb = parseInt(b.replace(/\D/g, '')) || 0
-      return na - nb
-    })]
-  }, [gruposDisponibles, selectedPeriodo])
-
-  // 3. Segmentos (filtrados por Periodo + Semana)
+  // 1. Segmentos (efectivos)
   const segmentosDisponibles = useMemo(() => {
     const set = new Set()
-    gruposDisponibles.forEach(g => {
-      const p = (g.periodo_reclutado || g.periodo || '').toUpperCase().trim()
-      if (selectedPeriodo !== 'TODOS' && p !== selectedPeriodo) return
-
-      const s = formatSem(g.semana_trabajo || g.semana_label || g.semana)
-      if (selectedSemana !== 'TODAS' && s !== selectedSemana) return
-
-      if (g.segmento) set.add(String(g.segmento).trim().toUpperCase())
+    gruposDisponibles.forEach((g) => {
+      const seg = segmentoDeCapacidad(g)
+      if (seg) set.add(seg)
     })
-    return ['TODOS', ...Array.from(set).sort()]
-  }, [gruposDisponibles, selectedPeriodo, selectedSemana])
+    return Array.from(set).sort()
+  }, [gruposDisponibles])
 
-  // 4. Campañas (filtradas por Periodo + Semana + Segmento)
+  // 2. Campañas SOLO del/los segmento(s) seleccionado(s)
   const campanasDisponibles = useMemo(() => {
     const set = new Set()
-    gruposDisponibles.forEach(g => {
-      const p = (g.periodo_reclutado || g.periodo || '').toUpperCase().trim()
-      if (selectedPeriodo !== 'TODOS' && p !== selectedPeriodo) return
-
-      const s = formatSem(g.semana_trabajo || g.semana_label || g.semana)
-      if (selectedSemana !== 'TODAS' && s !== selectedSemana) return
-
-      const seg = (g.segmento || '').toUpperCase().trim()
-      if (selectedSegmento !== 'TODOS' && seg !== selectedSegmento) return
-
-      if (g.campana) set.add(String(g.campana).trim().toUpperCase())
+    const segSet = selectedSegmentos.length
+      ? new Set(selectedSegmentos.map((s) => String(s).trim().toUpperCase()))
+      : null
+    gruposDisponibles.forEach((g) => {
+      const camp = String(g.campana || '').trim().toUpperCase()
+      if (!camp) return
+      const seg = segmentoDeCapacidad(g)
+      if (segSet && !segSet.has(seg)) return
+      set.add(camp)
     })
-    return ['TODAS', ...Array.from(set).sort()]
-  }, [gruposDisponibles, selectedPeriodo, selectedSemana, selectedSegmento])
+    return Array.from(set).sort()
+  }, [gruposDisponibles, selectedSegmentos])
 
-  // 5. Códigos de Grupo (filtrados por Periodo + Semana + Segmento + Campaña)
+  // 3. Códigos de Grupo (por segmentos + campañas)
   const codigosGruposDisponibles = useMemo(() => {
     const set = new Set()
-    gruposDisponibles.forEach(g => {
-      const p = (g.periodo_reclutado || g.periodo || '').toUpperCase().trim()
-      if (selectedPeriodo !== 'TODOS' && p !== selectedPeriodo) return
-
-      const s = formatSem(g.semana_trabajo || g.semana_label || g.semana)
-      if (selectedSemana !== 'TODAS' && s !== selectedSemana) return
-
-      const seg = (g.segmento || '').toUpperCase().trim()
-      if (selectedSegmento !== 'TODOS' && seg !== selectedSegmento) return
-
-      const c = (g.campana || '').toUpperCase().trim()
-      if (selectedCampana !== 'TODAS' && c !== selectedCampana) return
-
+    const segSet = selectedSegmentos.length
+      ? new Set(selectedSegmentos.map((s) => String(s).trim().toUpperCase()))
+      : null
+    const campSet = selectedCampanas.length
+      ? new Set(selectedCampanas.map((c) => String(c).trim().toUpperCase()))
+      : null
+    gruposDisponibles.forEach((g) => {
+      const seg = segmentoDeCapacidad(g)
+      if (segSet && !segSet.has(seg)) return
+      const c = String(g.campana || '').trim().toUpperCase()
+      if (campSet && !campSet.has(c)) return
       if (g.grupo_codigo) set.add(String(g.grupo_codigo).trim().toUpperCase())
     })
-    return ['TODOS', ...Array.from(set).sort()]
-  }, [gruposDisponibles, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana])
+    return Array.from(set).sort()
+  }, [gruposDisponibles, selectedSegmentos, selectedCampanas])
 
-  // 6. Reclutadores disponibles según las nóminas y personas cargadas
-  const reclutadoresDisponibles = useMemo(() => {
-    const set = new Set()
-    nominas.forEach(n => {
-      const r = String(n.reclutador || '').trim().toUpperCase()
-      if (r) set.add(r)
+  // Seguridad: si cambian opciones, podar selecciones huérfanas
+  useEffect(() => {
+    if (!selectedCampanas.length) return
+    const allowed = new Set(campanasDisponibles)
+    const next = selectedCampanas.filter((c) => allowed.has(c))
+    if (next.length !== selectedCampanas.length) setSelectedCampanas(next)
+  }, [campanasDisponibles, selectedCampanas])
+
+  useEffect(() => {
+    if (!selectedGrupos.length) return
+    const allowed = new Set(codigosGruposDisponibles)
+    const next = selectedGrupos.filter((g) => allowed.has(g))
+    if (next.length !== selectedGrupos.length) setSelectedGrupos(next)
+  }, [codigosGruposDisponibles, selectedGrupos])
+
+  const handleSegmentosChange = (vals) => {
+    const nextSegs = (vals || []).map((s) => String(s).trim().toUpperCase()).filter(Boolean)
+    setSelectedSegmentos(nextSegs)
+    const segSet = nextSegs.length ? new Set(nextSegs) : null
+    const nextCampSet = new Set()
+    gruposDisponibles.forEach((g) => {
+      const seg = segmentoDeCapacidad(g)
+      if (segSet && !segSet.has(seg)) return
+      const camp = String(g.campana || '').trim().toUpperCase()
+      if (camp) nextCampSet.add(camp)
     })
-    return ['TODOS', ...Array.from(set).sort()]
-  }, [nominas])
-
-  // Handlers de cambio con auto-reseteo en cascada
-  const handlePeriodoChange = (val) => {
-    setSelectedPeriodo(val)
-    setSelectedSemana('TODAS')
-    setSelectedSegmento('TODOS')
-    setSelectedCampana('TODAS')
-    setSelectedGrupo('TODOS')
+    // Cascada: dejar solo campañas del segmento; limpiar grupos
+    setSelectedCampanas((prev) => prev.filter((c) => nextCampSet.has(c)))
+    setSelectedGrupos([])
     setCalculoReady(false)
   }
 
-  const handleSemanaChange = (val) => {
-    setSelectedSemana(val)
-    setSelectedSegmento('TODOS')
-    setSelectedCampana('TODAS')
-    setSelectedGrupo('TODOS')
+  const handleCampanasChange = (vals) => {
+    const nextCamps = (vals || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean)
+    setSelectedCampanas(nextCamps)
+    const segSet = selectedSegmentos.length
+      ? new Set(selectedSegmentos.map((s) => String(s).trim().toUpperCase()))
+      : null
+    const campSet = nextCamps.length ? new Set(nextCamps) : null
+    const nextGrupoSet = new Set()
+    gruposDisponibles.forEach((g) => {
+      const seg = segmentoDeCapacidad(g)
+      if (segSet && !segSet.has(seg)) return
+      const c = String(g.campana || '').trim().toUpperCase()
+      if (campSet && !campSet.has(c)) return
+      if (g.grupo_codigo) nextGrupoSet.add(String(g.grupo_codigo).trim().toUpperCase())
+    })
+    setSelectedGrupos((prev) => prev.filter((g) => nextGrupoSet.has(g)))
     setCalculoReady(false)
   }
 
-  const handleSegmentoChange = (val) => {
-    setSelectedSegmento(val)
-    setSelectedCampana('TODAS')
-    setSelectedGrupo('TODOS')
-    setCalculoReady(false)
-  }
-
-  const handleCampanaChange = (val) => {
-    setSelectedCampana(val)
-    setSelectedGrupo('TODOS')
-    setCalculoReady(false)
-  }
-
-  const handleGrupoChange = (val) => {
-    setSelectedGrupo(val)
+  const handleGruposChange = (vals) => {
+    setSelectedGrupos(vals)
     setCalculoReady(false)
   }
 
   const handleResetFilters = () => {
-    setSelectedPeriodo('TODOS')
-    setSelectedSemana('TODAS')
-    setSelectedSegmento('TODOS')
-    setSelectedCampana('TODAS')
-    setSelectedGrupo('TODOS')
-    setSelectedReclutador('TODOS')
+    setSelectedSegmentos([])
+    setSelectedCampanas([])
+    setSelectedGrupos([])
+    setSelectedMesesPago([])
     setCalculoReady(false)
   }
 
-  // Ejecutar el cálculo de pagos
+  // Ejecutar cálculo: exige alcance (mes/segmento/campaña/grupo) para no saturar Supabase
   const handleCalcular = useCallback(async () => {
+    const tieneAlcance = selectedMesesPago.length > 0
+      || selectedSegmentos.length > 0
+      || selectedCampanas.length > 0
+      || selectedGrupos.length > 0
+
+    if (!tieneAlcance) {
+      setErrMsg('Elige al menos un Mes a pagar, Segmento, Campaña o Código de Grupo antes de calcular. Así evitamos sobrecargar el sistema.')
+      return
+    }
+
     setLoadingCalculo(true)
     setErrMsg(null)
+    setLoteMsg(null)
     try {
-      // 1. Recargar configs de propuestas actualizadas, capacidad y liquidaciones
+      // No re-fetch capacidad completa (select *) en cada cálculo: satura Postgres
+      const needCaps = !gruposCapacidad.length
       const [cfgs, caps, liqs] = await Promise.all([
-        fetchConfigPagosGrupo(),
-        fetchCapacidadRysOperativo(),
+        fetchConfigPagosGrupo().catch((e) => { console.warn('configs pagos:', e); return [] }),
+        needCaps
+          ? fetchCapacidadRysOperativo().catch((e) => { console.warn('capacidad pagos:', e); return [] })
+          : Promise.resolve(gruposCapacidad),
         fetchLiquidacionesHistoricas().catch(() => []),
       ])
-      setConfigs(cfgs)
-      if (caps && caps.length) setGruposCapacidad(caps)
-      setLiquidacionesHistoricas(liqs || [])
+      const configsSafe = Array.isArray(cfgs) ? cfgs : []
+      const capsSafe = Array.isArray(caps) ? caps : []
+      setConfigs(configsSafe)
+      if (capsSafe.length) setGruposCapacidad(capsSafe)
+      setLiquidacionesHistoricas(Array.isArray(liqs) ? liqs : [])
 
-      // 2. Traer nóminas con los filtros aplicados
+      // Mes a pagar → periodos de propuestas que cubren esos meses (alcance de cohorte sin UI de Periodo)
+      let periodosDesdeMes = []
+      if (selectedMesesPago.length && configsSafe.length) {
+        const want = new Set(selectedMesesPago.map(normMesPagoKey).filter(Boolean))
+        const perSet = new Set()
+        configsSafe.forEach((c) => {
+          const covered = mesesCronogramaDeConfig(c)
+          if (![...want].some((m) => covered.has(m))) return
+          const p = normMesPagoKey(c.periodoCapa || c.periodo)
+          if (p) perSet.add(p)
+        })
+        periodosDesdeMes = Array.from(perSet)
+      }
+
+      // Si solo hay mes y no se resolvieron periodos, exigir otro filtro (evita full-scan)
+      if (selectedMesesPago.length && !periodosDesdeMes.length
+        && !selectedSegmentos.length && !selectedCampanas.length && !selectedGrupos.length) {
+        setErrMsg(`No hay propuestas con cuotas en ${selectedMesesPago.join(', ')}. Elige también Segmento/Campaña o revisa Mes de Afectación en Propuestas.`)
+        setCalculoReady(false)
+        return
+      }
+
       const noms = await fetchNominasPagosCapacitacion({
-        periodo: selectedPeriodo,
-        semana: selectedSemana,
-        segmento: selectedSegmento,
-        campana: selectedCampana,
-        grupo_codigo: selectedGrupo,
+        periodo: periodosDesdeMes.length ? periodosDesdeMes : 'TODOS',
+        semana: 'TODAS',
+        segmento: selectedSegmentos,
+        campana: selectedCampanas,
+        grupo_codigo: selectedGrupos,
       })
+      const nomsSafe = Array.isArray(noms) ? noms : []
 
-      const docs = [...new Set(noms.map(n => n.documento).filter(Boolean))]
-      const asis = await fetchAsistenciasPagos(docs, selectedGrupo)
+      const docs = [...new Set(nomsSafe.map(n => n.documento).filter(Boolean))]
+      const asis = await fetchAsistenciasPagos(docs, selectedGrupos).catch((e) => {
+        console.warn('asistencias pagos:', e)
+        return []
+      })
       
-      setNominas(noms)
-      setAsistencias(asis)
+      setNominas(nomsSafe)
+      setAsistencias(Array.isArray(asis) ? asis : [])
       setCalculoReady(true)
+
+      if (!nomsSafe.length) {
+        setErrMsg(selectedMesesPago.length
+          ? `No hay personas a pagar en el mes ${selectedMesesPago.join(', ')} con los filtros actuales. Prueba otro mes o amplía Segmento/Campaña.`
+          : 'No se encontraron personas con los filtros seleccionados.')
+      }
     } catch (e) {
       console.error(e)
-      setErrMsg(e.message || 'Error al calcular pagos de capacitación.')
+      setErrMsg(formatPagosUiError(e, 'Error al calcular pagos de capacitación. Si persiste, el servidor puede estar saturado; espera un minuto e intenta con más filtros.'))
     } finally {
       setLoadingCalculo(false)
     }
-  }, [selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo])
+  }, [selectedMesesPago, selectedSegmentos, selectedCampanas, selectedGrupos, gruposCapacidad])
 
-  // Motor de cálculo puro
+  // Motor: sin filtro de cohorte en UI → periodoConsulta TODOS (el mes filtra la matriz)
   const todasFilasCalculadas = useMemo(() => {
     if (!calculoReady) return []
-    return calcularPagosCapacitacion(nominas, asistencias, configs, selectedPeriodo, gruposCapacidad)
-  }, [nominas, asistencias, configs, selectedPeriodo, gruposCapacidad, calculoReady])
+    return calcularPagosCapacitacion(nominas, asistencias, configs, 'TODOS', gruposCapacidad)
+  }, [nominas, asistencias, configs, gruposCapacidad, calculoReady])
 
-  // Filtrado por Reclutador (permite a cualquier reclutador auditar a sus compañeros o ver a todos)
-  const filasCalculadas = useMemo(() => {
-    if (selectedReclutador === 'TODOS') return todasFilasCalculadas
-    const target = String(selectedReclutador).trim().toUpperCase()
-    return todasFilasCalculadas.filter(f => String(f.reclutador || '').trim().toUpperCase() === target)
-  }, [todasFilasCalculadas, selectedReclutador])
+  const filasCalculadas = todasFilasCalculadas
 
   // SOLO las personas que califican para pago (excluyendo bajas, registros sin propuesta y sin días de asistencia)
   const filasQueCalifican = useMemo(() => {
@@ -2075,28 +2283,93 @@ export default function PagosCapacitacion({ userProfile }) {
     return generarMatrizCronogramaPagos(fuente, liquidacionesHistoricas)
   }, [mostrarBajas, filasCalculadas, filasQueCalifican, liquidacionesHistoricas])
 
-  // Meses de pago únicos encontrados en la matriz
+  // Meses a pagar: tras calcular, solo meses con cuotas; antes, desde propuestas/liquidaciones
   const mesesDePagoDisponibles = useMemo(() => {
     const set = new Set()
-    todasMatrizFilas.forEach(f => {
-      if (f.mes_pago) set.add(String(f.mes_pago).trim())
-    })
-    return ['TODOS', ...Array.from(set).sort()]
-  }, [todasMatrizFilas])
+    const addMes = (raw) => {
+      const m = normMesPagoKey(raw)
+      if (m) set.add(m)
+    }
 
-  // Matriz filtrada por Mes de Pago y por Estado de Pago
-  const matrizFilasFiltradas = useMemo(() => {
-    return todasMatrizFilas.filter(f => {
-      if (selectedMesPago !== 'TODOS' && f.mes_pago !== selectedMesPago) return false
-      if (selectedEstadoPago !== 'TODOS' && f.estado_pago !== selectedEstadoPago) return false
-      return true
+    if (calculoReady && todasMatrizFilas.length) {
+      todasMatrizFilas.forEach((f) => addMes(f.mes_pago))
+      return Array.from(set).sort().reverse()
+    }
+
+    ;(configs || []).forEach((c) => {
+      mesesCronogramaDeConfig(c).forEach((m) => set.add(m))
     })
-  }, [todasMatrizFilas, selectedMesPago, selectedEstadoPago])
+    ;(liquidacionesHistoricas || []).forEach((l) => addMes(l.mes_pago))
+    if (!set.size) {
+      const now = new Date()
+      for (let i = -2; i <= 4; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+        set.add(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`)
+      }
+    }
+    return Array.from(set).sort().reverse()
+  }, [calculoReady, configs, liquidacionesHistoricas, todasMatrizFilas])
+
+  // Campañas exactas del segmento en capacidad_rys (para no cruzar segmentos en la matriz)
+  const campanasDelSegmentoSel = useMemo(() => {
+    if (!selectedSegmentos.length) return null
+    const segSet = new Set(selectedSegmentos.map((s) => String(s).trim().toUpperCase()))
+    const set = new Set()
+    ;(gruposCapacidad || []).forEach((g) => {
+      const seg = String(g.segmento || '').trim().toUpperCase()
+      if (!segSet.has(seg)) return
+      const camp = String(g.campana || '').trim().toUpperCase()
+      if (camp) set.add(camp)
+    })
+    return set
+  }, [selectedSegmentos, gruposCapacidad])
+
+  // Matriz = mes + segmento/campaña exactos de capacidad (sin cruce entre segmentos)
+  const matrizFilasFiltradas = useMemo(() => {
+    let rows = todasMatrizFilas
+    if (selectedMesesPago.length) {
+      const set = new Set(selectedMesesPago.map(normMesPagoKey).filter(Boolean))
+      rows = rows.filter((f) => set.has(normMesPagoKey(f.mes_pago)))
+    }
+    if (campanasDelSegmentoSel) {
+      rows = rows.filter((f) => campanasDelSegmentoSel.has(String(f.campana || '').trim().toUpperCase()))
+    }
+    if (selectedCampanas.length) {
+      const set = new Set(selectedCampanas.map((c) => String(c).trim().toUpperCase()))
+      rows = rows.filter((f) => set.has(String(f.campana || '').trim().toUpperCase()))
+    }
+    if (selectedGrupos.length) {
+      const set = new Set(selectedGrupos.map((g) => String(g).trim().toUpperCase()))
+      rows = rows.filter((f) => set.has(String(f.grupo_codigo || '').trim().toUpperCase()))
+    }
+    return rows
+  }, [todasMatrizFilas, selectedMesesPago, campanasDelSegmentoSel, selectedCampanas, selectedGrupos])
+
+  const mesFiltroSinMatch = Boolean(
+    calculoReady && selectedMesesPago.length && todasMatrizFilas.length && !matrizFilasFiltradas.length,
+  )
+
+  useEffect(() => {
+    if (!mesFiltroSinMatch) return
+    const available = Array.from(
+      new Set(todasMatrizFilas.map((f) => normMesPagoKey(f.mes_pago)).filter(Boolean)),
+    ).sort().reverse()
+    setLoteMsg({
+      type: 'error',
+      text: `No hay cuotas a pagar en ${selectedMesesPago.join(', ')}. Meses con pago en este cálculo: ${available.slice(0, 8).join(', ')}. Cambia el Mes de Pago o vuelve a Calcular.`,
+    })
+    const t = setTimeout(() => setLoteMsg(null), 9000)
+    return () => clearTimeout(t)
+  }, [mesFiltroSinMatch, todasMatrizFilas, selectedMesesPago])
 
   // Métricas de la matriz filtrada
   const resumenMatriz = useMemo(() => {
     return generarResumenMatrizPagos(matrizFilasFiltradas)
   }, [matrizFilasFiltradas])
+
+  const labelMesesExport = selectedMesesPago.length
+    ? selectedMesesPago.join('-')
+    : 'Todos'
 
   // Exportar CSV
   const handleExport = () => {
@@ -2107,7 +2380,7 @@ export default function PagosCapacitacion({ userProfile }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `Matriz_Pagos_${selectedPeriodo}_Mes${selectedMesPago}_${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `Matriz_Pagos_Mes${labelMesesExport}_${new Date().toISOString().split('T')[0]}.csv`
       a.click()
       URL.revokeObjectURL(url)
     } else {
@@ -2117,13 +2390,13 @@ export default function PagosCapacitacion({ userProfile }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `Pagos_Capacitacion_${selectedPeriodo}_${selectedSemana}_${selectedCampana}_${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `Pagos_Capacitacion_${selectedCampanas.length ? selectedCampanas.join('-') : 'Todas'}_${new Date().toISOString().split('T')[0]}.csv`
       a.click()
       URL.revokeObjectURL(url)
     }
   }
 
-  // Cerrar lote de pagos (liquida quirúrgicamente las cuotas PENDIENTES filtradas o del mes)
+  // Cerrar lote de pagos (liquida quirúrgicamente las cuotas PENDIENTES filtradas)
   const handleCerrarLote = useCallback(async () => {
     const cuotasALiquidar = (vistaModo === 'matriz' ? matrizFilasFiltradas : todasMatrizFilas).filter(f => f.estado_pago === 'PENDIENTE')
 
@@ -2132,7 +2405,9 @@ export default function PagosCapacitacion({ userProfile }) {
       return
     }
 
-    const descripMes = selectedMesPago !== 'TODOS' ? `del mes de pago ${selectedMesPago}` : 'de las cuotas pendientes mostradas'
+    const descripMes = selectedMesesPago.length
+      ? `del mes de pago ${selectedMesesPago.join(', ')}`
+      : 'de las cuotas pendientes mostradas'
     const totalSoles = cuotasALiquidar.reduce((s, c) => s + (c.total_mes || c.total_general || 0), 0)
 
     if (!window.confirm(`¿Deseas cerrar y guardar como PAGADO el lote ${descripMes} para ${cuotasALiquidar.length} cuotas por un total de ${soles(totalSoles)}?\n\nEsta acción registrará las cuotas como liquidadas de forma inmutable.`)) return
@@ -2141,14 +2416,16 @@ export default function PagosCapacitacion({ userProfile }) {
     setLoteMsg(null)
     try {
       const meta = {
-        periodo: selectedPeriodo !== 'TODOS' ? selectedPeriodo : '',
-        mes_pago: selectedMesPago !== 'TODOS' ? selectedMesPago : null,
-        semana_trabajo: selectedSemana !== 'TODAS' ? parseInt(String(selectedSemana).replace(/\D/g, '')) || null : null,
-        segmento: selectedSegmento !== 'TODOS' ? selectedSegmento : null,
-        campana: selectedCampana !== 'TODAS' ? selectedCampana : null,
-        grupo_codigo: selectedGrupo !== 'TODOS' ? selectedGrupo : null,
+        periodo: '',
+        mes_pago: selectedMesesPago.length === 1 ? selectedMesesPago[0] : null,
+        semana_trabajo: null,
+        segmento: selectedSegmentos.length === 1 ? selectedSegmentos[0] : (selectedSegmentos.length ? selectedSegmentos.join(', ') : null),
+        campana: selectedCampanas.length === 1 ? selectedCampanas[0] : (selectedCampanas.length ? selectedCampanas.join(', ') : null),
+        grupo_codigo: selectedGrupos.length === 1 ? selectedGrupos[0] : (selectedGrupos.length ? selectedGrupos.join(', ') : null),
         cerrado_por: userProfile?.username || userProfile?.email || null,
-        notas_lote: selectedMesPago !== 'TODOS' ? `Liquidación Mes ${selectedMesPago}` : null,
+        notas_lote: selectedMesesPago.length
+          ? `Liquidación Mes ${selectedMesesPago.join(', ')}`
+          : null,
       }
       const lote_id = await saveLiquidacionPagos(cuotasALiquidar, meta)
       setLoteMsg({ type: 'success', text: `✓ Lote cerrado correctamente (${cuotasALiquidar.length} cuotas liquidadas). ID: ${lote_id.substring(0, 8)}...` })
@@ -2164,7 +2441,7 @@ export default function PagosCapacitacion({ userProfile }) {
     } finally {
       setSavingLote(false)
     }
-  }, [vistaModo, matrizFilasFiltradas, todasMatrizFilas, selectedMesPago, selectedPeriodo, selectedSemana, selectedSegmento, selectedCampana, selectedGrupo, userProfile, loadLotes])
+  }, [vistaModo, matrizFilasFiltradas, todasMatrizFilas, selectedMesesPago, selectedSegmentos, selectedCampanas, selectedGrupos, userProfile, loadLotes])
 
   // Ver detalle de lote histórico
   const handleVerDetalleLote = useCallback(async (lote_id) => {
@@ -2221,8 +2498,17 @@ export default function PagosCapacitacion({ userProfile }) {
       </div>
 
       {errMsg && (
-        <div className="flex items-center gap-2 text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3 text-sm">
-          <AlertCircle size={16} /> {errMsg}
+        <div className="flex items-start gap-2 text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3 text-sm max-h-28 overflow-auto">
+          <AlertCircle size={16} className="shrink-0 mt-0.5" />
+          <span className="break-words min-w-0">{typeof errMsg === 'string' ? errMsg : formatPagosUiError(errMsg)}</span>
+          <button
+            type="button"
+            onClick={() => setErrMsg(null)}
+            className="shrink-0 ml-auto text-rose-400/70 hover:text-rose-300 cursor-pointer"
+            aria-label="Cerrar error"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
 
@@ -2265,24 +2551,19 @@ export default function PagosCapacitacion({ userProfile }) {
         </div>
       )}
 
-      {/* ── TAB: CALCULAR PAGOS (5 FILTROS EN CASCADA) ────────────────── */}
+      {/* ── TAB: CALCULAR PAGOS ────────────────────────────────────────── */}
       {activeTab === 'calcular' && (
         <div className="space-y-5">
-          {/* Barra de Filtros Jerárquicos (shell visual; lógica sin cambios) */}
-          <div className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-xl p-4 shadow-sm space-y-3">
+          <div data-filter-bar className="bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-xl p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider">
                 <Filter size={14} className="text-[var(--accent)]" />
-                Filtros Jerárquicos de Consulta
+                Filtros de Consulta
               </div>
-              {(selectedPeriodo !== 'TODOS' || selectedSemana !== 'TODAS' || selectedSegmento !== 'TODOS' || selectedCampana !== 'TODAS' || selectedGrupo !== 'TODOS' || selectedReclutador !== 'TODOS' || selectedMesPago !== 'TODOS' || selectedEstadoPago !== 'TODOS') && (
+              {(selectedSegmentos.length > 0 || selectedCampanas.length > 0 || selectedGrupos.length > 0 || selectedMesesPago.length > 0) && (
                 <button
                   type="button"
-                  onClick={() => {
-                    handleResetFilters()
-                    setSelectedMesPago('TODOS')
-                    setSelectedEstadoPago('TODOS')
-                  }}
+                  onClick={handleResetFilters}
                   className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-rose-400 transition-colors cursor-pointer"
                 >
                   <RotateCcw size={12} /> Limpiar filtros
@@ -2290,127 +2571,81 @@ export default function PagosCapacitacion({ userProfile }) {
               )}
             </div>
 
-            {/* Mes de Pago arriba: mismo control/estilo que Periodo (solo cuando hay matriz calculada) */}
-            {calculoReady && filasQueCalifican.length > 0 && vistaModo === 'matriz' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 pb-3 border-b border-[var(--border-subtle)]">
-                <div className="flex flex-col gap-1">
-                  <label className={`${LABEL_GEA} flex items-center gap-1`}>
-                    <Clock size={12} className="text-amber-400" /> Mes de Pago
-                  </label>
-                  <select
-                    value={selectedMesPago}
-                    onChange={e => setSelectedMesPago(e.target.value)}
-                    className={`${SELECT_GEA} font-mono`}
-                  >
-                    {mesesDePagoDisponibles.map(m => (
-                      <option key={m} value={m}>{m === 'TODOS' ? 'TODOS LOS MESES' : m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className={LABEL_GEA}>Estado</label>
-                  <select
-                    value={selectedEstadoPago}
-                    onChange={e => setSelectedEstadoPago(e.target.value)}
-                    className={SELECT_GEA}
-                  >
-                    <option value="TODOS">TODOS</option>
-                    <option value="PENDIENTE">PENDIENTES</option>
-                    <option value="PAGADO">PAGADOS</option>
-                  </select>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-              {/* 1. PERIODO */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Mes de Pago — filtro principal del analista */}
               <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>1. Periodo</label>
-                <select
-                  value={selectedPeriodo}
-                  onChange={e => handlePeriodoChange(e.target.value)}
-                  className={SELECT_GEA}
-                >
-                  {periodosDisponibles.map(p => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
+                <label className={`${LABEL_GEA} flex items-center gap-1`}>
+                  <Clock size={12} className="text-amber-400" /> Mes a pagar
+                </label>
+                <FilterMultiSelect
+                  options={mesesDePagoDisponibles}
+                  values={selectedMesesPago}
+                  onChange={(vals) => { setSelectedMesesPago(vals); setCalculoReady(false) }}
+                  loading={loadingConfigs}
+                  allLabel="TODOS LOS MESES"
+                  pluralLabel="meses"
+                  emptyHint="Sin meses de pago"
+                  mono
+                />
               </div>
 
-              {/* 2. SEMANA */}
+              {/* Segmento */}
               <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>2. Semana</label>
-                <select
-                  value={selectedSemana}
-                  onChange={e => handleSemanaChange(e.target.value)}
-                  className={SELECT_GEA}
-                >
-                  {semanasDisponibles.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                <label className={LABEL_GEA}>Segmento</label>
+                <FilterMultiSelect
+                  options={segmentosDisponibles}
+                  values={selectedSegmentos}
+                  onChange={handleSegmentosChange}
+                  loading={loadingConfigs}
+                  allLabel="TODOS"
+                  pluralLabel="segmentos"
+                  emptyHint="Sin segmentos"
+                />
               </div>
 
-              {/* 3. SEGMENTO */}
+              {/* Campaña (depende del segmento) */}
               <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>3. Segmento</label>
-                <select
-                  value={selectedSegmento}
-                  onChange={e => handleSegmentoChange(e.target.value)}
-                  className={SELECT_GEA}
-                >
-                  {segmentosDisponibles.map(seg => (
-                    <option key={seg} value={seg}>{seg}</option>
-                  ))}
-                </select>
+                <label className={LABEL_GEA}>
+                  Campaña
+                  {selectedSegmentos.length > 0 && (
+                    <span className="ml-1 font-medium normal-case tracking-normal text-[var(--text-muted)]">
+                      ({campanasDisponibles.length})
+                    </span>
+                  )}
+                </label>
+                <FilterMultiSelect
+                  key={`campanas-${selectedSegmentos.join('|') || 'all'}`}
+                  options={campanasDisponibles}
+                  values={selectedCampanas}
+                  onChange={handleCampanasChange}
+                  loading={loadingConfigs}
+                  disabled={loadingConfigs}
+                  allLabel={selectedSegmentos.length ? 'TODAS DEL SEGMENTO' : 'TODAS'}
+                  pluralLabel="campañas"
+                  emptyHint={selectedSegmentos.length ? 'Sin campañas en ese segmento' : 'Sin campañas'}
+                />
               </div>
 
-              {/* 4. CAMPAÑA */}
+              {/* Código de Grupo */}
               <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>4. Campaña</label>
-                <select
-                  value={selectedCampana}
-                  onChange={e => handleCampanaChange(e.target.value)}
-                  className={SELECT_GEA}
-                >
-                  {campanasDisponibles.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 5. CÓDIGO DE GRUPO */}
-              <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>5. Código de Grupo</label>
-                <select
-                  value={selectedGrupo}
-                  onChange={e => handleGrupoChange(e.target.value)}
-                  className={`${SELECT_GEA} font-mono font-bold`}
-                >
-                  {codigosGruposDisponibles.map(g => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 6. RECLUTADOR */}
-              <div className="flex flex-col gap-1">
-                <label className={LABEL_GEA}>6. Reclutador</label>
-                <select
-                  value={selectedReclutador}
-                  onChange={e => setSelectedReclutador(e.target.value)}
-                  className={`${SELECT_GEA} text-[var(--accent)] font-semibold`}
-                >
-                  {reclutadoresDisponibles.map(r => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
+                <label className={LABEL_GEA}>Código de Grupo</label>
+                <FilterMultiSelect
+                  key={`grupos-${selectedSegmentos.join('|')}-${selectedCampanas.join('|')}`}
+                  options={codigosGruposDisponibles}
+                  values={selectedGrupos}
+                  onChange={handleGruposChange}
+                  loading={loadingConfigs}
+                  allLabel="TODOS"
+                  pluralLabel="grupos"
+                  emptyHint="Sin grupos"
+                  mono
+                />
               </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--border-subtle)]">
               <div className="text-xs text-[var(--text-muted)]">
-                Selecciona los filtros y haz clic en <strong className="text-[var(--accent)]">Calcular Pagos</strong> para cruzar con las asistencias.
+                Elige <strong className="text-amber-400">Mes a pagar</strong> y/o Segmento/Campaña/Grupo, luego <strong className="text-[var(--accent)]">Calcular Pagos</strong>. Sin filtros el sistema no calcula (protege el servidor).
               </div>
 
               <div className="flex items-center gap-2">

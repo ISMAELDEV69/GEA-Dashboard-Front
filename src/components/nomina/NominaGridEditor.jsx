@@ -610,9 +610,15 @@ export default function NominaGridEditor({
       if (err) throw err
       
       let finalRows = (rows || []).map(raw => {
-        const r = (!raw.edad && raw.edad !== 0 && raw.fecha_nacimiento)
-          ? { ...raw, edad: calcEdadFromFecha(raw.fecha_nacimiento) }
-          : raw
+        // Alias BD: algunos registros guardan exp_tiempo_campana y la grilla lee exp_tiempo_call
+        const withAlias = {
+          ...raw,
+          exp_tiempo_call: raw.exp_tiempo_call || raw.exp_tiempo_campana || '',
+          exp_tiempo_campana: raw.exp_tiempo_campana || raw.exp_tiempo_call || '',
+        }
+        const r = (!withAlias.edad && withAlias.edad !== 0 && withAlias.fecha_nacimiento)
+          ? { ...withAlias, edad: calcEdadFromFecha(withAlias.fecha_nacimiento) }
+          : withAlias
         let dist = r.distrito_residencia
         if (!dist && (r.direccion_domicilio || r.lugar_residencia)) {
           const geo = resolveDistrictCoordinates(r.lugar_residencia, r.direccion_domicilio, r.documento)
@@ -1606,7 +1612,7 @@ export default function NominaGridEditor({
                       </div>
                     </td>
                     {visibleColumns.map(col => {
-                      const val = row[col.key] || '';
+                      const val = (row[col.key] !== undefined && row[col.key] !== null) ? row[col.key] : '';
                       let badgeClass = 'text-[var(--text-primary)]';
                       if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO' || val === 'AGREGADO' || val === 'RECUPERADO' || val === 'AGREGADO CAP' || val === 'RECUPERADO CAP') {
                         badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';

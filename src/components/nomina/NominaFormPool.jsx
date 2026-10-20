@@ -825,10 +825,18 @@ export default function NominaFormPool({
           ? new Date(d.marca_temporal).toISOString()
           : new Date().toISOString()
 
+        const fechaNac = parseExcelDate(d.fecha_nacimiento) || d.fecha_nacimiento || null
+        const expTiempo = d.exp_tiempo_campana || d.exp_tiempo_call || null
         const rawPayload = {
           ...d,
           marca_temporal: safeMarcaTemporal,
-          fecha_nacimiento: parseExcelDate(d.fecha_nacimiento),
+          fecha_nacimiento: fechaNac,
+          edad: d.edad ?? null,
+          n_hijos: d.n_hijos ?? 0,
+          celular: d.celular || null,
+          celular_referencia: d.celular_referencia || null,
+          exp_tiempo_call: expTiempo,
+          exp_tiempo_campana: expTiempo,
           periodo_reclutado: bulkPeriodo ? String(bulkPeriodo).trim() : (matchedGrupoObj?.periodo || null),
           semana_trabajo: semanaNum,
           reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',

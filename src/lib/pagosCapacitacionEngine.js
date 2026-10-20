@@ -507,19 +507,21 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       if (periodoConsulta === 'TODOS' || mesBonoNumero === 1) {
         bonoBienvenida = parseFloat(config.bonoBienvenidaM1 ?? config.bono_bienvenida) || 0
         bonoPermanencia = parseFloat(config.bonoPermanenciaM1 ?? config.bono_permanencia_total) || 0
-        if (!tuveFaltas && diasAsistidos > 0) {
+        // REGLA: El bono de asistencia perfecta de capacitación SÍ se paga aunque el asesor tenga faltas
+        // (la penalización por faltas aplica recién al estar en operación).
+        if (diasAsistidos > 0) {
           bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0
         }
       } else if (mesBonoNumero === 2) {
         bonoBienvenida = parseFloat(config.bonoBienvenidaM2) || 0
         bonoPermanencia = parseFloat(config.bonoPermanenciaM2) || 0
-        if (!tuveFaltas && diasAsistidos > 0) {
+        if (diasAsistidos > 0) {
           bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM2) || 0
         }
       } else if (mesBonoNumero === 3) {
         bonoBienvenida = parseFloat(config.bonoBienvenidaM3) || 0
         bonoPermanencia = parseFloat(config.bonoPermanenciaM3) || 0
-        if (!tuveFaltas && diasAsistidos > 0) {
+        if (diasAsistidos > 0) {
           bonoAsistenciaPerfecta = parseFloat(config.bonoAsistenciaM3) || 0
         }
       } else if (mesBonoNumero === 4) {
@@ -612,7 +614,7 @@ export function generarResumenPagos(filas = []) {
     total_bono_asistencia_perfecta: +calificados.reduce((s, f) => s + f.bono_asistencia_perfecta, 0).toFixed(2),
     total_bono_permanencia: +calificados.reduce((s, f) => s + f.bono_permanencia_total, 0).toFixed(2),
     total_general: +calificados.reduce((s, f) => s + f.total_general, 0).toFixed(2),
-    personas_asistencia_perfecta: calificados.filter(f => f.asistencia_perfecta).length,
+    personas_asistencia_perfecta: calificados.filter(f => f.bono_asistencia_perfecta > 0).length,
     max_dias_asistidos: calificados.length ? Math.max(...calificados.map(f => f.dias_asistidos)) : 0,
     promedio_dias: calificados.length ? +(calificados.reduce((s, f) => s + f.dias_asistidos, 0) / calificados.length).toFixed(1) : 0,
   }
@@ -734,21 +736,21 @@ export function generarMatrizCronogramaPagos(filasCalculadas = [], liquidaciones
         mesStr: sumarMesesPeriodo(mesBonosBase, 0),
         bvda: parseFloat(config.bonoBienvenidaM1 ?? config.bono_bienvenida) || 0,
         perm: parseFloat(config.bonoPermanenciaM1 ?? config.bono_permanencia_total) || 0,
-        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0) : 0,
+        asis: parseFloat(config.bonoAsistenciaM1 ?? config.bono_asistencia_perfecta) || 0,
       },
       {
         mesNum: 2,
         mesStr: sumarMesesPeriodo(mesBonosBase, 1),
         bvda: parseFloat(config.bonoBienvenidaM2) || 0,
         perm: parseFloat(config.bonoPermanenciaM2) || 0,
-        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM2) || 0) : 0,
+        asis: parseFloat(config.bonoAsistenciaM2) || 0,
       },
       {
         mesNum: 3,
         mesStr: sumarMesesPeriodo(mesBonosBase, 2),
         bvda: parseFloat(config.bonoBienvenidaM3) || 0,
         perm: parseFloat(config.bonoPermanenciaM3) || 0,
-        asis: f.asistencia_perfecta ? (parseFloat(config.bonoAsistenciaM3) || 0) : 0,
+        asis: parseFloat(config.bonoAsistenciaM3) || 0,
       },
       {
         mesNum: 4,

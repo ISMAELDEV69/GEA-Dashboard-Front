@@ -30,7 +30,6 @@ import {
   Layers,
   ArrowRight,
   RotateCcw,
-  Sparkles,
   Award,
   Search,
   X,
@@ -41,11 +40,11 @@ import {
   Zap,
   Target,
   Clock,
-  AlertTriangle,
   Flame,
-  Hourglass,
   ShieldAlert,
-  Calendar
+  Calendar,
+  SlidersHorizontal,
+  ChevronUp
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { 
@@ -281,6 +280,88 @@ function MultiSelectFilter({
   );
 }
 
+/** KPI unificado Fase 2 — misma altura/layout; accent solo para semáforo de riesgo */
+function KpiCard({
+  label,
+  icon: Icon,
+  value,
+  unit,
+  subtitle,
+  microLeft,
+  microRight,
+  accent = null, // null | 'ok' | 'caution' | 'critical'
+}) {
+  const accentStyles = {
+    ok: {
+      card: 'border-emerald-500/35 hover:border-emerald-500/50',
+      value: 'text-emerald-400',
+      badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',
+      icon: 'text-emerald-400',
+    },
+    caution: {
+      card: 'border-amber-500/35 hover:border-amber-500/50',
+      value: 'text-amber-400',
+      badge: 'bg-amber-500/10 text-amber-400 border-amber-500/25',
+      icon: 'text-amber-400',
+    },
+    critical: {
+      card: 'border-rose-500/40 hover:border-rose-500/55',
+      value: 'text-rose-400',
+      badge: 'bg-rose-500/10 text-rose-400 border-rose-500/25',
+      icon: 'text-rose-400',
+    },
+  };
+  const a = accent ? accentStyles[accent] : null;
+
+  return (
+    <div
+      className={`flex flex-col h-full min-h-[148px] p-4 rounded-xl border bg-[var(--surface)] transition-colors ${
+        a ? a.card : 'border-[var(--border-subtle)] hover:border-[var(--border-normal)]'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <span className="text-[10px] font-bold text-[var(--text-muted)] tracking-wider uppercase truncate">
+          {label}
+        </span>
+        {Icon && (
+          <Icon
+            className={`w-3.5 h-3.5 shrink-0 ${a ? a.icon : 'text-[var(--text-muted)]'}`}
+            strokeWidth={2}
+          />
+        )}
+      </div>
+
+      <div className="flex items-baseline gap-1.5 flex-wrap min-h-[2.25rem]">
+        <span
+          className={`text-3xl font-bold tracking-tight tabular-nums ${
+            a ? a.value : 'text-[var(--text-primary)]'
+          }`}
+        >
+          {value}
+        </span>
+        {unit && (
+          <span className="text-sm font-semibold text-[var(--text-muted)]">{unit}</span>
+        )}
+      </div>
+
+      <p className="text-xs text-[var(--text-secondary)] mt-1 leading-snug">{subtitle}</p>
+
+      <div className="mt-auto pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between gap-2 text-[11px]">
+        <span className="text-[var(--text-muted)] truncate min-w-0">{microLeft}</span>
+        <span className="shrink-0 font-semibold text-[var(--text-primary)] tabular-nums">
+          {microRight}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function formatFteShort(n) {
+  if (n == null || Number.isNaN(Number(n))) return '0';
+  const v = Number(n);
+  return v % 1 === 0 ? String(v) : v.toFixed(1).replace('.', ',');
+}
+
 // Validación rigurosa de formador asignado real (descarta nulos, vacíos, guiones y cualquier variante de "Sin Asignar")
 const isFormadorValido = (formador) => {
   if (!formador) return false;
@@ -322,6 +403,7 @@ export default function ResumenCapacitacion({
   const [searchQuery, setSearchQuery] = useState('');
   const [showRiskModal, setShowRiskModal] = useState(false);
   const [showAllPeriodos, setShowAllPeriodos] = useState(false);
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
 
@@ -401,7 +483,57 @@ export default function ResumenCapacitacion({
     setFilters({ ...EMPTY_FILTERS });
     setSearchQuery('');
     setShowAllPeriodos(false);
+    setShowMoreFilters(false);
   };
+
+  const removeFilterValue = (key, value) => {
+    setFilters((f) => ({
+      ...f,
+      [key]: (f[key] || []).filter((v) => v !== value),
+    }));
+  };
+
+  const secondaryFilterCount = useMemo(() => {
+    let n = 0;
+    if (!isFilterAll(filters.modalidad)) n += filters.modalidad.length;
+    if (!isFilterAll(filters.campana)) n += filters.campana.length;
+    if (!isFilterAll(filters.grupo)) n += filters.grupo.length;
+    if (!isFilterAll(filters.estado)) n += filters.estado.length;
+    return n;
+  }, [filters.modalidad, filters.campana, filters.grupo, filters.estado]);
+
+  const activeFilterChips = useMemo(() => {
+    const chips = [];
+    const pushMany = (key, label, values, format) => {
+      if (isFilterAll(values)) return;
+      values.forEach((v) => {
+        chips.push({
+          id: `${key}:${v}`,
+          key,
+          value: v,
+          text: `${label}: ${format ? format(v) : v}`,
+        });
+      });
+    };
+    pushMany('periodo', 'Periodo', filters.periodo);
+    pushMany('semana', 'Semana', filters.semana);
+    pushMany('segmento', 'Segmento', filters.segmento);
+    pushMany('modalidad', 'Modalidad', filters.modalidad);
+    pushMany('campana', 'Campaña', filters.campana);
+    pushMany('grupo', 'Grupo', filters.grupo);
+    pushMany('estado', 'Estado', filters.estado, (e) =>
+      e === 'EN CURSO' ? 'EN CURSO' : e === 'CERRADO' ? 'CERRADO' : e
+    );
+    if (searchQuery.trim()) {
+      chips.push({
+        id: 'search',
+        key: 'search',
+        value: searchQuery,
+        text: `Buscar: ${searchQuery.trim()}`,
+      });
+    }
+    return chips;
+  }, [filters, searchQuery]);
 
   // Opciones de filtros cruzados reactivos sobre el conjunto de datos calculado
   const filterOptions = useMemo(() => {
@@ -1296,173 +1428,228 @@ export default function ResumenCapacitacion({
   };
 
   return (
-    <div className="space-y-6 pb-12 animate-fade-in">
-      {/* ── HEADER SUPERIOR Y BARRA DE FILTROS ── */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-[var(--surface)] p-4 rounded-2xl border border-[var(--border-subtle)] shadow-lg backdrop-blur-md">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-indigo-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-              <Activity className="w-5 h-5 animate-pulse" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black tracking-tight text-[var(--text-primary)] flex items-center gap-2">
-                RESUMEN CAPACITACIÓN & DOTACIÓN
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold">
-                  Panel Gerencial
-                </span>
+    <div className="space-y-5 pb-12 animate-fade-in">
+      {/* ── HEADER ── */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-[var(--surface)] px-4 py-3.5 rounded-xl border border-[var(--border-subtle)]">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 shrink-0 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+            <Activity className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-lg font-bold tracking-tight text-[var(--text-primary)]">
+                Resumen Capacitación
               </h1>
-              <p className="text-xs text-[var(--text-secondary)] font-medium">
-                Auditoría ejecutiva de conversión, retención y cumplimiento de metas operativas ({filteredData.length} {filteredData.length === 1 ? 'cohorte' : 'cohortes'})
-              </p>
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--surface-elevated)] text-[var(--text-muted)] border border-[var(--border-subtle)] font-semibold uppercase tracking-wide">
+                Dotación
+              </span>
             </div>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5 truncate">
+              Conversión, retención y cumplimiento · {filteredData.length} {filteredData.length === 1 ? 'cohorte' : 'cohortes'}
+            </p>
           </div>
         </div>
 
-        {/* Controles de Vista y Exportación */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Tabs Dashboard / Matriz */}
-          <div className="flex items-center p-1 bg-[var(--surface-elevated)] rounded-xl border border-[var(--border-subtle)]">
+          <div className="flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-elevated)] p-0.5">
             <button
+              type="button"
               onClick={() => setActiveTab('DASHBOARD')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
                 activeTab === 'DASHBOARD'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-md'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[var(--surface)] text-cyan-400 shadow-sm border border-[var(--border-subtle)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
             >
               <PieIcon className="w-3.5 h-3.5" />
-              DASHBOARD
+              Dashboard
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('MATRIZ_TABLA')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
                 activeTab === 'MATRIZ_TABLA'
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-md'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  ? 'bg-[var(--surface)] text-cyan-400 shadow-sm border border-[var(--border-subtle)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
               }`}
             >
               <TableIcon className="w-3.5 h-3.5" />
-              MATRIZ DETALLADA ({filteredData.length})
+              Matriz ({filteredData.length})
             </button>
           </div>
 
           <button
+            type="button"
             onClick={() => loadData(true)}
             disabled={loading || isRefreshing}
-            className="p-2 rounded-xl bg-[var(--surface-elevated)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all"
+            className="p-2 rounded-lg bg-[var(--surface-elevated)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
             title="Refrescar datos"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
           </button>
 
           <button
+            type="button"
             onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-xs font-semibold transition-colors"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
             Excel
           </button>
         </div>
       </div>
 
-      {/* ── BARRA DE FILTROS CRUZADOS MULTISELECT: PERIODO → SEMANA → SEGMENTO → CAMPAÑA → GRUPO ── */}
-      <div data-filter-bar className="bg-[var(--surface)] p-3.5 rounded-2xl border border-[var(--border-subtle)] flex flex-wrap items-center gap-3">
+      {/* ── FILTROS: primarios siempre visibles · secundarios en panel ── */}
+      <div data-filter-bar className="bg-[var(--surface)] rounded-xl border border-[var(--border-subtle)]">
+        <div className="p-3 flex flex-wrap items-end gap-2.5">
+          <MultiSelectFilter
+            label="Periodo ingreso"
+            allLabel="Todos los Periodos"
+            options={filterOptions.periodos}
+            values={filters.periodo}
+            onChange={(periodo) => setFilters((f) => ({ ...f, periodo }))}
+            extraHeader={
+              <button
+                type="button"
+                onClick={() => setShowAllPeriodos((v) => !v)}
+                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors ${
+                  showAllPeriodos
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-elevated)]'
+                }`}
+                title={showAllPeriodos ? 'Ocultar periodos proyectados lejanos' : 'Desbloquear periodos proyectados lejanos'}
+              >
+                {showAllPeriodos ? '★ Todos' : '+ Proyectados'}
+              </button>
+            }
+          />
 
-        <MultiSelectFilter
-          label="Periodo ingreso"
-          allLabel="Todos los Periodos"
-          options={filterOptions.periodos}
-          values={filters.periodo}
-          onChange={(periodo) => setFilters((f) => ({ ...f, periodo }))}
-          extraHeader={
+          <MultiSelectFilter
+            label="Semana"
+            allLabel="Todas las Semanas"
+            options={filterOptions.semanas}
+            values={filters.semana}
+            onChange={(semana) => setFilters((f) => ({ ...f, semana }))}
+          />
+
+          <MultiSelectFilter
+            label="Segmento"
+            allLabel="Todos los Segmentos"
+            options={filterOptions.segmentos}
+            values={filters.segmento}
+            onChange={(segmento) => setFilters((f) => ({ ...f, segmento }))}
+          />
+
+          <div className="flex-1 min-w-[160px]">
+            <label className="text-[10px] font-bold text-[var(--text-muted)] tracking-wider uppercase block mb-1">
+              Buscar
+            </label>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                placeholder="GPE, campaña..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl pl-8 pr-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowMoreFilters((v) => !v)}
+            className={`self-end flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+              showMoreFilters || secondaryFilterCount > 0
+                ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                : 'bg-[var(--surface-elevated)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+            }`}
+            aria-expanded={showMoreFilters}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            Más filtros
+            {secondaryFilterCount > 0 && (
+              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300">
+                {secondaryFilterCount}
+              </span>
+            )}
+            {showMoreFilters ? (
+              <ChevronUp className="w-3.5 h-3.5 opacity-70" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+            )}
+          </button>
+
+          {hasActiveFilters && (
             <button
               type="button"
-              onClick={() => setShowAllPeriodos(v => !v)}
-              className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all ${
-                showAllPeriodos 
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' 
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-elevated)]'
-              }`}
-              title={showAllPeriodos ? 'Ocultar periodos proyectados lejanos' : 'Desbloquear periodos proyectados lejanos'}
-            >
-              {showAllPeriodos ? '★ Todos' : '+ Proyectados'}
-            </button>
-          }
-        />
-
-        <MultiSelectFilter
-          label="Semana"
-          allLabel="Todas las Semanas"
-          options={filterOptions.semanas}
-          values={filters.semana}
-          onChange={(semana) => setFilters((f) => ({ ...f, semana }))}
-        />
-
-        <MultiSelectFilter
-          label="Segmento"
-          allLabel="Todos los Segmentos"
-          options={filterOptions.segmentos}
-          values={filters.segmento}
-          onChange={(segmento) => setFilters((f) => ({ ...f, segmento }))}
-        />
-
-        <MultiSelectFilter
-          label="Modalidad"
-          allLabel="Todas las Modalidades"
-          options={filterOptions.modalidades}
-          values={filters.modalidad}
-          onChange={(modalidad) => setFilters((f) => ({ ...f, modalidad }))}
-        />
-
-        <MultiSelectFilter
-          label="Campaña"
-          allLabel="Todas las Campañas"
-          options={filterOptions.campanas}
-          values={filters.campana}
-          onChange={(campana) => setFilters((f) => ({ ...f, campana }))}
-        />
-
-        <MultiSelectFilter
-          label="Grupo"
-          allLabel="Todos los Grupos"
-          options={filterOptions.grupos}
-          values={filters.grupo}
-          onChange={(grupo) => setFilters((f) => ({ ...f, grupo }))}
-        />
-
-        <MultiSelectFilter
-          label="Estado"
-          allLabel="Todos (Activos y Cerrados)"
-          options={filterOptions.estados}
-          values={filters.estado}
-          onChange={(estado) => setFilters((f) => ({ ...f, estado }))}
-          formatOption={(e) => (e === 'EN CURSO' ? '🟢 EN CURSO (Activos)' : e === 'CERRADO' ? '⚪ CERRADO' : e)}
-        />
-
-        {/* 7. BÚSQUEDA RÁPIDA */}
-        <div className="flex-1 min-w-[180px]">
-          <label className="text-[10px] font-black text-[var(--text-muted)] tracking-wider uppercase block mb-1">Buscar Cohorte</label>
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input
-              type="text"
-              placeholder="GPE, campaña..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[var(--surface-elevated)] border border-[var(--border-subtle)] rounded-xl pl-8 pr-3 py-1.5 text-xs text-[var(--text-primary)] focus:border-cyan-500 outline-none"
-            />
-          </div>
-        </div>
-
-        {hasActiveFilters && (
-          <div className="self-end">
-            <button
               onClick={handleResetFilters}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition-all"
+              className="self-end flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/15 text-rose-400 border border-rose-500/25 text-xs font-semibold transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               Limpiar
             </button>
+          )}
+        </div>
+
+        {showMoreFilters && (
+          <div className="px-3 pb-3 pt-0 border-t border-[var(--border-subtle)]">
+            <div className="pt-3 flex flex-wrap items-end gap-2.5">
+              <MultiSelectFilter
+                label="Modalidad"
+                allLabel="Todas las Modalidades"
+                options={filterOptions.modalidades}
+                values={filters.modalidad}
+                onChange={(modalidad) => setFilters((f) => ({ ...f, modalidad }))}
+              />
+              <MultiSelectFilter
+                label="Campaña"
+                allLabel="Todas las Campañas"
+                options={filterOptions.campanas}
+                values={filters.campana}
+                onChange={(campana) => setFilters((f) => ({ ...f, campana }))}
+              />
+              <MultiSelectFilter
+                label="Grupo"
+                allLabel="Todos los Grupos"
+                options={filterOptions.grupos}
+                values={filters.grupo}
+                onChange={(grupo) => setFilters((f) => ({ ...f, grupo }))}
+              />
+              <MultiSelectFilter
+                label="Estado"
+                allLabel="Todos (Activos y Cerrados)"
+                options={filterOptions.estados}
+                values={filters.estado}
+                onChange={(estado) => setFilters((f) => ({ ...f, estado }))}
+                formatOption={(e) =>
+                  e === 'EN CURSO' ? 'EN CURSO (Activos)' : e === 'CERRADO' ? 'CERRADO' : e
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {activeFilterChips.length > 0 && (
+          <div className="px-3 pb-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--border-subtle)] pt-2.5">
+            <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mr-0.5">
+              Activos
+            </span>
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => {
+                  if (chip.key === 'search') setSearchQuery('');
+                  else removeFilterValue(chip.key, chip.value);
+                }}
+                className="inline-flex items-center gap-1 max-w-[220px] px-2 py-0.5 rounded-md text-[11px] font-medium bg-[var(--surface-elevated)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:border-cyan-500/40 hover:text-[var(--text-primary)] transition-colors"
+                title="Quitar filtro"
+              >
+                <span className="truncate">{chip.text}</span>
+                <X className="w-3 h-3 shrink-0 opacity-60" />
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -1477,189 +1664,88 @@ export default function ResumenCapacitacion({
         </div>
       ) : activeTab === 'DASHBOARD' ? (
         <>
-          {/* ═══════════════════════════════════════════════════════════════════ */}
-          {/* NIVEL 1: SCORECARD EJECUTIVO (4 KPIS ESTRATÉGICOS NO REDUNDANTES)  */}
-          {/* ═══════════════════════════════════════════════════════════════════ */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* KPI 1: CANTIDAD DE GRUPOS / COHORTES */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-indigo-950/20 p-5 rounded-2xl border border-indigo-500/25 shadow-lg group hover:border-indigo-500/50 transition-all">
-              <div className="absolute top-0 right-0 w-28 h-28 bg-indigo-500/10 rounded-full blur-2xl group-hover:bg-indigo-500/20 transition-all pointer-events-none" />
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-black text-indigo-400 tracking-wider uppercase px-2.5 py-0.5 bg-indigo-500/10 rounded-md border border-indigo-500/20 flex items-center gap-1.5">
-                  <Layers className="w-3 h-3" />
-                  1 · Cantidad de Grupos
-                </span>
-                <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                  <Users className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight">
-                  {kpiGrupos.total.toLocaleString()} <span className="text-lg font-bold text-indigo-400">grupos</span>
-                </span>
-                <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
-                  {kpiGrupos.gruposConOjt} en OJT
-                </span>
-              </div>
-              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Cohortes Totales Evaluadas
-              </p>
-              <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)]">{kpiGrupos.formadoresUnicos} Formadores asignados</span>
-                <span className="font-bold text-[var(--text-primary)] font-mono">{kpiGrupos.segmentosUnicos} Segmentos</span>
-              </div>
-            </div>
+          {/* ── SCORECARD: 4 KPIs unificados ── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <KpiCard
+              label="Cantidad de grupos"
+              icon={Layers}
+              value={kpiGrupos.total.toLocaleString()}
+              unit="grupos"
+              subtitle="Cohortes evaluadas en el corte"
+              microLeft={`${kpiGrupos.gruposConOjt} en OJT · ${kpiGrupos.formadoresUnicos} formadores`}
+              microRight={`${kpiGrupos.segmentosUnicos} seg.`}
+            />
 
-            {/* KPI 2: AGING / ANTIGÜEDAD EN TRÁNSITO */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-cyan-950/20 p-5 rounded-2xl border border-cyan-500/25 shadow-lg group hover:border-cyan-500/50 transition-all">
-              <div className="absolute top-0 right-0 w-28 h-28 bg-cyan-500/10 rounded-full blur-2xl group-hover:bg-cyan-500/20 transition-all pointer-events-none" />
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-black text-cyan-400 tracking-wider uppercase px-2.5 py-0.5 bg-cyan-500/10 rounded-md border border-cyan-500/20 flex items-center gap-1.5">
-                  <Clock className="w-3 h-3" />
-                  2 · Aging OJT
+            <KpiCard
+              label="Aging OJT"
+              icon={Clock}
+              value={kpiAging.avgDays}
+              unit="días"
+              subtitle="Permanencia promedio en nesting"
+              microLeft={`${kpiAging.totalTransito} en OJT`}
+              microRight={
+                <span className={kpiAging.countEstancados > 0 ? 'text-amber-400' : 'text-[var(--text-primary)]'}>
+                  {kpiAging.countEstancados} &gt;15d
                 </span>
-                <div className="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
-                  <Hourglass className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight">
-                  {kpiAging.avgDays} <span className="text-lg font-bold text-cyan-400">días</span>
-                </span>
-                <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20">
-                  {kpiAging.totalTransito} en OJT
-                </span>
-              </div>
-              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Permanencia Promedio en Nesting
-              </p>
-              <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)]">Casos estancados:</span>
-                <span className={`font-bold font-mono px-1.5 py-0.2 rounded ${
-                  kpiAging.countEstancados > 0 
-                    ? 'text-amber-400 bg-amber-500/10 border border-amber-500/20' 
-                    : 'text-emerald-400'
-                }`}>
-                  {kpiAging.countEstancados} (&gt;15d)
-                </span>
-              </div>
-            </div>
+              }
+            />
 
-            {/* KPI 3: RIESGO DE COBERTURA & BRECHA OPERATIVA */}
-            <div className={`relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] ${
-              kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                ? 'to-rose-950/20 border-rose-500/25 hover:border-rose-500/50' 
-                : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                ? 'to-amber-950/20 border-amber-500/25 hover:border-amber-500/50'
-                : 'to-emerald-950/20 border-emerald-500/25 hover:border-emerald-500/50'
-            } p-5 rounded-2xl border shadow-lg group transition-all`}>
-              <div className={`absolute top-0 right-0 w-28 h-28 ${
-                kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                  ? 'bg-rose-500/10 group-hover:bg-rose-500/20' 
+            {(() => {
+              const riskAccent =
+                kpiAlertas.estadoSemaforo === 'CRÍTICO'
+                  ? 'critical'
                   : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                  ? 'bg-amber-500/10 group-hover:bg-amber-500/20'
-                  : 'bg-emerald-500/10 group-hover:bg-emerald-500/20'
-              } rounded-full blur-2xl transition-all pointer-events-none`} />
-              <div className="flex items-center justify-between mb-3">
-                <span className={`text-[10px] font-black ${
-                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                    ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' 
-                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                    ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
-                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                } tracking-wider uppercase px-2.5 py-0.5 rounded-md border flex items-center gap-1.5`}>
-                  <ShieldAlert className="w-3 h-3" />
-                  3 · Riesgo de Cobertura
-                </span>
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                    ? 'bg-rose-500/10 text-rose-400 animate-pulse' 
-                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'bg-emerald-500/10 text-emerald-400'
-                }`}>
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className={`text-3xl font-black tracking-tight ${
-                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                    ? 'text-rose-400' 
-                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                    ? 'text-amber-400'
-                    : 'text-emerald-400'
-                }`}>
-                  {kpiAlertas.hasBrecha 
-                    ? `-${kpiAlertas.brechaFtes % 1 === 0 ? kpiAlertas.brechaFtes : kpiAlertas.brechaFtes.toFixed(1).replace('.', ',')} FTEs` 
-                    : (kpiAlertas.superavitFtes > 0 ? `+${kpiAlertas.superavitFtes % 1 === 0 ? kpiAlertas.superavitFtes : kpiAlertas.superavitFtes.toFixed(1).replace('.', ',')} FTEs` : '0 FTEs')}
-                </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  kpiAlertas.estadoSemaforo === 'CRÍTICO' 
-                    ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
-                    : kpiAlertas.estadoSemaforo === 'PRECAUCIÓN'
-                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                }`}>
-                  {kpiAlertas.estadoSemaforo}
-                </span>
-              </div>
-              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                {kpiAlertas.hasBrecha ? 'Brecha real (I-OP FTE vs RQ)' : 'Meta Cubierta (Sin Brecha)'}
-              </p>
-              <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)]">
-                  {kpiAlertas.countSegBajoMeta} segm. &lt;70%
-                </span>
-                <button 
-                  type="button"
-                  onClick={() => setShowRiskModal(true)}
-                  className="font-bold text-amber-400 hover:text-amber-300 transition-colors underline underline-offset-2 cursor-pointer flex items-center gap-1"
-                  title="Clic para ver detalle de formadores en fuga crítica"
-                >
-                  {kpiAlertas.countFormadoresCriticos} form. &gt;35% fuga
-                </button>
-              </div>
-            </div>
+                    ? 'caution'
+                    : 'ok';
+              const riskValue = kpiAlertas.hasBrecha
+                ? `-${formatFteShort(kpiAlertas.brechaFtes)}`
+                : kpiAlertas.superavitFtes > 0
+                  ? `+${formatFteShort(kpiAlertas.superavitFtes)}`
+                  : '0';
+              return (
+                <KpiCard
+                  label={`Riesgo · ${kpiAlertas.estadoSemaforo}`}
+                  icon={ShieldAlert}
+                  value={riskValue}
+                  unit="FTEs"
+                  subtitle={
+                    kpiAlertas.hasBrecha
+                      ? 'Brecha real (I-OP FTE vs RQ)'
+                      : 'Meta cubierta (sin brecha)'
+                  }
+                  accent={riskAccent}
+                  microLeft={`${kpiAlertas.countSegBajoMeta} segm. <70%`}
+                  microRight={
+                    <button
+                      type="button"
+                      onClick={() => setShowRiskModal(true)}
+                      className="font-semibold text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                      title="Ver formadores en fuga crítica"
+                    >
+                      {kpiAlertas.countFormadoresCriticos} form. &gt;35%
+                    </button>
+                  }
+                />
+              );
+            })()}
 
-            {/* KPI 4: PROYECCIÓN DE CIERRE DE MES (RUN-RATE EN FTES) */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-[var(--surface)] via-[var(--surface-elevated)] to-amber-950/20 p-5 rounded-2xl border border-amber-500/25 shadow-lg group hover:border-amber-500/50 transition-all">
-              <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl group-hover:bg-amber-500/20 transition-all pointer-events-none" />
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] font-black text-amber-400 tracking-wider uppercase px-2.5 py-0.5 bg-amber-500/10 rounded-md border border-amber-500/20 flex items-center gap-1.5">
-                  <Target className="w-3 h-3" />
-                  4 · Run-Rate Cierre
+            <KpiCard
+              label="Run-rate cierre"
+              icon={Target}
+              value={
+                kpiProyeccion.iopProyectadoFtes % 1 === 0
+                  ? kpiProyeccion.iopProyectadoFtes.toLocaleString('es-PE')
+                  : kpiProyeccion.iopProyectadoFtes.toFixed(1).replace('.', ',')
+              }
+              unit="FTEs"
+              subtitle={`Pases I-OP estimados · ${kpiProyeccion.pctProyeccion}% RQ`}
+              microLeft={
+                <span title={`${kpiProyeccion.iopActual} docs (${kpiProyeccion.iopActualFtes} FTEs)`}>
+                  Día {kpiProyeccion.diasTranscurridos}/{kpiProyeccion.totalDaysInMonth} · {kpiProyeccion.iopActual} pers.
                 </span>
-                <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight">
-                  {kpiProyeccion.iopProyectadoFtes % 1 === 0 
-                    ? kpiProyeccion.iopProyectadoFtes.toLocaleString('es-PE') 
-                    : kpiProyeccion.iopProyectadoFtes.toFixed(1).replace('.', ',')}
-                  <span className="text-lg font-bold text-amber-400 ml-1.5">FTEs</span>
-                </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  kpiProyeccion.isCloseToTarget 
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                }`}>
-                  {kpiProyeccion.pctProyeccion}% RQ
-                </span>
-              </div>
-              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-1">
-                Pases I-OP Estimados al Cierre (FTEs)
-              </p>
-              <div className="mt-4 pt-3 border-t border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
-                <span className="text-[var(--text-muted)]" title={`${kpiProyeccion.iopActual} documentos únicos registrados (${kpiProyeccion.iopActualFtes} FTEs)`}>
-                  Día {kpiProyeccion.diasTranscurridos} de {kpiProyeccion.totalDaysInMonth} · <strong className="text-amber-400 font-mono">{kpiProyeccion.iopActual} personas</strong>
-                </span>
-                <span className="font-bold text-[var(--text-primary)] font-mono">
-                  Meta: {kpis.rq_solicitado.toLocaleString('es-PE')} FTEs
-                </span>
-              </div>
-            </div>
+              }
+              microRight={`Meta ${kpis.rq_solicitado.toLocaleString('es-PE')}`}
+            />
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════ */}

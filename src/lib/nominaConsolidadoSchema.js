@@ -55,7 +55,7 @@ export const NOMINA_DB_FIELDS = [
   'apellido_paterno', 'apellido_materno', 'nombres', 'celular', 'celular_referencia', 'usuario_whatsapp', 'correo',
   'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera',
   'nacionalidad', 'lugar_residencia', 'distrito_residencia', 'direccion_domicilio',
-  'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra',
+  'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'exp_tiempo_campana', 'exp_otra', 'exp_tiempo_otra',
   'fuente_oferta', 'observacion_reclutamiento', 'campana', 'segmento', 'grupo_codigo', 'modalidad',
   'condicion', 'horario_gestion', 'descanso', 'envio_dni', 'test_psicologico', 'validacion_pc',
   'evaluacion_dia_0', 'fecha_inicio_capacitacion', 'fecha_fin_capacitacion', 'fecha_conexion_ojt',
@@ -135,23 +135,52 @@ const HEADER_ALIASES = {
   observacion_reclutamiento: ['OBSERVACION'], // First occurrence
 }
 
+/** Quita tildes/ñ raros para matchear encabezados del Google Form aunque cambien acentos. */
+function foldHeader(h) {
+  return String(h || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[º°]/g, 'O')
+    .replace(/[^\w\s/?().]/g, ' ')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function mapGoogleFormHeaders(headerRow = []) {
   const headers = headerRow.map(h => String(h || '').toUpperCase().trim())
   const colIdx = {}
 
   headers.forEach((h, i) => {
-    // Normalizar texto eliminando saltos de línea y espacios extra
-    const clean = h.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    // Normalizar texto eliminando saltos de línea, acentos y espacios extra
+    const clean = foldHeader(h)
 
     if (clean.includes('MARCA TEMPORAL') || clean.includes('TIMESTAMP') || clean === 'HORA DE REGISTRO') colIdx['marca_temporal'] = i
-    else if (clean.includes('PERIODO RECLUTADO') || clean === 'PERIODO' || clean.includes('PERÍODO')) colIdx['periodo_reclutado'] = i
-    else if (clean.includes('SEMANA DE TRAB') || clean.includes('SEMANA')) colIdx['semana_trabajo'] = i
-    else if (clean.includes('RECLUTADOR') || clean.includes('SELECCIONADOR') || clean.includes('PSICOLOG') || clean.includes('QUIEN TE CONTACTO') || clean.includes('QUIÉN TE CONTACTÓ')) colIdx['reclutador'] = i
-    else if (clean.includes('CAMPAÑA') || clean.includes('CAMPANA') || clean.includes('A QUE CAMPAÑA') || clean.includes('A QUÉ CAMPAÑA')) colIdx['campana'] = i
+    else if (clean.includes('PERIODO RECLUTADO') || clean === 'PERIODO') colIdx['periodo_reclutado'] = i
+    else if (clean.includes('SEMANA DE TRAB') || (clean.includes('SEMANA') && !clean.includes('EXPERIENCIA'))) colIdx['semana_trabajo'] = i
+    else if (clean.includes('RECLUTADOR') || clean.includes('SELECCIONADOR') || clean.includes('PSICOLOG') || clean.includes('QUIEN TE CONTACTO')) colIdx['reclutador'] = i
+    // Experiencia ANTES que campaña: el form dice "...ORIENTADO A LA CAMPAÑA..."
+    else if (clean.includes('TIPO DE EXPERIENCIA') || (clean.includes('EXPERIENCIA') && clean.includes('ORIENTADO'))) {
+      colIdx['exp_tipo_campana'] = i
+    }
+    else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
+    else if (clean.includes('TIEMPO DE EXPERIENCIA') || clean.includes('CUANTO TIEMPO')) {
+      if (colIdx['exp_tiempo_call'] === undefined) colIdx['exp_tiempo_call'] = i
+      else if (colIdx['exp_tiempo_otra'] === undefined) colIdx['exp_tiempo_otra'] = i
+    }
+    else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
+    else if (
+      (clean.includes('CAMPANA') || clean.includes('A QUE CAMPANA')) &&
+      !clean.includes('EXPERIENCIA') &&
+      !clean.includes('TIPO DE')
+    ) {
+      colIdx['campana'] = i
+    }
     else if (clean.includes('SEDE') || clean.includes('LUGAR DE TRABAJO') || clean.includes('SEDE DE PREFERENCIA')) colIdx['sede'] = i
     else if (clean.includes('MODALIDAD') || clean.includes('PRESENCIAL O REMOTO') || clean.includes('REMOTO O PRESENCIAL') || clean.includes('HOME OFFICE') || clean.includes('TELETRABAJO')) colIdx['modalidad'] = i
     else if (clean.includes('TIPO DE DOCUMENTO') || clean === 'TIPO DOC') colIdx['tipo_documento'] = i
-    else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean.includes('IDENTIFICACION') || clean.includes('IDENTIFICACIÓN')) {
+    else if (clean.includes('DNI') || clean.includes('DOCUMENTO') || clean.includes('C.E.') || clean.includes('CEDULA') || clean.includes('IDENTIFICACION')) {
       if (colIdx['documento'] === undefined) colIdx['documento'] = i
     }
     else if (clean.includes('APELLIDO PATERNO') || clean === 'PATERNO') colIdx['apellido_paterno'] = i
@@ -160,19 +189,23 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('NOMBRES') || clean.includes('NOMBRE COMPLETO') || clean === 'NOMBRE') {
       if (colIdx['nombres'] === undefined) colIdx['nombres'] = i
     }
-    else if (clean.includes('CELULAR') || clean.includes('MÓVIL') || clean.includes('MOVIL') || clean.includes('TELEFONO') || clean.includes('TELÉFONO')) {
+    else if (
+      clean.includes('CELULAR') || clean.includes('MOVIL') || clean.includes('TELEFONO') ||
+      clean.includes('TELF') || clean.includes('NRO DE CEL') || clean.includes('NUMERO DE CEL') ||
+      (clean.includes('NUMERO') && (clean.includes('CEL') || clean.includes('WHATS') || clean.includes('CONTACTO')))
+    ) {
       if (clean.includes('REFERENCIA') || clean.includes('EMERGENCIA') || clean.includes('FAMILIAR')) colIdx['celular_referencia'] = i
       else if (colIdx['celular'] === undefined) colIdx['celular'] = i
     }
     else if (clean.includes('CORREO') || clean.includes('EMAIL') || clean.includes('E-MAIL')) colIdx['correo'] = i
-    else if (clean.includes('GÉNERO') || clean.includes('GENERO') || clean.includes('SEXO')) colIdx['genero'] = i
-    else if (clean.includes('FECHA DE NACIMIENTO') || clean.includes('F. NACIMIENTO') || clean.includes('NACIMIENTO')) colIdx['fecha_nacimiento'] = i
-    else if (clean === 'EDAD' || clean.includes('EDAD')) colIdx['edad'] = i
+    else if (clean.includes('GENERO') || clean.includes('SEXO')) colIdx['genero'] = i
+    else if (clean.includes('FECHA DE NACIMIENTO') || clean.includes('F. NACIMIENTO') || (clean.includes('NACIMIENTO') && !clean.includes('LUGAR'))) colIdx['fecha_nacimiento'] = i
+    else if (clean === 'EDAD' || clean.startsWith('EDAD ') || clean.includes(' TU EDAD') || clean.includes('CUANTOS ANOS') || clean.includes('CUANTOS ANOS')) colIdx['edad'] = i
     else if (clean.includes('ESTADO CIVIL')) colIdx['estado_civil'] = i
-    else if (clean.includes('HIJOS') || clean.includes('N° DE HIJOS')) colIdx['n_hijos'] = i
-    else if (clean.includes('NIVEL ACADÉMICO') || clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
-    else if (clean.includes('CARREA') || clean.includes('CARRERA') || clean.includes('PROFESION') || clean.includes('PROFESIÓN')) colIdx['carrera'] = i
-    else if (clean.includes('NACIONALIDAD') || clean.includes('PAÍS') || clean.includes('PAIS')) colIdx['nacionalidad'] = i
+    else if (clean.includes('HIJOS')) colIdx['n_hijos'] = i
+    else if (clean.includes('NIVEL ACADEMICO') || clean.includes('GRADO DE INSTRUCCION')) colIdx['nivel_academico'] = i
+    else if (clean.includes('CARREA') || clean.includes('CARRERA') || clean.includes('PROFESION')) colIdx['carrera'] = i
+    else if (clean.includes('NACIONALIDAD') || clean.includes('PAIS')) colIdx['nacionalidad'] = i
     
     // DISTRITO: Debe evaluarse estricta y prioritariamente ANTES de LUGAR DE RESIDENCIA para que "DISTRITO DE RESIDENCIA" no sea capturado por "RESIDENCIA"
     else if (clean.includes('DISTRITO') || clean.includes('COMUNA') || clean.includes('LOCALIDAD') || clean.includes('MUNICIPIO') || clean.includes('BARRIO')) {
@@ -180,37 +213,30 @@ export function mapGoogleFormHeaders(headerRow = []) {
     }
     // LUGAR DE RESIDENCIA / DEPARTAMENTO / PROVINCIA (Excluyendo DISTRITO / COMUNA)
     else if (!clean.includes('DISTRITO') && !clean.includes('COMUNA') && !clean.includes('LOCALIDAD') && (
-      clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA') || clean.includes('DEPARTAMENTO') || clean.includes('PROVINCIA') || clean.includes('REGIÓN') || clean.includes('REGION') || clean.includes('CIUDAD')
+      clean.includes('LUGAR DE RESIDENCIA') || clean.includes('RESIDENCIA') || clean.includes('DEPARTAMENTO') || clean.includes('PROVINCIA') || clean.includes('REGION') || clean.includes('CIUDAD')
     )) {
       if (colIdx['lugar_residencia'] === undefined) colIdx['lugar_residencia'] = i
     }
-    else if (clean.includes('DIRECCIÓN') || clean.includes('DIRECCION') || clean.includes('DOMICILIO') || clean.includes('DONDE VIVES') || clean.includes('CALLE') || clean.includes('AVENIDA')) colIdx['direccion_domicilio'] = i
-    else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
-    else if (clean.includes('TIPO DE EXPERIENCIA')) colIdx['exp_tipo_campana'] = i
-    else if (clean.includes('TIEMPO DE EXPERIENCIA') || clean.includes('CUANTO TIEMPO')) {
-      if (colIdx['exp_tiempo_call'] === undefined) colIdx['exp_tiempo_call'] = i
-      else if (colIdx['exp_tiempo_otra'] === undefined) colIdx['exp_tiempo_otra'] = i
-    }
-    else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
+    else if (clean.includes('DIRECCION') || clean.includes('DOMICILIO') || clean.includes('DONDE VIVES') || clean.includes('CALLE') || clean.includes('AVENIDA')) colIdx['direccion_domicilio'] = i
     else if (clean.includes('OFERTA') || clean.includes('ENTERASTE') || clean.includes('FUENTE')) colIdx['fuente_oferta'] = i
     else if (clean.includes('WTSP') || clean.includes('WHATSAPP')) colIdx['usuario_whatsapp'] = i
-    else if (clean.includes('CARGO CONTRACTUAL') || clean.includes('CARGO') || clean.includes('PUESTO')) colIdx['cargo_contractual'] = i
+    else if (clean.includes('CARGO CONTRACTUAL') || (clean.includes('CARGO') && !clean.includes('DESCARGA')) || clean.includes('PUESTO')) colIdx['cargo_contractual'] = i
     else if (clean.includes('BONO ASIST') || clean.includes('ONO ASIST')) colIdx['bono_asistencia_perfecta'] = i
     
     // Status Día 1
-    else if (clean.includes('STATUS DIA 1') || clean.includes('STATUS DÍA 1') || clean.includes('STATUS DIA1') || clean.includes('STATUS DÍA1') || clean === 'STATUS' || clean === 'ESTADO DIA 1' || clean === 'ESTADO DÍA 1') colIdx['status_dia_1'] = i
+    else if (clean.includes('STATUS DIA 1') || clean.includes('STATUS DIA1') || clean === 'STATUS' || clean === 'ESTADO DIA 1') colIdx['status_dia_1'] = i
     
     // Día 0 (Asistencia)
-    else if (clean === 'DIA 0' || clean === 'DÍA 0' || clean === 'DIA0' || clean === 'DÍA0' || clean === 'D0' || clean.includes('ASISTENCIA DÍA 0') || clean.includes('ASISTENCIA DIA 0') || (clean.includes('DIA 0') && !clean.includes('OBS') && !clean.includes('MOTIVO')) || (clean.includes('DÍA 0') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_0'] = i
+    else if (clean === 'DIA 0' || clean === 'DIA0' || clean === 'D0' || clean.includes('ASISTENCIA DIA 0') || (clean.includes('DIA 0') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_0'] = i
     
     // Observaciones Día 0
-    else if ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 0') || clean.includes('DÍA 0') || clean.includes('DIA0') || clean.includes('DÍA0') || clean.includes('D0'))) colIdx['dia_0_obs'] = i
+    else if ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 0') || clean.includes('DIA0') || clean.includes('D0'))) colIdx['dia_0_obs'] = i
     
     // Día 1 (Asistencia)
-    else if (clean === 'DIA 1' || clean === 'DÍA 1' || clean === 'DIA1' || clean === 'DÍA1' || clean === 'D1' || clean.includes('ASISTENCIA DÍA 1') || clean.includes('ASISTENCIA DIA 1') || (clean.includes('DIA 1') && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('MOTIVO')) || (clean.includes('DÍA 1') && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_1'] = i
+    else if (clean === 'DIA 1' || clean === 'DIA1' || clean === 'D1' || clean.includes('ASISTENCIA DIA 1') || (clean.includes('DIA 1') && !clean.includes('STATUS') && !clean.includes('ESTADO') && !clean.includes('OBS') && !clean.includes('MOTIVO'))) colIdx['dia_1'] = i
     
     // Observaciones Día 1
-    else if (clean.includes('NO ASISTIÓ DÍA 0') || clean.includes('NO ASISTIO DIA 0') || clean.includes('ASISTE DÍA1') || clean.includes('ASISTE DIA1') || clean.includes('ASISTE DÍA 1') || clean.includes('ASISTE DIA 1') || ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 1') || clean.includes('DÍA 1') || clean.includes('DIA1') || clean.includes('DÍA1') || clean.includes('D1')))) colIdx['dia_1_obs'] = i
+    else if (clean.includes('NO ASISTIO DIA 0') || clean.includes('ASISTE DIA1') || clean.includes('ASISTE DIA 1') || ((clean.includes('OBS') || clean.includes('MOTIVO')) && (clean.includes('DIA 1') || clean.includes('DIA1') || clean.includes('D1')))) colIdx['dia_1_obs'] = i
     
     else if (clean.includes('OBS') && clean.includes('EVALUAR')) colIdx['obs_evaluar'] = i
     else if (clean.includes('EVALUAR')) colIdx['evaluar'] = i
@@ -218,7 +244,7 @@ export function mapGoogleFormHeaders(headerRow = []) {
 
   // Segunda pasada contextual para columnas genéricas "OBSERVACIONES" o "OBS"
   headers.forEach((h, i) => {
-    const clean = h.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    const clean = foldHeader(h)
     if (clean === 'OBSERVACION' || clean === 'OBSERVACIONES' || clean === 'OBS' || clean === 'OBS.') {
       if (colIdx['dia_0'] !== undefined && (i === colIdx['dia_0'] + 1 || i === colIdx['dia_0'] + 2) && colIdx['dia_0_obs'] === undefined) {
         colIdx['dia_0_obs'] = i
@@ -315,13 +341,37 @@ function normalizeAsistencia(val) {
   return s
 }
 
+/** Normaliza teléfonos (Sheets a veces manda number / notación científica). */
+export function normalizePhoneValue(val) {
+  if (val === null || val === undefined || val === '') return null
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    // Evitar 9.87e8 → string científica
+    const asInt = Math.round(val)
+    if (asInt > 0 && String(asInt).length <= 15) return String(asInt)
+  }
+  let s = String(val).trim()
+  if (!s || s === '-' || s === '...' || s.toUpperCase() === 'NULL') return null
+  if (/e\+?\d+/i.test(s)) {
+    const n = Number(s)
+    if (Number.isFinite(n) && n > 0) s = String(Math.round(n))
+  }
+  const digits = s.replace(/[^\d+]/g, '').trim()
+  return digits || null
+}
+
 export function parseGoogleFormRow(row, colIdx) {
   const get = (key) => {
     const i = colIdx[key]
     return i >= 0 ? row[i] : null
   }
 
-  const str = (k) => String(get(k) || '').trim() || null
+  // ?? evita perder 0 numérico (n_hijos / edad)
+  const str = (k) => {
+    const v = get(k)
+    if (v === null || v === undefined) return null
+    const s = String(v).trim()
+    return s && s !== '...' ? s : null
+  }
   const rawTipoDoc = str('tipo_documento') ? str('tipo_documento').toUpperCase() : 'DNI'
   const rawNac = str('nacionalidad') ? str('nacionalidad').toUpperCase() : 'PERUANA'
   
@@ -410,11 +460,7 @@ export function parseGoogleFormRow(row, colIdx) {
     const val = str(k)
     return val ? val.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase() : null
   }
-  const normPhone = (k) => {
-    const val = str(k)
-    if (!val) return null
-    return val.replace(/[^\d+]/g, '').trim() || null
-  }
+  const normPhone = (k) => normalizePhoneValue(get(k))
 
   let rawLugar = normUpper('lugar_residencia')
   let rawDistrito = normUpper('distrito_residencia')
@@ -428,11 +474,28 @@ export function parseGoogleFormRow(row, colIdx) {
     }
   }
   const fechaNacParsed = parseExcelDate(get('fecha_nacimiento'))
+  const celularNorm = normPhone('celular')
+  const celularRefNorm = normPhone('celular_referencia')
+  const edadParsed = (() => {
+    const m = String(get('edad') ?? '').match(/\d{1,3}/)
+    const fromForm = m ? parseInt(m[0], 10) : null
+    if (fromForm && fromForm >= 14 && fromForm <= 90) return fromForm
+    return calcEdadFromFechaISO(fechaNacParsed)
+  })()
+  const nHijosParsed = (() => {
+    const raw = get('n_hijos')
+    if (raw === null || raw === undefined || raw === '') return 0
+    const m = String(raw).match(/\d{1,2}/)
+    if (!m) return 0
+    const n = parseInt(m[0], 10)
+    return Number.isFinite(n) && n >= 0 && n <= 20 ? n : 0
+  })()
+  const expTiempo = normUpper('exp_tiempo_call')
 
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
     periodo_reclutado: normUpper('periodo_reclutado'),
-    semana_trabajo: parseInt(get('semana_trabajo')) || null,
+    semana_trabajo: parseInt(get('semana_trabajo'), 10) || null,
     reclutador: normUpper('reclutador'),
     sede: normUpper('sede'),
     tipo_documento: normUpper('tipo_documento') || 'DNI',
@@ -440,20 +503,15 @@ export function parseGoogleFormRow(row, colIdx) {
     apellido_paterno: rawApPaterno ? rawApPaterno.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
     apellido_materno: rawApMaterno ? rawApMaterno.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
     nombres: rawNombres ? rawNombres.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
-    celular: normPhone('celular') || normPhone('celular_referencia'),
-    celular_referencia: normPhone('celular_referencia'),
+    celular: celularNorm || celularRefNorm,
+    celular_referencia: celularRefNorm,
     usuario_whatsapp: rawUsuarioWhatsapp ? rawUsuarioWhatsapp.replace(/[\r\n]+/g, ' ').trim() : null,
     correo: normLower('correo'),
     genero: normUpper('genero'),
     fecha_nacimiento: fechaNacParsed,
-    edad: (() => {
-      const m = String(get('edad') ?? '').match(/\d{1,3}/)
-      const fromForm = m ? parseInt(m[0], 10) : null
-      if (fromForm && fromForm >= 14 && fromForm <= 90) return fromForm
-      return calcEdadFromFechaISO(fechaNacParsed)
-    })(),
+    edad: edadParsed,
     estado_civil: normUpper('estado_civil'),
-    n_hijos: parseInt(get('n_hijos')) || 0,
+    n_hijos: nHijosParsed,
     nivel_academico: normUpper('nivel_academico'),
     carrera: normUpper('carrera'),
     nacionalidad: normUpper('nacionalidad') || 'PERUANA',
@@ -463,7 +521,9 @@ export function parseGoogleFormRow(row, colIdx) {
     modalidad: normUpper('modalidad') || (allRowText.includes('REMOT') || allRowText.includes('HOME OFFICE') || allRowText.includes('TELETRABAJO') ? 'REMOTO' : 'PRESENCIAL'),
     exp_call_center: normUpper('exp_call_center'),
     exp_tipo_campana: normUpper('exp_tipo_campana'),
-    exp_tiempo_call: normUpper('exp_tiempo_call'),
+    exp_tiempo_call: expTiempo,
+    // Alias BD (RPC adjudicar usa exp_tiempo_campana)
+    exp_tiempo_campana: expTiempo,
     exp_otra: normUpper('exp_otra'),
     exp_tiempo_otra: normUpper('exp_tiempo_otra'),
     fuente_oferta: normUpper('fuente_oferta'),

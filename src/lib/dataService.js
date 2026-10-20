@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from './supabase'
 import { enrichGruposWithStats, inferSegmento } from './capacidadRysSync'
 import { SHEET_SOURCES, sheetCsvUrl } from './sheetSources.js'
-import { parseCsvToMatrix, parseNominaRows, cleanDocumento, calcEdadFromFechaISO } from './nominaConsolidadoSchema.js'
+import { parseCsvToMatrix, parseNominaRows, cleanDocumento, calcEdadFromFechaISO, normalizePhoneValue } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
 import { analyzeDia1CorteRecords, isBajaDia1Motivo } from './bajaDia1Rules.js'
@@ -6640,6 +6640,70 @@ export async function dividirGrupoBulk({ parentCodigo, campana, distribucion }) 
  * Desactiva procesos previos en otros grupos (sin DELETE para preservar métricas históricas)
  * e inserta el nuevo registro activo en nóminas.
  */
+/** Asegura campos numéricos/alias que el form parsea pero el RPC/BD espera con otro nombre. */
+function normalizePostulanteForAdjudicar(p = {}) {
+  const celular = normalizePhoneValue(p.celular)
+  const celularRef = normalizePhoneValue(p.celular_referencia)
+  const fechaNac = p.fecha_nacimiento || null
+  let edad = p.edad
+  if (edad === '' || edad === undefined) edad = null
+  if (edad != null) edad = parseInt(edad, 10)
+  if (!Number.isFinite(edad)) edad = calcEdadFromFechaISO(fechaNac)
+  let nHijos = p.n_hijos
+  if (nHijos === '' || nHijos === undefined || nHijos === null) nHijos = 0
+  else nHijos = parseInt(nHijos, 10)
+  if (!Number.isFinite(nHijos) || nHijos < 0) nHijos = 0
+  const expTiempo = p.exp_tiempo_campana || p.exp_tiempo_call || null
+  return {
+    ...p,
+    celular: celular || null,
+    celular_referencia: celularRef || null,
+    fecha_nacimiento: fechaNac,
+    edad: edad ?? null,
+    n_hijos: nHijos,
+    exp_tiempo_call: expTiempo,
+    exp_tiempo_campana: expTiempo,
+  }
+}
+
+/** Parche post-RPC: el SQL antiguo no persistía edad / alias exp_tiempo_call. */
+async function backfillDemograficosTrasAdjudicar(cleanGrupo, rows = []) {
+  for (const row of rows) {
+    const doc = String(row.documento || '').trim()
+    if (!doc) continue
+    const patch = { updated_at: new Date().toISOString() }
+    if (row.celular) patch.celular = String(row.celular)
+    if (row.celular_referencia) patch.celular_referencia = String(row.celular_referencia)
+    if (row.fecha_nacimiento) patch.fecha_nacimiento = row.fecha_nacimiento
+    if (row.edad != null && row.edad !== '') patch.edad = Number(row.edad)
+    if (row.n_hijos != null && row.n_hijos !== '') patch.n_hijos = Number(row.n_hijos)
+    if (row.exp_tipo_campana) patch.exp_tipo_campana = row.exp_tipo_campana
+    const expT = row.exp_tiempo_campana || row.exp_tiempo_call
+    if (expT) {
+      patch.exp_tiempo_campana = expT
+      // Algunas BDs tienen ambas columnas; si falla el update, reintentamos sin exp_tiempo_call
+      patch.exp_tiempo_call = expT
+    }
+    if (row.observacion_reclutamiento) patch.observacion_reclutamiento = row.observacion_reclutamiento
+    if (Object.keys(patch).length <= 1) continue
+    let { error } = await supabase
+      .from('nominas')
+      .update(patch)
+      .eq('documento', doc)
+      .eq('grupo_codigo', cleanGrupo)
+    // Si la columna exp_tiempo_call no existe en BD, reintentar solo con alias oficial
+    if (error && /exp_tiempo_call/i.test(error.message || '')) {
+      delete patch.exp_tiempo_call
+      ;({ error } = await supabase
+        .from('nominas')
+        .update(patch)
+        .eq('documento', doc)
+        .eq('grupo_codigo', cleanGrupo))
+    }
+    if (error) console.warn('[adjudicar] backfill demográficos', doc, error.message)
+  }
+}
+
 export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana, postulantes }) {
   if (DB_MODE !== 'supabase') throw new Error("Requiere conexión a Supabase")
   if (!targetGrupo) throw new Error("El código del grupo destino es obligatorio")
@@ -6647,16 +6711,19 @@ export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana,
 
   const cleanGrupo = String(targetGrupo).trim().toUpperCase()
   const cleanCampana = String(targetCampana || '').trim().toUpperCase()
+  const normalized = (postulantes || []).map(normalizePostulanteForAdjudicar)
 
   // 1. Intentar ejecutar mediante el RPC transaccional de PostgreSQL
   try {
     const { data, error } = await supabase.rpc('adjudicar_postulantes_pool', {
       p_target_grupo: cleanGrupo,
       p_target_campana: cleanCampana,
-      p_postulantes: postulantes
+      p_postulantes: normalized
     })
 
     if (!error && data) {
+      // Asegurar celular / fecha / edad / hijos / experiencia aunque el RPC en BD esté desactualizado
+      await backfillDemograficosTrasAdjudicar(cleanGrupo, normalized)
       invalidateCache('all_consolidado')
       invalidateCache('resumen_cap_')
       invalidateCache('grupos_con_metas')
@@ -6678,12 +6745,12 @@ export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana,
   // 2. Inserción directa de nuevos registros en cliente (preservando historial previo de otros grupos)
   let { data: insData, error: insErr } = await supabase
     .from('nominas')
-    .insert(postulantes)
+    .insert(normalized)
 
   if (insErr && (insErr.message?.includes('kpi_reclutadores_llave') || insErr.details?.includes('kpi_reclutadores_llave'))) {
     // Reintento tras pausa breve si hubo colisión concurrente con el trigger de KPI
     await new Promise(r => setTimeout(r, 800))
-    const retry = await supabase.from('nominas').insert(postulantes)
+    const retry = await supabase.from('nominas').insert(normalized)
     insErr = retry.error
   }
 
@@ -9369,58 +9436,166 @@ export async function deleteConfigPagoGrupo(target) {
   saveToStorage('propuestas_consolidado', filtered);
 }
 
+/** Normaliza filtro multi/single: [] = todos. Acepta string o array. */
+function normalizePagosFilterList(val, allTokens = ['TODOS', 'TODAS']) {
+  const tokens = new Set(allTokens.map((t) => String(t).toUpperCase()));
+  const arr = Array.isArray(val) ? val : (val != null && val !== '' ? [val] : []);
+  return arr
+    .map((v) => String(v || '').trim())
+    .filter((v) => v && !tokens.has(v.toUpperCase()));
+}
+
+function normalizePeriodoPagos(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.length >= 6 ? digits.slice(0, 6) : String(raw || '').trim();
+}
+
 export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento, campana, grupo_codigo } = {}) {
-  // 1. Obtener grupos objetivo según filtros usando capacidad_rys como fuente oficial
+  const periodos = normalizePagosFilterList(periodo).map(normalizePeriodoPagos).filter(Boolean);
+  const segmentos = normalizePagosFilterList(segmento).map((s) => s.toUpperCase());
+  const campanas = normalizePagosFilterList(campana, ['TODOS', 'TODAS']).map((c) => c.toUpperCase());
+  const gruposFiltro = normalizePagosFilterList(grupo_codigo).map((g) => g.toUpperCase());
+  const hasPeriodoFilter = periodos.length > 0;
+  const hasHierarchyFilter = hasPeriodoFilter || segmentos.length > 0 || campanas.length > 0 || gruposFiltro.length > 0;
+
+  // 1. Resolver alcance en capacidad_rys (segmento/campaña/grupo EXACTOS).
+  // Importante: no filtrar solo por código de grupo — el mismo código se reutiliza en otras campañas/segmentos.
   let targetGrupos = [];
-  if (grupo_codigo && grupo_codigo !== 'TODOS') {
-    targetGrupos = [grupo_codigo];
-  } else {
+  /** @type {Set<string>} pares "CODIGO|CAMPANA" válidos según capacidad */
+  const targetPairs = new Set();
+  /** Campañas permitidas (selección usuario ∩ capacidad del segmento) */
+  let campanasEfectivas = [...campanas];
+
+  if (hasHierarchyFilter || (semana && semana !== 'TODAS')) {
     try {
       let capQ = supabase.from('capacidad_rys').select('codigo, campana, segmento, semana_label, semana_trabajo, periodo');
-      if (periodo && periodo !== 'TODOS') capQ = capQ.eq('periodo', periodo);
-      if (campana && campana !== 'TODAS') capQ = capQ.eq('campana', campana);
-      if (segmento && segmento !== 'TODOS') capQ = capQ.eq('segmento', segmento);
       if (semana && semana !== 'TODAS') {
         const sNum = parseInt(String(semana).replace(/\D/g, '')) || null;
         capQ = capQ.or(`semana_label.eq.${semana},semana_trabajo.eq.${sNum}`);
       }
       const { data: caps } = await capQ;
-      if (caps && caps.length > 0) {
-        caps.forEach(c => {
-          if (c.codigo) targetGrupos.push(c.codigo);
-        });
+      const perSet = hasPeriodoFilter ? new Set(periodos) : null;
+      const segSet = segmentos.length ? new Set(segmentos) : null;
+      const campSet = campanas.length ? new Set(campanas) : null;
+      const grpSet = gruposFiltro.length ? new Set(gruposFiltro) : null;
+      const campsFromCap = [];
+
+      ;(caps || []).forEach((c) => {
+        const camp = String(c.campana || '').trim().toUpperCase();
+        const seg = String(c.segmento || '').trim().toUpperCase();
+        const per = normalizePeriodoPagos(c.periodo);
+        const codigo = String(c.codigo || '').trim().toUpperCase();
+        if (perSet && !perSet.has(per)) return;
+        if (segSet && !segSet.has(seg)) return;
+        if (campSet && camp && !campSet.has(camp)) return;
+        if (grpSet && codigo && !grpSet.has(codigo)) return;
+        if (codigo) targetGrupos.push(codigo);
+        if (camp) campsFromCap.push(camp);
+        if (codigo && camp) targetPairs.add(`${codigo}|${camp}`);
+      });
+
+      targetGrupos = [...new Set(targetGrupos)];
+      // Si hay segmento (u otros filtros de capacidad), las campañas válidas son las de capacidad
+      if (segmentos.length || campanas.length || hasPeriodoFilter || gruposFiltro.length) {
+        const fromCap = [...new Set(campsFromCap)];
+        campanasEfectivas = campanas.length
+          ? fromCap.filter((c) => campanas.includes(c))
+          : fromCap;
       }
     } catch (e) {
       console.warn('Error al buscar grupos en capacidad_rys:', e);
     }
   }
 
-  // 2. Consultar directamente de consolidado_asistencias (fuente real de formación)
-  let qAsis = supabase
-    .from('consolidado_asistencias')
-    .select('documento, apellido_paterno, apellido_materno, nombres, campana, codigo_grupo, grupo, sigla, estado, created_at')
-    .neq('sigla', 'DESC')
-    .neq('estado', 'DESCUENTO')
-    .order('created_at', { ascending: false });
-
-  if (targetGrupos.length === 1) {
-    qAsis = qAsis.or(`codigo_grupo.eq.${targetGrupos[0]},grupo.eq.${targetGrupos[0]}`);
-  } else if (targetGrupos.length > 1) {
-    const list = targetGrupos.slice(0, 50).map(g => `"${g}"`).join(',');
-    qAsis = qAsis.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
+  // Grupos elegidos a mano sin filas en capacidad: usarlos igual, pero sin pares → no cruzar campañas
+  if (!targetGrupos.length && gruposFiltro.length) {
+    targetGrupos = [...gruposFiltro];
   }
 
-  // Filtrar estrictamente por campaña si está seleccionada
-  if (campana && campana !== 'TODAS') {
-    qAsis = qAsis.eq('campana', campana);
+  // Segmento/periodo/campaña sin match en capacidad → vacío (no abrir query global)
+  if ((segmentos.length || campanas.length) && !targetPairs.size && !targetGrupos.length) {
+    return [];
   }
 
-  const { data: asisRows, error: asisErr } = await qAsis.limit(5000);
-  if (asisErr) console.warn('Error consultando consolidado_asistencias para pagos:', asisErr);
+  const pairOk = (codigo, campanaVal) => {
+    if (!targetPairs.size) return true;
+    const g = String(codigo || '').trim().toUpperCase();
+    const c = String(campanaVal || '').trim().toUpperCase();
+    if (!g || !c) return false;
+    return targetPairs.has(`${g}|${c}`);
+  };
+
+  const campanaOk = (campanaVal) => {
+    if (!campanasEfectivas.length) return true;
+    const c = String(campanaVal || '').trim().toUpperCase();
+    if (!c) return false;
+    return campanasEfectivas.includes(c);
+  };
+
+  // 2. Consultar consolidado_asistencias SOLO con alcance (evitar full-scan → timeouts 57014)
+  // Sin filtros de cohorte/grupo: NO consultar consolidado a ciegas (tumba el proyecto).
+  const asisSelect = 'documento, apellido_paterno, apellido_materno, nombres, campana, codigo_grupo, grupo, sigla, estado, created_at';
+  const asisRows = [];
+  const pushAsis = (rows) => {
+    ;(rows || []).forEach((r) => asisRows.push(r));
+  };
+
+  const ASIS_PAGE = 1500;
+  const MAX_GRUPO_CHUNKS = 4; // máx ~160 grupos por cálculo
+
+  const runAsisQuery = async (grupoChunk) => {
+    if (!grupoChunk?.length) return [];
+    let qAsis = supabase
+      .from('consolidado_asistencias')
+      .select(asisSelect)
+      .neq('sigla', 'DESC')
+      .neq('estado', 'DESCUENTO');
+
+    if (grupoChunk.length === 1) {
+      qAsis = qAsis.or(`codigo_grupo.eq.${grupoChunk[0]},grupo.eq.${grupoChunk[0]}`);
+    } else {
+      const list = grupoChunk.map((g) => `"${g}"`).join(',');
+      qAsis = qAsis.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
+    }
+
+    if (campanasEfectivas.length === 1) qAsis = qAsis.eq('campana', campanasEfectivas[0]);
+    else if (campanasEfectivas.length > 1 && campanasEfectivas.length <= 80) {
+      qAsis = qAsis.in('campana', campanasEfectivas);
+    }
+
+    const { data, error } = await qAsis.limit(ASIS_PAGE);
+    if (error) {
+      console.warn('Error consultando consolidado_asistencias para pagos:', error);
+      return [];
+    }
+    return data || [];
+  };
+
+  if (targetGrupos.length === 0) {
+    // Sin grupos resueltos: no hacer SELECT masivo a consolidado (causa statement timeout).
+    // Se complementará vía nóminas más abajo si hay periodo/campaña.
+    console.warn('Pagos: sin grupos objetivo; se omite scan de consolidado_asistencias.');
+  } else {
+    const limited = targetGrupos.slice(0, MAX_GRUPO_CHUNKS * 40);
+    for (let i = 0; i < limited.length; i += 40) {
+      const chunk = limited.slice(i, i + 40);
+      pushAsis(await runAsisQuery(chunk));
+      if (asisRows.length >= ASIS_PAGE * 2) break;
+    }
+  }
+
+  // Cliente: campaña del segmento + par código|campaña (evita cruce entre segmentos)
+  const asisRowsFiltradas = asisRows.filter((r) => {
+    const camp = String(r.campana || '').trim().toUpperCase();
+    const g = String(r.codigo_grupo || r.grupo || '').trim().toUpperCase();
+    if (!campanaOk(camp)) return false;
+    if (!pairOk(g, camp)) return false;
+    return true;
+  });
 
   // Mapa de personas únicas de formación
   const personasMap = new Map();
-  (asisRows || []).forEach(r => {
+  asisRowsFiltradas.forEach(r => {
     const doc = String(r.documento || '').trim();
     if (!doc) return;
     if (!personasMap.has(doc)) {
@@ -9429,11 +9604,11 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
         apellido_paterno: r.apellido_paterno || '',
         apellido_materno: r.apellido_materno || '',
         nombres: r.nombres || '',
-        campana: r.campana || (campana !== 'TODAS' ? campana : ''),
-        segmento: segmento !== 'TODOS' ? segmento : '',
-        grupo_codigo: r.codigo_grupo || r.grupo || (grupo_codigo !== 'TODOS' ? grupo_codigo : ''),
+        campana: r.campana || (campanasEfectivas.length === 1 ? campanasEfectivas[0] : ''),
+        segmento: segmentos.length === 1 ? segmentos[0] : '',
+        grupo_codigo: r.codigo_grupo || r.grupo || (gruposFiltro.length === 1 ? gruposFiltro[0] : ''),
         semana_trabajo: semana !== 'TODAS' ? semana : '',
-        periodo_reclutado: periodo !== 'TODOS' ? periodo : '',
+        periodo_reclutado: periodos.length === 1 ? periodos[0] : '',
         status_final: 'ASISTENCIA REGISTRADA',
         reclutador: '',
         fecha_inicio_capacitacion: null,
@@ -9497,40 +9672,26 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
   // 4. Si hay asesores en nóminas para los grupos objetivo que no estaban en asistencia
   // (por ejemplo: asistieron solo a Día 0 / inducción o son agregados recientes), sumarlos también
   try {
-    let nomTargetQ = supabase
-      .from('nominas')
-      .select('documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final, reclutador, dia_0, dia_0_obs, evaluacion_dia_0, dia_1, dia_1_obs, status_dia_1, condicion');
-
-    if (targetGrupos.length === 1) {
-      nomTargetQ = nomTargetQ.eq('grupo_codigo', targetGrupos[0]);
-    } else if (targetGrupos.length > 1) {
-      const list = targetGrupos.slice(0, 50).map(g => `"${g}"`).join(',');
-      nomTargetQ = nomTargetQ.or(`grupo_codigo.in.(${list})`);
-    } else if (grupo_codigo && grupo_codigo !== 'TODOS') {
-      nomTargetQ = nomTargetQ.eq('grupo_codigo', grupo_codigo);
-    }
-
-    if (campana && campana !== 'TODAS') {
-      nomTargetQ = nomTargetQ.eq('campana', campana);
-    }
-    if (periodo && periodo !== 'TODOS') {
-      nomTargetQ = nomTargetQ.eq('periodo_reclutado', periodo);
-    }
-
-    const { data: extraNoms } = await nomTargetQ.limit(2000);
-    (extraNoms || []).forEach(n => {
-      const doc = String(n.documento || '').trim();
-      if (doc && !personasMap.has(doc)) {
+    const ingestExtraNoms = (extraNoms) => {
+      (extraNoms || []).forEach(n => {
+        const doc = String(n.documento || '').trim();
+        if (!doc || personasMap.has(doc)) return;
+        const camp = String(n.campana || '').trim().toUpperCase();
+        const g = String(n.grupo_codigo || '').trim().toUpperCase();
+        if (!campanaOk(camp)) return;
+        if (!pairOk(g, camp)) return;
+        const perNom = normalizePeriodoPagos(n.periodo_reclutado || n.periodo);
+        if (hasPeriodoFilter && perNom && !periodos.includes(perNom)) return;
         personasMap.set(doc, {
           documento: doc,
           apellido_paterno: n.apellido_paterno || '',
           apellido_materno: n.apellido_materno || '',
           nombres: n.nombres || '',
-          campana: n.campana || (campana !== 'TODAS' ? campana : ''),
-          segmento: n.segmento || (segmento !== 'TODOS' ? segmento : ''),
-          grupo_codigo: n.grupo_codigo || (grupo_codigo !== 'TODOS' ? grupo_codigo : ''),
+          campana: n.campana || (campanasEfectivas.length === 1 ? campanasEfectivas[0] : ''),
+          segmento: segmentos.length === 1 ? segmentos[0] : (n.segmento || ''),
+          grupo_codigo: n.grupo_codigo || (gruposFiltro.length === 1 ? gruposFiltro[0] : ''),
           semana_trabajo: n.semana_trabajo || (semana !== 'TODAS' ? semana : ''),
-          periodo_reclutado: n.periodo_reclutado || (periodo !== 'TODOS' ? periodo : ''),
+          periodo_reclutado: n.periodo_reclutado || (periodos.length === 1 ? periodos[0] : ''),
           status_final: n.status_final || 'NOMINA REGISTRADA',
           reclutador: n.reclutador || '',
           fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || null,
@@ -9546,23 +9707,60 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
           condicion: n.condicion || '',
           tipo_reclutado: n.condicion || '',
         });
+      });
+    };
+
+    const nomSelect = 'documento, apellido_paterno, apellido_materno, nombres, campana, segmento, grupo_codigo, semana_trabajo, periodo_reclutado, fecha_inicio_capacitacion, fecha_fin_capacitacion, fecha_conexion_ojt, fecha_conexion_op, status_final, reclutador, dia_0, dia_0_obs, evaluacion_dia_0, dia_1, dia_1_obs, status_dia_1, condicion';
+
+    const applyPeriodoToNomQ = (q) => {
+      if (periodos.length === 1) return q.eq('periodo_reclutado', periodos[0]);
+      if (periodos.length > 1) return q.in('periodo_reclutado', periodos);
+      return q;
+    };
+
+    const applyCampanaToNomQ = (q) => {
+      if (campanasEfectivas.length === 1) return q.eq('campana', campanasEfectivas[0]);
+      if (campanasEfectivas.length > 1 && campanasEfectivas.length <= 80) {
+        return q.in('campana', campanasEfectivas);
       }
-    });
+      return q;
+    };
+
+    if (targetGrupos.length === 0 && gruposFiltro.length > 0) {
+      // Grupos explícitos sin match: no ampliar
+    } else if (targetGrupos.length === 0 && segmentos.length && !hasPeriodoFilter && !campanas.length) {
+      // Segmento solo sin grupos resueltos: no ampliar nómina global
+    } else if (targetGrupos.length === 0) {
+      let nomTargetQ = applyCampanaToNomQ(applyPeriodoToNomQ(supabase.from('nominas').select(nomSelect)));
+      const { data: extraNoms } = await nomTargetQ.limit(3000);
+      ingestExtraNoms(extraNoms);
+    } else {
+      for (let i = 0; i < targetGrupos.length; i += 40) {
+        const chunk = targetGrupos.slice(i, i + 40);
+        let nomTargetQ = supabase.from('nominas').select(nomSelect);
+        if (chunk.length === 1) nomTargetQ = nomTargetQ.eq('grupo_codigo', chunk[0]);
+        else nomTargetQ = nomTargetQ.in('grupo_codigo', chunk);
+        nomTargetQ = applyCampanaToNomQ(applyPeriodoToNomQ(nomTargetQ));
+        const { data: extraNoms } = await nomTargetQ.limit(2000);
+        ingestExtraNoms(extraNoms);
+      }
+    }
   } catch (errNomTarget) {
     console.warn("Aviso al consultar nóminas complementarias:", errNomTarget);
   }
 
-  // Filtrado final estricto de coherencia
+  // Filtrado final estricto: campaña del segmento + par código|campaña de capacidad
   const personasResultado = Array.from(personasMap.values()).filter(p => {
-    if (campana && campana !== 'TODAS') {
-      const c = String(p.campana || '').trim().toUpperCase();
-      const cTarget = String(campana).trim().toUpperCase();
-      if (c && c !== cTarget) return false;
+    const c = String(p.campana || '').trim().toUpperCase();
+    const g = String(p.grupo_codigo || '').trim().toUpperCase();
+    if (!campanaOk(c)) return false;
+    if (!pairOk(g, c)) return false;
+    if (gruposFiltro.length) {
+      if (g && !gruposFiltro.includes(g)) return false;
     }
-    if (grupo_codigo && grupo_codigo !== 'TODOS') {
-      const g = String(p.grupo_codigo || '').trim().toUpperCase();
-      const gTarget = String(grupo_codigo).trim().toUpperCase();
-      if (g && g !== gTarget) return false;
+    if (hasPeriodoFilter) {
+      const per = normalizePeriodoPagos(p.periodo_reclutado || p.periodo);
+      if (per && !periodos.includes(per)) return false;
     }
     return true;
   });
@@ -9572,6 +9770,7 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
 
 export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null) {
   if (!documentos.length) return [];
+  const gruposFiltro = normalizePagosFilterList(grupoCodigo);
   if (DB_MODE === 'supabase') {
     let allRows = [];
     for (let i = 0; i < documentos.length; i += 100) {
@@ -9583,8 +9782,11 @@ export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null)
         .neq('sigla', 'DESC')
         .neq('estado', 'DESCUENTO');
 
-      if (grupoCodigo && grupoCodigo !== 'TODOS') {
-        q = q.or(`codigo_grupo.eq.${grupoCodigo},grupo.eq.${grupoCodigo}`);
+      if (gruposFiltro.length === 1) {
+        q = q.or(`codigo_grupo.eq.${gruposFiltro[0]},grupo.eq.${gruposFiltro[0]}`);
+      } else if (gruposFiltro.length > 1) {
+        const list = gruposFiltro.slice(0, 50).map(g => `"${g}"`).join(',');
+        q = q.or(`codigo_grupo.in.(${list}),grupo.in.(${list})`);
       }
 
       const { data, error } = await q.order('created_at', { ascending: true });
@@ -9618,10 +9820,13 @@ export async function fetchGruposPagosDisponibles() {
       if (data && data.length) {
         return data.map(row => {
           const semNum = row.semana_trabajo || (parseInt(String(row.semana_label || '').replace(/\D/g, '')) || null);
+          const campana = String(row.campana || '').trim().toUpperCase();
+          // Segmento exacto de capacidad_rys
+          const segmento = String(row.segmento || '').trim().toUpperCase();
           return {
             grupo_codigo: row.codigo,
-            campana: row.campana,
-            segmento: row.segmento,
+            campana,
+            segmento,
             semana_label: row.semana_label,
             semana_trabajo: semNum,
             periodo_reclutado: row.periodo,
@@ -9730,7 +9935,8 @@ export async function saveLiquidacionPagos(filas = [], meta = {}) {
  */
 export async function fetchLiquidacionesHistoricas() {
   if (DB_MODE === 'supabase') {
-    const { data, error } = await withCache('liquidaciones_historicas_all', 30000, async () => {
+    // withCache ya devuelve el payload (array), no { data, error }
+    const rows = await withCache('liquidaciones_historicas_all', 30000, async () => {
       const { data, error } = await supabase
         .from('liquidaciones_pagos_capacitacion')
         .select('*')
@@ -9741,8 +9947,7 @@ export async function fetchLiquidacionesHistoricas() {
       }
       return data || [];
     });
-    if (error) throw error;
-    return data || [];
+    return Array.isArray(rows) ? rows : [];
   } else {
     initLocalStorageDb();
     return getFromStorage('liquidaciones_pagos_capacitacion') || [];
@@ -9755,7 +9960,8 @@ export async function fetchLiquidacionesHistoricas() {
  */
 export async function fetchLiquidacionesLotes() {
   if (DB_MODE === 'supabase') {
-    const { data, error } = await withCache('liquidaciones_lotes', 60000, async () => {
+    // withCache ya devuelve el array de filas
+    const data = await withCache('liquidaciones_lotes', 60000, async () => {
       const { data, error } = await supabase
         .from('liquidaciones_pagos_capacitacion')
         .select('lote_id, periodo, mes_pago, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, cerrado_at, notas_lote, documento, total_general')
@@ -9763,11 +9969,11 @@ export async function fetchLiquidacionesLotes() {
       if (error) throw error;
       return data || [];
     });
-    if (error) throw error;
+    const rows = Array.isArray(data) ? data : [];
 
     // Agrupar por lote_id en el cliente
     const lotesMap = new Map();
-    for (const row of (data || [])) {
+    for (const row of rows) {
       if (!lotesMap.has(row.lote_id)) {
         lotesMap.set(row.lote_id, {
           lote_id: row.lote_id,

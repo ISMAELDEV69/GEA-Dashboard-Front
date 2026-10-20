@@ -148,10 +148,15 @@ export default function Login({ theme, setTheme }) {
       await launch(doLogin)
     } catch (err) {
       console.error('Login error:', err)
+      const msg = String(err?.message || '')
+      const isNetwork = /failed to fetch|networkerror|load failed|fetch failed|timeout|525|503|502/i.test(msg)
+        || err?.name === 'TypeError'
       setAuthError(
         err?.message === 'Invalid login credentials'
           ? 'Correo o contraseña incorrectos. Verifica tus datos.'
-          : err?.message || 'Error inesperado al iniciar sesión.'
+          : isNetwork
+            ? 'No se pudo conectar con el servidor (posible saturación o caída temporal). Espera 1–2 minutos e intenta de nuevo. Si persiste, contacta a soporte.'
+            : (msg || 'Error inesperado al iniciar sesión.')
       )
     }
   }
