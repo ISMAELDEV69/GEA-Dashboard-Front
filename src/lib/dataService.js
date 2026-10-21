@@ -3681,8 +3681,23 @@ export async function autocompletarDiasFaltantesGrupo({
     const [year, month, day] = dateIso.split('-');
     const spreadsheetDate = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
 
-    // Construir el payload respetando el estado de cada postulante
-    const payloads = baseAttendanceList.map(item => {
+    // Construir el payload respetando el estado de cada postulante, excluyendo Bajas Día 1 a futuro
+    const payloads = baseAttendanceList
+      .filter(item => {
+        const doc = String(item.documento || '').trim();
+        const pastBaja = allAsistencias.find(a => {
+          const aDoc = String(a.postulante_documento || a.documento || '').trim();
+          const aGroup = String(a.grupo_codigo || a.codigo_grupo || a.grupo || '').trim();
+          if (aDoc !== doc) return false;
+          if (aGroup && aGroup !== targetGroup) return false;
+          return a.sigla_asistencia === 'B' || a.sigla === 'B';
+        });
+        const motivo = pastBaja?.motivo_baja || item.pastMotive || item.motivo_baja || '';
+        // Regla Oficial: Las Bajas Día 1 de Reclutamiento no viajan a días futuros de Formación
+        if (isBajaDia1Motivo(motivo)) return false;
+        return true;
+      })
+      .map(item => {
       // Buscar si este postulante ya tenía una baja previa registrada ANTES de esta fecha
       const doc = String(item.documento || '').trim();
       const pastBaja = allAsistencias.find(a => {

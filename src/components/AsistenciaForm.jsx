@@ -1059,6 +1059,16 @@ export default function AsistenciaForm({
       }
     }
 
+    // 1. Fechas históricas y determinación de la fecha oficial de Día 1
+    const groupDates = Array.from(new Set(groupRecordsAll.map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia).filter(Boolean))).sort()
+    const rawGroupStart = activeGrupoObj?.fecha_registro || activeGrupoObj?.fecha_inicio_capacitacion || ''
+    const groupStartDate = parseFechaAsistencia(rawGroupStart) || rawGroupStart || ''
+    let firstDateOfGroup = groupDates.length > 0 ? groupDates[0] : groupStartDate
+    if (groupStartDate && (!firstDateOfGroup || groupStartDate < firstDateOfGroup)) {
+      firstDateOfGroup = groupStartDate
+    }
+    const isDay2OrLater = Boolean(firstDateOfGroup && fecha > firstDateOfGroup)
+
     // Ensure all historical attendees from asistencias are present in candidate pool
     const candidateDocs = new Set();
     const mergedCandidates = [];
@@ -1072,10 +1082,33 @@ export default function AsistenciaForm({
       }
     }
 
+    // Identificar postulantes que fueron BAJA DIA 1 en Día 1 sin asistencia confirmada en formación
+    const bajaDia1CandidateDocs = new Set();
+    for (const a of groupRecordsAll) {
+      const doc = String(a.postulante_documento || a.documento || '').trim();
+      const s = String(a.sigla_asistencia || a.sigla || '').trim().toUpperCase();
+      const m = String(a.motivo_baja || '').trim();
+      if (s === 'B' && isBajaDia1Motivo(m) && !activeAttendeeDocs.has(doc)) {
+        bajaDia1CandidateDocs.add(doc);
+      }
+    }
+    for (const p of effectivePostulantes) {
+      const doc = String(p.documento || '').trim();
+      const dia1Val = String(p.dia_1 || '').toUpperCase().trim();
+      const stVal = String(p.status_dia_1 || '').toUpperCase().trim();
+      if (!activeAttendeeDocs.has(doc) && (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO') && (stVal.includes('CESE') || isBajaDia1Motivo(p.motivo_baja))) {
+        bajaDia1CandidateDocs.add(doc);
+      }
+    }
+
     for (const p of effectivePostulantes) {
       const doc = String(p.documento || '').trim();
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (p.campana && normalize(p.campana) !== normalize(targetCampana)) continue;
+      }
+      // Regla de Negocio: A partir de Día 2, las Bajas Día 1 no existen en Formación
+      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
+        continue;
       }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
@@ -1094,6 +1127,10 @@ export default function AsistenciaForm({
       const doc = String(a.postulante_documento || '').trim();
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (a.campana && normalize(a.campana) !== normalize(targetCampana)) continue;
+      }
+      // Regla de Negocio: A partir de Día 2, las Bajas Día 1 no existen en Formación
+      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
+        continue;
       }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
@@ -1131,6 +1168,10 @@ export default function AsistenciaForm({
     const filteredPostulantes = mergedCandidates.filter(p => {
       if (!p.documento) return false
       const doc = String(p.documento || '').trim();
+      // En Día 2+, excluir bajas de Día 1 de RyS
+      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
+        return false;
+      }
       const hasHistoryInGroup = mappedDocs.has(p.documento);
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
 
@@ -1209,16 +1250,6 @@ export default function AsistenciaForm({
     
     setMissingDataCandidates([])
 
-    let firstDateOfGroup = null
-    if (groupRecordsAll.length > 0) {
-      firstDateOfGroup = parseFechaAsistencia(groupRecordsAll[0].fecha_asistencia || groupRecordsAll[0].fecha_registro_asistencia || groupRecordsAll[0].fecha) || groupRecordsAll[0].fecha_asistencia
-      for (let i = 1; i < groupRecordsAll.length; i++) {
-        const itemFecha = parseFechaAsistencia(groupRecordsAll[i].fecha_asistencia || groupRecordsAll[i].fecha_registro_asistencia || groupRecordsAll[i].fecha) || groupRecordsAll[i].fecha_asistencia
-        if (itemFecha && (!firstDateOfGroup || itemFecha < firstDateOfGroup)) {
-          firstDateOfGroup = itemFecha
-        }
-      }
-    }
     const isFirstRecordGroup = groupRecordsAll.length === 0 || (firstDateOfGroup && fecha <= firstDateOfGroup)
 
     const uniquePostulantes = []
@@ -1242,7 +1273,6 @@ export default function AsistenciaForm({
       (f.nombre_completo || f.datos_completos || f.nombres_completos || '').trim()
     ]))
 
-    const groupDates = Array.from(new Set(groupRecordsAll.map(a => parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia).filter(Boolean))).sort()
     const allDates = Array.from(new Set([...groupDates, fecha])).sort()
     const trainingDayIndex = allDates.indexOf(fecha) + 1
 
@@ -2009,8 +2039,9 @@ export default function AsistenciaForm({
     const bajasC3 = displayedList.filter(item =>
       item.sigla === 'B' && !isBajaDia1Item(item) && (Number(item.corte) === 3 || item.hadAttendanceInEarlierCuts)
     ).length
-    const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
-    const pctAsistencia = total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0'
+    // Denominador oficial de asistencia: nunca se divide entre las bajas de Día 1 de Reclutamiento
+    const baseTotal = Math.max(0, total - bajasDia1)
+    const pctAsistencia = baseTotal > 0 ? ((asistieron / baseTotal) * 100).toFixed(1) : (total > 0 ? ((asistieron / total) * 100).toFixed(1) : '0.0')
 
     return {
       total,

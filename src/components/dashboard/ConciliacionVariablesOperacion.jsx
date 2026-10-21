@@ -4,7 +4,7 @@ import {
   DollarSign, CheckCircle2, UserX, AlertTriangle, Search, Filter,
   Download, RefreshCw, FileSpreadsheet, Eye, Edit3, X, Check,
   Clock, ArrowRight, ShieldAlert, Sparkles, Building2, UploadCloud,
-  FileText, CheckSquare, AlertCircle
+  FileText, CheckSquare, AlertCircle, UserCheck, BarChart3, Layers, Award
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import {
@@ -26,10 +26,14 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
   const [periodos, setPeriodos] = useState(['202610'])
   const [periodoSel, setPeriodoSel] = useState('202610')
 
+  // Sub-vistas ejecutivas: 'matriz' | 'responsables' | 'flujo_reduccion'
+  const [subVista, setSubVista] = useState('matriz')
+
   // Filtros
   const [filtroTipoBono, setFiltroTipoBono] = useState('TODOS')
   const [filtroEstado, setFiltroEstado] = useState('TODOS')
   const [filtroCampana, setFiltroCampana] = useState('TODOS')
+  const [filtroResponsable, setFiltroResponsable] = useState('TODOS')
   const [busqueda, setBusqueda] = useState('')
 
   // Paginación
@@ -100,6 +104,18 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
     return Array.from(set).sort()
   }, [data])
 
+  // Listado único de responsables que autorizaron para filtro
+  const responsablesDisponibles = useMemo(() => {
+    const set = new Set()
+    data.forEach(r => {
+      const resp = (r.validado_por || '').trim().toUpperCase()
+      if (resp && !['WFM_ADMIN', 'WFM_ANALISTA', 'WFM_OPERACIONES'].includes(resp)) {
+        set.add(resp)
+      }
+    })
+    return Array.from(set).sort()
+  }, [data])
+
   // Cálculos ejecutivos (VS Operación)
   const kpis = useMemo(() => {
     let enviadoTotal = 0
@@ -154,6 +170,109 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
     }
   }, [data])
 
+  // Métricas agregadas por responsable / supervisor que autorizó
+  const metricasPorResponsable = useMemo(() => {
+    const map = {}
+    data.forEach(r => {
+      let resp = (r.validado_por || '').trim().toUpperCase()
+      if (!resp || ['WFM_ADMIN', 'WFM_ANALISTA', 'WFM_OPERACIONES'].includes(resp)) {
+        resp = 'SIN ASIGNAR'
+      }
+
+      const apr = Number(r.monto_aprobado || 0)
+      const env = Number(r.monto_enviado || 0)
+      const st = r.estado_validacion || 'PENDIENTE'
+      const tipo = r.tipo_bono || 'OTRO'
+
+      if (!map[resp]) {
+        map[resp] = {
+          responsable: resp,
+          bienvenida_casos: 0,
+          bienvenida_monto: 0,
+          permanencia_casos: 0,
+          permanencia_monto: 0,
+          asistencia_casos: 0,
+          asistencia_monto: 0,
+          total_casos_aprobados: 0,
+          total_monto_aprobado: 0,
+          total_cesados: 0,
+          total_monto_enviado: 0,
+          ahorro_generado: 0
+        }
+      }
+
+      map[resp].total_monto_enviado += env
+
+      if (st === 'CESADO') {
+        map[resp].total_cesados++
+        map[resp].ahorro_generado += env
+      } else {
+        map[resp].total_casos_aprobados++
+        map[resp].total_monto_aprobado += apr
+
+        if (tipo === 'BIENVENIDA') {
+          map[resp].bienvenida_casos++
+          map[resp].bienvenida_monto += apr
+        } else if (tipo === 'PERMANENCIA') {
+          map[resp].permanencia_casos++
+          map[resp].permanencia_monto += apr
+        } else if (tipo.includes('ASISTENCIA')) {
+          map[resp].asistencia_casos++
+          map[resp].asistencia_monto += apr
+        }
+      }
+    })
+
+    return Object.values(map).sort((a, b) => b.total_monto_aprobado - a.total_monto_aprobado)
+  }, [data])
+
+  // Datos para la tabla del Flujo de Reducción (Proyección vs Real vs Reducción)
+  const flujoReduccion = useMemo(() => {
+    const proyBienvenida = 43480
+    const proyPermanencia = 88410
+    const proyAsistencia = 78225
+    const proyTotal = proyBienvenida + proyPermanencia + proyAsistencia
+
+    const realBienvenida = kpis.desglose.BIENVENIDA.aprobado
+    const realPermanencia = kpis.desglose.PERMANENCIA.aprobado
+    const realAsistencia = kpis.desglose.ASISTENCIA_PERFECTA.aprobado
+    const realTotal = kpis.aprobadoTotal
+
+    const redBienvenidaPct = proyBienvenida > 0 ? (((proyBienvenida - realBienvenida) / proyBienvenida) * 100).toFixed(1) : '0.0'
+    const redPermanenciaPct = proyPermanencia > 0 ? (((proyPermanencia - realPermanencia) / proyPermanencia) * 100).toFixed(1) : '0.0'
+    const redAsistenciaPct = proyAsistencia > 0 ? (((proyAsistencia - realAsistencia) / proyAsistencia) * 100).toFixed(1) : '0.0'
+    const redTotalPct = proyTotal > 0 ? (((proyTotal - realTotal) / proyTotal) * 100).toFixed(1) : '0.0'
+
+    // Porcentaje de Ejecución / Pagado
+    const ejecBienvenidaPct = proyBienvenida > 0 ? ((realBienvenida / proyBienvenida) * 100).toFixed(1) : '0.0'
+    const ejecPermanenciaPct = proyPermanencia > 0 ? ((realPermanencia / proyPermanencia) * 100).toFixed(1) : '0.0'
+    const ejecAsistenciaPct = proyAsistencia > 0 ? ((realAsistencia / proyAsistencia) * 100).toFixed(1) : '0.0'
+    const ejecTotalPct = proyTotal > 0 ? ((realTotal / proyTotal) * 100).toFixed(1) : '0.0'
+
+    return {
+      proyBienvenida,
+      proyPermanencia,
+      proyAsistencia,
+      proyTotal,
+      realBienvenida,
+      realPermanencia,
+      realAsistencia,
+      realTotal,
+      redBienvenidaPct,
+      redPermanenciaPct,
+      redAsistenciaPct,
+      redTotalPct,
+      ejecBienvenidaPct,
+      ejecPermanenciaPct,
+      ejecAsistenciaPct,
+      ejecTotalPct,
+      ahorroBienvenida: proyBienvenida - realBienvenida,
+      ahorroPermanencia: proyPermanencia - realPermanencia,
+      ahorroAsistencia: proyAsistencia - realAsistencia,
+      ahorroTotal: proyTotal - realTotal
+    }
+  }, [kpis])
+
   // Filtro de filas
   const filasFiltradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase()
@@ -161,17 +280,19 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
       if (filtroTipoBono !== 'TODOS' && r.tipo_bono !== filtroTipoBono) return false
       if (filtroEstado !== 'TODOS' && r.estado_validacion !== filtroEstado) return false
       if (filtroCampana !== 'TODOS' && (r.campana || '').toUpperCase() !== filtroCampana) return false
+      if (filtroResponsable !== 'TODOS' && (r.validado_por || '').toUpperCase() !== filtroResponsable) return false
 
       if (q) {
         const doc = String(r.documento || '').toLowerCase()
         const nom = String(r.apellidos_nombres || '').toLowerCase()
         const camp = String(r.campana || '').toLowerCase()
-        if (!doc.includes(q) && !nom.includes(q) && !camp.includes(q)) return false
+        const resp = String(r.validado_por || '').toLowerCase()
+        if (!doc.includes(q) && !nom.includes(q) && !camp.includes(q) && !resp.includes(q)) return false
       }
 
       return true
     })
-  }, [data, filtroTipoBono, filtroEstado, filtroCampana, busqueda])
+  }, [data, filtroTipoBono, filtroEstado, filtroCampana, filtroResponsable, busqueda])
 
   // Paginación
   const totalPaginas = Math.ceil(filasFiltradas.length / itemsPorPagina) || 1
@@ -939,6 +1060,261 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
         </div>
       </div>
 
+      {/* ── SELECTOR DE SUB-VISTAS EJECUTIVAS ── */}
+      <div className="flex items-center gap-2 border-b border-[var(--border-normal)] pb-2 pt-1 overflow-x-auto">
+        <button
+          onClick={() => setSubVista('matriz')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            subVista === 'matriz'
+              ? 'bg-[var(--accent)] text-white shadow-md shadow-[var(--accent)]/20'
+              : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-white border border-[var(--border-normal)]'
+          }`}
+        >
+          <Layers size={15} />
+          Matriz Detallada ({filasFiltradas.length})
+        </button>
+
+        <button
+          onClick={() => setSubVista('responsables')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            subVista === 'responsables'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
+              : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-white border border-[var(--border-normal)]'
+          }`}
+        >
+          <Users size={15} />
+          Distribución por Responsable ({metricasPorResponsable.length})
+        </button>
+
+        <button
+          onClick={() => setSubVista('flujo_reduccion')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            subVista === 'flujo_reduccion'
+              ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
+              : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-white border border-[var(--border-normal)]'
+          }`}
+        >
+          <TrendingDown size={15} />
+          Flujo de Reducción Gerencial (Proyección vs Real)
+        </button>
+      </div>
+
+      {/* ── VISTA: FLUJO DE REDUCCIÓN GERENCIAL (PROYECCIÓN VS REAL) ── */}
+      {subVista === 'flujo_reduccion' && (
+        <div className="bg-[var(--bg-surface)] p-6 rounded-2xl border border-[var(--border-normal)] space-y-4 shadow-sm animate-in fade-in duration-200">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[var(--border-normal)] pb-4">
+            <div>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider">
+                Auditoría Presupuestal
+              </span>
+              <h3 className="text-lg font-bold text-[var(--text-primary)] mt-1 flex items-center gap-2">
+                <TrendingDown className="text-amber-400" size={20} />
+                Flujo y Matriz de Reducción Gerencial
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Comparativo de lo inicialmente proyectado para desembolso frente al monto real validado tras descartar ceses e inasistencias.
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-[var(--text-muted)] block">Ahorro Gerencial Consolidado</span>
+              <span className="text-2xl font-black text-emerald-400">{soles(flujoReduccion.ahorroTotal)}</span>
+              <span className="text-[11px] font-bold text-amber-400 block">(-{flujoReduccion.redTotalPct}% de reducción)</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left border-collapse border border-slate-700/60 rounded-xl overflow-hidden">
+              <thead>
+                <tr className="bg-slate-900/90 text-white font-bold uppercase tracking-wider text-xs border-b border-slate-700">
+                  <th className="px-4 py-3.5 border-r border-slate-700/60 text-slate-300">ESTADO</th>
+                  <th className="px-4 py-3.5 border-r border-slate-700/60 text-right text-amber-400">BONO DE BIENVENIDA</th>
+                  <th className="px-4 py-3.5 border-r border-slate-700/60 text-right text-purple-400">BONO DE PERMANENCIA</th>
+                  <th className="px-4 py-3.5 border-r border-slate-700/60 text-right text-cyan-400">BONO DE ASISTENCIA</th>
+                  <th className="px-4 py-3.5 text-right text-emerald-400 bg-slate-950/60">TOTAL CONSOLIDADO</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 font-mono text-xs">
+                {/* Fila Proyección */}
+                <tr className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-4 py-3.5 font-sans font-bold text-slate-200 border-r border-slate-700/60 uppercase">
+                    PROYECCIÓN
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-slate-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.proyBienvenida)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-slate-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.proyPermanencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-slate-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.proyAsistencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-white bg-slate-950/40">
+                    {soles(flujoReduccion.proyTotal)}
+                  </td>
+                </tr>
+
+                {/* Fila Real */}
+                <tr className="hover:bg-slate-800/30 transition-colors bg-emerald-950/10">
+                  <td className="px-4 py-3.5 font-sans font-bold text-emerald-400 border-r border-slate-700/60 uppercase flex items-center gap-1.5">
+                    <CheckCircle2 size={14} />
+                    REAL (VALIDADO)
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-emerald-400 border-r border-slate-700/60">
+                    {soles(flujoReduccion.realBienvenida)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-emerald-400 border-r border-slate-700/60">
+                    {soles(flujoReduccion.realPermanencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-bold text-emerald-400 border-r border-slate-700/60">
+                    {soles(flujoReduccion.realAsistencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-emerald-300 bg-slate-950/40">
+                    {soles(flujoReduccion.realTotal)}
+                  </td>
+                </tr>
+
+                {/* Fila Reducción */}
+                <tr className="hover:bg-slate-800/30 transition-colors bg-amber-950/15">
+                  <td className="px-4 py-3.5 font-sans font-bold text-amber-400 border-r border-slate-700/60 uppercase flex items-center gap-1.5">
+                    <TrendingDown size={14} />
+                    REDUCCIÓN (%)
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-amber-400 border-r border-slate-700/60">
+                    {flujoReduccion.redBienvenidaPct}% <span className="text-[10px] text-slate-400 font-sans block">({flujoReduccion.ejecBienvenidaPct}% ejec.)</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-amber-400 border-r border-slate-700/60">
+                    {flujoReduccion.redPermanenciaPct}% <span className="text-[10px] text-slate-400 font-sans block">({flujoReduccion.ejecPermanenciaPct}% ejec.)</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-amber-400 border-r border-slate-700/60">
+                    {flujoReduccion.redAsistenciaPct}% <span className="text-[10px] text-slate-400 font-sans block">({flujoReduccion.ejecAsistenciaPct}% ejec.)</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-amber-300 bg-slate-950/40">
+                    {flujoReduccion.redTotalPct}% <span className="text-[10px] text-slate-400 font-sans block">({flujoReduccion.ejecTotalPct}% ejec.)</span>
+                  </td>
+                </tr>
+
+                {/* Fila Ahorro Total */}
+                <tr className="hover:bg-slate-800/30 transition-colors bg-slate-900/60 font-bold border-t-2 border-slate-700">
+                  <td className="px-4 py-3.5 font-sans font-bold text-rose-300 border-r border-slate-700/60 uppercase">
+                    AHORRO TOTAL (S/)
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-rose-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.ahorroBienvenida)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-rose-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.ahorroPermanencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right text-rose-300 border-r border-slate-700/60">
+                    {soles(flujoReduccion.ahorroAsistencia)}
+                  </td>
+                  <td className="px-4 py-3.5 text-right font-black text-emerald-400 bg-slate-950/60 text-sm">
+                    {soles(flujoReduccion.ahorroTotal)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-xl text-xs text-slate-400 flex items-center justify-between">
+            <span>ℹ️ Datos sincronizados con Supabase y conciliados tras la exclusión de cesados de permanencia confirmados.</span>
+            <button
+              onClick={() => setSubVista('matriz')}
+              className="text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1 cursor-pointer"
+            >
+              Ver casos individuales en la matriz <ArrowRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── VISTA: DISTRIBUCIÓN POR RESPONSABLE / AUTORIZADOR ── */}
+      {subVista === 'responsables' && (
+        <div className="bg-[var(--bg-surface)] p-6 rounded-2xl border border-[var(--border-normal)] space-y-4 shadow-sm animate-in fade-in duration-200">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[var(--border-normal)] pb-4">
+            <div>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-500/10 text-purple-400 border border-purple-500/20 uppercase tracking-wider">
+                Control Operativo & Autorizaciones
+              </span>
+              <h3 className="text-lg font-bold text-[var(--text-primary)] mt-1 flex items-center gap-2">
+                <Users className="text-purple-400" size={20} />
+                Distribución y Autorizaciones por Responsable
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Mapeo exacto de los supervisores y responsables que autorizaron la nómina de bonos en Operaciones.
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs text-[var(--text-muted)] block">Total Responsables</span>
+              <span className="text-xl font-black text-purple-400">{metricasPorResponsable.length} autorizadores</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse border border-[var(--border-normal)] rounded-xl overflow-hidden">
+              <thead>
+                <tr className="bg-[var(--bg-base)] text-[var(--text-muted)] font-bold uppercase tracking-wider text-[11px] border-b border-[var(--border-normal)]">
+                  <th className="px-3.5 py-3">#</th>
+                  <th className="px-3.5 py-3">Responsable (Autorizó)</th>
+                  <th className="px-3.5 py-3 text-right">Bono Bienvenida</th>
+                  <th className="px-3.5 py-3 text-right">Bono Permanencia</th>
+                  <th className="px-3.5 py-3 text-right">Asistencia Perfecta</th>
+                  <th className="px-3.5 py-3 text-center">Casos Aprobados</th>
+                  <th className="px-3.5 py-3 text-right text-emerald-400">Total Autorizado (S/)</th>
+                  <th className="px-3.5 py-3 text-center">% Part.</th>
+                  <th className="px-3.5 py-3 text-center">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-normal)] font-mono">
+                {metricasPorResponsable.map((item, idx) => {
+                  const partPct = kpis.aprobadoTotal > 0
+                    ? ((item.total_monto_aprobado / kpis.aprobadoTotal) * 100).toFixed(1)
+                    : '0.0'
+
+                  return (
+                    <tr key={item.responsable} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
+                      <td className="px-3.5 py-2.5 text-center text-slate-500">{idx + 1}</td>
+                      <td className="px-3.5 py-2.5 font-sans font-bold text-white flex items-center gap-2">
+                        <UserCheck size={14} className="text-cyan-400" />
+                        {item.responsable}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-right text-amber-300">
+                        {soles(item.bienvenida_monto)} <span className="text-[10px] text-slate-400 font-sans block">({item.bienvenida_casos} casos)</span>
+                      </td>
+                      <td className="px-3.5 py-2.5 text-right text-purple-300">
+                        {soles(item.permanencia_monto)} <span className="text-[10px] text-slate-400 font-sans block">({item.permanencia_casos} casos)</span>
+                      </td>
+                      <td className="px-3.5 py-2.5 text-right text-cyan-300">
+                        {soles(item.asistencia_monto)} <span className="text-[10px] text-slate-400 font-sans block">({item.asistencia_casos} casos)</span>
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center font-bold text-white">
+                        {item.total_casos_aprobados}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-right font-black text-emerald-400 text-sm">
+                        {soles(item.total_monto_aprobado)}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center font-bold text-slate-300">
+                        {partPct}%
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center">
+                        <button
+                          onClick={() => {
+                            setFiltroResponsable(item.responsable)
+                            setSubVista('matriz')
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 border border-cyan-500/30 transition-all cursor-pointer"
+                        >
+                          Ver Casos
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── BARRA DE BÚSQUEDA Y FILTROS ── */}
       <div className="bg-[var(--bg-surface)] p-4 rounded-2xl border border-[var(--border-normal)] flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
@@ -952,7 +1328,7 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
                 setBusqueda(e.target.value)
                 setPagina(1)
               }}
-              placeholder="Buscar por DNI, Nombre o Campaña..."
+              placeholder="Buscar por DNI, Nombre, Campaña o Responsable..."
               className="w-full pl-9 pr-3 py-1.5 bg-[var(--bg-base)] border border-[var(--border-normal)] rounded-xl text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
             />
             {busqueda && (
@@ -1021,6 +1397,26 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
               ))}
             </select>
           </div>
+
+          {/* Filtro Responsable que autorizó */}
+          <div className="flex items-center gap-1.5 bg-[var(--bg-base)] border border-[var(--border-normal)] rounded-xl px-2.5 py-1.5">
+            <span className="text-[11px] font-bold text-cyan-400 uppercase">Autorizó:</span>
+            <select
+              value={filtroResponsable}
+              onChange={(e) => {
+                setFiltroResponsable(e.target.value)
+                setPagina(1)
+              }}
+              className="bg-transparent text-xs font-semibold text-[var(--text-primary)] focus:outline-none cursor-pointer"
+            >
+              <option value="TODOS" className="bg-slate-900">TODOS LOS RESPONSABLES</option>
+              {responsablesDisponibles.map(r => (
+                <option key={r} value={r} className="bg-slate-900">
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Contador de resultados */}
@@ -1045,20 +1441,21 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
                 <th className="px-3.5 py-3 text-right text-amber-400">Ahorro (S/)</th>
                 <th className="px-3.5 py-3 text-center">Estado Validación</th>
                 <th className="px-3.5 py-3">Motivo / Obs. Operación</th>
+                <th className="px-3.5 py-3">Autorizado Por</th>
                 <th className="px-3.5 py-3 text-center">Acciones de Ajuste</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-normal)]">
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={12} className="py-12 text-center text-[var(--text-muted)]">
                     <RefreshCw className="animate-spin inline-block mr-2" size={18} />
                     Cargando base de validación...
                   </td>
                 </tr>
               ) : filasPaginadas.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-[var(--text-muted)]">
+                  <td colSpan={12} className="py-12 text-center text-[var(--text-muted)]">
                     No se encontraron registros que coincidan con los filtros seleccionados.
                   </td>
                 </tr>
@@ -1182,6 +1579,14 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
                             {r.motivo_ajuste || r.observacion_operacion || <span className="text-slate-600">—</span>}
                           </div>
                         )}
+                      </td>
+
+                      {/* Autorizado Por */}
+                      <td className="px-3.5 py-2.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                          <UserCheck size={11} className="text-cyan-400" />
+                          {r.validado_por || 'OPERACIONES'}
+                        </span>
                       </td>
 
                       {/* Acciones */}
