@@ -39,3 +39,5 @@ migrate_data.py
 scratch/
 scripts/
 *.csv
+*.xlsx
+*.xls

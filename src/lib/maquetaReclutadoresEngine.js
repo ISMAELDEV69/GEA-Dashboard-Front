@@ -242,12 +242,19 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
   // 1. Mapeo del catálogo maestro de reclutadores
   const equipoMap = new Map()
   for (const eq of equipoList || []) {
-    const full = norm(`${eq.apellido_paterno || ''} ${eq.apellido_materno || ''} ${eq.nombres_completos || ''}`)
+    const apP = eq.apellido_paterno || ''
+    const apM = eq.apellido_materno || ''
+    const nomb = eq.nombres_completos || ''
+    const full = norm(`${apP} ${apM} ${nomb}`)
+    const fullInverted = norm(`${nomb} ${apP} ${apM}`)
+    const fullSinMaterno = norm(`${apP} ${nomb}`)
+    const fullInvertedSinMaterno = norm(`${nomb} ${apP}`)
     const alias = norm(eq.alias)
     const alix = norm(eq.alix)
+    const doc = String(eq.documento || '').trim()
     const info = {
-      documento: eq.documento || '',
-      nombresCompletos: `${eq.apellido_paterno || ''} ${eq.apellido_materno || ''} ${eq.nombres_completos || ''}`.trim() || eq.alias || 'RECLUTADOR',
+      documento: doc,
+      nombresCompletos: `${apP} ${apM} ${nomb}`.trim() || eq.alias || 'RECLUTADOR',
       alias: eq.alias || '',
       cargo: eq.cargo || 'Asistente de Reclutamiento y Selección',
       cargoClave: clasificarCargoReclutador(eq.cargo),
@@ -257,9 +264,13 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       pctSodexo: Number(eq.pct_sodexo) >= 0 ? Number(eq.pct_sodexo) : 40,
     }
     if (full) equipoMap.set(full, info)
+    if (fullInverted) equipoMap.set(fullInverted, info)
+    if (fullSinMaterno) equipoMap.set(fullSinMaterno, info)
+    if (fullInvertedSinMaterno) equipoMap.set(fullInvertedSinMaterno, info)
     if (alias) equipoMap.set(alias, info)
     if (alix) equipoMap.set(alix, info)
-    if (eq.nombres_completos) equipoMap.set(norm(eq.nombres_completos), info)
+    if (doc) equipoMap.set(doc, info)
+    if (nomb) equipoMap.set(norm(nomb), info)
   }
 
   // 2. Agrupación y suma de datos operativos acumulados por Reclutador (Base)
@@ -358,11 +369,19 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     // Buscar información en catálogo maestro
     let master = equipoMap.get(key)
     if (!master) {
-      // Búsqueda difusa por partes de nombre
+      // Búsqueda difusa por partes de nombre o intersección de tokens
+      const keyWords = key.split(' ').filter(w => w.length > 2)
       for (const [k, v] of equipoMap.entries()) {
         if (k.length > 5 && (key.includes(k) || k.includes(key))) {
           master = v
           break
+        }
+        if (keyWords.length >= 2) {
+          const matchCount = keyWords.filter(w => k.includes(w)).length
+          if (matchCount >= Math.min(2, keyWords.length)) {
+            master = v
+            break
+          }
         }
       }
     }
@@ -381,8 +400,8 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     let pctDia1Operativo = op.dia1Meta > 0 ? round2((op.dia1 / op.dia1Meta) * 100) : 0
     let pctDotacionOperativo = op.rq > 0 ? round2((op.dotacion / op.rq) * 100) : 0
 
-    // Si es posición de liderazgo en modelo diferenciado, se evalúa sobre la media del equipo
-    const evaluadoSobreEquipo = !isSheetsOficial && esLider
+    // Si es posición de liderazgo (Coordinador, Jefe, Supervisor), se evalúa sobre la media/suma consolidada del equipo
+    const evaluadoSobreEquipo = esLider || (cargoClave === 'COORDINADOR' || cargoClave === 'SUPERVISOR')
     const pctDia1ParaMaqueta = evaluadoSobreEquipo ? mediaEquipoPctDia1 : pctDia1Operativo
     const pctDotacionParaMaqueta = evaluadoSobreEquipo ? mediaEquipoPctDotacion : pctDotacionOperativo
 
@@ -452,13 +471,13 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       campanas: Array.from(op.campanas).join(', '),
       gruposCount: op.gruposCount,
       
-      // Métricas Operativas Individuales
-      dia1Real: op.dia1,
-      dia1Meta: op.dia1Meta,
-      pctDia1Operativo,
-      dotacionReal: op.dotacion,
-      rqReal: op.rq,
-      pctDotacionOperativo,
+      // Métricas Operativas Individuales (para líderes se refleja la suma y media global del equipo)
+      dia1Real: evaluadoSobreEquipo ? sumaEquipoDia1 : op.dia1,
+      dia1Meta: evaluadoSobreEquipo ? sumaEquipoDia1Meta : op.dia1Meta,
+      pctDia1Operativo: evaluadoSobreEquipo ? mediaEquipoPctDia1 : pctDia1Operativo,
+      dotacionReal: evaluadoSobreEquipo ? sumaEquipoDotacion : op.dotacion,
+      rqReal: evaluadoSobreEquipo ? sumaEquipoRq : op.rq,
+      pctDotacionOperativo: evaluadoSobreEquipo ? mediaEquipoPctDotacion : pctDotacionOperativo,
       nominaReal: op.nomina,
       aptosReal: op.aptos,
       evaluadosReal: op.evaluados,

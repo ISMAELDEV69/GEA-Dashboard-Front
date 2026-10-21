@@ -10683,4 +10683,295 @@ export async function fetchLiquidacionesPeriodo(periodo) {
   }
 }
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SERVICIOS DE CONCILIACIÓN Y VALIDACIÓN DE VARIABLES CON OPERACIÓN / RRHH
+ * Tabla: public.variables_validacion_operacion
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+export async function fetchVariablesValidacion(periodo = '202610') {
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      let query = supabase
+        .from('variables_validacion_operacion')
+        .select('*')
+        .range(0, 9999)
+
+      if (periodo && periodo !== 'ALL') {
+        query = query.eq('periodo', String(periodo).trim())
+      }
+
+      query = query.order('tipo_bono', { ascending: true }).order('item_num', { ascending: true })
+
+      const { data, error } = await query
+      if (error) throw error
+      return data || []
+    } catch (err) {
+      console.error('[fetchVariablesValidacion] Error:', err)
+      throw err
+    }
+  } else {
+    const raw = localStorage.getItem(`gea_vars_val_${periodo}`)
+    return raw ? JSON.parse(raw) : []
+  }
+}
+
+export async function fetchPeriodosVariablesValidacion() {
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('variables_validacion_operacion')
+        .select('periodo')
+        .order('periodo', { ascending: false })
+
+      if (error) throw error
+      const unique = Array.from(new Set((data || []).map(r => r.periodo).filter(Boolean)))
+      return unique.length ? unique : ['202610']
+    } catch (err) {
+      console.warn('[fetchPeriodosVariablesValidacion] Fallback:', err)
+      return ['202610']
+    }
+  }
+  return ['202610']
+}
+
+export async function updateVariableValidacionRow(id, updates) {
+  if (!id) throw new Error('ID requerido para actualización')
+
+  const payload = {
+    ...updates,
+    fecha_validacion: updates.fecha_validacion || new Date().toISOString()
+  }
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    const { data, error } = await supabase
+      .from('variables_validacion_operacion')
+      .update(payload)
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+    return data?.[0]
+  } else {
+    return payload
+  }
+}
+
+export async function procesarCesesBulkVariables(periodo, dnisList = [], meta = {}) {
+  if (!dnisList.length) return { count: 0 }
+
+  const cleanDnis = dnisList.map(d => String(d).trim().replace(/\D/g, '')).filter(Boolean)
+  if (!cleanDnis.length) return { count: 0 }
+
+  const payload = {
+    estado_validacion: 'CESADO',
+    monto_aprobado: 0,
+    motivo_ajuste: meta.motivo || 'CESE DE OPERACIÓN (BAJA)',
+    observacion_operacion: meta.observacion || 'Confirmado por Operaciones / RRHH',
+    fecha_cese: meta.fecha_cese || null,
+    validado_por: meta.validado_por || 'WFM_OPERACIONES',
+    fecha_validacion: new Date().toISOString()
+  }
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    let query = supabase
+      .from('variables_validacion_operacion')
+      .update(payload)
+      .in('documento', cleanDnis)
+
+    if (periodo && periodo !== 'ALL') {
+      query = query.eq('periodo', String(periodo).trim())
+    }
+
+    const { data, error } = await query.select('id, documento')
+    if (error) throw error
+    return { count: data?.length || 0, data }
+  } else {
+    return { count: cleanDnis.length }
+  }
+}
+
+export async function aprobarTodosPendientesVariables(periodo, validado_por = 'WFM_SISTEMA') {
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    let query = supabase
+      .from('variables_validacion_operacion')
+      .select('id, monto_enviado, monto_aprobado, estado_validacion')
+      .eq('estado_validacion', 'PENDIENTE')
+
+    if (periodo && periodo !== 'ALL') {
+      query = query.eq('periodo', String(periodo).trim())
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    if (!data || !data.length) return { count: 0 }
+
+    const now = new Date().toISOString()
+    const { error: updateErr } = await supabase
+      .from('variables_validacion_operacion')
+      .update({
+        estado_validacion: 'APROBADO',
+        validado_por,
+        fecha_validacion: now
+      })
+      .eq('estado_validacion', 'PENDIENTE')
+      .eq('periodo', String(periodo).trim())
+
+    if (updateErr) throw updateErr
+    return { count: data.length }
+  }
+  return { count: 0 }
+}
+
+export async function guardarNuevasVariablesBulk(periodo, rows = []) {
+  if (!rows || !rows.length) return { count: 0 }
+
+  const formattedRows = rows.map((r, i) => ({
+    periodo: String(periodo || r.periodo || '202610').trim(),
+    tipo_bono: String(r.tipo_bono || 'BIENVENIDA').toUpperCase().trim(),
+    item_num: Number(r.item_num || r.item || i + 1),
+    documento: String(r.documento || r.dni || '').trim().replace(/\D/g, ''),
+    apellidos_nombres: String(r.apellidos_nombres || r.colaborador || r.nombre || '').trim().toUpperCase(),
+    cargo: String(r.cargo || '').trim().toUpperCase(),
+    campana: String(r.campana || '').trim().toUpperCase(),
+    fecha_ingreso: r.fecha_ingreso ? String(r.fecha_ingreso).trim() : null,
+    monto_enviado: Number(r.monto_enviado || r.monto || 0),
+    monto_aprobado: Number(r.monto_aprobado ?? (r.monto_enviado || r.monto || 0)),
+    monto_pagado: 0,
+    estado_validacion: r.estado_validacion || 'PENDIENTE',
+    fecha_cese: r.fecha_cese || null,
+    motivo_ajuste: r.motivo_ajuste || null,
+    observacion_operacion: r.observacion_operacion || null,
+    validado_por: r.validado_por || null,
+    fecha_validacion: r.fecha_validacion || null
+  })).filter(r => r.documento && r.documento.length >= 7)
+
+  if (!formattedRows.length) return { count: 0 }
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    const CHUNK_SIZE = 200
+    let totalInserted = 0
+
+    for (let i = 0; i < formattedRows.length; i += CHUNK_SIZE) {
+      const chunk = formattedRows.slice(i, i + CHUNK_SIZE)
+      const { data, error } = await supabase
+        .from('variables_validacion_operacion')
+        .upsert(chunk, {
+          onConflict: 'periodo,tipo_bono,documento'
+        })
+        .select('id')
+
+      if (error) throw error
+      totalInserted += (data?.length || chunk.length)
+    }
+
+    return { count: totalInserted }
+  } else {
+    return { count: formattedRows.length }
+  }
+}
+
+export async function aplicarValidacionExcelBulk(periodo, registrosValidacion = [], validado_por = 'WFM_OPERACIONES') {
+  if (!registrosValidacion.length) return { cesados: 0, aprobados: 0, observados: 0 }
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+    let cesadosCount = 0
+    let aprobadosCount = 0
+    let observadosCount = 0
+    const now = new Date().toISOString()
+
+    const cesadosDnis = []
+    const aprobadosDnis = []
+    const individuales = []
+
+    for (const item of registrosValidacion) {
+      const doc = String(item.documento || item.dni || '').trim().replace(/\D/g, '')
+      if (!doc) continue
+
+      const estado = String(item.estado_validacion || item.estado || 'PENDIENTE').toUpperCase().trim()
+
+      if (estado === 'CESADO' || estado === 'BAJA') {
+        cesadosDnis.push({
+          doc,
+          fecha_cese: item.fecha_cese || null,
+          motivo: item.motivo_ajuste || 'CESE DE OPERACIÓN (BAJA)'
+        })
+      } else if (estado === 'APROBADO' || estado === 'ACTIVO') {
+        aprobadosDnis.push(doc)
+      } else {
+        individuales.push({ ...item, doc, estado })
+      }
+    }
+
+    if (cesadosDnis.length) {
+      const dnis = cesadosDnis.map(c => c.doc)
+      let q = supabase
+        .from('variables_validacion_operacion')
+        .update({
+          estado_validacion: 'CESADO',
+          monto_aprobado: 0,
+          motivo_ajuste: 'CESE CONFIRMADO POR OPERACIONES',
+          validado_por,
+          fecha_validacion: now
+        })
+        .in('documento', dnis)
+
+      if (periodo && periodo !== 'ALL') {
+        q = q.eq('periodo', String(periodo).trim())
+      }
+
+      const { data, error } = await q.select('id')
+      if (error) console.warn('[aplicarValidacionExcelBulk] Error cesados:', error)
+      cesadosCount = data?.length || dnis.length
+    }
+
+    if (aprobadosDnis.length) {
+      let q = supabase
+        .from('variables_validacion_operacion')
+        .update({
+          estado_validacion: 'APROBADO',
+          validado_por,
+          fecha_validacion: now
+        })
+        .in('documento', aprobadosDnis)
+
+      if (periodo && periodo !== 'ALL') {
+        q = q.eq('periodo', String(periodo).trim())
+      }
+
+      const { data, error } = await q.select('id')
+      if (error) console.warn('[aplicarValidacionExcelBulk] Error aprobados:', error)
+      aprobadosCount = data?.length || aprobadosDnis.length
+    }
+
+    for (const ind of individuales) {
+      let q = supabase
+        .from('variables_validacion_operacion')
+        .update({
+          estado_validacion: ind.estado,
+          monto_aprobado: ind.monto_aprobado !== undefined ? Number(ind.monto_aprobado) : undefined,
+          observacion_operacion: ind.observacion || ind.motivo || null,
+          validado_por,
+          fecha_validacion: now
+        })
+        .eq('documento', ind.doc)
+
+      if (periodo && periodo !== 'ALL') {
+        q = q.eq('periodo', String(periodo).trim())
+      }
+
+      await q
+      observadosCount++
+    }
+
+    return { cesados: cesadosCount, aprobados: aprobadosCount, observados: observadosCount }
+  }
+
+  return { cesados: 0, aprobados: 0, observados: 0 }
+}
+
+
+
 

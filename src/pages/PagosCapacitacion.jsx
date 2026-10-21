@@ -5,8 +5,9 @@ import {
   CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Star,
   TrendingUp, Users, DollarSign, Plus, Pencil, Trash2, Save, X,
   Filter, Search, RotateCcw, Lock, History, Eye, Loader2,
-  FileSpreadsheet, Layers, Clock
+  FileSpreadsheet, Layers, Clock, ShieldCheck
 } from 'lucide-react'
+import ConciliacionVariablesOperacion from '../components/dashboard/ConciliacionVariablesOperacion'
 import {
   fetchConfigPagosGrupo,
   upsertConfigPagoGrupo,
@@ -2478,6 +2479,7 @@ export default function PagosCapacitacion({ userProfile }) {
             { id: 'calcular', label: 'Calcular Pagos', icon: Calculator },
             { id: 'configurar', label: 'Propuestas de Grupos', icon: Settings2 },
             { id: 'historico', label: 'Histórico de Lotes', icon: History },
+            { id: 'conciliacion', label: 'Validación Operaciones (VS)', icon: ShieldCheck },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -2933,6 +2935,11 @@ export default function PagosCapacitacion({ userProfile }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── TAB: CONCILIACIÓN Y VALIDACIÓN CON OPERACIONES (VS) ──────── */}
+      {activeTab === 'conciliacion' && (
+        <ConciliacionVariablesOperacion userProfile={userProfile} />
       )}
     </div>
   )

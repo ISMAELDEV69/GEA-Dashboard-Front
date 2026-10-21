@@ -102,7 +102,7 @@ export default function MaquetaBonosReclutadores({
   // Adaptador de filas operativas: prioriza maqueta_reclutadores_base si existe en BD
   const effectiveKpiRows = useMemo(() => {
     if (baseFromDb && baseFromDb.length > 0) {
-      return baseFromDb.map((b) => ({
+      const baseMapped = baseFromDb.map((b) => ({
         responsable: b.analista_reclutador,
         meta_dia_1_individual: Number(b.meta_dia_1_individual || 0),
         meta_dia_1_campana: Number(b.meta_dia_1_grupal || 0),
@@ -119,6 +119,38 @@ export default function MaquetaBonosReclutadores({
         fecha_ingreso_op: b.fecha_fin_capa,
         tipo_reclutador: b.tipo_reclutador,
       }))
+
+      // Identificar reclutadores presentes en la base oficial
+      const norm = (s) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ')
+      const reclutadoresEnBase = new Set(baseMapped.map(b => norm(b.responsable)))
+
+      // Si kpiRows tiene filas de un reclutador que NO está en la base oficial, agregarlas como respaldo operativo
+      const filasFaltantes = (kpiRows || []).filter(k => {
+        const nom = norm(k.responsable)
+        if (!nom || nom === 'ADMIN' || nom === 'RECLUTADOR' || nom.includes('SIN NOMINA') || nom === 'RECUPERADO') return false
+        const exists = Array.from(reclutadoresEnBase).some(r => r === nom || r.includes(nom) || nom.includes(r))
+        return !exists
+      }).map(k => ({
+        responsable: k.responsable,
+        meta_dia_1_individual: Number(k.meta_dia_1_individual || 0),
+        meta_dia_1_campana: Number(k.meta_dia_1_campana || 0),
+        dia_1: Number(k.dia_1 || 0),
+        dia_1_tope: Number(k.dia_1_tope || 0),
+        dotacion_q: Number(k.dotacion_q || 0),
+        dotacion_q_tope: Number(k.dotacion_q_tope || 0),
+        rq: Number(k.rq_individual || k.rq || 0),
+        nomina: Number(k.nomina || 0),
+        campana: k.campana,
+        codigo_gpe: k.grupo_g,
+        grupo_g: k.grupo_g,
+        segmento: k.segmento,
+        modalidad: k.modalidad,
+        fecha_inicio: k.fecha_inicio,
+        fecha_ingreso_op: k.fecha_ingreso_op,
+        tipo_reclutador: k.cargo || 'Asistente de Reclutamiento y Selección',
+      }))
+
+      return [...baseMapped, ...filasFaltantes]
     }
     return kpiRows
   }, [baseFromDb, kpiRows])
