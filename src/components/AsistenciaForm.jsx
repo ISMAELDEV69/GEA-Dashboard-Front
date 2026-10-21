@@ -2030,6 +2030,7 @@ export default function AsistenciaForm({
   const kpis = useMemo(() => {
     const total = displayedList.length
     const asistieron = displayedList.filter(item => item.sigla === 'A' || item.sigla === 'I-OP').length
+    const faltas = displayedList.filter(item => item.sigla === 'FI' || item.sigla === 'FJ').length
     
     // Bajas de Formación (Excluye 'BAJA DIA 1' / 'Periodo Gracia' imputadas a Reclutamiento)
     const isBajaDia1Item = (item) => isBajaDia1Motivo(item.motivo_baja)
