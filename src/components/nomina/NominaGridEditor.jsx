@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { AREAS_BOLSA_CAPA, checkCalibracionDia1, fetchReclutadoresFull, invalidateCache, isAreaBolsaCapa } from '../../lib/dataService'
 import { resolveDistrictCoordinates } from '../../lib/geoMobilityService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
+import { parseFechaNacimiento } from '../../lib/nominaConsolidadoSchema'
 import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock, MessageSquare, Copy, Check, Sparkles, FileSpreadsheet, FileWarning, CheckCheck, Send, Filter } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
@@ -33,6 +34,81 @@ function calcEdadFromFecha(fecha) {
   let age = today.getFullYear() - y
   if (today.getMonth() + 1 < m || (today.getMonth() + 1 === m && today.getDate() < d)) age--
   return age >= 0 && age < 120 ? age : null
+}
+
+// Sanitiza y tipa adecuadamente los campos antes de enviarlos a PostgreSQL
+function sanitizeRowUpdatesForDb(rawUpdates) {
+  if (!rawUpdates) return {}
+  const sanitized = { ...rawUpdates }
+
+  // 1. Columnas DATE: Si no es fecha válida en ISO, parsear. Si no parsea, NO enviar a Postgres (evita error 22008 / 22007)
+  const dateFields = [
+    'fecha_nacimiento',
+    'fecha_inicio_capacitacion',
+    'fecha_fin_capacitacion',
+    'fecha_conexion_ojt',
+    'fecha_conexion_op',
+    'fecha_inscripcion_curso',
+    'fecha_ingreso'
+  ]
+  for (const f of dateFields) {
+    if (f in sanitized) {
+      const raw = sanitized[f]
+      if (raw === null || raw === undefined || String(raw).trim() === '' || String(raw).trim() === '-') {
+        sanitized[f] = null
+      } else {
+        const parsed = parseFechaNacimiento(raw)
+        if (parsed) {
+          sanitized[f] = parsed
+        } else {
+          // No es fecha válida aún (ej. usuario escribiendo a medias), omitir de este payload
+          delete sanitized[f]
+        }
+      }
+    }
+  }
+
+  // 2. Si fecha_nacimiento fue modificada y es válida, sincronizar edad automáticamente
+  if (sanitized.fecha_nacimiento) {
+    const calculatedAge = calcEdadFromFecha(sanitized.fecha_nacimiento)
+    if (calculatedAge !== null) {
+      sanitized.edad = calculatedAge
+    }
+  }
+
+  // 3. Columnas INTEGER
+  const intFields = ['edad', 'n_hijos', 'semana_trabajo']
+  for (const f of intFields) {
+    if (f in sanitized) {
+      const raw = sanitized[f]
+      if (raw === '' || raw === null || raw === undefined || raw === '-') {
+        sanitized[f] = null
+      } else {
+        const n = parseInt(String(raw).replace(/[^\d-]/g, ''), 10)
+        sanitized[f] = Number.isFinite(n) ? n : null
+      }
+    }
+  }
+
+  // 4. Columnas NUMERIC / FLOAT
+  const numFields = [
+    'remuneracion', 'bono_variable', 'bono_movilidad',
+    'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno'
+  ]
+  for (const f of numFields) {
+    if (f in sanitized) {
+      const raw = sanitized[f]
+      if (raw === '' || raw === null || raw === undefined || raw === '-') {
+        sanitized[f] = null
+      } else {
+        const cleaned = String(raw).replace(/[^0-9.-]/g, '')
+        const val = parseFloat(cleaned)
+        sanitized[f] = Number.isFinite(val) ? val : null
+      }
+    }
+  }
+
+  return sanitized
 }
 
 function getHeaderColor(key, isSelected = false) {
@@ -66,7 +142,7 @@ export const POSTULANTE_COLUMNS = [
   { key: 'usuario_whatsapp', label: 'USUARIO WHATSAPP', width: 170 },
   { key: 'correo', label: 'CORREO', width: 220 },
   { key: 'genero', label: 'GÉNERO', width: 110 },
-  { key: 'fecha_nacimiento', label: 'F. NACIMIENTO', width: 130 },
+  { key: 'fecha_nacimiento', label: 'F. NACIMIENTO', width: 130, placeholder: 'DD/MM/AAAA' },
   { key: 'edad', label: 'EDAD', width: 90, type: 'number' },
   { key: 'estado_civil', label: 'ESTADO CIVIL', width: 130 },
   { key: 'n_hijos', label: 'N° HIJOS', width: 90, type: 'number' },
@@ -161,6 +237,7 @@ export default function NominaGridEditor({
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   })
   const [savingStatus, setSavingStatus] = useState('idle') // 'idle' | 'saving' | 'saved' | 'error'
+  const [saveErrorMessage, setSaveErrorMessage] = useState(null)
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
   const [filters, setFilters] = useState({})
@@ -688,11 +765,18 @@ export default function NominaGridEditor({
 
   // Flush batched updates for a row to database
   const flushRowUpdate = async (rowId) => {
-    const rowUpdates = pendingUpdatesRef.current.get(rowId)
-    if (!rowUpdates || Object.keys(rowUpdates).length === 0) return
+    const rawUpdates = pendingUpdatesRef.current.get(rowId)
+    if (!rawUpdates || Object.keys(rawUpdates).length === 0) return
 
     pendingUpdatesRef.current.delete(rowId)
     setSavingStatus('saving')
+    setSaveErrorMessage(null)
+
+    const rowUpdates = sanitizeRowUpdatesForDb(rawUpdates)
+    if (Object.keys(rowUpdates).length === 0) {
+      setSavingStatus('idle')
+      return
+    }
 
     try {
       const { error: err } = await supabase
@@ -703,6 +787,8 @@ export default function NominaGridEditor({
       if (err) throw err
 
       lastLoadedAtRef.current = new Date().toISOString()
+      const now = new Date()
+      setLastUpdatedTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 
       if (rowUpdates.dia_1) {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
@@ -714,11 +800,15 @@ export default function NominaGridEditor({
       invalidateCache('grupos_con_metas')
       window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: grupoCodigo, campana } }))
 
+      // Sincronizar estado local con los valores sanitizados (ej. fecha formateada a ISO y edad calculada)
+      setData(prev => prev.map(r => r.id === rowId ? { ...r, ...rowUpdates } : r))
+
       setSavingStatus('saved')
       setTimeout(() => setSavingStatus('idle'), 2000)
       onSaveComplete?.()
     } catch (err) {
       console.error('Save error', err)
+      setSaveErrorMessage(err.message || String(err))
       setSavingStatus('error')
     }
   }
@@ -729,7 +819,15 @@ export default function NominaGridEditor({
     if (!canEditRow(targetRow) || key === 'reclutador') return
     const updateObj = { [key]: value || null }
     if (key === 'fecha_nacimiento') {
-      updateObj.edad = calcEdadFromFecha(value)
+      const parsedDate = parseFechaNacimiento(value)
+      if (parsedDate) {
+        updateObj.edad = calcEdadFromFecha(parsedDate)
+        if (immediate) {
+          updateObj.fecha_nacimiento = parsedDate
+        }
+      } else {
+        updateObj.edad = calcEdadFromFecha(value)
+      }
     }
     if (key === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (value || '').trim().toUpperCase())
@@ -766,11 +864,15 @@ export default function NominaGridEditor({
     const editableRows = filteredData.filter(r => canEditRow(r))
     if (editableRows.length === 0) return
     const firstRow = editableRows[0]
-    const updateObj = { [selectedColumn]: firstRow[selectedColumn] || null }
+    
+    let rawVal = firstRow[selectedColumn]
+    const rawObj = { [selectedColumn]: rawVal || null }
     if (selectedColumn === 'reclutador') {
       const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (firstRow[selectedColumn] || '').trim().toUpperCase())
-      updateObj.reclutador_id = recObj ? recObj.id : null
+      rawObj.reclutador_id = recObj ? recObj.id : null
     }
+
+    const updateObj = sanitizeRowUpdatesForDb(rawObj)
 
     const updatedData = data.map(row => {
       const inFilter = editableRows.some(f => f.id === row.id)
@@ -782,6 +884,7 @@ export default function NominaGridEditor({
 
     setData(updatedData)
     setSavingStatus('saving')
+    setSaveErrorMessage(null)
 
     try {
       const targetIds = editableRows.filter(f => f.id !== firstRow.id).map(f => f.id)
@@ -1282,8 +1385,13 @@ export default function NominaGridEditor({
               </span>
             )}
             {savingStatus === 'error' && (
-              <span className="flex items-center gap-1.5 text-red-400">
+              <span className="flex items-center gap-1.5 text-red-400" title={saveErrorMessage || 'Error al guardar cambios en base de datos'}>
                 <AlertCircle size={13} /> Error al guardar
+                {saveErrorMessage && (
+                  <span className="text-[10px] text-red-300/80 font-normal truncate max-w-[150px] hidden sm:inline" title={saveErrorMessage}>
+                    ({saveErrorMessage})
+                  </span>
+                )}
               </span>
             )}
             {savingStatus === 'idle' && (
@@ -1666,7 +1774,7 @@ export default function NominaGridEditor({
                               onFocus={() => setSelectedColumn(col.key)}
                               onKeyDown={e => e.key === 'Enter' && e.target.blur()}
                               className="w-full h-full p-2 bg-transparent text-xs font-medium outline-none focus:ring-1 focus:ring-cyan-400 transition-colors placeholder:text-[var(--text-muted)]/40"
-                              placeholder="..."
+                              placeholder={col.placeholder || "..."}
                             />
                           )}
                         </td>

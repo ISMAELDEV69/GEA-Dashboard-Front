@@ -831,21 +831,21 @@ export default function NominaFormPool({
           ? new Date(d.marca_temporal).toISOString()
           : new Date().toISOString()
 
-        const fechaNac = parseFechaNacimiento(d.fecha_nacimiento) || d.fecha_nacimiento || null
+        const fechaNac = parseFechaNacimiento(d.fecha_nacimiento) || null
         const edadVal = parseEdadValue(d.edad, fechaNac)
         const expTiempo = normalizeTiempoExperiencia(d.exp_tiempo_campana || d.exp_tiempo_call) || d.exp_tiempo_campana || d.exp_tiempo_call || null
         const phonesCel = extractPhonesFromText(d.celular)
         const phonesRef = extractPhonesFromText(d.celular_referencia)
         const phonesWsp = extractPhonesFromText(d.usuario_whatsapp)
 
-        const finalCelular = phonesCel.primary || phonesRef.primary || phonesWsp.primary || d.celular || null
-        const finalCelularRef = phonesCel.secondary || phonesRef.secondary || (phonesCel.primary && phonesRef.primary && phonesRef.primary !== phonesCel.primary ? phonesRef.primary : null) || d.celular_referencia || null
+        const finalCelular = phonesCel.primary || phonesWsp.primary || phonesRef.primary || d.celular || null
+        const finalCelularRef = phonesRef.primary || phonesCel.secondary || phonesRef.secondary || (phonesWsp.primary && phonesWsp.primary !== finalCelular ? phonesWsp.primary : null) || d.celular_referencia || null
 
         const rawPayload = {
           ...d,
           marca_temporal: safeMarcaTemporal,
           fecha_nacimiento: fechaNac,
-          edad: edadVal ?? d.edad ?? null,
+          edad: edadVal ?? (d.edad ? parseInt(String(d.edad).replace(/\D/g, ''), 10) || null : null),
           n_hijos: d.n_hijos ?? 0,
           celular: finalCelular,
           celular_referencia: finalCelularRef,
@@ -1462,7 +1462,11 @@ export default function NominaFormPool({
 
                     {/* Edad */}
                     <td className="p-3 text-xs font-bold whitespace-nowrap align-top min-w-[65px]">
-                      <span className="text-[var(--text-secondary)]">{d.edad ? `${d.edad} años` : '—'}</span>
+                      <span className="text-[var(--text-secondary)]">
+                        {d.edad !== null && d.edad !== undefined && d.edad !== ''
+                          ? (String(d.edad).replace(/\s*años?|\s*anos?|\s*de\s*edad/gi, '').trim().match(/\d+/)?.[0] || String(d.edad).replace(/\s*años?|\s*anos?/gi, '').trim() || '—')
+                          : '—'}
+                      </span>
                     </td>
 
                     {/* Estado Civil */}

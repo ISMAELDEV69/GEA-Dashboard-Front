@@ -355,7 +355,7 @@ export function extractPhonesFromText(val) {
   const phonesFound = []
 
   // 3. Dividir por separadores habituales de múltiples teléfonos (slash, comas, guiones dobles, palabras clave)
-  const tokens = s.split(/[\/,;\n\r|]|\b(?:LLAMADA|LLAMADAS|WSP|WTSP|WHATSAPP|WHATS|PERSONAL|REF|REFERENCIA|CASA|MAMA|PAPA|HERMANO|FIJO|MOVIL|CEL|CELULAR|O|Y)\b/i)
+  const tokens = s.split(/[\/,;\n\r|—–]|\s+[-–—]\s+|\b(?:LLAMADA|LLAMADAS|WSP|WTSP|WHATSAPP|WHATS|PERSONAL|REF|REFERENCIA|CASA|MAMA|PAPA|HERMANO|FIJO|MOVIL|CEL|CELULAR|O|Y)\b/i)
   for (const token of tokens) {
     let digits = token.replace(/\D/g, '')
     if (digits.startsWith('51') && digits.length === 11 && digits[2] === '9') {
@@ -367,6 +367,13 @@ export function extractPhonesFromText(val) {
   }
 
   // 4. Si aún no encontramos o solo encontramos 1, buscar secuencias de 9 dígitos continuos o con espacios/guiones
+  if (phonesFound.length < 2) {
+    const directMatches = s.matchAll(/(?:^|[^\d])(?:\+?51\s*)?(9\d{8})(?=[^\d]|$)/g)
+    for (const m of directMatches) {
+      const d = m[1]
+      if (!phonesFound.includes(d)) phonesFound.push(d)
+    }
+  }
   if (phonesFound.length < 2) {
     let cleaned = s.replace(/(?:\+51|51)\s*(9[\d\s.-]{8,14})/g, '$1')
     const matches = cleaned.matchAll(/(?:^|[^\d])(9[\d\s.-]{8,12}\d)(?:$|[^\d])/g)
@@ -406,8 +413,30 @@ const HEADER_ALIASES = {
   apellido_paterno: ['APELLIDO PATERNO'],
   apellido_materno: ['APELLIDO MATERNO'],
   nombres: ['NOMBRES COMPLETOS'],
-  celular: ['NÚMERO DE CELULAR / MÓVIL', 'NÚMERO DE CELULAR', 'CELULAR'],
-  celular_referencia: ['NÚMERO DE CELULAR DE REFERENCIA'],
+  celular: ['NÚMERO DE CELULAR / MÓVIL', 'NÚMERO DE CELULAR', 'CELULAR', 'NUMERO DE CELULAR'],
+  celular_referencia: [
+    'NÚMERO DE CELULAR DE REFERENCIA',
+    'NUMERO DE CELULAR DE REFERENCIA',
+    'CELULAR DE REFERENCIA',
+    'NUMERO DE REFERENCIA',
+    'TELEFONO DE REFERENCIA',
+    'CEL. REF.',
+    'CEL. REF',
+    'CEL REF',
+    'CONTACTO DE EMERGENCIA',
+    'NUMERO DE EMERGENCIA',
+    'CELULAR DE EMERGENCIA',
+    'TELEFONO DE EMERGENCIA',
+    'NUMERO FAMILIAR',
+    'CELULAR FAMILIAR',
+    'REFERENCIA FAMILIAR',
+    'CELULAR SECUNDARIO',
+    'NUMERO SECUNDARIO',
+    'TELEFONO SECUNDARIO',
+    'CELULAR 2',
+    'NUMERO 2',
+    'TELEFONO 2'
+  ],
   usuario_whatsapp: [
     'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HALLAS MODIFICADO ASI :',
     'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HAYAS MODIFICADO ASI :',
@@ -503,6 +532,26 @@ export function mapGoogleFormHeaders(headerRow = []) {
     else if (clean.includes('NOMBRES') || clean.includes('NOMBRE COMPLETO') || clean === 'NOMBRE') {
       if (colIdx['nombres'] === undefined) colIdx['nombres'] = i
     }
+    // 1. CELULAR DE REFERENCIA / EMERGENCIA / SEGUNDO CONTACTO
+    else if (
+      (clean.includes('REFERENCIA') || clean.includes('REF.') || clean.includes(' REF') ||
+       clean.includes('EMERGENCIA') || clean.includes('FAMILIAR') || clean.includes('SEGUNDO') ||
+       clean.includes('SECUNDARIO') || clean.includes('ALTERNATIVO') || clean.includes('RESPALDO') ||
+       clean.includes('CELULAR 2') || clean.includes('TELEFONO 2') || clean.includes('NUMERO 2') || clean.includes('CONTACTO 2')) &&
+      !clean.includes('LUGAR') && !clean.includes('DIRECCION') && !clean.includes('DOMICILIO') &&
+      !clean.includes('NOMBRE') && !clean.includes('APELLIDO') && !clean.includes('PARENTESCO') &&
+      !clean.includes('RELACION') && !clean.includes('RELACIÓN') && !clean.includes('VINCULO') &&
+      !clean.includes('VÍNCULO') && !clean.includes('QUIEN') && !clean.includes('QUIÉN')
+    ) {
+      const hasPhoneWord = clean.includes('CEL') || clean.includes('MOVIL') || clean.includes('MÓVIL') ||
+                           clean.includes('TEL') || clean.includes('NUMERO') || clean.includes('NÚMERO') ||
+                           clean.includes('NRO') || clean.includes('NUM') || clean.includes('WHATSAPP') || clean.includes('WSP')
+      // Si tiene palabra explícita de teléfono/número, toma prioridad total sobre cualquier mapeo previo
+      if (hasPhoneWord || colIdx['celular_referencia'] === undefined) {
+        colIdx['celular_referencia'] = i
+      }
+    }
+    // 2. CELULAR PRINCIPAL / MOVIL / TELEFONO
     else if (
       clean.includes('CELULAR') || clean.includes('MOVIL') || clean.includes('TELEFONO') ||
       clean.includes('TELF') || clean.includes('NRO DE CEL') || clean.includes('NUMERO DE CEL') ||
@@ -794,8 +843,19 @@ export function parseGoogleFormRow(row, colIdx) {
   const phonesFromRef = extractPhonesFromText(get('celular_referencia'))
   const phonesFromWsp = extractPhonesFromText(rawUsuarioWhatsapp)
 
-  let celularNorm = phonesFromCel.primary || (phonesFromRef.primary && phonesFromRef.primary !== phonesFromCel.secondary ? phonesFromRef.primary : null) || phonesFromWsp.primary || null
-  let celularRefNorm = phonesFromCel.secondary || phonesFromRef.secondary || (phonesFromCel.primary && phonesFromRef.primary && phonesFromRef.primary !== phonesFromCel.primary ? phonesFromRef.primary : null) || null
+  // Celular principal: celular directo, si no wsp, si no teléfono de referencia
+  let celularNorm = phonesFromCel.primary || phonesFromWsp.primary || phonesFromRef.primary || null
+
+  // Celular de referencia:
+  // 1) Si vino en la columna de referencia (phonesFromRef.primary), PRESERVARLO (incluso si coincide con el principal)
+  // 2) Si no vino, pero el campo celular trajo un segundo número (ej. "987654321 / 912345678"), usar phonesFromCel.secondary
+  // 3) Si el campo referencia trajo un segundo número, usar phonesFromRef.secondary
+  // 4) Si whatsapp trajo un número válido diferente al principal, usarlo como respaldo
+  let celularRefNorm = phonesFromRef.primary ||
+                       phonesFromCel.secondary ||
+                       phonesFromRef.secondary ||
+                       (phonesFromWsp.primary && phonesFromWsp.primary !== celularNorm ? phonesFromWsp.primary : null) ||
+                       null
 
   // Fallback exhaustivo para celular si sigue vacío: buscar en toda la fila un número de 9 dígitos que inicie en 9
   if (!celularNorm) {
@@ -808,6 +868,24 @@ export function parseGoogleFormRow(row, colIdx) {
         if (candidate.secondary && candidate.secondary !== rawDoc) {
           celularRefNorm = candidate.secondary
         }
+        break
+      }
+    }
+  }
+
+  // Fallback exhaustivo para celular de referencia si sigue vacío:
+  // Buscar en toda la fila un número de 9 dígitos que sea diferente al celular principal y al DNI
+  if (!celularRefNorm) {
+    for (let cIdx = 0; cIdx < row.length; cIdx++) {
+      const cellVal = String(row[cIdx] || '').trim()
+      if (!cellVal || cellVal === rawDoc) continue
+      const candidate = extractPhonesFromText(cellVal)
+      if (candidate.primary && candidate.primary !== rawDoc && candidate.primary !== celularNorm) {
+        celularRefNorm = candidate.primary
+        break
+      }
+      if (candidate.secondary && candidate.secondary !== rawDoc && candidate.secondary !== celularNorm) {
+        celularRefNorm = candidate.secondary
         break
       }
     }

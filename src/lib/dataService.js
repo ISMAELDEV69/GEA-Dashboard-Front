@@ -6858,10 +6858,10 @@ function normalizePostulanteForAdjudicar(p = {}) {
   const phonesRef = extractPhonesFromText(p.celular_referencia)
   const phonesWsp = extractPhonesFromText(p.usuario_whatsapp)
 
-  const celular = phonesCel.primary || (phonesRef.primary && phonesRef.primary !== phonesCel.secondary ? phonesRef.primary : null) || phonesWsp.primary || normalizePhoneValue(p.celular)
-  const celularRef = phonesCel.secondary || phonesRef.secondary || (phonesCel.primary && phonesRef.primary && phonesRef.primary !== phonesCel.primary ? phonesRef.primary : null) || normalizePhoneValue(p.celular_referencia)
+  const celular = phonesCel.primary || phonesWsp.primary || phonesRef.primary || normalizePhoneValue(p.celular)
+  const celularRef = phonesRef.primary || phonesCel.secondary || phonesRef.secondary || (phonesWsp.primary && phonesWsp.primary !== celular ? phonesWsp.primary : null) || normalizePhoneValue(p.celular_referencia)
 
-  const fechaNac = parseFechaNacimiento(p.fecha_nacimiento) || p.fecha_nacimiento || null
+  const fechaNac = parseFechaNacimiento(p.fecha_nacimiento) || null
   const edad = parseEdadValue(p.edad, fechaNac)
 
   let nHijos = p.n_hijos
