@@ -283,7 +283,7 @@ const AttendanceRow = React.memo(function AttendanceRow({
             >
               {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
               {item.showBajaDia1Option && !item.isCorte3 && <option value="BAJA DIA 1">BAJA DIA 1</option>}
-              {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && !item.isCorte3 && (
+              {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && (
                 <option value="BAJA DIA 1">BAJA DIA 1</option>
               )}
               {item.motivo_baja && item.motivo_baja !== 'BAJA DIA 1' && item.motivo_baja !== 'OBSERVADO' && item.motivo_baja !== 'SOBREDOTACIÓN' && !motivosBaja.some(m => m.motivo === item.motivo_baja) && (
@@ -1067,8 +1067,6 @@ export default function AsistenciaForm({
     if (groupStartDate && (!firstDateOfGroup || groupStartDate < firstDateOfGroup)) {
       firstDateOfGroup = groupStartDate
     }
-    const isDay2OrLater = Boolean(firstDateOfGroup && fecha > firstDateOfGroup)
-
     // Ensure all historical attendees from asistencias are present in candidate pool
     const candidateDocs = new Set();
     const mergedCandidates = [];
@@ -1082,33 +1080,10 @@ export default function AsistenciaForm({
       }
     }
 
-    // Identificar postulantes que fueron BAJA DIA 1 en Día 1 sin asistencia confirmada en formación
-    const bajaDia1CandidateDocs = new Set();
-    for (const a of groupRecordsAll) {
-      const doc = String(a.postulante_documento || a.documento || '').trim();
-      const s = String(a.sigla_asistencia || a.sigla || '').trim().toUpperCase();
-      const m = String(a.motivo_baja || '').trim();
-      if (s === 'B' && isBajaDia1Motivo(m) && !activeAttendeeDocs.has(doc)) {
-        bajaDia1CandidateDocs.add(doc);
-      }
-    }
-    for (const p of effectivePostulantes) {
-      const doc = String(p.documento || '').trim();
-      const dia1Val = String(p.dia_1 || '').toUpperCase().trim();
-      const stVal = String(p.status_dia_1 || '').toUpperCase().trim();
-      if (!activeAttendeeDocs.has(doc) && (dia1Val === 'FALTA' || dia1Val === 'NO ASISTIO') && (stVal.includes('CESE') || isBajaDia1Motivo(p.motivo_baja))) {
-        bajaDia1CandidateDocs.add(doc);
-      }
-    }
-
     for (const p of effectivePostulantes) {
       const doc = String(p.documento || '').trim();
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (p.campana && normalize(p.campana) !== normalize(targetCampana)) continue;
-      }
-      // Regla de Negocio: A partir de Día 2, las Bajas Día 1 no existen en Formación
-      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
-        continue;
       }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
@@ -1127,10 +1102,6 @@ export default function AsistenciaForm({
       const doc = String(a.postulante_documento || '').trim();
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (a.campana && normalize(a.campana) !== normalize(targetCampana)) continue;
-      }
-      // Regla de Negocio: A partir de Día 2, las Bajas Día 1 no existen en Formación
-      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
-        continue;
       }
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
       const isDesc = !hasActiveInGroup && (
@@ -1168,10 +1139,6 @@ export default function AsistenciaForm({
     const filteredPostulantes = mergedCandidates.filter(p => {
       if (!p.documento) return false
       const doc = String(p.documento || '').trim();
-      // En Día 2+, excluir bajas de Día 1 de RyS
-      if (isDay2OrLater && bajaDia1CandidateDocs.has(doc) && !activeAttendeeDocs.has(doc)) {
-        return false;
-      }
       const hasHistoryInGroup = mappedDocs.has(p.documento);
       const hasActiveInGroup = activeAttendeeDocs.has(doc);
 

@@ -18,6 +18,7 @@ DECLARE
   v_doc             TEXT;
   v_inserted_count  INTEGER := 0;
   v_updated_count   INTEGER := 0;
+  v_deactivated_count INTEGER := 0;
   v_clean_grupo     TEXT;
   v_clean_campana   TEXT;
 BEGIN
@@ -47,6 +48,25 @@ BEGIN
       CONTINUE;
     END IF;
 
+    -- Si el postulante ya estaba asignado a OTRO grupo en la MISMA semana de trabajo,
+    -- desactivar la asignación previa para evitar duplicidades en la dotación activa de la semana
+    IF v_item->>'semana_trabajo' IS NOT NULL AND v_item->>'semana_trabajo' <> '' THEN
+      UPDATE public.nominas
+      SET
+        activo = false,
+        estado = 'REASIGNADO',
+        observacion_estado = 'Reasignado a grupo ' || v_clean_grupo || ' en semana ' || (v_item->>'semana_trabajo'),
+        updated_at = NOW()
+      WHERE documento = v_doc
+        AND semana_trabajo = (v_item->>'semana_trabajo')::INTEGER
+        AND UPPER(TRIM(grupo_codigo)) <> v_clean_grupo
+        AND activo = true;
+
+      IF FOUND THEN
+        v_deactivated_count := v_deactivated_count + 1;
+      END IF;
+    END IF;
+
     -- Si ya existe un registro en este mismo grupo exacto, actualizar datos demográficos sin pisar seguimiento operativo
     IF EXISTS (
       SELECT 1 FROM public.nominas
@@ -60,7 +80,7 @@ BEGIN
         apellido_materno = COALESCE(NULLIF(TRIM(v_item->>'apellido_materno'), ''), apellido_materno),
         celular = COALESCE(NULLIF(TRIM(v_item->>'celular'), ''), celular),
         celular_referencia = COALESCE(NULLIF(TRIM(v_item->>'celular_referencia'), ''), celular_referencia),
-        usuario_whatsapp = COALESCE(NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''), usuario_whatsapp),
+        usuario_whatsapp = COALESCE(NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''), NULLIF(TRIM(v_item->>'celular'), ''), usuario_whatsapp),
         correo = COALESCE(NULLIF(TRIM(v_item->>'correo'), ''), correo),
         genero = COALESCE(NULLIF(TRIM(v_item->>'genero'), ''), genero),
         fecha_nacimiento = CASE 
@@ -186,7 +206,7 @@ BEGIN
         TRIM(COALESCE(v_item->>'apellido_materno', '')),
         NULLIF(TRIM(v_item->>'celular'), ''),
         NULLIF(TRIM(v_item->>'celular_referencia'), ''),
-        NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''),
+        COALESCE(NULLIF(TRIM(v_item->>'usuario_whatsapp'), ''), NULLIF(TRIM(v_item->>'celular'), '')),
         NULLIF(TRIM(v_item->>'correo'), ''),
         NULLIF(TRIM(v_item->>'genero'), ''),
         CASE WHEN v_item->>'fecha_nacimiento' IS NOT NULL AND v_item->>'fecha_nacimiento' <> '' THEN (v_item->>'fecha_nacimiento')::DATE ELSE NULL END,
@@ -264,7 +284,7 @@ BEGIN
     'success', true,
     'inserted', v_inserted_count,
     'updated', v_updated_count,
-    'deactivated', 0
+    'deactivated', v_deactivated_count
   );
 END;
 $$;

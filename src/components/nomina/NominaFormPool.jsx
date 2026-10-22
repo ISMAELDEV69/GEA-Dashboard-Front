@@ -74,7 +74,7 @@ function isAsistioVal(val) {
   return s === 'ASISTIO' || s === 'SI' || s === 'A' || s === 'PRESENTE'
 }
 
-export function evaluarHistorialPostulante(assignment) {
+export function evaluarHistorialPostulante(assignment, context = {}) {
   if (!assignment) {
     return {
       tipo: 'DISPONIBLE',
@@ -86,39 +86,22 @@ export function evaluarHistorialPostulante(assignment) {
     }
   }
 
-  // 1. Validar Día 0 y Día 1 de Nómina:
-  // Si en la nómina previa NO asistió a Día 1 (ej: asistió a D0 pero faltó a D1, o faltó a ambos),
-  // significa que el asesor NUNCA llegó a la capacitación/control de asistencia del aula.
-  const asistioD1 = isAsistioVal(assignment.dia_1)
-
-  if (!asistioD1) {
-    return {
-      tipo: 'NO_LLEGO_CAPA',
-      estadoLabel: 'INGRESO APTO',
-      isActivo: false,
-      isBloqueante: false,
-      motivoBaja: 'NO ASISTIÓ A DÍA 1',
-      descripcion: `No asistió a Día 1 en ${assignment.grupo_codigo || 'grupo previo'}`
-    }
-  }
-
-  // 2. Si SÍ asistió a Día 1 en nómina, el asesor ingresó a la capacitación.
-  // Validamos su estado en el Control de Asistencia (consolidado_asistencias) y nómina:
+  // 1. Validar si está explícitamente inactivo o cesado en la nómina
   if (assignment.activo === false) {
     return {
       tipo: 'REINGRESO',
       estadoLabel: 'CESADO',
       isActivo: false,
       isBloqueante: false,
-      motivoBaja: assignment.asis_motivo_baja || assignment.motivo_baja || 'Baja en proceso previo',
+      motivoBaja: assignment.asis_motivo_baja || assignment.motivo_baja || assignment.observacion_estado || 'Baja en proceso previo',
       descripcion: `Cesado en ${assignment.grupo_codigo || 'grupo previo'}`
     }
   }
 
-  // Si tiene campo explícito de ult_estado / ultimo_estado
+  // 2. Si tiene campo explícito de ult_estado / ultimo_estado
   if (assignment.ult_estado) {
     const u = String(assignment.ult_estado).trim().toUpperCase()
-    if (u.includes('CES') || u.includes('BAJA') || u.includes('NO ACTIVO') || u === 'INACTIVO') {
+    if (u.includes('CES') || u.includes('BAJA') || u.includes('NO ACTIVO') || u === 'INACTIVO' || u.includes('REASIGN')) {
       return {
         tipo: 'REINGRESO',
         estadoLabel: 'CESADO',
@@ -134,13 +117,18 @@ export function evaluarHistorialPostulante(assignment) {
         estadoLabel: 'ACTIVO',
         isActivo: true,
         isBloqueante: true,
+        isSemanaEnCurso: false,
+        grupo: assignment.grupo_codigo,
+        reclutador: assignment.reclutador,
+        semana: assignment.semana_trabajo,
+        campana: assignment.campana,
         motivoBaja: '',
         descripcion: `En capacitación activa en ${assignment.grupo_codigo || 'otro grupo'}`
       }
     }
   }
 
-  // Revisar sigla, estado o motivo de baja en consolidado de asistencia y nómina
+  // 3. Revisar sigla, estado o motivo de baja en consolidado de asistencia y nómina
   const rawSigla = String(assignment.asis_sigla || assignment.sigla || '').trim().toUpperCase()
   const rawAsisEstado = String(assignment.asis_estado || '').trim().toUpperCase()
   const rawMotivo = String(assignment.asis_motivo_baja || assignment.motivo_baja || assignment.observacion_estado || '').trim().toUpperCase()
@@ -149,12 +137,12 @@ export function evaluarHistorialPostulante(assignment) {
   const rawStatusD1 = String(assignment.status_dia_1 || '').trim().toUpperCase()
 
   const hasBajaAsistencia = (
-    rawSigla === 'B' || rawSigla === 'BD1' || rawSigla === 'D1' ||
+    rawSigla === 'B' || rawSigla === 'BD1' || rawSigla === 'D1' || rawSigla === 'DES' ||
     rawAsisEstado.includes('BAJA') || rawAsisEstado.includes('CESAD') || rawAsisEstado.includes('DESERC') ||
-    rawEstado === 'CESADO' || rawEstado === 'BAJA' ||
+    rawEstado === 'CESADO' || rawEstado === 'BAJA' || rawEstado === 'REASIGNADO' ||
     rawStatusFinal.includes('BAJA') || rawStatusFinal.includes('CESAD') ||
     rawStatusD1.includes('BAJA') || rawStatusD1.includes('DESERC') ||
-    (rawMotivo && rawMotivo !== 'NULL' && rawMotivo !== 'UNDEFINED' && rawMotivo !== 'ASISTIO' && rawMotivo !== 'ACTIVO' && rawMotivo !== 'SIN ESPECIFICAR')
+    (rawMotivo && !['NULL', 'UNDEFINED', 'ASISTIO', 'ACTIVO', 'SIN ESPECIFICAR'].includes(rawMotivo))
   )
 
   if (hasBajaAsistencia) {
@@ -168,18 +156,73 @@ export function evaluarHistorialPostulante(assignment) {
     }
   }
 
+  // 4. Si NO tiene baja y su registro está ACTIVO, evaluar si pertenece a la SEMANA EN CURSO o es reciente
+  const targetSemNum = context?.bulkSemana ? parseInt(String(context.bulkSemana).replace(/\D/g, ''), 10) : null
+  const assignSemNum = assignment.semana_trabajo ? parseInt(String(assignment.semana_trabajo).replace(/\D/g, ''), 10) : null
+  const isMismaSemana = Boolean(targetSemNum && assignSemNum && targetSemNum === assignSemNum)
+
+  let isRecentAssignment = false
+  if (assignment.created_at) {
+    const diffDays = (Date.now() - new Date(assignment.created_at).getTime()) / (1000 * 60 * 60 * 24)
+    if (diffDays <= 14) {
+      isRecentAssignment = true
+    }
+  }
+
+  const isSemanaActualOActiva = isMismaSemana || (isRecentAssignment && (!targetSemNum || !assignSemNum || assignSemNum >= (targetSemNum - 1)))
+
+  const asistioD1 = isAsistioVal(assignment.dia_1)
+  const dia1Raw = String(assignment.dia_1 || '').trim().toUpperCase()
+  const isDia1Falta = dia1Raw === 'FALTO' || dia1Raw === 'F' || dia1Raw === 'NO' || dia1Raw === 'INASISTENCIA'
+
+  // 4.1 Postulante tomado en la semana en curso (pendiente de Día 1 o recién adjudicado por otro compañero)
+  if (isSemanaActualOActiva && !isDia1Falta) {
+    const semLabel = assignment.semana_trabajo || targetSemNum || 'CURSO'
+    return {
+      tipo: 'ADJUDICADO_OTRO_GRUPO',
+      estadoLabel: `YA ADJUDICADO (SEM ${semLabel})`,
+      isActivo: true,
+      isBloqueante: true,
+      isSemanaEnCurso: true,
+      grupo: assignment.grupo_codigo,
+      reclutador: assignment.reclutador,
+      semana: assignment.semana_trabajo,
+      campana: assignment.campana,
+      motivoBaja: '',
+      descripcion: `Ya adjudicado a ${assignment.grupo_codigo || 'otro grupo'} por ${assignment.reclutador || 'otro reclutador'} (Semana ${semLabel})`
+    }
+  }
+
+  // 4.2 Postulante con asistencia confirmada a Día 1 (activo en aula o en operaciones de semanas previas)
+  if (asistioD1) {
+    return {
+      tipo: 'ACTIVO_OTRO_GRUPO',
+      estadoLabel: 'ACTIVO',
+      isActivo: true,
+      isBloqueante: true,
+      isSemanaEnCurso: false,
+      grupo: assignment.grupo_codigo,
+      reclutador: assignment.reclutador,
+      semana: assignment.semana_trabajo,
+      campana: assignment.campana,
+      motivoBaja: '',
+      descripcion: `En capacitación activa en ${assignment.grupo_codigo || 'otro grupo'}`
+    }
+  }
+
+  // 4.3 Postulante de semanas históricas anteriores que nunca llegó a Día 1 (Ingreso Apto disponible)
   return {
-    tipo: 'ACTIVO_OTRO_GRUPO',
-    estadoLabel: 'ACTIVO',
-    isActivo: true,
-    isBloqueante: true,
-    motivoBaja: '',
-    descripcion: `En capacitación activa en ${assignment.grupo_codigo || 'otro grupo'}`
+    tipo: 'NO_LLEGO_CAPA',
+    estadoLabel: 'INGRESO APTO',
+    isActivo: false,
+    isBloqueante: false,
+    motivoBaja: 'NO ASISTIÓ A DÍA 1',
+    descripcion: `No asistió a Día 1 en ${assignment.grupo_codigo || 'grupo previo'}`
   }
 }
 
-function getEstadoDisplay(assignment) {
-  return evaluarHistorialPostulante(assignment).estadoLabel
+function getEstadoDisplay(assignment, context) {
+  return evaluarHistorialPostulante(assignment, context).estadoLabel
 }
 
 function PoolStat({ label, value, color, icon: Icon }) {
@@ -329,6 +372,14 @@ export default function NominaFormPool({
   const [importing, setImporting]           = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [duplicateWarningData, setDuplicateWarningData] = useState(null)
+  const [conflictWarningData, setConflictWarningData] = useState(null)
+
+  const currentContext = useMemo(() => ({
+    bulkSemana,
+    bulkPeriodo,
+    bulkGrupo,
+    bulkCampana
+  }), [bulkSemana, bulkPeriodo, bulkGrupo, bulkCampana])
 
   // Carga directa de archivo .xlsx desde el disco
   const handleFileUpload = async (e) => {
@@ -699,11 +750,11 @@ export default function NominaFormPool({
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment) return true
       if (assignment.grupo_codigo === bulkGrupo) return true
-      const evalRes = evaluarHistorialPostulante(assignment)
-      // Bloqueante solo si está en capacitación activa en otro grupo
+      const evalRes = evaluarHistorialPostulante(assignment, currentContext)
+      // Bloqueante si está en capacitación activa en otro grupo o ya adjudicado en la semana en curso
       return !evalRes.isBloqueante
     })
-  , [availableData, latestAssignedDocs, bulkGrupo])
+  , [availableData, latestAssignedDocs, bulkGrupo, currentContext])
 
   const poolStats = useMemo(() => ({
     total: poolData.length,
@@ -713,18 +764,18 @@ export default function NominaFormPool({
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment) return false
       if (assignment.grupo_codigo === bulkGrupo) return false
-      const evalRes = evaluarHistorialPostulante(assignment)
+      const evalRes = evaluarHistorialPostulante(assignment, currentContext)
       return evalRes.isBloqueante
     }).length,
     seleccionados: selectedDocs.size,
-  }), [poolData, selectableData, latestAssignedDocs, selectedDocs, bulkGrupo])
+  }), [poolData, selectableData, latestAssignedDocs, selectedDocs, bulkGrupo, currentContext])
 
   const toggleSelect = (doc, marca) => {
     const cleanDoc = String(doc || '').trim()
     const assignment = latestAssignedDocs.get(cleanDoc)
-    // Bloquear solo si está actualmente ACTIVO en OTRO grupo diferente al destino seleccionado
+    // Bloquear si está actualmente ACTIVO o ya adjudicado en la semana en curso en OTRO grupo
     if (assignment && assignment.grupo_codigo !== bulkGrupo && bulkGrupo) {
-      const evalRes = evaluarHistorialPostulante(assignment)
+      const evalRes = evaluarHistorialPostulante(assignment, currentContext)
       if (evalRes.isBloqueante) return
     }
     const key = `${cleanDoc}|${marca}`
@@ -747,7 +798,7 @@ export default function NominaFormPool({
       const cleanDoc = String(d.documento || '').trim()
       const assignment = latestAssignedDocs.get(cleanDoc)
       if (!assignment || (bulkGrupo && assignment.grupo_codigo === bulkGrupo)) return true
-      const evalRes = evaluarHistorialPostulante(assignment)
+      const evalRes = evaluarHistorialPostulante(assignment, currentContext)
       return !evalRes.isBloqueante
     })
     const next = new Set(selectedDocs)
@@ -770,7 +821,35 @@ export default function NominaFormPool({
       selectedDocs.has(`${String(d.documento || '').trim()}|${d.marca_temporal}`)
     )
 
-    // Detectar quiénes ya existen en este grupo (Advertencia no bloqueante)
+    // 1. Detectar si alguno ya está adjudicado en otro grupo en la semana en curso (Alerta entre reclutadores)
+    const conflictsInOtherGroups = []
+    selectedPoolItems.forEach(d => {
+      const cleanDoc = String(d.documento || '').trim()
+      const assignment = latestAssignedDocs.get(cleanDoc)
+      if (assignment && String(assignment.grupo_codigo || '').trim().toUpperCase() !== cleanTargetGrupo) {
+        const evalRes = evaluarHistorialPostulante(assignment, currentContext)
+        if (evalRes.isBloqueante && evalRes.isSemanaEnCurso) {
+          conflictsInOtherGroups.push({
+            documento: cleanDoc,
+            nombre: `${d.apellido_paterno || ''} ${d.nombres || ''}`.trim() || d.nombre_completo || 'Postulante',
+            grupo_origen: assignment.grupo_codigo || 'Otro Grupo',
+            reclutador_origen: assignment.reclutador || 'Otro reclutador',
+            semana: assignment.semana_trabajo || 'Semana actual',
+            campana: assignment.campana || ''
+          })
+        }
+      }
+    })
+
+    if (conflictsInOtherGroups.length > 0) {
+      setConflictWarningData({
+        candidates: conflictsInOtherGroups,
+        totalSelected: selectedPoolItems.length
+      })
+      return
+    }
+
+    // 2. Detectar quiénes ya existen en este grupo (Advertencia no bloqueante de actualización)
     const existingInThisGroup = []
     selectedPoolItems.forEach(d => {
       const cleanDoc = String(d.documento || '').trim()
@@ -833,7 +912,8 @@ export default function NominaFormPool({
 
         const fechaNac = parseFechaNacimiento(d.fecha_nacimiento) || null
         const edadVal = parseEdadValue(d.edad, fechaNac)
-        const expTiempo = normalizeTiempoExperiencia(d.exp_tiempo_campana || d.exp_tiempo_call) || d.exp_tiempo_campana || d.exp_tiempo_call || null
+        const expTiempoCall = normalizeTiempoExperiencia(d.exp_tiempo_campana || d.exp_tiempo_call) || d.exp_tiempo_campana || d.exp_tiempo_call || null
+        const expTiempoOtra = normalizeTiempoExperiencia(d.exp_tiempo_otra) || d.exp_tiempo_otra || null
         const phonesCel = extractPhonesFromText(d.celular)
         const phonesRef = extractPhonesFromText(d.celular_referencia)
         const phonesWsp = extractPhonesFromText(d.usuario_whatsapp)
@@ -849,8 +929,12 @@ export default function NominaFormPool({
           n_hijos: d.n_hijos ?? 0,
           celular: finalCelular,
           celular_referencia: finalCelularRef,
-          exp_tiempo_call: expTiempo,
-          exp_tiempo_campana: expTiempo,
+          exp_call_center: d.exp_call_center || null,
+          exp_tipo_campana: d.exp_tipo_campana || null,
+          exp_tiempo_call: expTiempoCall,
+          exp_tiempo_campana: expTiempoCall,
+          exp_otra: d.exp_otra || null,
+          exp_tiempo_otra: expTiempoOtra,
           periodo_reclutado: bulkPeriodo ? String(bulkPeriodo).trim() : (matchedGrupoObj?.periodo || null),
           semana_trabajo: semanaNum,
           reclutador: reclutador || d.reclutador || 'RECLUTAMIENTO',
@@ -964,10 +1048,18 @@ export default function NominaFormPool({
   const handleDesadjudicar = async (assignment, candidate) => {
     const cleanDoc = String(candidate.documento || assignment.documento || '').trim()
     const targetGrupo = assignment.grupo_codigo || 'Sin Grupo'
-    
-    if (!window.confirm(
-      `¿Habilitar a ${candidate.nombres || ''} ${candidate.apellido_paterno || ''} (DNI: ${cleanDoc}) para asignarlo al grupo actual ${bulkGrupo || ''}?\n\nℹ️ El registro previo en "${targetGrupo}" se conservará intacto en el historial para proteger los indicadores del reclutador anterior.`
-    )) return
+    const reclutadorPrevio = assignment.reclutador || 'Otro reclutador'
+    const semPrevio = assignment.semana_trabajo ? `Semana ${assignment.semana_trabajo}` : 'Semana en curso'
+    const nombreCand = [candidate.nombres, candidate.apellido_paterno].filter(Boolean).join(' ') || cleanDoc
+
+    const evalRes = evaluarHistorialPostulante(assignment, currentContext)
+    const isSemanaActual = evalRes?.isSemanaEnCurso
+
+    const confirmMsg = isSemanaActual
+      ? `⚠️ ALERTA: POSTULANTE YA ADJUDICADO EN LA SEMANA EN CURSO\n\nEl postulante ${nombreCand} (DNI: ${cleanDoc}) ya fue adjudicado por el reclutador "${reclutadorPrevio}" al grupo "${targetGrupo}" (${semPrevio}).\n\n¿Estás seguro de que deseas reasignarlo a tu nómina en el grupo actual "${bulkGrupo || ''}"?\n\nℹ️ Al guardarlo en tu nómina, se cancelará la duplicidad en el grupo anterior manteniendo la consistencia de la dotación.`
+      : `¿Habilitar a ${nombreCand} (DNI: ${cleanDoc}) para asignarlo al grupo actual ${bulkGrupo || ''}?\n\nℹ️ El registro previo en "${targetGrupo}" se conservará intacto en el historial para proteger los indicadores del reclutador anterior.`
+
+    if (!window.confirm(confirmMsg)) return
 
     try {
       setLoading(true)
@@ -987,7 +1079,7 @@ export default function NominaFormPool({
         return next
       })
 
-      setSuccess(`✅ Postulante ${cleanDoc} habilitado para adjudicar a ${bulkGrupo || 'este grupo'}. Su historial previo se mantiene seguro.`)
+      setSuccess(`✅ Postulante ${cleanDoc} habilitado para adjudicar a ${bulkGrupo || 'este grupo'}.`)
       setTimeout(() => setSuccess(null), 5000)
     } catch (err) {
       console.error('Error al habilitar postulante:', err)
@@ -1279,8 +1371,9 @@ export default function NominaFormPool({
                 const isAssigned = Boolean(latestAssignment)
                 const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
                 
-                const evalRes = isAssigned ? evaluarHistorialPostulante(latestAssignment) : null
+                const evalRes = isAssigned ? evaluarHistorialPostulante(latestAssignment, currentContext) : null
                 const isOtherGroup = isAssigned && !isCurrentGroup && evalRes?.isBloqueante
+                const isSemanaEnCurso = isOtherGroup && evalRes?.isSemanaEnCurso
                 const isReingreso = isAssigned && !isCurrentGroup && evalRes?.tipo === 'REINGRESO'
                 const isNoLlegoCapa = isAssigned && !isCurrentGroup && evalRes?.tipo === 'NO_LLEGO_CAPA'
                 const estadoAssignment = evalRes ? evalRes.estadoLabel : null
@@ -1307,9 +1400,11 @@ export default function NominaFormPool({
                             ? 'bg-emerald-500/5 hover:bg-emerald-500/10 cursor-pointer'
                             : isReingreso
                               ? 'bg-blue-500/5 hover:bg-blue-500/10 cursor-pointer'
-                              : isOtherGroup
-                                ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
-                                : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
+                              : isSemanaEnCurso
+                                ? 'bg-rose-500/10 hover:bg-rose-500/15 cursor-pointer border-l-2 border-l-rose-500'
+                                : isOtherGroup
+                                  ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
+                                  : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
                     }`}
                   >
                     {/* Selection Checkbox */}
@@ -1324,13 +1419,15 @@ export default function NominaFormPool({
                         }} 
                         className="cursor-pointer pt-1"
                         title={
-                          isOtherGroup 
-                            ? `Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` 
-                            : isNoLlegoCapa 
-                              ? `Ingreso Apto (No asistió a Día 1 en ${latestAssignment.grupo_codigo})`
-                              : isReingreso
-                                ? `Reingreso disponible (Cesado en ${latestAssignment.grupo_codigo})`
-                                : 'Seleccionar'
+                          isSemanaEnCurso
+                            ? `⚠️ Ya adjudicado por ${latestAssignment.reclutador || 'otro reclutador'} en ${latestAssignment.grupo_codigo} (${latestAssignment.semana_trabajo ? `Sem ${latestAssignment.semana_trabajo}` : 'Semana en curso'}). Haz clic para reasignar.`
+                            : isOtherGroup 
+                              ? `Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` 
+                              : isNoLlegoCapa 
+                                ? `Ingreso Apto (No asistió a Día 1 en ${latestAssignment.grupo_codigo})`
+                                : isReingreso
+                                  ? `Reingreso disponible (Cesado en ${latestAssignment.grupo_codigo})`
+                                  : 'Seleccionar'
                         }
                       >
                         {isSelected 
@@ -1384,8 +1481,47 @@ export default function NominaFormPool({
                         </span>
                       )}
 
-                      {/* Caso 3: Sigue registrado como ACTIVO en OTRO grupo diferente en Asistencia */}
-                      {isOtherGroup && (
+                      {/* Caso 3A: Ya adjudicado en la SEMANA EN CURSO a otro grupo/reclutador */}
+                      {isOtherGroup && isSemanaEnCurso && (
+                        <div className="mt-1.5 p-2 rounded-xl bg-rose-500/10 dark:bg-rose-950/30 border border-rose-500/30 text-rose-600 dark:text-rose-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
+                            <span className="truncate max-w-[130px] flex items-center gap-1 text-rose-600 dark:text-rose-300 font-black">
+                              ⚠️ {evalRes?.estadoLabel || 'YA ADJUDICADO'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDesadjudicar(latestAssignment, d); }}
+                              className="px-1.5 py-0.5 rounded bg-rose-500 hover:bg-rose-600 text-white transition-colors text-[8.5px] font-black shrink-0 cursor-pointer shadow-xs"
+                              title="Reasignar a mi grupo actual cancelando la duplicidad previa"
+                            >
+                              Reasignar
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[9px]">
+                            <div>
+                              <span className="text-[var(--text-muted)] font-semibold">Grupo: </span>
+                              <span className="font-mono font-bold text-[var(--text-primary)]">{latestAssignment.grupo_codigo || '—'}</span>
+                            </div>
+                            <div>
+                              <span className="text-[var(--text-muted)] font-semibold">Semana: </span>
+                              <span className="font-bold text-[var(--text-primary)]">{latestAssignment.semana_trabajo ? `Sem ${latestAssignment.semana_trabajo}` : 'Actual'}</span>
+                            </div>
+                            <div className="col-span-2 pt-0.5 border-t border-rose-500/20">
+                              <span className="text-[var(--text-muted)] font-semibold">Tomado por: </span>
+                              <span className="font-bold text-rose-500 dark:text-rose-300">{latestAssignment.reclutador || 'Otro reclutador'}</span>
+                            </div>
+                            {latestAssignment.campana && (
+                              <div className="col-span-2 text-[8px] text-[var(--text-muted)] truncate">
+                                Campaña: <b className="text-[var(--text-primary)]">{latestAssignment.campana}</b>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Caso 3B: Sigue registrado como ACTIVO en OTRO grupo diferente en Asistencia (Capacitación/Operaciones anterior) */}
+                      {isOtherGroup && !isSemanaEnCurso && (
                         <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/25 text-amber-600 dark:text-amber-400 space-y-1 shadow-2xs" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-between gap-1.5 text-[10px] font-black uppercase tracking-wider">
                             <span className="truncate max-w-[140px]" title={latestAssignment.campana || 'Sin Campaña'}>
@@ -1440,8 +1576,8 @@ export default function NominaFormPool({
 
                     {/* Usuario WhatsApp */}
                     <td className="p-3 text-xs whitespace-nowrap align-top min-w-[150px]">
-                      <span className={d.usuario_whatsapp ? "text-emerald-500 font-medium" : "text-[var(--text-secondary)]"}>
-                        {d.usuario_whatsapp || '—'}
+                      <span className={(d.usuario_whatsapp || d.celular) ? "text-emerald-500 font-medium font-mono" : "text-[var(--text-secondary)]"}>
+                        {d.usuario_whatsapp || d.celular || '—'}
                       </span>
                     </td>
 
@@ -1579,6 +1715,90 @@ export default function NominaFormPool({
           <span>Adjudicar a mi Grupo {selectedDocs.size > 0 ? `(${selectedDocs.size})` : ''}</span>
         </button>
       </div>
+
+      {/* ── MODAL ALERTA DE CONFLICTO DE ADJUDICACIÓN EN SEMANA EN CURSO ── */}
+      {conflictWarningData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-[var(--bg-elevated)] border border-rose-500/30 w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-rose-400">
+              <div className="bg-rose-500/20 p-2.5 rounded-xl border border-rose-500/30">
+                <AlertTriangle size={22} className="text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-[var(--text-primary)]">
+                  ⚠️ Postulantes ya adjudicados en la semana en curso
+                </h3>
+                <span className="text-[11px] text-rose-400 font-semibold">
+                  {conflictWarningData.candidates.length} de {conflictWarningData.totalSelected} seleccionados ya pertenecen a otro grupo esta semana
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-[var(--bg-muted)]/60 rounded-xl p-3 border border-rose-500/20 max-h-52 overflow-y-auto space-y-2">
+              {conflictWarningData.candidates.map((c, i) => (
+                <div key={i} className="flex flex-col gap-1 text-xs py-1.5 px-2.5 rounded-lg bg-[var(--bg-surface)] border border-rose-500/20">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[var(--text-primary)] uppercase truncate max-w-[260px]">{c.nombre}</span>
+                    <span className="font-mono text-[11px] text-rose-400 font-bold">{c.documento}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] border-t border-[var(--border-subtle)] pt-1">
+                    <span>Grupo origen: <b className="text-[var(--text-primary)]">{c.grupo_origen}</b> ({c.semana ? `Sem ${c.semana}` : ''})</span>
+                    <span>Reclutador: <b className="text-rose-400">{c.reclutador_origen}</b></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 leading-relaxed">
+              <strong>Importante:</strong> Estos postulantes ya fueron tomados por otro compañero para la misma semana de trabajo. Si confirmas la reasignación hacia tu grupo <strong className="text-white">{bulkGrupo}</strong>, su asignación previa será dada de baja para evitar duplicidades en la dotación.
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConflictWarningData(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-[var(--bg-muted)] hover:bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-all cursor-pointer"
+              >
+                Cancelar y Revisar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConflictWarningData(null)
+                  // Verificar si además hay duplicados en el grupo destino
+                  const cleanTargetGrupo = String(bulkGrupo || '').split(' - ')[0].trim().toUpperCase()
+                  const selectedPoolItems = poolData.filter(d =>
+                    selectedDocs.has(`${String(d.documento || '').trim()}|${d.marca_temporal}`)
+                  )
+                  const existingInThisGroup = []
+                  selectedPoolItems.forEach(d => {
+                    const cleanDoc = String(d.documento || '').trim()
+                    const assignment = latestAssignedDocs.get(cleanDoc)
+                    if (assignment && String(assignment.grupo_codigo || '').trim().toUpperCase() === cleanTargetGrupo) {
+                      existingInThisGroup.push({
+                        documento: cleanDoc,
+                        nombre: `${d.apellido_paterno || ''} ${d.nombres || ''}`.trim() || d.nombre_completo || 'Postulante'
+                      })
+                    }
+                  })
+
+                  if (existingInThisGroup.length > 0) {
+                    setDuplicateWarningData({
+                      candidates: existingInThisGroup,
+                      totalSelected: selectedPoolItems.length
+                    })
+                  } else {
+                    executeSave()
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/20 transition-all cursor-pointer flex items-center gap-1.5 font-black"
+              >
+                Confirmar Reasignación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── MODAL ADVERTENCIA DE DUPLICADOS (PREVENCIÓN EN ORIGEN) ── */}
       {duplicateWarningData && (

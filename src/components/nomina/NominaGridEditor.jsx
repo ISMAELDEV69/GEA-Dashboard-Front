@@ -112,7 +112,7 @@ function sanitizeRowUpdatesForDb(rawUpdates) {
 }
 
 function getHeaderColor(key, isSelected = false) {
-  const group1 = ['celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'fuente_oferta', 'observacion_reclutamiento'];
+  const group1 = ['celular', 'celular_referencia', 'usuario_whatsapp', 'correo', 'genero', 'fecha_nacimiento', 'edad', 'estado_civil', 'n_hijos', 'nivel_academico', 'carrera', 'distrito_residencia', 'lugar_residencia', 'direccion_domicilio', 'exp_call_center', 'exp_tipo_campana', 'exp_tiempo_call', 'exp_otra', 'exp_tiempo_otra', 'fuente_oferta', 'observacion_reclutamiento'];
   const group2 = ['doc_cv', 'doc_dni_adjunto', 'doc_certijoven', 'doc_recibo_servicios', 'doc_ficha_datos', 'doc_autorizacion', 'status_final', 'observacion_final', 'revision_estado'];
   const group3 = ['validacion_reingreso', 'fecha_validacion', 'observacion_reingreso'];
   
@@ -154,6 +154,8 @@ export const POSTULANTE_COLUMNS = [
   { key: 'exp_call_center', label: 'EXP. CALL', width: 130 },
   { key: 'exp_tipo_campana', label: 'EXP. CAMPAÑA', width: 160 },
   { key: 'exp_tiempo_call', label: 'TIEMPO EXP.', width: 130 },
+  { key: 'exp_otra', label: 'OTRA EXP.', width: 160 },
+  { key: 'exp_tiempo_otra', label: 'TIEMPO OTRA EXP.', width: 140 },
   { key: 'fuente_oferta', label: 'FUENTE OFERTA', width: 160 },
   { key: 'observacion_reclutamiento', label: 'OBS. RECLUTAMIENTO', width: 220 }
 ]
@@ -696,8 +698,11 @@ export default function NominaGridEditor({
         // Alias BD: algunos registros guardan exp_tiempo_campana y la grilla lee exp_tiempo_call
         const withAlias = {
           ...raw,
+          exp_tipo_campana: raw.exp_tipo_campana || '',
           exp_tiempo_call: raw.exp_tiempo_call || raw.exp_tiempo_campana || '',
           exp_tiempo_campana: raw.exp_tiempo_campana || raw.exp_tiempo_call || '',
+          exp_otra: raw.exp_otra || '',
+          exp_tiempo_otra: raw.exp_tiempo_otra || '',
         }
         const r = (!withAlias.edad && withAlias.edad !== 0 && withAlias.fecha_nacimiento)
           ? { ...withAlias, edad: calcEdadFromFecha(withAlias.fecha_nacimiento) }
@@ -1726,7 +1731,14 @@ export default function NominaGridEditor({
                       </div>
                     </td>
                     {visibleColumns.map(col => {
-                      const val = (row[col.key] !== undefined && row[col.key] !== null) ? row[col.key] : '';
+                      let val = (row[col.key] !== undefined && row[col.key] !== null) ? row[col.key] : '';
+                      // Si usuario_whatsapp no tiene alias o tiene placeholder inválido, usar su celular como WhatsApp
+                      if (col.key === 'usuario_whatsapp') {
+                        const sVal = String(val).trim();
+                        if (!sVal || sVal === '-' || sVal === '.' || sVal === '—' || sVal === 'null' || sVal === 'NO' || sVal.toUpperCase() === 'NO TENGO') {
+                          val = row.celular || '';
+                        }
+                      }
                       let badgeClass = 'text-[var(--text-primary)]';
                       if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO' || val === 'AGREGADO' || val === 'RECUPERADO' || val === 'AGREGADO CAP' || val === 'RECUPERADO CAP') {
                         badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';

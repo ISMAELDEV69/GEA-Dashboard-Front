@@ -443,12 +443,22 @@ const HEADER_ALIASES = {
     'BRINDAME EL USUARIO DE TU WTSP EN CASO LO HAYAS MODIFICADO',
     'BRINDAME EL USUARIO DE TU WTSP',
     'BRINDAME EL USUARIO DE TU WHATSAPP',
+    'BRINDAME EL USUARIO DE TU WSP',
     'USUARIO DE TU WTSP',
     'USUARIO DE TU WHATSAPP',
+    'USUARIO DE TU WSP',
     'USUARIO WTSP',
     'USUARIO WHATSAPP',
+    'USUARIO WSP',
+    'NUMERO DE WHATSAPP',
+    'NUMERO DE WTSP',
+    'NUMERO DE WSP',
+    'NUMERO WHATSAPP',
+    'NUMERO WTSP',
+    'NUMERO WSP',
     'WTSP',
-    'WHATSAPP'
+    'WHATSAPP',
+    'WSP'
   ],
   correo: ['CORREO ELECTRONICO'],
   genero: ['GÉNERO O SEXO DEL POSTULANTE'],
@@ -508,11 +518,25 @@ export function mapGoogleFormHeaders(headerRow = []) {
       colIdx['exp_tipo_campana'] = i
     }
     else if (clean.includes('EXPERIENCIA') && (clean.includes('CALL') || clean.includes('CENTER'))) colIdx['exp_call_center'] = i
-    else if (clean.includes('TIEMPO DE EXPERIENCIA') || clean.includes('CUANTO TIEMPO')) {
-      if (colIdx['exp_tiempo_call'] === undefined) colIdx['exp_tiempo_call'] = i
-      else if (colIdx['exp_tiempo_otra'] === undefined) colIdx['exp_tiempo_otra'] = i
+    else if (clean.includes('OTRA EXPERIENCIA') && (clean.includes('TIEMPO') || clean.includes('CUANTO') || clean.includes('QUE TIEMPO'))) {
+      colIdx['exp_tiempo_otra'] = i
     }
-    else if (clean.includes('OTRA EXPERIENCIA')) colIdx['exp_otra'] = i
+    else if (
+      clean.includes('TIEMPO DE EXPERIENCIA') ||
+      clean.includes('TIEMPO EXPERIENCIA') ||
+      clean.includes('CUANTO TIEMPO') ||
+      clean.includes('QUE TIEMPO') ||
+      (clean.includes('TIEMPO') && clean.includes('EXPERIENCIA'))
+    ) {
+      if (clean.includes('OTRA') || clean.includes('OTRO')) {
+        colIdx['exp_tiempo_otra'] = i
+      } else if (colIdx['exp_tiempo_call'] === undefined) {
+        colIdx['exp_tiempo_call'] = i
+      } else if (colIdx['exp_tiempo_otra'] === undefined) {
+        colIdx['exp_tiempo_otra'] = i
+      }
+    }
+    else if (clean.includes('OTRA EXPERIENCIA') || clean.includes('OTRAS EXPERIENCIAS')) colIdx['exp_otra'] = i
     else if (
       (clean.includes('CAMPANA') || clean.includes('A QUE CAMPANA')) &&
       !clean.includes('EXPERIENCIA') &&
@@ -551,7 +575,25 @@ export function mapGoogleFormHeaders(headerRow = []) {
         colIdx['celular_referencia'] = i
       }
     }
-    // 2. CELULAR PRINCIPAL / MOVIL / TELEFONO
+    // 2. USUARIO WHATSAPP / WTSP / WSP (Evaluado antes de celular genérico para evitar que 'USUARIO WSP' o 'NUMERO DE WHATSAPP' sea capturado como celular)
+    else if (
+      clean.includes('USUARIO DE TU WTSP') ||
+      clean.includes('USUARIO DE TU WHATSAPP') ||
+      clean.includes('USUARIO DE TU WSP') ||
+      clean.includes('USUARIO WTSP') ||
+      clean.includes('USUARIO WHATSAPP') ||
+      clean.includes('USUARIO WSP') ||
+      clean.includes('MODIFICADO') ||
+      clean.includes('HALLAS') ||
+      clean.includes('HAYAS') ||
+      (clean.includes('USUARIO') && (clean.includes('WSP') || clean.includes('WTSP') || clean.includes('WHATS') || clean.includes('CHAT') || clean.includes('RED'))) ||
+      ((clean === 'WHATSAPP' || clean === 'WTSP' || clean === 'WSP' || clean.includes('NUMERO DE WHATSAPP') || clean.includes('NUMERO WHATSAPP') || clean.includes('NUMERO WSP') || clean.includes('NUMERO DE WSP')) && colIdx['celular'] !== undefined)
+    ) {
+      if (colIdx['usuario_whatsapp'] === undefined) {
+        colIdx['usuario_whatsapp'] = i
+      }
+    }
+    // 3. CELULAR PRINCIPAL / MOVIL / TELEFONO
     else if (
       clean.includes('CELULAR') || clean.includes('MOVIL') || clean.includes('TELEFONO') ||
       clean.includes('TELF') || clean.includes('NRO DE CEL') || clean.includes('NUMERO DE CEL') ||
@@ -590,7 +632,11 @@ export function mapGoogleFormHeaders(headerRow = []) {
     }
     else if (clean.includes('DIRECCION') || clean.includes('DOMICILIO') || clean.includes('DONDE VIVES') || clean.includes('CALLE') || clean.includes('AVENIDA')) colIdx['direccion_domicilio'] = i
     else if (clean.includes('OFERTA') || clean.includes('ENTERASTE') || clean.includes('FUENTE')) colIdx['fuente_oferta'] = i
-    else if (clean.includes('WTSP') || clean.includes('WHATSAPP')) colIdx['usuario_whatsapp'] = i
+    else if (clean.includes('WTSP') || clean.includes('WHATSAPP') || clean.includes('WSP')) {
+      if (colIdx['usuario_whatsapp'] === undefined) {
+        colIdx['usuario_whatsapp'] = i
+      }
+    }
     else if (clean.includes('CARGO CONTRACTUAL') || (clean.includes('CARGO') && !clean.includes('DESCARGA')) || clean.includes('PUESTO')) colIdx['cargo_contractual'] = i
     else if (clean.includes('BONO ASIST') || clean.includes('ONO ASIST')) colIdx['bono_asistencia_perfecta'] = i
     
@@ -904,6 +950,41 @@ export function parseGoogleFormRow(row, colIdx) {
   const expTiempoCall = normalizeTiempoExperiencia(get('exp_tiempo_call')) || normUpper('exp_tiempo_call')
   const expTiempoOtra = normalizeTiempoExperiencia(get('exp_tiempo_otra')) || normUpper('exp_tiempo_otra')
 
+  // Limpieza y normalización de Usuario WhatsApp (descarta placeholders como 'no tengo', '-', etc.)
+  let cleanUsuarioWhatsapp = null
+  if (rawUsuarioWhatsapp) {
+    const wClean = rawUsuarioWhatsapp.replace(/[\r\n]+/g, ' ').trim()
+    const wUpper = wClean.toUpperCase()
+    const invalidPlaceholders = [
+      '-', '.', '*', '--', '---', '...', 'NO', 'NO TIENE', 'NO TENGO', 'NO TENGO USUARIO',
+      'NO TENGO NOMBRE DE USUARIO', 'NINGUNO', 'NINGUNA', 'NO APLICA', 'NOAPLICA', 'N/A', 'NA',
+      'NO LO HE MODIFICADO', 'NO HE MODIFICADO', 'NO MODIFIQUE', 'SIN MODIFICAR', 'SIN USUARIO',
+      'NO DISPONIBLE', 'NO CUENTA', 'NO POSEE', 'X', 'XX', 'XXX', 'UNDEFINED', 'NULL'
+    ]
+    const isJunk = invalidPlaceholders.includes(wUpper) ||
+                   wUpper.startsWith('NO TENGO') ||
+                   wUpper.startsWith('NO LO HE') ||
+                   wUpper.startsWith('NO HE') ||
+                   wUpper === 'NO' ||
+                   /^[-.*_/#]+$/.test(wClean)
+
+    if (!isJunk) {
+      // Si el postulante ingresó un número telefónico en vez de alias, formatearlo
+      const wspPhone = extractPhonesFromText(wClean)
+      if (wspPhone.primary) {
+        cleanUsuarioWhatsapp = wspPhone.primary
+      } else {
+        cleanUsuarioWhatsapp = wClean
+      }
+    }
+  }
+
+  // Fallback: Si no indicó un alias personalizado de WhatsApp (o puso placeholder),
+  // su WhatsApp de contacto es su celular principal (o de referencia)
+  if (!cleanUsuarioWhatsapp) {
+    cleanUsuarioWhatsapp = celularNorm || celularRefNorm || null
+  }
+
   return {
     marca_temporal: parseTimestamp(str('marca_temporal')),
     periodo_reclutado: normUpper('periodo_reclutado'),
@@ -917,7 +998,7 @@ export function parseGoogleFormRow(row, colIdx) {
     nombres: rawNombres ? rawNombres.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase() : null,
     celular: celularNorm || celularRefNorm,
     celular_referencia: celularRefNorm,
-    usuario_whatsapp: rawUsuarioWhatsapp ? rawUsuarioWhatsapp.replace(/[\r\n]+/g, ' ').trim() : null,
+    usuario_whatsapp: cleanUsuarioWhatsapp,
     correo: normLower('correo'),
     genero: normUpper('genero'),
     fecha_nacimiento: fechaNacParsed,

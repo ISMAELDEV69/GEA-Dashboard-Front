@@ -6884,18 +6884,25 @@ function normalizePostulanteForAdjudicar(p = {}) {
   else nHijos = parseInt(nHijos, 10)
   if (!Number.isFinite(nHijos) || nHijos < 0) nHijos = 0
 
-  const rawExp = p.exp_tiempo_campana || p.exp_tiempo_call || null
-  const expTiempo = normalizeTiempoExperiencia(rawExp) || rawExp
+  const rawExpCall = p.exp_tiempo_call || p.exp_tiempo_campana || null
+  const expTiempoCall = normalizeTiempoExperiencia(rawExpCall) || rawExpCall
+  const rawExpOtra = p.exp_tiempo_otra || null
+  const expTiempoOtra = normalizeTiempoExperiencia(rawExpOtra) || rawExpOtra
 
   return {
     ...p,
     celular: celular || null,
     celular_referencia: celularRef || null,
+    usuario_whatsapp: p.usuario_whatsapp || celular || null,
     fecha_nacimiento: fechaNac,
     edad: edad ?? null,
     n_hijos: nHijos,
-    exp_tiempo_call: expTiempo,
-    exp_tiempo_campana: expTiempo,
+    exp_call_center: p.exp_call_center || null,
+    exp_tipo_campana: p.exp_tipo_campana || null,
+    exp_tiempo_call: expTiempoCall,
+    exp_tiempo_campana: expTiempoCall,
+    exp_otra: p.exp_otra || null,
+    exp_tiempo_otra: expTiempoOtra,
   }
 }
 
@@ -6907,10 +6914,14 @@ async function backfillDemograficosTrasAdjudicar(cleanGrupo, rows = []) {
     const patch = { updated_at: new Date().toISOString() }
     if (row.celular) patch.celular = String(row.celular)
     if (row.celular_referencia) patch.celular_referencia = String(row.celular_referencia)
+    if (row.usuario_whatsapp) patch.usuario_whatsapp = String(row.usuario_whatsapp)
     if (row.fecha_nacimiento) patch.fecha_nacimiento = row.fecha_nacimiento
     if (row.edad != null && row.edad !== '') patch.edad = Number(row.edad)
     if (row.n_hijos != null && row.n_hijos !== '') patch.n_hijos = Number(row.n_hijos)
+    if (row.exp_call_center) patch.exp_call_center = row.exp_call_center
     if (row.exp_tipo_campana) patch.exp_tipo_campana = row.exp_tipo_campana
+    if (row.exp_otra) patch.exp_otra = row.exp_otra
+    if (row.exp_tiempo_otra) patch.exp_tiempo_otra = row.exp_tiempo_otra
     const expT = row.exp_tiempo_campana || row.exp_tiempo_call
     if (expT) {
       patch.exp_tiempo_campana = expT
@@ -6976,6 +6987,28 @@ export async function adjudicarPostulantesPoolBulk({ targetGrupo, targetCampana,
   }
 
   // 2. Inserción directa de nuevos registros en cliente (preservando historial previo de otros grupos)
+  // Desactivar asignaciones previas activas en la misma semana si existe reasignación
+  for (const item of normalized) {
+    if (item.documento && item.semana_trabajo) {
+      try {
+        await supabase
+          .from('nominas')
+          .update({
+            activo: false,
+            estado: 'REASIGNADO',
+            observacion_estado: `Reasignado a grupo ${cleanGrupo} en semana ${item.semana_trabajo}`,
+            updated_at: new Date().toISOString()
+          })
+          .eq('documento', item.documento)
+          .eq('semana_trabajo', item.semana_trabajo)
+          .neq('grupo_codigo', cleanGrupo)
+          .eq('activo', true)
+      } catch (deactErr) {
+        console.warn("No se pudo desactivar asignación previa en misma semana:", deactErr)
+      }
+    }
+  }
+
   let { data: insData, error: insErr } = await supabase
     .from('nominas')
     .insert(normalized)

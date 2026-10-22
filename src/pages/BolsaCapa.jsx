@@ -892,7 +892,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
           exp_tiempo_call: p.exp_tiempo_call || hist.exp_tiempo_call || null,
           exp_otra: p.exp_otra || hist.exp_otra || null,
           exp_tiempo_otra: p.exp_tiempo_otra || hist.exp_tiempo_otra || null,
-          exp_tiempo_campana: p.exp_tiempo_campana || hist.exp_tiempo_campana || null,
+          exp_tiempo_campana: p.exp_tiempo_campana || hist.exp_tiempo_campana || p.exp_tiempo_call || null,
           lugar_nacimiento: p.lugar_nacimiento || hist.lugar_nacimiento || null,
           celular_emergencia: p.celular_emergencia || hist.celular_emergencia || null,
           contacto_emergencia: p.contacto_emergencia || hist.contacto_emergencia || null,
