@@ -36,39 +36,123 @@ function calcEdadFromFecha(fecha) {
   return age >= 0 && age < 120 ? age : null
 }
 
+// Parsea y valida fechas de procesos operativos (capacitación, OJT, OP, validación, etc.)
+// Acepta formato HTML date input 'YYYY-MM-DD', formatos texto 'DD/MM/YYYY', 'DD-MM-YYYY', 'YYYY/MM/DD'
+// y seriales de Excel, en rango razonable de años operativos (1990 - 2040)
+export function parseOperationalDate(val) {
+  if (val === null || val === undefined) return null
+  let s = String(val).trim()
+  if (!s || s === '-' || s === '.' || s === '—' || s.toUpperCase() === 'NULL' || s === 'undefined' || s === '...') return null
+
+  // Limpiar comillas
+  s = s.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
+
+  // 1. Si viene como Date object
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const y = val.getFullYear()
+    const m = String(val.getMonth() + 1).padStart(2, '0')
+    const d = String(val.getDate()).padStart(2, '0')
+    if (y >= 1990 && y <= 2040) return `${y}-${m}-${d}`
+  }
+
+  // 2. Formato ISO estricto o con hora: YYYY-MM-DD o YYYY-MM-DDTHH:mm:ss
+  const matchIso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
+  if (matchIso) {
+    const y = parseInt(matchIso[1], 10)
+    const m = parseInt(matchIso[2], 10)
+    const d = parseInt(matchIso[3], 10)
+    if (y >= 1990 && y <= 2040 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+  }
+
+  // 3. Formato latino DD/MM/YYYY o DD-MM-YYYY
+  const matchDma = s.match(/^(\d{1,2})[\s\-_/.]+(\d{1,2})[\s\-_/.]+(\d{2,4})/)
+  if (matchDma) {
+    const d = parseInt(matchDma[1], 10)
+    const m = parseInt(matchDma[2], 10)
+    let y = parseInt(matchDma[3], 10)
+    if (y < 100) y = y >= 50 ? 1900 + y : 2000 + y
+    if (d > 12 && m <= 12) {
+      if (y >= 1990 && y <= 2040 && d <= 31 && m >= 1) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      }
+    } else if (m > 12 && d <= 12) {
+      if (y >= 1990 && y <= 2040 && m <= 31 && d >= 1) {
+        return `${y}-${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}`
+      }
+    } else if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      if (y >= 1990 && y <= 2040) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      }
+    }
+  }
+
+  // 4. Excel serial number
+  if (/^\d{4,6}(?:\.\d+)?$/.test(s)) {
+    const serial = parseFloat(s)
+    if (serial >= 20000 && serial <= 60000) {
+      const d = new Date(Math.round((serial - 25569) * 86400 * 1000))
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear()
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const day = String(d.getUTCDate()).padStart(2, '0')
+        if (y >= 1990 && y <= 2040) return `${y}-${m}-${day}`
+      }
+    }
+  }
+
+  return null
+}
+
 // Sanitiza y tipa adecuadamente los campos antes de enviarlos a PostgreSQL
 function sanitizeRowUpdatesForDb(rawUpdates) {
   if (!rawUpdates) return {}
   const sanitized = { ...rawUpdates }
 
-  // 1. Columnas DATE: Si no es fecha válida en ISO, parsear. Si no parsea, NO enviar a Postgres (evita error 22008 / 22007)
-  const dateFields = [
-    'fecha_nacimiento',
+  // 1. Fecha de Nacimiento (estricto para rango de edad)
+  if ('fecha_nacimiento' in sanitized) {
+    const raw = sanitized.fecha_nacimiento
+    if (raw === null || raw === undefined || String(raw).trim() === '' || String(raw).trim() === '-') {
+      sanitized.fecha_nacimiento = null
+    } else {
+      const parsed = parseFechaNacimiento(raw)
+      if (parsed) {
+        sanitized.fecha_nacimiento = parsed
+      } else {
+        delete sanitized.fecha_nacimiento
+      }
+    }
+  }
+
+  // 2. Fechas operativas (capacitación, OJT, OP, validación, etc.)
+  const operationalDateFields = [
     'fecha_inicio_capacitacion',
     'fecha_fin_capacitacion',
     'fecha_conexion_ojt',
     'fecha_conexion_op',
     'fecha_inscripcion_curso',
-    'fecha_ingreso'
+    'fecha_ingreso',
+    'fecha_validacion'
   ]
-  for (const f of dateFields) {
+  for (const f of operationalDateFields) {
     if (f in sanitized) {
       const raw = sanitized[f]
       if (raw === null || raw === undefined || String(raw).trim() === '' || String(raw).trim() === '-') {
         sanitized[f] = null
       } else {
-        const parsed = parseFechaNacimiento(raw)
+        const parsed = parseOperationalDate(raw)
         if (parsed) {
           sanitized[f] = parsed
         } else {
-          // No es fecha válida aún (ej. usuario escribiendo a medias), omitir de este payload
+          // Si no es fecha válida en absoluto, omitir para no romper Postgres
           delete sanitized[f]
         }
       }
     }
   }
 
-  // 2. Si fecha_nacimiento fue modificada y es válida, sincronizar edad automáticamente
+  // 3. Sincronizar edad automáticamente si fecha_nacimiento fue modificada y es válida
   if (sanitized.fecha_nacimiento) {
     const calculatedAge = calcEdadFromFecha(sanitized.fecha_nacimiento)
     if (calculatedAge !== null) {
@@ -76,7 +160,7 @@ function sanitizeRowUpdatesForDb(rawUpdates) {
     }
   }
 
-  // 3. Columnas INTEGER
+  // 4. Columnas INTEGER
   const intFields = ['edad', 'n_hijos', 'semana_trabajo']
   for (const f of intFields) {
     if (f in sanitized) {
@@ -90,7 +174,7 @@ function sanitizeRowUpdatesForDb(rawUpdates) {
     }
   }
 
-  // 4. Columnas NUMERIC / FLOAT
+  // 5. Columnas NUMERIC / FLOAT
   const numFields = [
     'remuneracion', 'bono_variable', 'bono_movilidad',
     'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno'
@@ -242,6 +326,7 @@ export default function NominaGridEditor({
   const [saveErrorMessage, setSaveErrorMessage] = useState(null)
   const [error, setError] = useState(null)
   const [selectedColumn, setSelectedColumn] = useState(null)
+  const [activeRowId, setActiveRowId] = useState(null)
   const [filters, setFilters] = useState({})
   const [reclutadoresList, setReclutadoresList] = useState([])
   const [externalChangeDetected, setExternalChangeDetected] = useState(false)
@@ -822,6 +907,7 @@ export default function NominaGridEditor({
   const handleCellChange = (rowId, key, value, immediate = false) => {
     const targetRow = data.find((r) => r.id === rowId)
     if (!canEditRow(targetRow) || key === 'reclutador') return
+    setActiveRowId(rowId)
     const updateObj = { [key]: value || null }
     if (key === 'fecha_nacimiento') {
       const parsedDate = parseFechaNacimiento(value)
@@ -832,6 +918,21 @@ export default function NominaGridEditor({
         }
       } else {
         updateObj.edad = calcEdadFromFecha(value)
+      }
+    }
+    const operationalDateFields = [
+      'fecha_inicio_capacitacion',
+      'fecha_fin_capacitacion',
+      'fecha_conexion_ojt',
+      'fecha_conexion_op',
+      'fecha_inscripcion_curso',
+      'fecha_ingreso',
+      'fecha_validacion'
+    ]
+    if (operationalDateFields.includes(key) && immediate) {
+      const parsedOp = parseOperationalDate(value)
+      if (parsedOp) {
+        updateObj[key] = parsedOp
       }
     }
     if (key === 'reclutador') {
@@ -863,25 +964,92 @@ export default function NominaGridEditor({
     }
   }
 
+  // Información calculada de la fuente a replicar para la columna activa
+  const replicationSourceInfo = useMemo(() => {
+    if (!selectedColumn || selectedColumn === 'reclutador') return null
+    const editableRows = filteredData.filter(r => canEditRow(r))
+    if (editableRows.length < 2) return null
+
+    let source = null
+    if (activeRowId) {
+      const activeCandidate = editableRows.find(r => r.id === activeRowId)
+      if (activeCandidate && activeCandidate[selectedColumn] !== undefined && activeCandidate[selectedColumn] !== null && String(activeCandidate[selectedColumn]).trim() !== '') {
+        source = activeCandidate
+      }
+    }
+    if (!source) {
+      source = editableRows.find(r => r[selectedColumn] !== undefined && r[selectedColumn] !== null && String(r[selectedColumn]).trim() !== '') || editableRows[0]
+    }
+    const val = source ? source[selectedColumn] : null
+    const colDef = ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)
+    const label = colDef?.label || selectedColumn
+    const candidateName = source ? ([source.nombres, source.apellido_paterno].filter(Boolean).join(' ') || 'Postulante') : ''
+
+    return {
+      sourceRowId: source?.id,
+      candidateName,
+      value: val,
+      hasValue: val !== null && val !== undefined && String(val).trim() !== '',
+      label,
+      targetCount: editableRows.length - 1
+    }
+  }, [selectedColumn, activeRowId, filteredData, canEditRow])
+
   // Handle bulk replication of a column to all filtered rows
-  const handleBulkUpdate = async () => {
-    if (!selectedColumn || selectedColumn === 'reclutador' || filteredData.length < 2) return
+  const handleBulkUpdate = async (overrideColumn = null, overrideRowId = null) => {
+    const colKey = overrideColumn || selectedColumn
+    if (!colKey || colKey === 'reclutador' || filteredData.length < 2) return
     const editableRows = filteredData.filter(r => canEditRow(r))
     if (editableRows.length === 0) return
-    const firstRow = editableRows[0]
-    
-    let rawVal = firstRow[selectedColumn]
-    const rawObj = { [selectedColumn]: rawVal || null }
-    if (selectedColumn === 'reclutador') {
-      const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (firstRow[selectedColumn] || '').trim().toUpperCase())
+
+    // 1. Determinar la fila origen desde la cual replicar:
+    // Prioridad A: La fila especificada o activa (activeRowId), si tiene valor.
+    // Prioridad B: La primera fila que tenga un valor no vacío en esa columna.
+    // Prioridad C: La primera fila editable.
+    const targetRowId = overrideRowId || activeRowId
+    let sourceRow = null
+    if (targetRowId) {
+      const candidate = editableRows.find(r => r.id === targetRowId)
+      if (candidate && candidate[colKey] !== undefined && candidate[colKey] !== null && String(candidate[colKey]).trim() !== '') {
+        sourceRow = candidate
+      }
+    }
+    if (!sourceRow) {
+      sourceRow = editableRows.find(r => r[colKey] !== undefined && r[colKey] !== null && String(r[colKey]).trim() !== '') || editableRows[0]
+    }
+
+    let rawVal = sourceRow ? sourceRow[colKey] : null
+
+    // Validar si el valor origen está vacío
+    if (rawVal === null || rawVal === undefined || String(rawVal).trim() === '') {
+      setSaveErrorMessage(`Primero ingresa un valor en la columna "${ALL_EDITABLE_COLUMNS.find(c => c.key === colKey)?.label || colKey}" para poder replicarlo a los demás postulantes.`)
+      setSavingStatus('error')
+      setTimeout(() => setSavingStatus('idle'), 4000)
+      return
+    }
+
+    const rawObj = { [colKey]: rawVal }
+    if (colKey === 'reclutador') {
+      const recObj = reclutadores.find(r => (r.nombre_completo || '').trim().toUpperCase() === (rawVal || '').trim().toUpperCase())
       rawObj.reclutador_id = recObj ? recObj.id : null
     }
 
     const updateObj = sanitizeRowUpdatesForDb(rawObj)
+    if (Object.keys(updateObj).length === 0) {
+      setSaveErrorMessage(`El valor ingresado no es válido para la columna "${ALL_EDITABLE_COLUMNS.find(c => c.key === colKey)?.label || colKey}".`)
+      setSavingStatus('error')
+      setTimeout(() => setSavingStatus('idle'), 4000)
+      return
+    }
+
+    const targetRows = editableRows.filter(f => f.id !== sourceRow.id)
+    const targetIds = targetRows.map(f => f.id)
+
+    if (targetIds.length === 0) return
 
     const updatedData = data.map(row => {
-      const inFilter = editableRows.some(f => f.id === row.id)
-      if (inFilter && row.id !== firstRow.id) {
+      const inFilter = targetRows.some(f => f.id === row.id)
+      if (inFilter) {
         return { ...row, ...updateObj }
       }
       return row
@@ -892,17 +1060,14 @@ export default function NominaGridEditor({
     setSaveErrorMessage(null)
 
     try {
-      const targetIds = editableRows.filter(f => f.id !== firstRow.id).map(f => f.id)
-      if (targetIds.length > 0) {
-        const { error: err } = await supabase
-          .from('nominas')
-          .update(updateObj)
-          .in('id', targetIds)
+      const { error: err } = await supabase
+        .from('nominas')
+        .update(updateObj)
+        .in('id', targetIds)
 
-        if (err) throw err
-      }
+      if (err) throw err
 
-      if (selectedColumn === 'dia_1') {
+      if (colKey === 'dia_1') {
         await checkCalibracionDia1(grupoCodigo, campana).catch(e => console.error('Calibration check error:', e))
       }
 
@@ -913,13 +1078,32 @@ export default function NominaGridEditor({
       window.dispatchEvent(new CustomEvent('gea-data-mutation', { detail: { grupo_codigo: grupoCodigo, campana } }))
 
       setSavingStatus('saved')
-      setTimeout(() => setSavingStatus('idle'), 2000)
+      setTimeout(() => setSavingStatus('idle'), 2500)
       onSaveComplete?.()
     } catch (err) {
       console.error('Bulk save error', err)
       setError(err.message)
+      setSaveErrorMessage(err.message || String(err))
       setSavingStatus('error')
     }
+  }
+
+  // Forzar vaciado de cambios pendientes antes de recargar
+  const handleRefreshOrSync = async () => {
+    if (loading || isRefreshing) return
+    if (pendingUpdatesRef.current.size > 0) {
+      setSavingStatus('saving')
+      const pendingRowIds = Array.from(pendingUpdatesRef.current.keys())
+      for (const rowId of pendingRowIds) {
+        if (debounceTimersRef.current.has(rowId)) {
+          clearTimeout(debounceTimersRef.current.get(rowId))
+          debounceTimersRef.current.delete(rowId)
+        }
+        await flushRowUpdate(rowId)
+      }
+    }
+    await loadData(true)
+    if (onSaveComplete) onSaveComplete()
   }
 
   // Handle 1-click mark all 6 documents + status_final OK for a single candidate
@@ -1349,16 +1533,13 @@ export default function NominaGridEditor({
             </button>
           )}
 
-          {/* Botón de Actualizar sin recargar página */}
+          {/* Botón de Actualizar / Sincronizar sin recargar página */}
           <button
             type="button"
-            onClick={() => {
-              loadData(true)
-              if (onSaveComplete) onSaveComplete()
-            }}
+            onClick={handleRefreshOrSync}
             disabled={loading || isRefreshing}
             className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-2xs"
-            title="Recargar postulantes y nuevos ingresos de este grupo"
+            title="Guarda cambios pendientes y recarga los postulantes de este grupo"
           >
             <RefreshCw size={13} className={(loading || isRefreshing) ? 'animate-spin text-cyan-400' : ''} />
             <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
@@ -1366,14 +1547,34 @@ export default function NominaGridEditor({
 
           {!isReadOnly && (
             <button 
-              onClick={handleBulkUpdate}
+              type="button"
+              onClick={() => handleBulkUpdate()}
               disabled={data.length < 2 || savingStatus === 'saving' || !selectedColumn || selectedColumn === 'reclutador'}
-              className="text-xs px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              className={`text-xs px-3 py-1.5 font-bold rounded-lg border transition-all flex items-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                !selectedColumn || selectedColumn === 'reclutador'
+                  ? 'bg-slate-800/40 text-slate-500 border-slate-700/50'
+                  : replicationSourceInfo?.hasValue
+                    ? 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border-cyan-500/40'
+                    : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/30'
+              }`}
+              title={
+                !selectedColumn 
+                  ? "Haz clic en una columna para replicar su valor a los demás postulantes" 
+                  : replicationSourceInfo?.hasValue
+                    ? `Replicar "${replicationSourceInfo.value}" a ${replicationSourceInfo.targetCount} postulantes`
+                    : "Ingresa un valor en esta columna para poder replicarlo"
+              }
             >
-              <CheckCircle2 size={14} /> 
-              {selectedColumn 
-                ? (selectedColumn === 'reclutador' ? 'Reclutador no replicable' : `Replicar "${ALL_EDITABLE_COLUMNS.find(c => c.key === selectedColumn)?.label}" a todos`) 
-                : 'Selecciona columna para replicar'}
+              <Copy size={13} className={replicationSourceInfo?.hasValue ? "text-cyan-400" : "text-amber-400"} />
+              <span className="truncate max-w-[280px]">
+                {!selectedColumn
+                  ? 'Selecciona columna para replicar'
+                  : selectedColumn === 'reclutador'
+                    ? 'Reclutador no replicable'
+                    : replicationSourceInfo?.hasValue
+                      ? `Replicar "${replicationSourceInfo.value}" (${replicationSourceInfo.label}) a todos`
+                      : `Replicar "${replicationSourceInfo?.label}" (Escribe un valor)`}
+              </span>
             </button>
           )}
 
@@ -1639,6 +1840,19 @@ export default function NominaGridEditor({
                         {col.key === 'reclutador' && <Lock size={10} className="text-amber-400 shrink-0" />}
                         <span className="truncate">{col.label}</span>
                       </div>
+                      {selectedColumn === col.key && !isReadOnly && col.key !== 'reclutador' && replicationSourceInfo?.hasValue && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBulkUpdate(col.key);
+                          }}
+                          title={`Replicar "${replicationSourceInfo.value}" a los demás postulantes`}
+                          className="p-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-200 transition-all cursor-pointer shrink-0"
+                        >
+                          <Copy size={11} />
+                        </button>
+                      )}
                       <ColumnFilter 
                         columnKey={col.key}
                         label={col.label}
@@ -1739,6 +1953,11 @@ export default function NominaGridEditor({
                           val = row.celular || '';
                         }
                       }
+                      // Para inputs de tipo date, normalizar a formato YYYY-MM-DD para que el navegador lo renderice
+                      if (col.type === 'date' && val) {
+                        const parsedOp = parseOperationalDate(val);
+                        if (parsedOp) val = parsedOp;
+                      }
                       let badgeClass = 'text-[var(--text-primary)]';
                       if (val === 'OK' || val === 'COMPLETO' || val === 'APROBADO' || val === 'APTO' || val === 'ASISTIO' || val === 'AGREGADO' || val === 'RECUPERADO' || val === 'AGREGADO CAP' || val === 'RECUPERADO CAP') {
                         badgeClass = 'bg-emerald-500/10 text-emerald-400 font-bold';
@@ -1767,7 +1986,10 @@ export default function NominaGridEditor({
                               value={val}
                               onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
                               onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
-                              onFocus={() => setSelectedColumn(col.key)}
+                              onFocus={() => {
+                                setSelectedColumn(col.key);
+                                setActiveRowId(row.id);
+                              }}
                               className="w-full h-full p-2 bg-transparent text-xs font-semibold outline-none focus:ring-1 focus:ring-cyan-400 transition-colors"
                             >
                               <option value="" className="bg-[var(--bg-surface)] text-[var(--text-muted)]">--</option>
@@ -1783,7 +2005,10 @@ export default function NominaGridEditor({
                               value={val}
                               onChange={e => handleCellChange(row.id, col.key, e.target.value, false)}
                               onBlur={e => handleCellChange(row.id, col.key, e.target.value, true)}
-                              onFocus={() => setSelectedColumn(col.key)}
+                              onFocus={() => {
+                                setSelectedColumn(col.key);
+                                setActiveRowId(row.id);
+                              }}
                               onKeyDown={e => e.key === 'Enter' && e.target.blur()}
                               className="w-full h-full p-2 bg-transparent text-xs font-medium outline-none focus:ring-1 focus:ring-cyan-400 transition-colors placeholder:text-[var(--text-muted)]/40"
                               placeholder={col.placeholder || "..."}
