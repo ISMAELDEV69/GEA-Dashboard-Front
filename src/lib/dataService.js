@@ -671,30 +671,36 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
     if (totalCount === 0) return [];
 
     const step = 5000;
-    const chunkPromises = [];
+    const chunkTasks = [];
     for (let from = 0; from < totalCount; from += step) {
-      let dataQuery = supabase
-        .from('consolidado_asistencias')
-        .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro')
-        .order('id', { ascending: true })
-        .range(from, from + step - 1);
+      chunkTasks.push(() => {
+        let dataQuery = supabase
+          .from('consolidado_asistencias')
+          .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro')
+          .order('id', { ascending: true })
+          .range(from, from + step - 1);
 
-      if (!all && !periodo && cutoffIso) {
-        dataQuery = dataQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
-      } else if (periodo) {
-        const pClean = String(periodo).trim();
-        const yyyy = pClean.slice(0, 4);
-        const mm = pClean.slice(4, 6);
-        dataQuery = dataQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%/${mm}/${yyyy}%,fecha_registro_asistencia.ilike.%${yyyy}-${mm}%`);
-      }
-
-      chunkPromises.push(dataQuery);
+        if (!all && !periodo && cutoffIso) {
+          dataQuery = dataQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
+        } else if (periodo) {
+          const pClean = String(periodo).trim();
+          const yyyy = pClean.slice(0, 4);
+          const mm = pClean.slice(4, 6);
+          dataQuery = dataQuery.or(`archivo_origen.ilike.%${pClean}%,fecha_registro_asistencia.ilike.%/${mm}/${yyyy}%,fecha_registro_asistencia.ilike.%${yyyy}-${mm}%`);
+        }
+        return dataQuery;
+      });
     }
 
-    const [descSet, ...results] = await Promise.all([
-      getDescuentosSetGlobal(),
-      ...chunkPromises
-    ]);
+    const descSetPromise = getDescuentosSetGlobal();
+    const results = [];
+    const BATCH_SIZE = 2; // Concurrencia controlada para proteger el pool de conexiones de Postgres
+    for (let i = 0; i < chunkTasks.length; i += BATCH_SIZE) {
+      const batchFns = chunkTasks.slice(i, i + BATCH_SIZE);
+      const batchRes = await Promise.all(batchFns.map(fn => fn()));
+      results.push(...batchRes);
+    }
+    const descSet = await descSetPromise;
 
     let allData = [];
     for (const res of results) {
@@ -4161,19 +4167,10 @@ export async function fetchDashboardData() {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
       fetchAllConsolidado(),
-      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado, formador_documento, formador_nombre'),
+      supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap, fecha_registro, fecha_baja')
     ])
-    if (capRes.error) {
-      const msg = String(capRes.error.message || '')
-      if (msg.includes('formador_nombre') || msg.includes('formador_documento')) {
-        const retry = await supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado')
-        if (retry.error) throw retry.error
-        capRes.data = retry.data
-      } else {
-        throw capRes.error
-      }
-    }
+    if (capRes.error) throw capRes.error
     if (descRes.error) throw descRes.error
     
     return {
@@ -4369,12 +4366,16 @@ export async function upsertGrupoDia1(grupo_codigo, campana, fecha_dia1) {
 export async function fetchAsistenciasReclutador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return []
   
-  const { data, error } = await supabase
+  let q = supabase
     .from('asistencias_dia1_reclutador')
     .select('*')
     .eq('grupo_codigo', grupo_codigo)
-    .eq('campana', campana)
-  if (error) throw error
+
+  const { data, error } = await q
+  if (error) {
+    console.warn('Aviso fetchAsistenciasReclutador:', error)
+    return []
+  }
   
   // El usuario solicitó explícitamente que "EN LA NÓMINA DE RECLUTAMIENTO SÍ DEBE MOSTRAR TODO TAL CUAL"
   // Por lo tanto, no filtramos los descuentos aquí.
@@ -4387,20 +4388,19 @@ export async function saveAsistenciasReclutador(grupo_codigo, campana, registros
   // upsert registros
   const bajas = []
   const payload = registros.map(r => {
-    const isBaja = r.sigla_inicial === 'F' || r.sigla_final === 'F'
+    const sig = r.sigla_asistencia || r.sigla_inicial || r.sigla_final || 'A'
+    const isBaja = sig === 'F' || sig === 'B' || r.sigla_inicial === 'F' || r.sigla_final === 'F'
     if (isBaja) bajas.push(r.documento)
     return {
       postulante_documento: r.documento,
       grupo_codigo,
-      campana,
-      sigla_inicial: r.sigla_inicial,
-      sigla_final: r.sigla_final,
-      motivo_baja: isBaja ? 'BAJA DIA 1' : null
+      sigla_asistencia: sig,
+      motivo_baja: isBaja ? (r.motivo_baja || 'BAJA DIA 1') : null
     }
   })
   
-  const { error: delErr } = await supabase.from('asistencias_dia1_reclutador').delete().eq('grupo_codigo', grupo_codigo).eq('campana', campana)
-  if (delErr) throw delErr
+  const { error: delErr } = await supabase.from('asistencias_dia1_reclutador').delete().eq('grupo_codigo', grupo_codigo)
+  if (delErr) console.warn('Aviso delete asistencias_dia1_reclutador:', delErr)
 
   const { error } = await supabase.from('asistencias_dia1_reclutador').insert(payload)
   if (error) throw error
@@ -7276,10 +7276,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('estado_calibracion, fecha_dia1, grupo_codigo, campana')
         .in('grupo_codigo', codigos),
       supabase.from('asistencias_dia1_reclutador')
-        .select('postulante_documento, grupo_codigo, campana, sigla_inicial, sigla_final, motivo_baja')
+        .select('postulante_documento, grupo_codigo, sigla_asistencia, motivo_baja')
         .in('grupo_codigo', codigos),
       supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, tipo_reclutado, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
+        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
         .in('grupo_codigo', codigos)
     ];
 
@@ -7297,9 +7297,16 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const [cfgRes, recAsisRes, nomRes, asisFallbackRes] = await Promise.all(promises);
     
     configAll = cfgRes.data || [];
-    recAsisDia1All = recAsisRes.data || [];
+    recAsisDia1All = (recAsisRes.data || []).map(r => ({
+      ...r,
+      sigla_inicial: r.sigla_asistencia || 'A',
+      sigla_final: r.sigla_asistencia || 'A'
+    }));
     if (nomRes?.data && nomRes.data.length > 0) {
-      activePostulantes = nomRes.data;
+      activePostulantes = nomRes.data.map(n => ({
+        ...n,
+        tipo_reclutado: n.tipo_reclutado || n.condicion || ''
+      }));
     }
     if (asisFallbackRes?.data && activeAsistencias.length === 0) {
       activeAsistencias = asisFallbackRes.data;
