@@ -24,6 +24,7 @@ import {
   ChevronsRight
 } from 'lucide-react';
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
+import { isBajaDia1Motivo } from '../lib/bajaDia1Rules';
 import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import * as XLSX from 'xlsx';
 import AsistenciaCeldaEditorModal from './AsistenciaCeldaEditorModal';
@@ -707,14 +708,26 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       // Descartar registros con periodos fuera del rango histórico 2026 operativo
       if (rowPeriodo && !isPeriodoOperativoValido(rowPeriodo, maxPeriodoOperativo)) continue;
 
+      // REGLA OPERATIVA DE ASISTENCIA: Bloquear y descartar registros marcados con fechas futuras posteriores a hoy
+      if (row.fecha_registro_asistencia) {
+        const dAsis = parseLocalDate(row.fecha_registro_asistencia);
+        const todayLimit = new Date();
+        todayLimit.setHours(23, 59, 59, 999);
+        if (dAsis && dAsis.getTime() > todayLimit.getTime()) {
+          continue;
+        }
+      }
+
       const rowSegmento = cap?.segmento || normalizeSegmento(row.segmento);
 
       const txtEstado = String(row.estado || '').toUpperCase();
       const txtMotivo = String(row.motivo_baja || '').toUpperCase();
       const txtObs = String(row.observacion_estado || '').toUpperCase();
-      const isDescRow = Boolean(row.isDescuento) || txtEstado === 'DESCUENTO' || txtMotivo.includes('DESCUENTO');
+      const isB1Explicit = txtMotivo.includes('BAJA DIA 1') || txtMotivo.includes('BAJA D1') || isBajaDia1Motivo(txtMotivo) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
+
+      const isDescRow = !isB1Explicit && (Boolean(row.isDescuento) || txtEstado === 'DESCUENTO' || txtMotivo.includes('DESCUENTO'));
       
-      const isBajaDia1Val = !isDescRow && (isBajaDia1(txtMotivo, row.sigla, row) || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1'));
+      const isBajaDia1Val = isB1Explicit || (!isDescRow && isBajaDia1(txtMotivo, row.sigla, row));
       
       result.push({
         ...row,
@@ -999,11 +1012,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (dni) {
         const gpeNorm = normalizeGpe(d.grupo_cap);
         const campNorm = normalizeCampana(d.campana);
-        if (gpeNorm && gpeNorm !== 'Sin GPE') {
-          approvedGroupDescSet.add(`${dni}|${gpeNorm}`);
-          approvedGroupDescSet.add(`${dni}|${cleanCodeKey(gpeNorm)}`);
-        }
         if (campNorm && campNorm !== 'SIN CAMPAÑA') {
+          if (gpeNorm && gpeNorm !== 'Sin GPE') {
+            approvedGroupDescSet.add(`${dni}|${campNorm}|${gpeNorm}`);
+            approvedGroupDescSet.add(`${dni}|${campNorm}|${cleanCodeKey(gpeNorm)}`);
+          }
           approvedGroupDescSet.add(`${dni}|${campNorm}`);
         }
       }
@@ -1047,14 +1060,18 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
       const rowCamp = normalizeCampana(row._campana || row.campana);
-      const isDiscountInThisGroup = approvedGroupDescSet.has(`${doc}|${rowGpe}`) || 
-                                   (rowGpe && approvedGroupDescSet.has(`${doc}|${cleanCodeKey(rowGpe)}`)) ||
-                                   approvedGroupDescSet.has(`${doc}|${rowCamp}`);
+      const isDiscountInThisGroup = (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${rowGpe}`)) || 
+                                   (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${cleanCodeKey(rowGpe)}`)) ||
+                                   (rowCamp && approvedGroupDescSet.has(`${doc}|${rowCamp}`));
 
-      const isExplicitDescLatest = (String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || isDiscountInThisGroup);
+      const isExplicitBajaD1 = isBajaDia1Motivo(motivo) || rows.some(r => isBajaDia1Motivo(r.motivo_baja || r.motivo || r.observacion_estado || r.observacion || r.estado));
+
+      const isExplicitDescLatest = !isExplicitBajaD1 && (String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || isDiscountInThisGroup);
 
       if (hasAnyIop) {
         stateMap.set(doc, 'ACTIVO');
+      } else if (isExplicitBajaD1 && !hasAttendedTraining) {
+        stateMap.set(doc, 'BAJA DIA 1');
       } else if (isExplicitDescLatest) {
         descSet.add(doc);
         stateMap.set(doc, 'DESCUENTO');
@@ -1078,12 +1095,15 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
     return kpiFilteredData.filter((row) => {
       const doc = normalizeText(row.documento);
-      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? 'CESADO' : normalizeEstado(row.estado));
+      const isD1Baja = isBajaDia1Motivo(row.motivo_baja || row.motivo || row.observacion_estado);
+      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(row.estado));
       return lastState === filters.estado;
     });
   }, [kpiFilteredData, filters.estado, lastStateMap]);
 
   const uniqueDates = useMemo(() => {
+    const todayLimit = new Date();
+    todayLimit.setHours(23, 59, 59, 999);
     const datesMap = new Map();
     for (let i = 0; i < filteredData.length; i++) {
       const rawDate = filteredData[i].fecha_registro_asistencia;
@@ -1091,6 +1111,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         const canonical = formatCanonicalDate(rawDate);
         const parsed = parseLocalDate(rawDate);
         if (canonical && parsed) {
+          // Bloquear columnas de fechas futuras
+          if (parsed.getTime() > todayLimit.getTime()) continue;
           datesMap.set(canonical, parsed.getTime());
         }
       }
@@ -1147,7 +1169,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const campana = lastRow._campana;
       const gpe = lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
-      const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? 'CESADO' : normalizeEstado(lastRow.estado));
+      const isD1Baja = isBajaDia1Motivo(lastRow.motivo_baja || lastRow.motivo || lastRow.observacion_estado);
+      const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(lastRow.estado));
       const hasDescuento = docState === 'DESCUENTO';
 
       // REGLA OFICIAL: Los descuentos no asisten a sala (dejan filas vacías con guiones).

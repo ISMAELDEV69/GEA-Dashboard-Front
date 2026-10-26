@@ -281,8 +281,8 @@ const AttendanceRow = React.memo(function AttendanceRow({
               }`}
               title={item.isLockedBaja ? `Baja registrada en fecha anterior: ${item.motivo_baja}` : 'Motivo de baja'}
             >
-              {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Formación --</option>}
-              {item.showBajaDia1Option && !item.isCorte3 && <option value="BAJA DIA 1">BAJA DIA 1</option>}
+              {!item.motivo_baja && <option value="">-- Seleccionar Motivo de Baja --</option>}
+              {item.showBajaDia1Option && <option value="BAJA DIA 1">BAJA DIA 1</option>}
               {item.motivo_baja && !item.showBajaDia1Option && item.motivo_baja === 'BAJA DIA 1' && (
                 <option value="BAJA DIA 1">BAJA DIA 1</option>
               )}
@@ -292,7 +292,6 @@ const AttendanceRow = React.memo(function AttendanceRow({
 
               {item.allowOtherMotivos && (
                 <>
-                  <option value="OBSERVADO" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">OBSERVADO</option>
                   {!motivosBaja.some(m => m.motivo === 'DISTANCIA') && (
                     <option value="DISTANCIA" className="bg-[var(--bg-surface)] text-[var(--text-primary)]">DISTANCIA</option>
                   )}
@@ -347,39 +346,15 @@ function resolveFormadorDisplayName(formadoresList = [], doc = '', fallback = ''
 }
 
 /**
- * Detecta el corte sugerido (1, 2 o 3) según el horario del grupo (mañana, tarde o noche)
- * dividiendo la jornada en 3 momentos de corte operativo (Apertura, Seguimiento RyS, Cierre).
+ * Detecta el corte sugerido de forma SECUENCIAL según los guardados del grupo en el día:
+ * - 1ª marcada del día = Corte 1 (Apertura RyS)
+ * - 2ª marcada del día = Corte 2 (Seguimiento RyS / Refrigerio)
+ * - 3ª marcada del día = Corte 3 (Cierre Día 1 · Formación)
  */
-function getSuggestedCorte(rangoHorario) {
-  if (!rangoHorario) {
-    const hour = new Date().getHours()
-    if (hour < 11) return 1
-    if (hour < 14) return 2
-    return 3
-  }
-  const matches = String(rangoHorario).match(/(\d{1,2}):(\d{2})/g)
-  if (!matches || matches.length < 2) {
-    const hour = new Date().getHours()
-    if (hour < 11) return 1
-    if (hour < 14) return 2
-    return 3
-  }
-  const [startH, startM] = matches[0].split(':').map(Number)
-  const [endH, endM] = matches[1].split(':').map(Number)
-  let startMin = startH * 60 + startM
-  let endMin = endH * 60 + endM
-  if (endMin <= startMin) endMin += 24 * 60
-
-  const now = new Date()
-  let currentMin = now.getHours() * 60 + now.getMinutes()
-  if (currentMin < startMin && endMin > 24 * 60) currentMin += 24 * 60
-
-  const duration = endMin - startMin
-  const c1 = startMin + duration * 0.35
-  const c2 = startMin + duration * 0.70
-
-  if (currentMin <= c1) return 1
-  if (currentMin <= c2) return 2
+function getSequentialSuggestedCorte(savedCortesSet) {
+  if (!savedCortesSet || savedCortesSet.size === 0) return 1
+  if (!savedCortesSet.has(1)) return 1
+  if (!savedCortesSet.has(2)) return 2
   return 3
 }
 
@@ -407,6 +382,8 @@ export default function AsistenciaForm({
   const [selectedGrupo, setSelectedGrupo] = useState(() => localStorage.getItem('wfm_asis_grupo') || '')
   const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
   const [selectedCorte, setSelectedCorte] = useState(1)
+  const hasUserManuallySelectedCorte = useRef(false)
+  const lastFechaRef = useRef(fecha)
   const [searchTerm, setSearchTerm] = useState('')
   
   const [attendanceList, setAttendanceList] = useState([])
@@ -749,6 +726,7 @@ export default function AsistenciaForm({
     setSelectedGrupo('')
   }
   const handleGrupoChange = (val) => {
+    hasUserManuallySelectedCorte.current = false
     if (val && val.includes(':::')) {
       const [code, camp] = val.split(':::')
       setSelectedGrupo(code)
@@ -762,17 +740,54 @@ export default function AsistenciaForm({
     }
   }
 
+  // Reset de selección manual si el usuario cambia de fecha
   useEffect(() => {
-    if (gruposFiltrados.length === 1 && !selectedGrupo) setSelectedGrupo(gruposFiltrados[0].id || gruposFiltrados[0].codigo)
-  }, [gruposFiltrados, selectedGrupo])
+    if (lastFechaRef.current !== fecha) {
+      lastFechaRef.current = fecha
+      hasUserManuallySelectedCorte.current = false
+    }
+  }, [fecha])
 
-  // Auto-sugerir corte según el horario del grupo activo
+  // Cortes ya guardados en asistencias para este grupo en la fecha seleccionada
+  const savedCortesToday = useMemo(() => {
+    const set = new Set()
+    if (!Array.isArray(asistencias) || !fecha || (!selectedGrupo && !activeGrupoObj)) return set
+    const targetGroup = selectedGrupo
+    const targetGrupoCodigo = activeGrupoObj?.codigo || selectedGrupo
+    const targetCampana = activeGrupoObj?.campana
+
+    for (let i = 0; i < asistencias.length; i++) {
+      const a = asistencias[i]
+      if (!a) continue
+      const matchGrupo = normalize(a.grupo_codigo) === normalize(targetGroup) || normalize(a.grupo_codigo) === normalize(targetGrupoCodigo)
+      if (!matchGrupo) continue
+      if (targetCampana && a.campana && normalize(a.campana) !== normalize(targetCampana)) continue
+
+      const recFecha = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia
+      if (recFecha === fecha) {
+        const rawC = a.corte != null ? String(a.corte).replace(/\D/g, '') : ''
+        const c = rawC ? Number(rawC) : null
+        if (c >= 1 && c <= 3) {
+          set.add(c)
+        } else if (a.corte === null || a.corte === undefined || a.corte === '') {
+          set.add(1)
+        }
+      }
+    }
+    return set
+  }, [asistencias, fecha, selectedGrupo, activeGrupoObj])
+
+  // Auto-sugerir corte SECUENCIAL según guardados del grupo en el día:
+  // 1ra marcada del día = Corte 1
+  // 2da marcada del día = Corte 2 (si ya existe C1)
+  // 3ra marcada del día = Corte 3 (si ya existen C1 y C2)
   useEffect(() => {
-    if (!activeGrupoObj) return
-    const rangoHorario = activeGrupoObj.rango_horario || activeGrupoObj.horario || activeGrupoObj.turno || ''
-    const suggested = getSuggestedCorte(rangoHorario)
+    if (!activeGrupoObj && !selectedGrupo) return
+    if (hasUserManuallySelectedCorte.current) return
+
+    const suggested = getSequentialSuggestedCorte(savedCortesToday)
     setSelectedCorte(suggested)
-  }, [activeGrupoObj])
+  }, [activeGrupoObj, selectedGrupo, fecha, savedCortesToday])
 
   useEffect(() => {
     if (!selectedGrupo) {
@@ -1313,18 +1328,19 @@ export default function AsistenciaForm({
         hadDia1Attendance,
         hadAttendanceInEarlierCuts,
       }
-      // Se permite BAJA DIA 1 en Día 1 (Cortes 1-2), o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1 (periodo de gracia)
-      // En Corte 3: el formador debe registrar la baja con motivo propio de formación — NO se clasifica como BAJA DIA 1
+      // Se permite BAJA DIA 1 en Día 1 (Cortes 1-2), o en Corte 3 si en C2 tuvo falta (abandono), o en Día 2 para perfiles distintos a APTO sin asistencia en Día 1
+      const isAbandonoDia1C2 = Boolean(corteFlagsToday.isAbandonoDia1C2)
       const isCorte3 = selectedCorte === 3
       const isEligibleBajaD1 = canAssignBajaDia1({
         trainingDayIndex,
         row: profileRow,
         hadDia1Attendance,
         hadAttendanceInEarlierCuts,
+        hadC2Falta: isAbandonoDia1C2,
         existingMotivo: '',
         corte: selectedCorte,
       })
-      const showBajaDia1Option = isEligibleBajaD1 && !isCorte3
+      const showBajaDia1Option = isEligibleBajaD1 && (!isCorte3 || isAbandonoDia1C2)
       const allowOtherMotivos = true
 
       const docFormador = String(p.formador_documento || effectiveGrupoObj?.formador_documento || '').trim()
@@ -1441,6 +1457,7 @@ export default function AsistenciaForm({
         showBajaDia1Option,
         allowOtherMotivos,
         hadAttendanceInEarlierCuts,
+        isAbandonoDia1C2,
         sigla,
         motivo_baja,
         isLateInclusion,
@@ -1554,13 +1571,14 @@ export default function AsistenciaForm({
         row: item,
         hadDia1Attendance: item.hadDia1Attendance,
         hadAttendanceInEarlierCuts: item.hadAttendanceInEarlierCuts,
+        hadC2Falta: item.isAbandonoDia1C2,
         motivo: newMotivo,
         corte: item.corte ?? selectedCorte,
       })
       if (isBajaDia1Motivo(newMotivo) && !nextMotivo) {
         toast.info(
           'Elige motivo de Formación',
-          'En Corte 3 (o con A en C1/C2) no aplica BAJA DIA 1. Selecciona un motivo de la lista.'
+          'En Corte 3 (o con asistencia previa continua) no aplica BAJA DIA 1. Selecciona un motivo de la lista.'
         )
       }
       const editKey = `${doc}|${selectedCorte}`
@@ -1723,6 +1741,7 @@ export default function AsistenciaForm({
           motivo: motivo_baja,
           hadDia1Attendance: item.hadDia1Attendance,
           hadAttendanceInEarlierCuts: item.hadAttendanceInEarlierCuts,
+          hadC2Falta: item.isAbandonoDia1C2,
           corte,
         })
         if (isBajaDia1Motivo(before) && !motivo_baja) {
@@ -1732,10 +1751,10 @@ export default function AsistenciaForm({
       return { ...item, motivo_baja, corte }
     })
 
-    const invalidItems = sanitizedList.filter(item => item.sigla === 'B' && !item.motivo_baja && !item.isLateInclusion)
+    const invalidItems = sanitizedList.filter(item => item.sigla === 'B' && (!item.motivo_baja || item.motivo_baja === 'OBSERVADO') && !item.isLateInclusion)
     if (invalidItems.length > 0) {
       const names = invalidItems.map(i => `${i.nombres || i.documento}`).join(', ')
-      return alert(`Selecciona un motivo de baja de la lista para:\n\n${names}`)
+      return alert(`Selecciona un motivo de baja válido de la lista para:\n\n${names}\n\n(No se permite dejar el motivo vacío ni usar 'OBSERVADO')`)
     }
 
     const recordsToSave = sanitizedList.filter(item => !item.isLateInclusion).map(item => ({
@@ -1805,7 +1824,11 @@ export default function AsistenciaForm({
           `${clearedBajaDia1Count} fila(s) tenían BAJA DIA 1 no aplicable (C3 o con A en C1/C2). Elige un motivo de la lista.`
         )
       }
-      toast.success('¡Asistencia guardada!', `Corte ${selectedCorte} sincronizado. Los cortes previos del día se conservan.`)
+      hasUserManuallySelectedCorte.current = false
+      const nextSug = selectedCorte < 3
+        ? `Próxima marcación sugerida: Corte ${selectedCorte + 1}.`
+        : 'Todos los cortes de Día 1 completados.'
+      toast.success('¡Asistencia guardada!', `Corte ${selectedCorte} sincronizado. ${nextSug}`)
     } catch (err) {
       toast.error('Error al guardar', err.message || 'No se pudo guardar la asistencia.')
     } finally {
@@ -1815,6 +1838,11 @@ export default function AsistenciaForm({
 
   const handleSave = async (e, options = {}) => {
     if (e && e.preventDefault) e.preventDefault();
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (fecha > todayStr) {
+      toast.error('Fecha bloqueada', `No se puede registrar asistencia en fechas posteriores al día actual (${todayStr}).`);
+      return;
+    }
     if (isReadOnly) {
       if (readOnlyReason === 'SEGMENTO_BLOQUEADO') {
         toast.error(`Modo solo lectura: Este grupo es de ${grupoSegmento} y tu segmento es ${userSegmento}.`);
@@ -2473,22 +2501,29 @@ export default function AsistenciaForm({
                   <div className="grid grid-cols-7 gap-1">
                     {getDaysInMonth(pickerYear, pickerMonth).map((d) => {
                       const isSelected = d.dateStr === fecha;
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      const isFuture = d.dateStr > todayStr;
                       return (
                         <button
                           key={d.dateStr}
                           type="button"
+                          disabled={isFuture}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (isFuture) return;
                             setFecha(d.dateStr);
                             setShowDatePickerPopup(false);
                           }}
-                          className={`h-6 w-6 text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer ${
-                            isSelected 
-                              ? 'bg-cyan-500 text-slate-950 font-black shadow-[0_0_8px_rgba(6,182,212,0.4)]' 
-                              : d.isCurrentMonth 
-                                ? 'text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]' 
-                                : 'text-[var(--text-muted)] opacity-30'
+                          className={`h-6 w-6 text-[11px] font-semibold rounded-md flex items-center justify-center transition-all ${
+                            isFuture
+                              ? 'text-[var(--text-muted)] opacity-20 cursor-not-allowed pointer-events-none'
+                              : isSelected 
+                                ? 'bg-cyan-500 text-slate-950 font-black shadow-[0_0_8px_rgba(6,182,212,0.4)] cursor-pointer' 
+                                : d.isCurrentMonth 
+                                  ? 'text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer' 
+                                  : 'text-[var(--text-muted)] opacity-30 cursor-pointer'
                           }`}
+                          title={isFuture ? 'Bloqueado: No se puede marcar asistencia de fechas futuras' : undefined}
                         >
                           {d.day}
                         </button>
@@ -2515,9 +2550,9 @@ export default function AsistenciaForm({
 
           {/* CORTE (solo visible en Día 1): C1–C2 ventana RyS · C3 cierre Formación */}
           {(attendanceList[0]?.trainingDayIndex ?? 0) === 1 && (
-            <div className="flex flex-col gap-0.5 min-w-0" title="Cortes 1–2: seguimiento RyS · Corte 3: cierre Formación (baja no es BAJA DIA 1)">
+            <div className="flex flex-col gap-0.5 min-w-0" title="1ª marcada = C1 (Apertura RyS) · 2ª marcada = C2 (Seguimiento / Refrigerio) · 3ª marcada = C3 (Cierre Formación)">
               <span className="text-[8px] font-black uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1 truncate">
-                <Radio size={10} className="text-violet-500 shrink-0" /> CORTE
+                <Radio size={10} className="text-violet-500 shrink-0" /> CORTE DÍA 1
               </span>
               <div className="flex gap-1 h-7 items-center">
                 {[1, 2, 3].map(c => {
@@ -2541,22 +2576,30 @@ export default function AsistenciaForm({
                     <button
                       key={c}
                       type="button"
-                      onClick={() => setSelectedCorte(c)}
-                      title={tip}
-                      className={`flex-1 h-7 text-[10px] font-black rounded-lg border transition-all cursor-pointer select-none ${isActive ? activeColors : colors}`}
+                      onClick={() => {
+                        hasUserManuallySelectedCorte.current = true
+                        setSelectedCorte(c)
+                      }}
+                      title={`${tip} ${savedCortesToday.has(c) ? '(Corte ya registrado hoy ✓)' : '(Corte pendiente)'}`}
+                      className={`flex-1 h-7 text-[10px] font-black rounded-lg border transition-all cursor-pointer select-none flex items-center justify-center gap-0.5 ${isActive ? activeColors : colors}`}
                     >
-                      C{c}
+                      <span>C{c}</span>
+                      {savedCortesToday.has(c) && <span className="text-[8px] font-bold opacity-90">✓</span>}
                     </button>
                   )
                 })}
               </div>
-              {selectedCorte <= 2 ? (
-                <span className="text-[8px] text-amber-500 font-bold mt-0.5 leading-tight">
-                  C{selectedCorte}: seguimiento RyS
+              {selectedCorte === 1 ? (
+                <span className="text-[8px] text-emerald-500 font-bold mt-0.5 leading-tight flex items-center gap-1 truncate">
+                  1ª marcada: C1 (Apertura RyS) {savedCortesToday.has(1) && '· Guardado ✓'}
+                </span>
+              ) : selectedCorte === 2 ? (
+                <span className="text-[8px] text-amber-500 font-bold mt-0.5 leading-tight flex items-center gap-1 truncate">
+                  2ª marcada: C2 (Seguimiento / Refrigerio) {savedCortesToday.has(2) && '· Guardado ✓'}
                 </span>
               ) : (
-                <span className="text-[8px] text-rose-500 font-bold mt-0.5 leading-tight">
-                  C3: baja = Formación (no BAJA DIA 1)
+                <span className="text-[8px] text-rose-500 font-bold mt-0.5 leading-tight flex items-center gap-1 truncate">
+                  3ª marcada: C3 (Cierre Formación) {savedCortesToday.has(3) && '· Guardado ✓'}
                 </span>
               )}
             </div>

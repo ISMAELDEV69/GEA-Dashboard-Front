@@ -378,7 +378,16 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
       isBajaDia1(p.dia_1_obs || p.motivo_baja, p.status_dia_1 || p.sigla, p) ||
       (last && isBajaDia1(last.motivo_baja, last.sigla || last.sigla_asistencia, last))
 
-    const bajaD1 = !descuento && !hasAttendanceInClass && !tieneIngreso && isBajaDia1Record
+    // Asistencia más allá del Día 1 inicial (Día 2 en adelante)
+    const hasAttendanceBeyondDia1 = sorted.some((r) => {
+      const s = String(r.sigla || r.sigla_asistencia || '').toUpperCase().trim()
+      const d = parseFechaAsistencia(r.fecha_registro_asistencia || r.fecha_asistencia || r.fecha)
+      const firstDate = parseFechaAsistencia(sorted[0]?.fecha_registro_asistencia || sorted[0]?.fecha_asistencia || sorted[0]?.fecha)
+      return (s === 'A' || s === 'FJ' || s === 'I-OP') && d && firstDate && d > firstDate
+    })
+
+    // REGLA OFICIAL: Si es BAJA DIA 1 (incluso con presencia en C1 y falta en C2), exonera al formador
+    const bajaD1 = !descuento && !tieneIngreso && isBajaDia1Record && !hasAttendanceBeyondDia1
 
     // Día 1 oficial (idéntico a Resumen Capacitación & Dotación)
     const dia1 = !descuento && !bajaD1 && (hasAttendanceInClass || dia1InNomina || tieneIngreso)

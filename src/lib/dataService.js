@@ -141,9 +141,13 @@ export function invalidateCache(keyPrefix) {
 
 export function isBajaDia1(motivo, sigla, row) {
   if (!motivo && !sigla && !row) return false;
-  if (row?.isDescuento || row?.is_descuento || String(row?.estado || '').toUpperCase().trim() === 'DESCUENTO') return false;
-
+  
   const m = String(motivo || row?.motivo_baja || row?.motivo || '').toUpperCase().trim();
+  const isExplicitD1Motivo = m.includes('BAJA DIA 1') || m.includes('BAJA D1') || isBajaDia1Motivo(m);
+
+  if ((row?.isDescuento || row?.is_descuento || String(row?.estado || '').toUpperCase().trim() === 'DESCUENTO') && !isExplicitD1Motivo) {
+    return false;
+  }
   if (m.includes('DESCUENTO')) return false;
 
   const s = String(sigla || row?.sigla || row?.sigla_asistencia || '').toUpperCase().trim();
@@ -156,9 +160,10 @@ export function isBajaDia1(motivo, sigla, row) {
   // Regla de Calibración Día 1 con 3 Cortes:
   // Reclutamiento hace seguimiento hasta el Corte 2.
   // Si es Corte 3 o si el alumno ya tuvo asistencia en un corte anterior del Día 1, NUNCA es Baja Día 1
+  // EXCEPCIÓN: Si el motivo registrado explícitamente en BD es BAJA DIA 1 (o abandono en C2), prevalece la Baja Día 1
   const corte = Number(row?.corte ?? row?.corteIndex ?? 0);
   const isCorte3 = corte === 3 || String(row?.fecha_hora_registro || '').toUpperCase().includes('CORTE 3');
-  if (isCorte3 || row?.hadAttendanceInEarlierCuts === true) {
+  if (!isExplicitD1Motivo && (isCorte3 || row?.hadAttendanceInEarlierCuts === true)) {
     return false;
   }
 
@@ -622,10 +627,8 @@ export function getDescuentosSetGlobal() {
         if (camp && rawGrupo) set.add(`${dni}|${camp}|${rawGrupo}`);
         if (camp && cleanCode) set.add(`${dni}|${camp}|${cleanCode}`);
         set.add(makeDescuentoKey(dni, d.campana, d.grupo_cap));
-        // Llaves compuestas por DNI + Grupo (aislado por cohorte/grupo de capacitación)
-        if (grupo) set.add(`${dni}|${grupo}`);
-        if (cleanCode) set.add(`${dni}|${cleanCode}`);
-        if (rawGrupo) set.add(`${dni}|${rawGrupo}`);
+        // Llaves compuestas por DNI + Campaña (evita contaminación cruzada entre campañas)
+        if (camp && camp !== 'SIN CAMPANA') set.add(`${dni}|${camp}`);
       }
     });
     return set;
@@ -707,10 +710,20 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
         const row = allData[i];
         const doc = normalizeDNI(row.documento);
         const grp = row.codigo_grupo || row.grupo;
+        const camp = normalizeCampana(row.campana);
+        const m = String(row.motivo_baja || row.motivo || '').toUpperCase();
+
+        // Si el registro de asistencia ya está explícitamente registrado como BAJA DIA 1, NUNCA es descuento
+        if (m.includes('BAJA DIA 1') || m.includes('BAJA D1') || isBajaDia1Motivo(m)) {
+          row.isDescuento = false;
+          continue;
+        }
+
         row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo)) ||
                           descSet.has(makeDescuentoKey(row.documento, row.campana, row.grupo)) ||
-                          descSet.has(`${doc}|${cleanGroupCode(grp)}`) ||
-                          descSet.has(`${doc}|${normalizeGPE(grp)}`);
+                          (camp && descSet.has(`${doc}|${camp}|${cleanGroupCode(grp)}`)) ||
+                          (camp && descSet.has(`${doc}|${camp}|${normalizeGPE(grp)}`)) ||
+                          (camp && descSet.has(`${doc}|${camp}`));
       }
     }
 
@@ -4309,25 +4322,22 @@ export function fetchAllAsistenciasBajas() {
 
 export async function fetchGruposDia1() {
   if (DB_MODE !== 'supabase') return []
-  // We need the codigo, so we join with grupos_capacitacion
-  const { data, error } = await supabase
-    .from('grupos_dia1')
-    .select(`
-      fecha_dia1,
-      estado_calibracion,
-      created_at,
-      updated_at,
-      grupo_codigo,
-      capacidad_rys (
-        codigo
-      )
-    `)
-  if (error) throw error
-  
-  return data.map(row => ({
-    ...row,
-    grupo_codigo: row.capacidad_rys?.codigo
-  })) || []
+  try {
+    const { data, error } = await supabase
+      .from('grupos_dia1')
+      .select('fecha_dia1, estado_calibracion, created_at, updated_at, grupo_codigo, campana')
+    if (error) {
+      console.warn('fetchGruposDia1 error:', error)
+      return []
+    }
+    return (data || []).map(row => ({
+      ...row,
+      grupo_codigo: row.grupo_codigo
+    }))
+  } catch (err) {
+    console.warn('fetchGruposDia1 exception:', err)
+    return []
+  }
 }
 
 export async function upsertGrupoDia1(grupo_codigo, campana, fecha_dia1) {
