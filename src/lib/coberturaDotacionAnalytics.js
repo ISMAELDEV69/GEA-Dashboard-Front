@@ -65,7 +65,9 @@ function cleanUpper(val) {
 }
 
 export function isAreaReclutamiento(area) {
-  return cleanUpper(area) === 'RECLUTAMIENTO'
+  const a = cleanUpper(area)
+  if (!a) return true
+  return a === 'RECLUTAMIENTO' || a.includes('RECUPER') || a.includes('RECLUTA')
 }
 
 export function normalizeModalidadDotacion(raw) {

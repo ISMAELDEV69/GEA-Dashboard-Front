@@ -78,7 +78,7 @@ const HEADER_ALIASES = {
   rq_ftes_solicitado: ['RQ FTES SOLICITADO', 'RQ FTES', 'FTES SOLICITADO'],
   meta_dia_0: ['META DIA 0', 'META DÍA 0'],
   meta_dia_1: ['META DIA 1', 'META DÍA 1'],
-  periodo_ingreso_op: ['PERIODO INGRESO OP'],
+  periodo_ingreso_op: ['PERIODO INGRESO', 'PERIODO INGRESO OP', 'PERIODO DE INGRESO', 'PERIODO INGRESO OP.'],
   periodo_rys: ['RYS', 'PERIODO RYS'],
 }
 
@@ -189,10 +189,14 @@ export function mapCapacidadRysHeaders(headerRow = []) {
   const colIdx = {}
 
   for (const col of CAPACIDAD_RYS_COLUMNS) {
-    const aliases = HEADER_ALIASES[col.key] || [col.label]
-    colIdx[col.key] = headers.findIndex(h =>
-      aliases.some(a => h.includes(a.toUpperCase()))
-    )
+    const aliases = (HEADER_ALIASES[col.key] || [col.label]).map(a => a.toUpperCase())
+    // 1. Priorizar coincidencia exacta
+    let idx = headers.findIndex(h => aliases.some(a => h === a))
+    // 2. Si no hay coincidencia exacta, coincidencia parcial
+    if (idx === -1) {
+      idx = headers.findIndex(h => aliases.some(a => h.includes(a)))
+    }
+    colIdx[col.key] = idx
   }
 
   return colIdx
@@ -210,7 +214,8 @@ export function rowToCapacidadRysPayload(row, colIdx, rowIndex = 0) {
   const periodo = String(get('periodo') || '').trim()
 
   if (!codigo) {
-    codigo = ''
+    const rawPeriodoIng = String(get('periodo_ingreso_op') || get('periodo') || '').replace(/\D/g, '')
+    codigo = `PROY-${rawPeriodoIng || 'S_C'}-${rowIndex}`
   }
 
   return {
@@ -288,7 +293,7 @@ export function parseCapacidadRysCsv(text) {
   for (let i = 1; i < matrix.length; i++) {
     const row = matrix[i]
     if (row.every(c => !String(c).trim())) continue
-    const payload = rowToCapacidadRysPayload(row, colIdx, i - 1)
+    const payload = rowToCapacidadRysPayload(row, colIdx, i)
     if (payload) {
       payloads.push(payload)
     }

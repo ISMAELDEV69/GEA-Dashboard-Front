@@ -34,7 +34,7 @@ function isGrupoVigente(g) {
   if (!g) return false
   if (g.is_cerrado) return false
   const st = normalizeEstado(g.estado || g.estado_grupo)
-  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYECT') || st.includes('PLANIF')) return false
+  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYEC') || st.includes('PLANIF')) return false
   return st.includes('CURSO') || st.includes('ACT') || (!st.includes('CERR') && !st.includes('FIN') && !st.includes('CULM'))
 }
 

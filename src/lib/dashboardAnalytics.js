@@ -938,15 +938,17 @@ export const MIN_PERIODO_CORTE = '202608'
 
 export function isCampanaProyectada(g) {
   if (!g) return false
-  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
-  return st === 'PROYECTADA' || st === 'PROYECTADO' || st === 'PLANIFICADA' || st === 'PLANIFICADO' ||
-         st === 'PENDIENTE' || st === 'POR_INICIAR' || st.includes('PROYECT') || st.includes('PLANIF')
+  const raw = String(g.estado || g.estado_grupo || '')
+  const st = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
+  return st === 'PROYECTADA' || st === 'PROYECTADO' || st === 'PROYECCION' || st === 'PLANIFICADA' || st === 'PLANIFICADO' ||
+         st === 'PENDIENTE' || st === 'POR_INICIAR' || st.includes('PROYEC') || st.includes('PLANIF')
 }
 
 export function isCampanaOperativa(g) {
   if (!g) return false
   if (isCampanaProyectada(g)) return false
-  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
+  const raw = String(g.estado || g.estado_grupo || '')
+  const st = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim().replace(/[\s_-]+/g, '_')
   return st === 'EN_CURSO' || st === 'ACTIVO' || st === 'ABIERTO' || st === 'CERRADO' || st === 'CERRADA' ||
          st === 'FINALIZADO' || st === 'FINALIZADA' || st === 'CULMINADO' || st === 'HISTORICO' ||
          st.includes('CURSO') || st.includes('ACTIVO') || st.includes('CERR') || st.includes('FINAL') || st.includes('CULMIN') ||
@@ -956,8 +958,10 @@ export function isCampanaOperativa(g) {
 export function isGrupoActivo(g) {
   if (!g) return false
   if (g.is_cerrado) return false
-  const st = String(g.estado || g.estado_grupo || '').toUpperCase().trim()
-  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYECT') || st.includes('PLANIF')) return false
+  if (isCampanaProyectada(g)) return false
+  const raw = String(g.estado || g.estado_grupo || '')
+  const st = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim()
+  if (st.includes('CANCEL') || st.includes('INACT') || st.includes('PROYEC') || st.includes('PLANIF')) return false
   return st.includes('CURSO') || st.includes('ACT') || (!st.includes('CERR') && !st.includes('FIN') && !st.includes('CULM'))
 }
 
@@ -981,11 +985,7 @@ export function resolvePeriodoIngreso(g) {
   if (!g) return null
   const direct = normalize2026Period(g.periodo_ingreso_op || g.periodo_ingreso || g.periodo_efectivo)
   if (direct) return direct
-  if (g.fecha_ingreso_op) {
-    const fromFecha = normalize2026Period(g.fecha_ingreso_op)
-    if (fromFecha) return fromFecha
-  }
-  return null
+  return normalize2026Period(g.periodo || g.periodo_capacitacion) || null
 }
 
 

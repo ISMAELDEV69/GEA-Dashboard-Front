@@ -1856,6 +1856,7 @@ export function subscribeOperationalData(onChange) {
     await invalidateCache('all_motivos_bajas');
     await invalidateCache('grupos_con_metas');
     await invalidateCache('resumen_cap_');
+    await invalidateCache('v_resumen_capacitacion_cohortes');
     await invalidateCache('postulantes_');
     await invalidateCache('campanas_list');
     await invalidateCache('sedes_list');
@@ -2767,10 +2768,10 @@ export function fetchGruposConMetas(bypassCache = false) {
 
       let reclutadoresConStats = []
       let metaDia0 = g.meta_dia_0 || 0
-      let metaDia1 = g.meta_dia_1 || 0
-      let rqSolicitado = (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_solicitado || 0) : 0
-      let rqFtes = (String(g.area_traslado || '').trim().toUpperCase() === 'RECLUTAMIENTO') ? (g.rq_ftes_solicitado || 0) : 0
-      let listaActual = 0
+      const rawAreaG = String(g.area_traslado || '').trim().toUpperCase()
+      const isEligibleAreaG = !rawAreaG || rawAreaG === 'RECLUTAMIENTO' || rawAreaG.includes('RECUPER') || rawAreaG.includes('RECLUTA')
+      let rqSolicitado = isEligibleAreaG ? (g.rq_solicitado || 0) : 0
+      let rqFtes = isEligibleAreaG ? (g.rq_ftes_solicitado || 0) : 0
       let conectadosDia0 = 0
       let conectadosDia1 = 0
       let fromMetasEquipos = false
@@ -3217,7 +3218,43 @@ export async function deleteMotivoBaja(motivoId) {
   return true
 }
 
+export function getTodayLocalPeru() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    const peruTime = new Date(d.getTime() - 5 * 3600000);
+    return peruTime.toISOString().split('T')[0];
+  }
+}
+
 export async function insertConsolidado(payloads) {
+  if (DB_MODE !== 'supabase') return;
+  if (!payloads || payloads.length === 0) return;
+
+  // REGLA ESTRICTA: Permitir hoy y cualquier fecha pasada (ej. ayer regularizado).
+  // NUNCA permitir registrar fechas posteriores a hoy (días futuros).
+  const todayIso = getTodayLocalPeru();
+  const safePayloads = payloads.filter(p => {
+    const pIso = parseFechaAsistencia(p.fecha_registro_asistencia) || p.fecha_registro_asistencia;
+    if (pIso && pIso > todayIso) {
+      console.warn(`[Seguridad Asistencia] Registro omitido: La fecha ${pIso} es posterior al día actual (${todayIso}) para el documento ${p.documento}.`);
+      return false;
+    }
+    return true;
+  });
+
+  if (safePayloads.length === 0) {
+    console.warn('[Seguridad Asistencia] Todos los registros recibidos corresponden a fechas futuras. Operación bloqueada.');
+    return;
+  }
+  payloads = safePayloads;
+
   // Proteger datos vitales: Si algún registro viene con nombres o celular vacíos, rescatar de nóminas o consolidado
   const incompleteDocs = payloads
     .filter(p => !p.nombres || !p.celular || !p.apellido_paterno)
@@ -3402,9 +3439,13 @@ export async function regularizarAsistenciaPostulante({
       }
     }
 
+    const todayIso = getTodayLocalPeru();
     for (const r of records) {
       const isoDate = r.fecha;
-      if (!isoDate) continue;
+      if (!isoDate || isoDate > todayIso) {
+        if (isoDate > todayIso) console.warn(`[Seguridad Asistencia] Regularización bloqueada para fecha futura: ${isoDate}`);
+        continue;
+      }
       const [year, month, day] = isoDate.split('-');
       const spreadsheetDate1 = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
       const spreadsheetDate2 = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
@@ -3695,8 +3736,13 @@ export async function autocompletarDiasFaltantesGrupo({
   const weekStr = semana ? `SEM${String(semana).replace(/\D/g, '')}` : '';
   const nowStr = new Date().toLocaleString('es-PE');
   const sortedDates = [...missingDates].sort();
+  const todayIso = getTodayLocalPeru();
 
   for (const dateIso of sortedDates) {
+    if (dateIso > todayIso) {
+      console.warn(`[Seguridad Asistencia] Autocompletado ignorado para fecha futura: ${dateIso} (hoy: ${todayIso})`);
+      continue;
+    }
     const [year, month, day] = dateIso.split('-');
     const spreadsheetDate = `${parseInt(day, 10)}/${parseInt(month, 10)}/${year}`;
 
@@ -3928,6 +3974,32 @@ export async function guardarAsistenciaLoteFechas({
   if (!cleanDoc || !targetGroup || !fechas.length) {
     return { success: false, message: 'Faltan datos obligatorios para registrar la asistencia en lote.' };
   }
+
+  // REGLA ESTRICTA DE SEGURIDAD:
+  // Nunca permitir registrar asistencia en fechas posteriores al día actual (fechas futuras).
+  const todayIso = getTodayLocalPeru();
+  const safeFechas = fechas.filter(f => {
+    let iso = parseFechaAsistencia(f);
+    if (!iso) {
+      if (f.includes('-')) {
+        const parts = f.split('T')[0].split('-');
+        if (parts.length === 3) iso = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      } else if (f.includes('/')) {
+        const parts = f.split('/');
+        if (parts.length === 3) iso = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+      }
+    }
+    if (iso && iso > todayIso) {
+      console.warn(`[Seguridad Asistencia] Fecha futura ignorada en lote: ${iso} (hoy: ${todayIso}) para ${cleanDoc}`);
+      return false;
+    }
+    return true;
+  });
+
+  if (!safeFechas.length) {
+    return { success: false, message: 'Todas las fechas seleccionadas corresponden a días futuros posteriores a hoy. Operación bloqueada.' };
+  }
+  fechas = safeFechas;
 
   // 1. Limpieza estricta previa para este usuario, grupo, campaña, semana y fechas
   await eliminarAsistenciaLoteFechas({
@@ -7880,6 +7952,45 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 }
 
 /**
+ * Consulta la vista pre-agregada v_resumen_capacitacion_cohortes en PostgreSQL (Supabase).
+ * Descarga directamente las cohortes ya totalizadas en <100ms sin saturar la red ni la memoria.
+ */
+export async function fetchResumenCapacitacionOptimizado(force = false) {
+  if (DB_MODE !== 'supabase') return [];
+  if (force) {
+    invalidateCache('v_resumen_capacitacion_cohortes');
+  }
+  return withCache('v_resumen_capacitacion_cohortes', 60000, async () => {
+    const { data, error } = await supabase
+      .from('v_resumen_capacitacion_cohortes')
+      .select('*')
+      .order('grupo_codigo');
+    if (error) {
+      console.warn('Error fetching v_resumen_capacitacion_cohortes:', error);
+      throw error;
+    }
+    return (data || []).map(r => ({
+      ...r,
+      codigo: r.grupo_codigo,
+      rq_solicitado: Number(r.rq_solicitado) || 0,
+      rq_ftes_solicitado: Number(r.rq_solicitado) || 0,
+      meta_dia_0: Number(r.meta_dia_0) || 0,
+      meta_dia_1: Number(r.meta_dia_1) || 0,
+      total_nomina: Number(r.total_nomina) || 0,
+      asistio_dia0: Number(r.asistio_dia0) || 0,
+      asistio_dia1: Number(r.asistio_dia1) || 0,
+      activos_ojt: Number(r.activos_ojt) || 0,
+      desertores_ct: Number(r.desertores_ct) || 0,
+      desertores_ojt: Number(r.desertores_ojt) || 0,
+      ingresos_iop: Number(r.ingresos_iop) || 0,
+      ingresos_iop_ftes: Number(r.ingresos_iop_ftes) || 0,
+      pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
+      from_db_view: true
+    }));
+  });
+}
+
+/**
  * Cálculo Ultrarrápido de Métricas de Resumen Capacitación en Memoria (O(1) Map indexing).
  * Reutiliza postulantes y asistencias ya cargados en RAM sin consultas redundantes a Supabase.
  */
@@ -8673,7 +8784,8 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
+        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
@@ -8681,15 +8793,17 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       })(),
       rq_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
-        const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
-          ? Number(grupoInfo.rq_ftes_solicitado)
-          : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
+        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        if (isGrupoCancelado || !isEligibleArea) return 0;
+        const rawRq = (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '')
+          ? Number(grupoInfo.rq_solicitado)
+          : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_ftes_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        if (isGrupoCancelado || rawArea !== 'RECLUTAMIENTO') return 0;
+        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : Number(grupoInfo.rq_solicitado || 0);

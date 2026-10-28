@@ -387,8 +387,12 @@ export default function AsistenciaRegularizacionModal({
           return { ...r, sigla: 'FI', motivo_baja: '' }
         }
 
-        // Si marcamos 'B' en un día, los días posteriores heredan B y el motivo que el formador elija en el día origen
+        // Si marcamos 'B' en un día, solo los días transcurridos hasta HOY heredan B (NUNCA días futuros)
+        // Regla Oficial: Si el motivo es BAJA DIA 1, tampoco viaja a días posteriores.
         if (newSigla === 'B' && idx > targetIndex) {
+          if (r.fecha > todayStr) {
+            return r; // NUNCA propagar baja ni asistencia a días que aún no ocurren
+          }
           return { ...r, sigla: 'B', motivo_baja: '' }
         }
 
@@ -413,12 +417,18 @@ export default function AsistenciaRegularizacionModal({
         hadDia1Attendance: hadDia1Att,
       })
 
+      const isB1 = isBajaDia1Motivo(safeMotivo)
+
       return prev.map((r, idx) => {
         if (r.fecha === fecha) {
           return { ...r, motivo_baja: safeMotivo }
         }
-        // Si este día es posterior al cese y también es 'B', sincronizar su motivo elegido
-        if (idx > targetIndex && r.sigla === 'B') {
+        // Si este día es posterior al cese y también es 'B' (solo días hasta hoy, y NUNCA para Baja Día 1)
+        if (idx > targetIndex && r.sigla === 'B' && r.fecha <= todayStr) {
+          if (isB1) {
+            // Regla oficial: BAJA DIA 1 no viaja a días posteriores; se limpia
+            return { ...r, sigla: '', motivo_baja: '' }
+          }
           return { ...r, motivo_baja: safeMotivo }
         }
         return r
@@ -444,6 +454,10 @@ export default function AsistenciaRegularizacionModal({
 
   const handleAddCustomDate = () => {
     if (!newDateInput) return
+    if (newDateInput > todayStr) {
+      toast.error('Fecha futura bloqueada', `No se puede registrar asistencia en la fecha ${formatPrettyDate(newDateInput)} porque aún no ocurre.`)
+      return
+    }
     if (recordsState.some(r => r.fecha === newDateInput)) {
       toast.warning('Fecha duplicada', 'Esta fecha ya se encuentra en el calendario.')
       return
@@ -469,16 +483,16 @@ export default function AsistenciaRegularizacionModal({
       return
     }
 
-    const missingMotive = recordsState.find(r => r.sigla === 'B' && !r.motivo_baja)
+    const missingMotive = recordsState.find(r => r.sigla === 'B' && !r.motivo_baja && r.fecha <= todayStr)
     if (missingMotive) {
       toast.warning('Motivo requerido', `Selecciona un motivo de baja para el día ${formatSpreadsheetDate(missingMotive.fecha)}.`)
       return
     }
 
-    // Solo persistimos días que tengan una sigla definida
-    const validRecordsToSave = recordsState.filter(r => Boolean(r.sigla))
+    // Solo persistimos días que tengan una sigla definida y que sean fechas transcurridas o de hoy (NUNCA futuras)
+    const validRecordsToSave = recordsState.filter(r => Boolean(r.sigla) && (!r.fecha || r.fecha <= todayStr))
     if (validRecordsToSave.length === 0) {
-      toast.warning('Sin marcas válidas', 'No hay marcas de asistencia definidas para guardar.')
+      toast.warning('Sin marcas válidas', 'No hay marcas de asistencia válidas para guardar (las fechas futuras no se guardan hasta su día de ocurrencia).')
       return
     }
 
@@ -736,45 +750,57 @@ export default function AsistenciaRegularizacionModal({
                         const originBajaMotivo = firstBajaIndex !== -1 ? (recordsState[firstBajaIndex]?.motivo_baja || '') : ''
                         const isOriginDia1 = firstBajaIndex !== -1 && Boolean(recordsState[firstBajaIndex]?.isDia1 || recordsState[firstBajaIndex]?.dayIndex === 1 || isBajaDia1Motivo(originBajaMotivo))
 
+                        const isFuture = rec.fecha > todayStr
+
                         return (
                           <td 
                             key={rec.fecha}
                             className={`p-3 text-center align-top relative transition-colors ${
-                              isModified ? 'bg-cyan-500/5' : isBaja ? 'bg-rose-500/5' : ''
+                              isFuture ? 'bg-slate-500/5 opacity-60' : isModified ? 'bg-cyan-500/5' : isBaja ? 'bg-rose-500/5' : ''
                             }`}
                           >
                             <div className="flex flex-col items-center justify-between min-h-[95px] gap-2">
                               {/* Selector Directo de Marca / Sigla (Garantiza 100% visibilidad de A, I-OP, FI, FJ, B) */}
                               <div className="relative w-full">
                                 <select
-                                  value={rec.sigla || ''}
+                                  value={isFuture ? '' : (rec.sigla || '')}
                                   onChange={e => handleStatusSelect(rec.fecha, e.target.value)}
-                                  disabled={isReadOnly || isSaving}
-                                  className={`w-full py-2 pl-2.5 pr-6 rounded-xl border text-center font-bold text-xs outline-none cursor-pointer transition-all shadow-xs appearance-none font-mono ${
-                                    isPending
-                                      ? 'border-dashed border-[var(--border-normal)] text-[var(--text-muted)] bg-[var(--bg-elevated)]/60 hover:border-cyan-500 hover:text-cyan-400'
-                                      : `${siglaConfig?.bg || 'bg-[var(--bg-elevated)]'} ${siglaConfig?.border || 'border-[var(--border-normal)]'} ${siglaConfig?.text || 'text-[var(--text-primary)]'} hover:brightness-110`
-                                  } ${isModified ? 'ring-2 ring-cyan-500/60 font-black' : ''}`}
-                                  title="Haz clic para seleccionar: A, I-OP, FI, FJ o B"
+                                  disabled={isReadOnly || isSaving || isFuture}
+                                  className={`w-full py-2 pl-2.5 pr-6 rounded-xl border text-center font-bold text-xs outline-none transition-all shadow-xs appearance-none font-mono ${
+                                    isFuture
+                                      ? 'border-dashed border-[var(--border-subtle)] text-[var(--text-muted)] bg-[var(--bg-base)]/40 cursor-not-allowed'
+                                      : isPending
+                                      ? 'border-dashed border-[var(--border-normal)] text-[var(--text-muted)] bg-[var(--bg-elevated)]/60 hover:border-cyan-500 hover:text-cyan-400 cursor-pointer'
+                                      : `${siglaConfig?.bg || 'bg-[var(--bg-elevated)]'} ${siglaConfig?.border || 'border-[var(--border-normal)]'} ${siglaConfig?.text || 'text-[var(--text-primary)]'} hover:brightness-110 cursor-pointer`
+                                  } ${isModified && !isFuture ? 'ring-2 ring-cyan-500/60 font-black' : ''}`}
+                                  title={isFuture ? 'Fecha futura: No se puede registrar asistencia anticipada' : 'Haz clic para seleccionar: A, I-OP, FI, FJ o B'}
                                 >
-                                  <option value="" className="bg-slate-900 text-slate-400 font-sans">
-                                    — Pendiente
-                                  </option>
-                                  <option value="A" className="bg-slate-900 text-emerald-400 font-bold font-sans">
-                                    A · Asistencia (Asistió)
-                                  </option>
-                                  <option value="I-OP" className="bg-slate-900 text-blue-400 font-bold font-sans">
-                                    I-OP · Ingreso Operación
-                                  </option>
-                                  <option value="FI" className="bg-slate-900 text-amber-400 font-bold font-sans">
-                                    FI · Falta Injustificada
-                                  </option>
-                                  <option value="FJ" className="bg-slate-900 text-violet-400 font-bold font-sans">
-                                    FJ · Falta Justificada
-                                  </option>
-                                  <option value="B" className="bg-slate-900 text-rose-400 font-bold font-sans">
-                                    B · Baja
-                                  </option>
+                                  {isFuture ? (
+                                    <option value="" className="bg-slate-900 text-slate-500 font-sans">
+                                      — Futuro
+                                    </option>
+                                  ) : (
+                                    <>
+                                      <option value="" className="bg-slate-900 text-slate-400 font-sans">
+                                        — Pendiente
+                                      </option>
+                                      <option value="A" className="bg-slate-900 text-emerald-400 font-bold font-sans">
+                                        A · Asistencia (Asistió)
+                                      </option>
+                                      <option value="I-OP" className="bg-slate-900 text-blue-400 font-bold font-sans">
+                                        I-OP · Ingreso Operación
+                                      </option>
+                                      <option value="FI" className="bg-slate-900 text-amber-400 font-bold font-sans">
+                                        FI · Falta Injustificada
+                                      </option>
+                                      <option value="FJ" className="bg-slate-900 text-violet-400 font-bold font-sans">
+                                        FJ · Falta Justificada
+                                      </option>
+                                      <option value="B" className="bg-slate-900 text-rose-400 font-bold font-sans">
+                                        B · Baja
+                                      </option>
+                                    </>
+                                  )}
                                 </select>
                                 <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-current opacity-70">
                                   <ChevronDown size={13} />

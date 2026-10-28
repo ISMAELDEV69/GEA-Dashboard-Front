@@ -1063,13 +1063,24 @@ export default function AsistenciaForm({
       }
     }
 
-    // Sort previous records for each doc by date descending
+    // Corte legacy (null/0/vacío) = Corte 1 del Día 1 (datos guardados antes del multi-corte)
+    const normCorteVal = (raw) => {
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n <= 0) return 1
+      return n
+    }
+
+    // Sort previous records for each doc by date descending, and within same date by corte descending
     for (const [doc, arr] of previousRecordsByDoc.entries()) {
       if (arr.length > 1) {
         arr.sort((a, b) => {
           const fa = parseFechaAsistencia(a.fecha_asistencia || a.fecha_registro_asistencia || a.fecha) || a.fecha_asistencia || ''
           const fb = parseFechaAsistencia(b.fecha_asistencia || b.fecha_registro_asistencia || b.fecha) || b.fecha_asistencia || ''
-          return fb.localeCompare(fa)
+          const dCmp = fb.localeCompare(fa)
+          if (dCmp !== 0) return dCmp
+          const ca = normCorteVal(a.corte)
+          const cb = normCorteVal(b.corte)
+          return cb - ca
         })
       }
     }
@@ -1100,13 +1111,11 @@ export default function AsistenciaForm({
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (p.campana && normalize(p.campana) !== normalize(targetCampana)) continue;
       }
-      const hasActiveInGroup = activeAttendeeDocs.has(doc);
-      const isDesc = !hasActiveInGroup && (
-                     descuentosAprobadosSet.has(doc) || 
+      const isDesc = descuentosAprobadosSet.has(doc) || 
                      descuentosAprobadosSet.has(`DNI:${doc}`) ||
                      isDescuentoAprobado(p) || 
                      String(p.estado || '').toUpperCase() === 'DESCUENTO' ||
-                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO'));
+                     String(p.motivo_baja || '').toUpperCase().includes('DESCUENTO');
       if (!isDesc) {
         candidateDocs.add(p.documento);
         mergedCandidates.push(p);
@@ -1118,13 +1127,11 @@ export default function AsistenciaForm({
       if (targetCampana && targetCampana !== 'Sin Campaña' && targetCampana !== 'Todas') {
         if (a.campana && normalize(a.campana) !== normalize(targetCampana)) continue;
       }
-      const hasActiveInGroup = activeAttendeeDocs.has(doc);
-      const isDesc = !hasActiveInGroup && (
-                     descuentosAprobadosSet.has(doc) || 
+      const isDesc = descuentosAprobadosSet.has(doc) || 
                      descuentosAprobadosSet.has(`DNI:${doc}`) ||
                      isDescuentoAprobado(a) || 
                      String(a.estado || '').toUpperCase() === 'DESCUENTO' ||
-                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO'));
+                     String(a.motivo_baja || '').toUpperCase().includes('DESCUENTO');
       if (isDesc) continue;
 
       if (!candidateDocs.has(a.postulante_documento)) {
@@ -1162,6 +1169,11 @@ export default function AsistenciaForm({
         if (p.campana && normalize(p.campana) !== normalize(targetCampana)) {
           return false;
         }
+      }
+
+      // Si es un descuento aprobado, nunca debe aparecer en la toma de asistencia
+      if (descuentosAprobadosSet.has(doc) || descuentosAprobadosSet.has(`DNI:${doc}`) || isDescuentoAprobado(p)) {
+        return false;
       }
 
       // Si ya tiene registros de asistencia en el grupo, siempre debe aparecer en el grupo
@@ -1258,13 +1270,6 @@ export default function AsistenciaForm({
     const allDates = Array.from(new Set([...groupDates, fecha])).sort()
     const trainingDayIndex = allDates.indexOf(fecha) + 1
 
-    // Corte legacy (null/0/vacío) = Corte 1 del Día 1 (datos guardados antes del multi-corte)
-    const normCorteVal = (raw) => {
-      const n = Number(raw)
-      if (!Number.isFinite(n) || n <= 0) return 1
-      return n
-    }
-
     const list = uniquePostulantes.map(p => {
       const isLateInclusion = false
       const dayRecs = sameDayRecordsByDoc.get(p.documento) || []
@@ -1278,11 +1283,10 @@ export default function AsistenciaForm({
         .filter(r => normCorteVal(r.corte) < currentCorte)
         .sort((a, b) => normCorteVal(b.corte) - normCorteVal(a.corte))
 
-      const sameDayEarlierBaja = earlierSameDay.find(r => {
-        const s = String(r.sigla_asistencia || r.sigla || '').toUpperCase().trim()
-        return s === 'B'
-      }) || null
       const latestEarlierSameDay = earlierSameDay[0] || null
+      const latestEarlierSameDaySigla = String(latestEarlierSameDay?.sigla_asistencia || latestEarlierSameDay?.sigla || '').toUpperCase().trim()
+      // Solo es baja del mismo día si el corte inmediatamente anterior terminó en 'B'
+      const sameDayEarlierBaja = latestEarlierSameDaySigla === 'B' ? latestEarlierSameDay : null
 
       const corteFlagsToday = analyzeDia1CorteRecords(dayRecs, existing || latestEarlierSameDay)
       const hadAttendanceInEarlierCuts = Boolean(corteFlagsToday.hadAttendanceInEarlierCuts)
@@ -1297,11 +1301,15 @@ export default function AsistenciaForm({
         if (rawTipo === 'APTO') rawTipo = 'OBSERVADO'
       }
 
+      // Evaluar el último registro de fechas previas (ordenado fecha desc y corte desc)
       const prevList = previousRecordsByDoc.get(p.documento) || []
-      const pastBajaRecord = sameDayEarlierBaja || prevList.find(r => (r.sigla_asistencia || r.sigla) === 'B')
+      const latestPrevRecord = prevList.length > 0 ? prevList[0] : null
+      const latestPrevSigla = String(latestPrevRecord?.sigla_asistencia || latestPrevRecord?.sigla || '').toUpperCase().trim()
+      const isPastDayBaja = latestPrevSigla === 'B'
+      const pastBajaRecord = sameDayEarlierBaja || (isPastDayBaja ? latestPrevRecord : null)
       const pastIopRecord = prevList.find(r => (r.sigla_asistencia || r.sigla) === 'I-OP')
       const pastMotiveFromRecords = pastBajaRecord?.motivo_baja
-        || prevList.find(r => r.motivo_baja && String(r.motivo_baja).trim() !== '' && String(r.motivo_baja).trim() !== 'null')?.motivo_baja
+        || (isPastDayBaja ? latestPrevRecord?.motivo_baja : '')
         || ''
 
       // Verificar si tuvo asistencia activa efectiva en el Día 1 (días previos o cortes C1/C2 de hoy)
@@ -1757,11 +1765,22 @@ export default function AsistenciaForm({
       return alert(`Selecciona un motivo de baja válido de la lista para:\n\n${names}\n\n(No se permite dejar el motivo vacío ni usar 'OBSERVADO')`)
     }
 
-    const recordsToSave = sanitizedList.filter(item => !item.isLateInclusion).map(item => ({
-      documento: item.documento,
-      sigla: item.sigla,
-      motivo_baja: item.motivo_baja
-    }))
+    // Regla Oficial de Negocio: Las Bajas Día 1 de Reclutamiento NO viajan a días posteriores de Formación.
+    // Si estamos en un día posterior al Día 1 y el postulante permanece como Baja Día 1 bloqueada,
+    // NO se persiste asistencia diaria para él en consolidado_asistencias.
+    const recordsToSave = sanitizedList
+      .filter(item => !item.isLateInclusion)
+      .filter(item => {
+        if (item.trainingDayIndex > 1 && item.isLockedBaja && isBajaDia1Motivo(item.motivo_baja || item.pastMotive)) {
+          return false
+        }
+        return true
+      })
+      .map(item => ({
+        documento: item.documento,
+        sigla: item.sigla,
+        motivo_baja: item.motivo_baja
+      }))
     setSaving(true)
     try {
       const targetGroup = activeGrupoObj?.codigo || selectedGrupo;

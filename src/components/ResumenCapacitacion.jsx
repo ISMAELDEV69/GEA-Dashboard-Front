@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import SemicircleGauge from './dashboard/SemicircleGauge';
 import { 
+  fetchResumenCapacitacionOptimizado,
   calculateMetricasResumenCapacitacionFast, 
   parseFechaAsistencia, 
   invalidateCache 
@@ -137,13 +138,17 @@ const SEGMENTO_COLORS = {
   'LIPIGAS': '#00E676'
 };
 
-// RQ FTE del gauge: solo área RECLUTAMIENTO (no TRASLADO, OPERACIONES, CAPACITACIÓN, etc.)
-const isAreaReclutamiento = (area) => String(area || '').trim().toUpperCase() === 'RECLUTAMIENTO';
+// RQ FTE del gauge: áreas válidas exclusivamente RECLUTAMIENTO y RECUPERADO (no TRASLADO interno, CAPACITACIÓN, OPERACIONES, etc.)
+const isAreaEligibleRq = (area) => {
+  const a = String(area || '').trim().toUpperCase();
+  if (!a) return false;
+  return a === 'RECLUTAMIENTO' || a.includes('RECUPER') || a.includes('RECLUTA');
+};
 
 const getGrupoRq = (g) => {
   if (!g) return 0;
   if (g.is_cancelado) return 0;
-  if (!isAreaReclutamiento(g.area_traslado)) return 0;
+  if (!isAreaEligibleRq(g.area_traslado)) return 0;
 
   const rqFtes = g.rq_ftes_solicitado !== undefined && g.rq_ftes_solicitado !== null ? Number(g.rq_ftes_solicitado) : null;
   const rqSol = g.rq_solicitado !== undefined && g.rq_solicitado !== null ? Number(g.rq_solicitado) : null;
@@ -435,10 +440,9 @@ export default function ResumenCapacitacion({
   const isCalculatingRef = useRef(false);
   const lastParamsRef = useRef('');
 
-  // Carga y cálculo de métricas ultrarrápido
+  // Carga y cálculo de métricas ultrarrápido (<100ms vía PostgreSQL View)
   const loadData = useCallback(async (force = false) => {
     const effectiveGrupos = (campanasMetas && campanasMetas.length > 0) ? campanasMetas : grupos;
-    if (!effectiveGrupos || effectiveGrupos.length === 0) return;
     
     const paramsKey = `${effectiveGrupos.length}_${postulantes.length}_${asistencias.length}`;
     if (!force && lastParamsRef.current === paramsKey && data.length > 0) return;
@@ -453,12 +457,26 @@ export default function ResumenCapacitacion({
       }
       setError(null);
 
-      const metricas = await calculateMetricasResumenCapacitacionFast(effectiveGrupos, postulantes, asistencias);
-      setCapacidadRys(effectiveGrupos);
+      let metricas = [];
+      // 1. Intentar carga directa y ultrarrápida desde PostgreSQL View en Supabase
+      try {
+        metricas = await fetchResumenCapacitacionOptimizado(force);
+      } catch (sqlErr) {
+        console.warn('Aviso: Fallback a cálculo en memoria por error en vista SQL:', sqlErr);
+      }
+
+      // 2. Si la vista no arrojó filas o falló, fallback seguro al cálculo cliente
+      if (!metricas || metricas.length === 0) {
+        if (effectiveGrupos && effectiveGrupos.length > 0) {
+          metricas = await calculateMetricasResumenCapacitacionFast(effectiveGrupos, postulantes, asistencias);
+        }
+      }
+
+      setCapacidadRys(effectiveGrupos.length > 0 ? effectiveGrupos : (metricas || []));
       setData(metricas || []);
       lastParamsRef.current = paramsKey;
     } catch (err) {
-      console.error('Error calculating resumen metrics:', err);
+      console.error('Error loading resumen metrics:', err);
       setError(err?.message || 'Error cargando datos de resumen');
     } finally {
       isCalculatingRef.current = false;
@@ -468,11 +486,8 @@ export default function ResumenCapacitacion({
   }, [grupos, campanasMetas, postulantes, asistencias, data.length]);
 
   useEffect(() => {
-    const effectiveGrupos = (campanasMetas && campanasMetas.length > 0) ? campanasMetas : grupos;
-    if (effectiveGrupos.length > 0) {
-      loadData(false);
-    }
-  }, [grupos.length, campanasMetas.length, postulantes.length, asistencias.length]);
+    loadData(false);
+  }, [loadData, grupos.length, campanasMetas.length, postulantes.length, asistencias.length]);
 
   // Escuchar refresco global
   useEffect(() => {
@@ -564,29 +579,21 @@ export default function ResumenCapacitacion({
       if (g.is_cancelado) return false;
       const st = norm(g.estado);
       if (st.includes('CANCEL') || st.includes('ANULAD') || st.includes('INACT')) return false;
-      if (!isFormadorValido(g.formador || g.formador_nombre)) return false;
       return true;
     });
     
-    // 1. Periodos = PERIODO INGRESO. Operativos siempre visibles; proyectados solo con + Proyectados.
-    const periodosOperativos = new Set();
-    const periodosProyectados = new Set();
+    // 1. Periodos = PERIODO INGRESO. Todos los periodos disponibles
+    const periodos = new Set();
     dataset.forEach(g => {
       const cleanP = resolvePeriodoIngreso(g) || getGrupoPeriodo(g);
       if (!cleanP || cleanP < MIN_PERIODO_CORTE) return;
-      if (isCampanaProyectada(g)) periodosProyectados.add(cleanP);
-      else periodosOperativos.add(cleanP);
+      periodos.add(cleanP);
     });
-    const periodos = new Set(periodosOperativos);
-    if (showAllPeriodos) {
-      periodosProyectados.forEach((p) => periodos.add(p));
-    }
     
     // Subfiltro por periodo activo
     const subPeriodo = dataset.filter(g => {
       const cleanP = resolvePeriodoIngreso(g) || getGrupoPeriodo(g);
       if (cleanP && cleanP < MIN_PERIODO_CORTE) return false;
-      if (isCampanaProyectada(g) && !showAllPeriodos) return false;
       return isFilterAll(filters.periodo) || filters.periodo.includes(String(cleanP || '').trim());
     });
 
@@ -626,10 +633,15 @@ export default function ResumenCapacitacion({
       if (!isFilterAll(filters.estado)) {
         const wantsActivo = filters.estado.some((e) => ['EN CURSO', 'ACTIVO'].includes(norm(e)));
         const wantsCerrado = filters.estado.some((e) => norm(e) === 'CERRADO');
-        if (wantsActivo && wantsCerrado) return isGrupoActivo(g) || isGrupoCerrado(g);
-        if (wantsActivo) return isGrupoActivo(g);
-        if (wantsCerrado) return isGrupoCerrado(g);
-        return filters.estado.some((e) => norm(g.estado) === norm(e));
+        const wantsProyectado = filters.estado.some((e) => norm(e).includes('PROYEC') || norm(e).includes('PLANIF'));
+        const isAct = isGrupoActivo(g);
+        const isCer = isGrupoCerrado(g);
+        const isProy = isCampanaProyectada(g);
+        let matchesEstado = false;
+        if (wantsActivo && isAct) matchesEstado = true;
+        if (wantsCerrado && isCer) matchesEstado = true;
+        if (wantsProyectado && isProy) matchesEstado = true;
+        if (!matchesEstado && !filters.estado.some((e) => norm(g.estado) === norm(e))) return false;
       }
       return true;
     });
@@ -641,7 +653,7 @@ export default function ResumenCapacitacion({
     });
     
     // 5. Estados del Grupo: opciones principales requeridas
-    const estados = ['EN CURSO', 'CERRADO'];
+    const estados = ['EN CURSO', 'PROYECCIÓN', 'CERRADO'];
 
     // 6. Grupos (filtrados por campaña activa y estado)
     const isCampanaFiltered = !isFilterAll(filters.campana);
@@ -693,18 +705,10 @@ export default function ResumenCapacitacion({
     const isCampanaFiltered = !isFilterAll(filters.campana);
 
     return data.filter(d => {
-      // Excluir grupos proyectados fuera de operación
-      if (isCampanaProyectada(d)) return false;
-
       // Excluir grupos cancelados o inactivos
       if (d.is_cancelado) return false;
       const stNorm = norm(d.estado);
       if (stNorm.includes('CANCEL') || stNorm.includes('ANULAD') || stNorm.includes('INACT')) return false;
-
-      // Excluir grupos sin formador asignado
-      if (!isFormadorValido(d.formador || d.formador_nombre)) {
-        return false;
-      }
 
       // Filtro Periodo (PERIODO INGRESO OP)
       const cleanP = resolvePeriodoIngreso(d) || getGrupoPeriodo(d);
@@ -728,22 +732,26 @@ export default function ResumenCapacitacion({
       if (!isFilterAll(filters.modalidad) && !filters.modalidad.includes(normModalidad(d.modalidad))) {
         return false;
       }
-      // Filtro Estado del Grupo (EN CURSO vs CERRADO reactivo)
+      // Filtro Estado del Grupo (EN CURSO vs PROYECCIÓN vs CERRADO reactivo)
       if (!isFilterAll(filters.estado)) {
         const wantsActivo = filters.estado.some((e) => ['EN CURSO', 'ACTIVO'].includes(norm(e)));
         const wantsCerrado = filters.estado.some((e) => norm(e) === 'CERRADO');
-        if (wantsActivo && wantsCerrado) {
-          if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
-        } else if (wantsCerrado) {
-          if (!isGrupoCerrado(d)) return false;
-        } else if (wantsActivo) {
-          if (!isGrupoActivo(d)) return false;
-        } else if (!filters.estado.some((e) => norm(d.estado) === norm(e))) {
+        const wantsProyectado = filters.estado.some((e) => norm(e).includes('PROYEC') || norm(e).includes('PLANIF'));
+
+        const isAct = isGrupoActivo(d);
+        const isCer = isGrupoCerrado(d);
+        const isProy = isCampanaProyectada(d);
+
+        let matchesEstado = false;
+        if (wantsActivo && isAct) matchesEstado = true;
+        if (wantsCerrado && isCer) matchesEstado = true;
+        if (wantsProyectado && isProy) matchesEstado = true;
+        if (!matchesEstado && !filters.estado.some((e) => norm(d.estado) === norm(e))) {
           return false;
         }
       } else {
-        // En 'Todos', asegurar que no se incluyan grupos cancelados o inactivos fantasma
-        if (!isGrupoActivo(d) && !isGrupoCerrado(d)) return false;
+        // En 'Todos', asegurar que no se incluyan grupos cancelados o inactivos
+        if (!isGrupoActivo(d) && !isGrupoCerrado(d) && !isCampanaProyectada(d)) return false;
       }
       // Filtro Campaña
       if (isCampanaFiltered && !filters.campana.some((c) => norm(c) === norm(d.campana))) {
@@ -1257,10 +1265,23 @@ export default function ResumenCapacitacion({
       return num % 1 === 0 ? num.toLocaleString('es-PE') : num.toFixed(1).replace('.', ',');
     };
 
+    const brechaFtes = Math.max(0, Number((rq - iopFtes).toFixed(1)));
+    const superavitFtes = Math.max(0, Number((iopFtes - rq).toFixed(1)));
+
     return {
       desercionGlobal: {
         value: parseFloat(pctDesercionGlobal.toFixed(2)),
-        target: 43.40,
+        target: 20.00,
+        metrics: [
+          { label: 'Base Día 1', value: `${d1.toLocaleString('es-PE')} pers.` },
+          { label: 'Bajas Totales', value: `${desertoresTotal.toLocaleString('es-PE')} pers.` },
+          { label: 'Retención Global', value: `${(100 - pctDesercionGlobal).toFixed(1)}%` },
+        ],
+        status: pctDesercionGlobal <= 20
+          ? { label: 'En Meta', tone: 'healthy' }
+          : pctDesercionGlobal <= 35
+            ? { label: 'Precaución', tone: 'caution' }
+            : { label: 'Crítico', tone: 'critical' },
         subMetrics: [
           { label: 'Q Día 1', value: d1.toLocaleString('es-PE') },
           { label: 'Desertores', value: desertoresTotal.toLocaleString('es-PE') }
@@ -1269,6 +1290,16 @@ export default function ResumenCapacitacion({
       desercionCT: {
         value: parseFloat(pctDesercionCT.toFixed(2)),
         target: 20.00,
+        metrics: [
+          { label: 'Base Día 1', value: `${d1.toLocaleString('es-PE')} pers.` },
+          { label: 'Bajas Aula (CT)', value: `${desertoresCt.toLocaleString('es-PE')} pers.` },
+          { label: 'Pases a OJT', value: `${qIniciaOjt.toLocaleString('es-PE')} pers.` },
+        ],
+        status: pctDesercionCT <= 20
+          ? { label: 'Controlado', tone: 'healthy' }
+          : pctDesercionCT <= 35
+            ? { label: 'Alerta', tone: 'caution' }
+            : { label: 'Crítico', tone: 'critical' },
         subMetrics: [
           { label: 'Q Día 1', value: d1.toLocaleString('es-PE') },
           { label: 'Desertores CT', value: desertoresCt.toLocaleString('es-PE') }
@@ -1277,6 +1308,20 @@ export default function ResumenCapacitacion({
       dotacion: {
         value: parseFloat(pctDotacion.toFixed(2)),
         target: 80.00,
+        metrics: [
+          { label: 'Meta Solicitada (RQ)', value: `${formatFte(rq)} FTEs` },
+          { label: 'Pases I-OP Reales', value: `${formatFte(iopFtes)} FTEs (${iop} pers.)` },
+          {
+            label: 'Brecha Real',
+            value: `${brechaFtes > 0 ? `-${formatFte(brechaFtes)}` : `+${formatFte(superavitFtes)}`} FTEs`,
+            highlight: brechaFtes > 0 ? 'critical' : 'healthy'
+          },
+        ],
+        status: pctDotacion >= 80
+          ? { label: 'En Meta', tone: 'healthy' }
+          : pctDotacion >= 60
+            ? { label: 'Precaución', tone: 'caution' }
+            : { label: 'Crítico', tone: 'critical' },
         subMetrics: [
           { label: "RQ FTE's", value: formatFte(rq) },
           { label: "Dotación FTE's", value: formatFte(iopFtes) }
@@ -1285,6 +1330,16 @@ export default function ResumenCapacitacion({
       desercionOJT: {
         value: parseFloat(pctDesercionOJT.toFixed(2)),
         target: 20.00,
+        metrics: [
+          { label: 'En Tránsito OJT', value: `${ojt.toLocaleString('es-PE')} pers.` },
+          { label: 'Graduados I-OP', value: `${iop.toLocaleString('es-PE')} pers.` },
+          { label: 'Bajas en OJT', value: `${desertoresOjt.toLocaleString('es-PE')} pers.` },
+        ],
+        status: pctDesercionOJT <= 10
+          ? { label: 'Excelente', tone: 'healthy' }
+          : pctDesercionOJT <= 20
+            ? { label: 'En Meta', tone: 'healthy' }
+            : { label: 'Crítico', tone: 'critical' },
         subMetrics: [
           { label: 'Q Inicia OJT', value: Number(qIniciaOjt || 0).toLocaleString('es-PE') },
           { label: 'Desertores OJT', value: Number(desertoresOjt || 0).toLocaleString('es-PE') }
@@ -1923,35 +1978,43 @@ export default function ResumenCapacitacion({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
                 <SemicircleGauge
                   compact
-                  title="Deserción"
-                  value={executiveGaugesData.desercionGlobal.value}
-                  target={executiveGaugesData.desercionGlobal.target}
-                  type="desercion"
-                  subMetrics={executiveGaugesData.desercionGlobal.subMetrics}
-                />
-                <SemicircleGauge
-                  compact
-                  title="Deserción CT"
-                  value={executiveGaugesData.desercionCT.value}
-                  target={executiveGaugesData.desercionCT.target}
-                  type="desercion"
-                  subMetrics={executiveGaugesData.desercionCT.subMetrics}
-                />
-                <SemicircleGauge
-                  compact
-                  title="Dotación"
+                  title="Dotación vs RQ"
                   value={executiveGaugesData.dotacion.value}
                   target={executiveGaugesData.dotacion.target}
                   type="dotacion"
                   maxVal={100}
+                  metrics={executiveGaugesData.dotacion.metrics}
+                  status={executiveGaugesData.dotacion.status}
                   subMetrics={executiveGaugesData.dotacion.subMetrics}
                 />
                 <SemicircleGauge
                   compact
-                  title="Deserción OJT"
+                  title="Deserción Global"
+                  value={executiveGaugesData.desercionGlobal.value}
+                  target={executiveGaugesData.desercionGlobal.target}
+                  type="desercion"
+                  metrics={executiveGaugesData.desercionGlobal.metrics}
+                  status={executiveGaugesData.desercionGlobal.status}
+                  subMetrics={executiveGaugesData.desercionGlobal.subMetrics}
+                />
+                <SemicircleGauge
+                  compact
+                  title="Deserción Aula (CT)"
+                  value={executiveGaugesData.desercionCT.value}
+                  target={executiveGaugesData.desercionCT.target}
+                  type="desercion"
+                  metrics={executiveGaugesData.desercionCT.metrics}
+                  status={executiveGaugesData.desercionCT.status}
+                  subMetrics={executiveGaugesData.desercionCT.subMetrics}
+                />
+                <SemicircleGauge
+                  compact
+                  title="Deserción OJT (Piso)"
                   value={executiveGaugesData.desercionOJT.value}
                   target={executiveGaugesData.desercionOJT.target}
                   type="desercion"
+                  metrics={executiveGaugesData.desercionOJT.metrics}
+                  status={executiveGaugesData.desercionOJT.status}
                   subMetrics={executiveGaugesData.desercionOJT.subMetrics}
                 />
               </div>
@@ -2241,7 +2304,13 @@ export default function ResumenCapacitacion({
 
                   return (
                     <tr key={`${d.grupo_codigo}_${d.campana}_${i}`} className="hover:bg-[var(--surface-hover)] transition-colors font-medium">
-                      <td className="py-2.5 px-3 font-mono font-bold text-cyan-400 whitespace-nowrap">{d.grupo_codigo}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-cyan-400 whitespace-nowrap">
+                        {String(d.grupo_codigo || '').startsWith('PROY-') ? (
+                          <span className="text-[var(--text-muted)] italic font-normal text-xs" title="Proyección por asignar">Por asignar</span>
+                        ) : (
+                          d.grupo_codigo
+                        )}
+                      </td>
                       <td className="py-2.5 px-3 text-[var(--text-primary)] font-semibold truncate max-w-[170px]" title={d.formador}>
                         {d.formador && d.formador !== 'Sin Asignar' ? (
                           <span className="text-[var(--text-primary)]">{d.formador}</span>

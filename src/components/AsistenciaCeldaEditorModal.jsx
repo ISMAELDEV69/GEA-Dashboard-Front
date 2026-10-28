@@ -16,7 +16,9 @@ import {
 } from 'lucide-react'
 import {
   guardarAsistenciaLoteFechas,
-  eliminarAsistenciaLoteFechas
+  eliminarAsistenciaLoteFechas,
+  getTodayLocalPeru,
+  parseFechaAsistencia
 } from '../lib/dataService'
 
 const SIGLAS_OPCIONES = [
@@ -104,11 +106,22 @@ export default function AsistenciaCeldaEditorModal({
 
   const cohortDates = cellData?.allCohortDates || (cellData?.fecha ? [cellData.fecha] : [])
   const personFechas = cellData?.personFechas || {}
+  const todayIso = getTodayLocalPeru()
+
+  const isFutureDate = (d) => {
+    const iso = parseFechaAsistencia(d) || (String(d).includes('-') ? String(d).split('T')[0] : '')
+    return Boolean(iso && iso > todayIso)
+  }
 
   useEffect(() => {
     if (isOpen && cellData) {
-      // Iniciar con la fecha donde se hizo clic seleccionada
-      setSelectedDates(new Set([cellData.fecha]))
+      // Iniciar con la fecha donde se hizo clic si no es futura
+      const initialDate = cellData.fecha
+      if (initialDate && !isFutureDate(initialDate)) {
+        setSelectedDates(new Set([initialDate]))
+      } else {
+        setSelectedDates(new Set())
+      }
       setSelectedSigla(cellData.siglaActual || 'A')
       setMotivoBaja('DESERCIÓN')
       setOtroMotivo('')
@@ -125,6 +138,11 @@ export default function AsistenciaCeldaEditorModal({
 
   // Toggles de selección de fechas
   const toggleDate = (date) => {
+    if (isFutureDate(date)) {
+      setErrorMsg(`La fecha ${date} es posterior a hoy y no se puede modificar.`)
+      return
+    }
+    setErrorMsg(null)
     setSelectedDates(prev => {
       const next = new Set(prev)
       if (next.has(date)) {
@@ -137,17 +155,27 @@ export default function AsistenciaCeldaEditorModal({
   }
 
   const selectAllDates = () => {
-    setSelectedDates(new Set(cohortDates))
+    setErrorMsg(null)
+    const validDates = cohortDates.filter(d => !isFutureDate(d))
+    if (validDates.length > 0) {
+      setSelectedDates(new Set(validDates))
+    }
   }
 
   const selectOnlyGaps = () => {
-    const gaps = cohortDates.filter(d => !personFechas[d] || personFechas[d] === '—')
+    setErrorMsg(null)
+    const gaps = cohortDates.filter(d => (!personFechas[d] || personFechas[d] === '—') && !isFutureDate(d))
     if (gaps.length > 0) {
       setSelectedDates(new Set(gaps))
     }
   }
 
   const selectOnlyClickedDate = () => {
+    if (isFutureDate(cellData.fecha)) {
+      setErrorMsg(`La fecha ${cellData.fecha} es posterior a hoy y no se puede modificar.`)
+      return
+    }
+    setErrorMsg(null)
     setSelectedDates(new Set([cellData.fecha]))
   }
 
@@ -156,7 +184,13 @@ export default function AsistenciaCeldaEditorModal({
   // Guardar en lote o individual
   const handleGuardar = async () => {
     if (fechasArray.length === 0) {
-      setErrorMsg('Debes seleccionar al menos una fecha.')
+      setErrorMsg('Debes seleccionar al menos una fecha válida (no futura).')
+      return
+    }
+
+    const futureDates = fechasArray.filter(d => isFutureDate(d))
+    if (futureDates.length > 0) {
+      setErrorMsg(`No se permite registrar asistencia en fechas futuras (${futureDates.join(', ')}).`)
       return
     }
 
@@ -359,22 +393,29 @@ export default function AsistenciaCeldaEditorModal({
               {cohortDates.map(d => {
                 const isSelected = selectedDates.has(d)
                 const currentSigla = personFechas[d] || '—'
-                const badgeStyle = STATUS_BADGE_STYLE[currentSigla] || 'bg-slate-800 text-slate-400 border-slate-700'
+                const isFuture = isFutureDate(d)
+                const badgeStyle = isFuture
+                  ? 'bg-slate-800/60 text-slate-500 border-slate-700/50'
+                  : (STATUS_BADGE_STYLE[currentSigla] || 'bg-slate-800 text-slate-400 border-slate-700')
 
                 return (
                   <button
                     key={d}
                     type="button"
+                    disabled={isFuture}
                     onClick={() => toggleDate(d)}
+                    title={isFuture ? 'Fecha posterior a hoy (bloqueada)' : undefined}
                     className={`flex items-center justify-between px-2 py-1.5 rounded-lg border text-[11px] font-mono transition-all ${
-                      isSelected
-                        ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200 ring-1 ring-cyan-400/60 shadow-sm'
-                        : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                      isFuture
+                        ? 'opacity-40 cursor-not-allowed bg-slate-900/40 border-slate-800/50 text-slate-600'
+                        : isSelected
+                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200 ring-1 ring-cyan-400/60 shadow-sm cursor-pointer'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 cursor-pointer'
                     }`}
                   >
                     <span className="font-semibold">{d.split('/')[0]}/{d.split('/')[1]}</span>
                     <span className={`text-[9px] font-black px-1.5 py-0.2 rounded border ${badgeStyle}`}>
-                      {currentSigla}
+                      {isFuture ? 'FUT' : currentSigla}
                     </span>
                   </button>
                 )
