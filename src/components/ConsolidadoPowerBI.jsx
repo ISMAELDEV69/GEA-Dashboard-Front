@@ -1024,15 +1024,27 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       }
     });
 
+    const keyRowsMap = new Map();
+    const latestKeyMap = new Map();
+
     for (let i = 0; i < kpiFilteredData.length; i++) {
       const row = kpiFilteredData[i];
       const doc = normalizeText(row.documento);
       if (!doc) continue;
 
+      const rowCamp = normalizeCampana(row._campana || row.campana);
+      const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+      const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
+
       if (!docRowsMap.has(doc)) {
         docRowsMap.set(doc, []);
       }
       docRowsMap.get(doc).push(row);
+
+      if (!keyRowsMap.has(rowKey)) {
+        keyRowsMap.set(rowKey, []);
+      }
+      keyRowsMap.get(rowKey).push(row);
 
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
@@ -1041,11 +1053,16 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (!prev || time >= prev.time) {
         latestDocMap.set(doc, { time, row });
       }
+
+      const prevKey = latestKeyMap.get(rowKey);
+      if (!prevKey || time >= prevKey.time) {
+        latestKeyMap.set(rowKey, { time, row });
+      }
     }
 
     const stateMap = new Map();
-    for (const [doc, { row }] of latestDocMap.entries()) {
-      const rows = docRowsMap.get(doc) || [];
+
+    const computeStateForGroup = (doc, row, rows) => {
       const motivo = row?.motivo_baja || row?.motivo;
       const sigla = normalizeSigla(row?.sigla);
 
@@ -1074,22 +1091,28 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const isExplicitDescLatest = isDiscountInThisGroup || hasDescInRows || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || String(row?.sigla || '').toUpperCase() === 'DESC' || Boolean(row?.isDescuento);
 
-      if (isExplicitDescLatest) {
-        descSet.add(doc);
-        stateMap.set(doc, 'DESCUENTO');
-      } else if (hasAnyIop) {
-        stateMap.set(doc, 'ACTIVO');
-      } else if (isExplicitBajaD1 && !hasAttendedTraining) {
-        stateMap.set(doc, 'BAJA DIA 1');
-      } else if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) {
-        stateMap.set(doc, 'BAJA DIA 1');
-      } else if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') {
-        stateMap.set(doc, 'CESADO');
-      } else if (isBajaDia1(motivo, sigla, row) && !hasAttendedTraining) {
-        stateMap.set(doc, 'BAJA DIA 1');
-      } else {
-        stateMap.set(doc, 'ACTIVO');
-      }
+      if (isExplicitDescLatest) return 'DESCUENTO';
+      if (hasAnyIop) return 'ACTIVO';
+      if (isExplicitBajaD1 && !hasAttendedTraining) return 'BAJA DIA 1';
+      if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) return 'BAJA DIA 1';
+      if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') return 'CESADO';
+      if (isBajaDia1(motivo, sigla, row) && !hasAttendedTraining) return 'BAJA DIA 1';
+      return 'ACTIVO';
+    };
+
+    for (const [doc, { row }] of latestDocMap.entries()) {
+      const rows = docRowsMap.get(doc) || [];
+      const st = computeStateForGroup(doc, row, rows);
+      if (st === 'DESCUENTO') descSet.add(doc);
+      stateMap.set(doc, st);
+    }
+
+    for (const [rowKey, { row }] of latestKeyMap.entries()) {
+      const doc = normalizeText(row.documento);
+      const rows = keyRowsMap.get(rowKey) || [];
+      const st = computeStateForGroup(doc, row, rows);
+      if (st === 'DESCUENTO') descSet.add(rowKey);
+      stateMap.set(rowKey, st);
     }
 
     return { lastStateMap: stateMap, descuentosDocSet: descSet };
@@ -1099,8 +1122,12 @@ export default function ConsolidadoPowerBI({ userProfile }) {
   const filteredData = useMemo(() => {
     const nonDiscountData = kpiFilteredData.filter((row) => {
       const doc = normalizeText(row.documento);
-      if (descuentosDocSet.has(doc)) return false;
-      const lastState = lastStateMap.get(doc);
+      const rowCamp = normalizeCampana(row._campana || row.campana);
+      const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+      const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
+
+      if (descuentosDocSet.has(rowKey) || descuentosDocSet.has(doc)) return false;
+      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc);
       if (lastState === 'DESCUENTO') return false;
       if (row.isDescuento) return false;
       const sg = String(row.sigla || '').toUpperCase();
@@ -1114,8 +1141,12 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
     return nonDiscountData.filter((row) => {
       const doc = normalizeText(row.documento);
+      const rowCamp = normalizeCampana(row._campana || row.campana);
+      const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+      const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
+
       const isD1Baja = isBajaDia1Motivo(row.motivo_baja || row.motivo || row.observacion_estado);
-      const lastState = lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(row.estado));
+      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(row.estado));
       return lastState === filters.estado;
     });
   }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
@@ -1148,14 +1179,21 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const row = filteredData[i];
       const doc = normalizeText(row.documento);
       if (!doc) continue;
+
+      const campana = normalizeCampana(row._campana || row.campana);
+      const gpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+      const rowKey = `${doc}|${campana}|${gpe}`;
       
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
       
-      let entry = map.get(doc);
+      let entry = map.get(rowKey);
       if (!entry) {
         entry = {
+          rowKey,
           documento: doc,
+          campana,
+          gpe,
           latestTime: time,
           lastRow: row,
           celular: row.celular || '',
@@ -1163,7 +1201,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
           nombre_formador: row.nombre_formador || '',
           fechas: {},
         };
-        map.set(doc, entry);
+        map.set(rowKey, entry);
       } else {
         if (time >= entry.latestTime) {
           entry.latestTime = time;
@@ -1183,14 +1221,15 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     }
 
     let result = [];
-    for (const [doc, entry] of map.entries()) {
+    for (const [rowKey, entry] of map.entries()) {
       const lastRow = entry.lastRow;
-      const campana = lastRow._campana;
-      const gpe = lastRow._gpe;
+      const doc = entry.documento;
+      const campana = entry.campana || lastRow._campana;
+      const gpe = entry.gpe || lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
       const isD1Baja = isBajaDia1Motivo(lastRow.motivo_baja || lastRow.motivo || lastRow.observacion_estado);
-      const docState = lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(lastRow.estado));
-      const hasDescuento = docState === 'DESCUENTO' || descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
+      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(lastRow.estado));
+      const hasDescuento = docState === 'DESCUENTO' || descuentosDocSet.has(rowKey) || descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
 
       // EXCLUSIÓN ESTRICTA: Los descuentos autorizados NO deben aparecer en la matriz de Control de Asistencia
       if (hasDescuento) {
@@ -1198,8 +1237,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       }
 
       result.push({
+        rowKey,
         documento: doc,
         nombre_completo: `${normalizeText(lastRow.apellido_paterno)} ${normalizeText(lastRow.apellido_materno)} ${normalizeText(lastRow.nombres)}`.trim(),
+        campana: campana || '—',
         ult_estado: docState,
         isDescuento: hasDescuento,
         fecha_inicio_ojt: cap?.fecha_inicio_ojt || '—',
@@ -1218,7 +1259,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
-        (r) => r.documento.toLowerCase().includes(q) || r.nombre_completo.toLowerCase().includes(q)
+        (r) => r.documento.toLowerCase().includes(q) ||
+               r.nombre_completo.toLowerCase().includes(q) ||
+               r.campana.toLowerCase().includes(q) ||
+               r.gpe.toLowerCase().includes(q)
       );
     }
     return result;
@@ -1377,9 +1421,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const base = {
         DOCUMENTO: r.documento,
         'NOMBRE COMPLETO': r.nombre_completo,
+        CAMPAÑA: r.campana,
+        GPE: r.gpe,
         'ULT. ESTADO': r.ult_estado,
         'FECHA INICIO OJT': r.fecha_inicio_ojt,
-        GPE: r.gpe,
         'CONDICIÓN LABORAL': r.condicion_laboral,
         'TIPO RECLUTADO': r.tipo_reclutado,
       };
@@ -1409,12 +1454,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
   const FIXED_COLS = [
     { id: 'documento', label: 'DOCUMENTO', width: 95, left: 0 },
-    { id: 'nombre', label: 'NOMBRE COMPLETO', width: 220, left: 95 },
-    { id: 'estado', label: 'ULT. ESTADO', width: 85, left: 315 },
-    { id: 'fecha', label: 'FECHA OJT', width: 95, left: 400 },
-    { id: 'gpe', label: 'GPE', width: 110, left: 495 },
-    { id: 'condicion', label: 'CONDICIÓN', width: 95, left: 605 },
-    { id: 'tipo', label: 'TIPO REC.', width: 90, left: 700 },
+    { id: 'nombre', label: 'NOMBRE COMPLETO', width: 200, left: 95 },
+    { id: 'campana', label: 'CAMPAÑA', width: 150, left: 295 },
+    { id: 'gpe', label: 'GPE', width: 105, left: 445 },
+    { id: 'estado', label: 'ULT. ESTADO', width: 85, left: 550 },
+    { id: 'fecha', label: 'FECHA OJT', width: 90, left: 635 },
+    { id: 'condicion', label: 'CONDICIÓN', width: 85, left: 725 },
+    { id: 'tipo', label: 'TIPO REC.', width: 85, left: 810 },
   ];
 
   if (loading) {
@@ -1666,14 +1712,20 @@ export default function ConsolidadoPowerBI({ userProfile }) {
             </thead>
             <tbody>
               {paginatedRows.map((row) => (
-                <tr key={row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
+                <tr key={row.rowKey || row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 font-bold font-mono text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
                     {row.documento}
                   </td>
                   <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-semibold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[1].left, minWidth: FIXED_COLS[1].width, maxWidth: FIXED_COLS[1].width }}>
                     {row.nombre_completo}
                   </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--accent)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }} title={row.campana}>
+                    {row.campana}
+                  </td>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
+                    {row.gpe}
+                  </td>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
                     <div className="flex items-center gap-1">
                       <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
                         row.ult_estado === 'ACTIVO'
@@ -1693,16 +1745,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
                       )}
                     </div>
                   </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
                     {row.fecha_inicio_ojt}
                   </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
-                    {row.gpe}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
                     {row.condicion_laboral}
                   </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
+                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[7].left, minWidth: FIXED_COLS[7].width, maxWidth: FIXED_COLS[7].width }}>
                     {row.tipo_reclutado}
                   </td>
                   {uniqueDates.map((date) => {
@@ -1713,7 +1762,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
                         <div
                           onClick={() => {
                             if (!isAdmin) return;
-                            const camp = row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : '');
+                            const camp = (row.campana && row.campana !== '—') ? row.campana : (row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : ''));
                             const gpeVal = row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : '');
                             const cap = row.capInfo || getCapInfo(camp, gpeVal);
                             const docForm = row.documento_formador || cap?.formador_documento || row.lastRow?.documento_formador || '';
@@ -1765,7 +1814,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
               {pivotRows.length === 0 && (
                 <tr>
-                  <td colSpan={7 + uniqueDates.length} className="px-4 py-16 text-center text-[var(--text-muted)]">
+                  <td colSpan={8 + uniqueDates.length} className="px-4 py-16 text-center text-[var(--text-muted)]">
                     {loadingHistorical ? (
                       <div className="flex flex-col items-center justify-center">
                         <Loader2 size={32} className="mx-auto mb-2 text-cyan-500 animate-spin" />
@@ -1871,13 +1920,15 @@ export default function ConsolidadoPowerBI({ userProfile }) {
               const r = prev[i];
               const rDoc = String(r.documento || '').trim();
               const rDate = formatCanonicalDate(r.fecha_registro_asistencia);
-              const rGpe = String(r.grupo || r.codigo_grupo || '').trim();
+              const rGpe = normalizeGpe(r._gpe || r.grupo || r.codigo_grupo || '');
+              const rCamp = normalizeCampana(r._campana || r.campana || '');
 
               const matchUser = rDoc === docClean;
-              const matchGpe = !targetGpe || !rGpe || rGpe === targetGpe;
+              const matchGpe = !targetGpe || !rGpe || rGpe === normalizeGpe(targetGpe);
+              const matchCamp = !targetCampana || !rCamp || rCamp === normalizeCampana(targetCampana) || targetCampana === 'Todas';
               const matchDate = targetFechasSet.has(rDate);
 
-              if (matchUser && matchGpe && matchDate) {
+              if (matchUser && matchGpe && matchCamp && matchDate) {
                 copy.push({
                   ...r,
                   sigla,
