@@ -1584,6 +1584,7 @@ export async function fetchGrupos(postulantesForStats = null) {
         .from('capacidad_rys')
         .select('*')
         .order('fecha_registro', { ascending: false })
+        .range(0, 4999)
       if (error) throw error
       return raw || [];
     });
@@ -1607,6 +1608,7 @@ export async function fetchCapacidadRysOperativo() {
       .from('capacidad_rys')
       .select('*')
       .order('periodo', { ascending: false })
+      .range(0, 4999)
     if (error) throw error
     
     return (data || []).map(row => ({
@@ -2095,7 +2097,8 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
   try {
     const { data: existingData } = await supabase
       .from('capacidad_rys')
-      .select('codigo, campana, formador_documento, area_traslado')
+      .select('codigo, campana, estado, formador_documento, area_traslado')
+      .range(0, 4999)
     const existingMap = new Map()
     if (existingData) {
       for (const g of existingData) {
@@ -2148,6 +2151,23 @@ export async function importCapacidadRysBulk(payloads, { onProgress } = {}) {
       }
     }
     const finalRowsToUpsert = Array.from(uniqueRowsMap.values())
+
+    // 3.6 Eliminar filas obsoletas de proyección (PROY-* o estado PROYECCIÓN) que ya fueron reemplazadas o borradas en el Excel
+    if (existingData) {
+      for (const g of existingData) {
+        const camp = String(g.campana || '').trim().toUpperCase()
+        const cod = String(g.codigo || '').trim().toUpperCase()
+        const est = String(g.estado || '').trim().toUpperCase()
+        if (!uniqueRowsMap.has(`${camp}_${cod}`) && (cod.startsWith('PROY-') || est === 'PROYECCIÓN')) {
+          const { error: delErr } = await supabase
+            .from('capacidad_rys')
+            .delete()
+            .eq('campana', g.campana)
+            .eq('codigo', g.codigo)
+          if (!delErr) results.deleted++
+        }
+      }
+    }
 
     const existingByCodigo = new Map()
     if (existingData) {
@@ -2638,7 +2658,8 @@ export function fetchGruposConMetas(bypassCache = false) {
         supabase
           .from('capacidad_rys')
           .select('codigo, periodo, periodo_ingreso_op, semana_label, semana_trabajo, estado, meta_dia_0, meta_dia_1, rq_solicitado, rq_ftes_solicitado, area_traslado, campana, segmento, modalidad, sede, rango_horario, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op')
-          .order('codigo'),
+          .order('codigo')
+          .range(0, 4999),
         supabase
           .from('grupo_reclutadores')
           .select('grupo_codigo, reclutador_id, meta_rq_individual, meta_dia_1_individual, documento, reclutador_nombre, reclutadores(nombre_completo)'),
