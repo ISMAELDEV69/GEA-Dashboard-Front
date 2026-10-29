@@ -557,6 +557,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     estado: 'Todas' 
   });
   const fetchedFiltersRef = useRef(new Set());
+  const tableContainerRef = useRef(null);
+
+  useEffect(() => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = 0;
+    }
+  }, [search, filters]);
 
   const loadData = useCallback(async () => {
     try {
@@ -1151,27 +1158,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     });
   }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
 
-  const uniqueDates = useMemo(() => {
-    const todayLimit = new Date();
-    todayLimit.setHours(23, 59, 59, 999);
-    const datesMap = new Map();
-    for (let i = 0; i < filteredData.length; i++) {
-      const rawDate = filteredData[i].fecha_registro_asistencia;
-      if (rawDate) {
-        const canonical = formatCanonicalDate(rawDate);
-        const parsed = parseLocalDate(rawDate);
-        if (canonical && parsed) {
-          // Bloquear columnas de fechas futuras
-          if (parsed.getTime() > todayLimit.getTime()) continue;
-          datesMap.set(canonical, parsed.getTime());
-        }
-      }
-    }
-    return Array.from(datesMap.entries())
-      .sort((a, b) => a[1] - b[1])
-      .map(([canonical]) => canonical);
-  }, [filteredData]);
-
   const pivotRows = useMemo(() => {
     const map = new Map();
     
@@ -1267,6 +1253,58 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     }
     return result;
   }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, search, filters.estado]);
+
+  const uniqueDates = useMemo(() => {
+    if (!pivotRows.length) return [];
+
+    const todayLimit = new Date();
+    todayLimit.setHours(23, 59, 59, 999);
+    const datesMap = new Map();
+
+    let minPersonTime = Infinity;
+    const activeCohorts = new Set();
+
+    for (let i = 0; i < pivotRows.length; i++) {
+      const r = pivotRows[i];
+      if (r.campana && r.gpe) {
+        activeCohorts.add(`${normalizeCampana(r.campana)}|${normalizeGpe(r.gpe)}`);
+      }
+      const dateKeys = Object.keys(r.fechas || {});
+      for (let j = 0; j < dateKeys.length; j++) {
+        const canonical = dateKeys[j];
+        const parsed = parseLocalDate(canonical);
+        if (parsed && parsed.getTime() <= todayLimit.getTime()) {
+          const t = parsed.getTime();
+          datesMap.set(canonical, t);
+          if (t < minPersonTime) minPersonTime = t;
+        }
+      }
+    }
+
+    if (minPersonTime < Infinity) {
+      for (let i = 0; i < filteredData.length; i++) {
+        const row = filteredData[i];
+        const camp = normalizeCampana(row._campana || row.campana);
+        const gpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
+        if (!activeCohorts.has(`${camp}|${gpe}`)) continue;
+
+        const rawDate = row.fecha_registro_asistencia;
+        if (rawDate) {
+          const canonical = formatCanonicalDate(rawDate);
+          const parsed = parseLocalDate(rawDate);
+          if (canonical && parsed) {
+            const t = parsed.getTime();
+            if (t < minPersonTime || t > todayLimit.getTime()) continue;
+            datesMap.set(canonical, t);
+          }
+        }
+      }
+    }
+
+    return Array.from(datesMap.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([canonical]) => canonical);
+  }, [pivotRows, filteredData]);
 
   const totalPages = pageSize === 'Todas' ? 1 : Math.max(1, Math.ceil(pivotRows.length / Number(pageSize)));
   const currentPage = Math.min(page, totalPages);
@@ -1687,7 +1725,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         </div>
 
         {/* Scrollable Matrix Table */}
-        <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[var(--bg-surface)]">
+        <div ref={tableContainerRef} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[var(--bg-surface)]">
           <table className="w-full min-w-[1200px] border-separate border-spacing-0 text-left text-xs">
             <thead className="sticky top-0 z-30 shadow-xs">
               <tr>
