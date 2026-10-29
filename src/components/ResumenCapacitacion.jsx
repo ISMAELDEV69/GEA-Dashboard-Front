@@ -912,12 +912,13 @@ export default function ResumenCapacitacion({
     const iop = kpis.ingresos_iop || 0;
     const iopFtes = kpis.ingresos_iop_ftes || 0;
     const rq = kpis.rq_solicitado || 0;
-    const qIniciaOjt = ojt + iop + desertoresOjt;
+    const qIniciaOjt = Math.min(d1, Math.max(ojt + iop + desertoresOjt, d1 - (kpis.desertores_ct || 0)));
     const ojt_transito = segmentData.reduce((acc, s) => acc + s.enTransito, 0);
 
     return {
       d1_vs_nomina: total > 0 ? ((d1 / total) * 100).toFixed(1) : '0.0',
       ojt_vs_d1: d1 > 0 ? ((qIniciaOjt / d1) * 100).toFixed(1) : '0.0',
+      iop_vs_d1: d1 > 0 ? ((iop / d1) * 100).toFixed(1) : '0.0',
       iop_vs_nomina: total > 0 ? ((iop / total) * 100).toFixed(1) : '0.0',
       iop_vs_ojt: qIniciaOjt > 0 ? ((iop / qIniciaOjt) * 100).toFixed(1) : '0.0',
       cumplimiento_rq: rq > 0 ? ((iopFtes / rq) * 100).toFixed(1) : '0.0',
@@ -1190,16 +1191,17 @@ export default function ResumenCapacitacion({
         etapa: '1. Reclutados',
         nombre: 'Nómina Reclutada',
         valor: kpis.total_nomina,
-        pct: '100%',
+        pct: 'Sourcing Reclut.',
         drop: '-',
-        fill: '#38BDF8'
+        fill: '#38BDF8',
+        isSourcing: true
       },
       {
         etapa: '2. Inicio D1',
-        nombre: 'Inicio Formación',
+        nombre: 'Inicio Formación (Día 1)',
         valor: kpis.asistio_dia1,
-        pct: `${kpiPercentages.d1_vs_nomina}%`,
-        drop: `${dropD1}% caída`,
+        pct: '100% Base Capa.',
+        drop: `${dropD1}% no-show reclut.`,
         fill: '#818CF8'
       },
       {
@@ -1207,15 +1209,15 @@ export default function ResumenCapacitacion({
         nombre: 'Pase a OJT / Nesting',
         valor: qIniciaOjt,
         pct: `${kpiPercentages.ojt_vs_d1}% vs D1`,
-        drop: `${dropOjt}% caída`,
+        drop: `${dropOjt}% caída aula`,
         fill: '#2DD4BF'
       },
       {
         etapa: '4. Pases I-OP',
         nombre: 'Pase a Operación',
         valor: kpis.ingresos_iop,
-        pct: `${kpiPercentages.iop_vs_ojt}% vs OJT`,
-        drop: `${dropIop}% caída`,
+        pct: `${kpiPercentages.iop_vs_d1}% Conversión vs D1`,
+        drop: `${dropIop}% caída OJT`,
         fill: '#FBBF24'
       }
     ];
@@ -1236,9 +1238,10 @@ export default function ResumenCapacitacion({
     // 1. Deserción Global de Capacitación
     // En cohortes finalizadas: (d1 - iop) / d1. En cohortes activas: protege a quienes siguen en aula u OJT.
     const totalActivos = activosActuales + ojt;
+    const maxBajasPosibles = d1 > 0 ? Math.max(0, d1 - totalActivos - iop) : 0;
     const desertoresRegistrados = desertoresCt + desertoresOjt;
-    const desertoresTotal = Math.max(desertoresRegistrados, Math.max(0, d1 - totalActivos - iop));
-    const pctDesercionGlobal = d1 > 0 ? (desertoresTotal / d1) * 100 : 0;
+    const desertoresTotal = Math.min(maxBajasPosibles, desertoresRegistrados);
+    const pctDesercionGlobal = d1 > 0 ? Math.min(100, (desertoresTotal / d1) * 100) : 0;
 
     // 2. Deserción CT (Aula): mismo flujo que el resumen WhatsApp.
     // Numerador = bajas formación (sigla B) antes de OJT. Denominador = Q Día 1.
@@ -1251,8 +1254,8 @@ export default function ResumenCapacitacion({
 
     // 4. Deserción OJT: bajas con fecha >= fecha_inicio_ojt / personas que pisaron OJT.
     // activos_ojt ya excluye I-OP, así que no se suma el graduado dos veces.
-    const qIniciaOjt = ojt + iop + desertoresOjt;
-    const pctDesercionOJT = qIniciaOjt > 0 ? (desertoresOjt / qIniciaOjt) * 100 : 0;
+    const qIniciaOjt = Math.min(d1, Math.max(ojt + iop + desertoresOjt, d1 - desertoresCt));
+    const pctDesercionOJT = qIniciaOjt > 0 ? Math.min(100, (desertoresOjt / qIniciaOjt) * 100) : 0;
 
     const formatNum = (n) => {
       const num = Number(n) || 0;
@@ -1846,7 +1849,7 @@ export default function ResumenCapacitacion({
                     Embudo de conversión
                   </h3>
                   <p className="text-xs text-[var(--text-secondary)] mt-1 ml-3.5">
-                    Nómina → Día 1 → OJT → I-OP
+                    Base Día 1 Capacitación → OJT → I-OP (Conversión real: {kpiPercentages.iop_vs_d1}%)
                   </p>
                 </div>
                 <span className="text-[10px] font-bold text-cyan-300/80 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-md">
@@ -1862,9 +1865,11 @@ export default function ResumenCapacitacion({
                       ? ((step.valor / prev.valor) * 100).toFixed(1)
                       : null;
                   const barPct =
-                    kpis.total_nomina > 0
-                      ? Math.min(100, (step.valor / kpis.total_nomina) * 100)
-                      : 0;
+                    idx === 0
+                      ? 100
+                      : kpis.asistio_dia1 > 0
+                        ? Math.min(100, (step.valor / kpis.asistio_dia1) * 100)
+                        : 0;
                   const dropNum = String(funnelData[idx].drop || '').replace('% caída', '').trim();
 
                   return (

@@ -143,44 +143,60 @@ nominas_agg AS (
   WHERE n.activo = true
   GROUP BY n.grupo_codigo, n.campana
 ),
-asistencias_agg AS (
+postulantes_asistencias AS (
   SELECT 
     ca.codigo_grupo,
     ca.campana,
-    COUNT(DISTINCT CASE 
-      WHEN ca.sigla IN ('A', 'FJ', 'I-OP', 'CAPACITACION', 'OJT') THEN ca.documento 
-    END) AS asis_dia1,
-    COUNT(DISTINCT CASE 
+    ca.documento,
+    BOOL_OR(ca.sigla IN ('A', 'FJ', 'I-OP', 'CAPACITACION', 'OJT')) AS has_asistencia_valida,
+    BOOL_OR(ca.sigla = 'I-OP' OR UPPER(COALESCE(ca.estado, '')) IN ('INGRESO A OPERACION', 'I-OP')) AS has_iop,
+    BOOL_OR(UPPER(COALESCE(ca.motivo_baja, '')) LIKE '%BAJA DIA 1%' OR UPPER(COALESCE(ca.estado, '')) LIKE '%BAJA DIA 1%') AS is_baja_dia1,
+    MIN(CASE 
       WHEN ca.sigla = 'B' 
         AND UPPER(COALESCE(ca.estado, '')) NOT LIKE '%DESC%'
         AND UPPER(COALESCE(ca.motivo_baja, '')) NOT LIKE '%DESC%'
-        AND (cb.fecha_inicio_ojt IS NULL OR parse_fecha_asistencia(ca.fecha_registro_asistencia) < cb.fecha_inicio_ojt)
-      THEN ca.documento 
-    END) AS desertores_ct,
-    COUNT(DISTINCT CASE 
-      WHEN ca.sigla = 'B' 
-        AND UPPER(COALESCE(ca.estado, '')) NOT LIKE '%DESC%'
-        AND UPPER(COALESCE(ca.motivo_baja, '')) NOT LIKE '%DESC%'
-        AND cb.fecha_inicio_ojt IS NOT NULL 
-        AND parse_fecha_asistencia(ca.fecha_registro_asistencia) >= cb.fecha_inicio_ojt
-      THEN ca.documento 
-    END) AS desertores_ojt,
-    COUNT(DISTINCT CASE 
-      WHEN ca.sigla IN ('A', 'OJT') 
-        AND cb.fecha_inicio_ojt IS NOT NULL 
-        AND parse_fecha_asistencia(ca.fecha_registro_asistencia) >= cb.fecha_inicio_ojt
-        AND NOT EXISTS (
-          SELECT 1 FROM public.consolidado_asistencias sub 
-          WHERE sub.codigo_grupo = ca.codigo_grupo 
-            AND sub.campana = ca.campana 
-            AND sub.documento = ca.documento 
-            AND sub.sigla IN ('B', 'I-OP')
-        )
-      THEN ca.documento 
-    END) AS activos_ojt
+        AND UPPER(COALESCE(ca.motivo_baja, '')) NOT LIKE '%BAJA DIA 1%'
+      THEN parse_fecha_asistencia(ca.fecha_registro_asistencia)
+    END) AS fecha_primera_baja,
+    BOOL_OR(
+      ca.sigla IN ('A', 'OJT') 
+      AND cb.fecha_inicio_ojt IS NOT NULL 
+      AND parse_fecha_asistencia(ca.fecha_registro_asistencia) >= cb.fecha_inicio_ojt
+    ) AS attended_ojt
   FROM public.consolidado_asistencias ca
   JOIN cohortes_base cb ON cb.grupo_codigo = ca.codigo_grupo AND cb.campana = ca.campana
-  GROUP BY ca.codigo_grupo, ca.campana
+  GROUP BY ca.codigo_grupo, ca.campana, ca.documento, cb.fecha_inicio_ojt
+),
+asistencias_agg AS (
+  SELECT 
+    pa.codigo_grupo,
+    pa.campana,
+    COUNT(DISTINCT CASE 
+      WHEN (pa.has_asistencia_valida OR pa.has_iop) AND NOT pa.is_baja_dia1 
+      THEN pa.documento 
+    END) AS asis_dia1,
+    COUNT(DISTINCT CASE 
+      WHEN NOT pa.has_iop 
+        AND pa.fecha_primera_baja IS NOT NULL 
+        AND (cb.fecha_inicio_ojt IS NULL OR pa.fecha_primera_baja < cb.fecha_inicio_ojt)
+      THEN pa.documento 
+    END) AS desertores_ct,
+    COUNT(DISTINCT CASE 
+      WHEN NOT pa.has_iop 
+        AND pa.fecha_primera_baja IS NOT NULL 
+        AND cb.fecha_inicio_ojt IS NOT NULL 
+        AND pa.fecha_primera_baja >= cb.fecha_inicio_ojt
+      THEN pa.documento 
+    END) AS desertores_ojt,
+    COUNT(DISTINCT CASE 
+      WHEN NOT pa.has_iop 
+        AND pa.fecha_primera_baja IS NULL 
+        AND pa.attended_ojt 
+      THEN pa.documento 
+    END) AS activos_ojt
+  FROM postulantes_asistencias pa
+  JOIN cohortes_base cb ON cb.grupo_codigo = pa.codigo_grupo AND cb.campana = pa.campana
+  GROUP BY pa.codigo_grupo, pa.campana
 ),
 iop_personas AS (
   SELECT 
@@ -224,7 +240,8 @@ SELECT
   cb.meta_dia_1,
   COALESCE(na.total_nomina, 0) AS total_nomina,
   COALESCE(na.nom_asistio_dia0, 0) AS asistio_dia0,
-  GREATEST(COALESCE(na.nom_asistio_dia1, 0), COALESCE(aa.asis_dia1, 0)) AS asistio_dia1,
+  -- Día 1 Oficial de Capacitación: Asistencia efectiva registrada por Capacitación (excluye caídas de reclutamiento / Baja Día 1)
+  COALESCE(aa.asis_dia1, 0) AS asistio_dia1,
   COALESCE(aa.activos_ojt, 0) AS activos_ojt,
   COALESCE(aa.desertores_ct, 0) AS desertores_ct,
   COALESCE(aa.desertores_ojt, 0) AS desertores_ojt,

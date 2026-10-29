@@ -2768,6 +2768,8 @@ export function fetchGruposConMetas(bypassCache = false) {
 
       let reclutadoresConStats = []
       let metaDia0 = g.meta_dia_0 || 0
+      let metaDia1 = g.meta_dia_1 || 0
+      let listaActual = 0
       const rawAreaG = String(g.area_traslado || '').trim().toUpperCase()
       const isEligibleAreaG = !rawAreaG || rawAreaG === 'RECLUTAMIENTO' || rawAreaG.includes('RECUPER') || rawAreaG.includes('RECLUTA')
       let rqSolicitado = isEligibleAreaG ? (g.rq_solicitado || 0) : 0
@@ -7969,24 +7971,41 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       console.warn('Error fetching v_resumen_capacitacion_cohortes:', error);
       throw error;
     }
-    return (data || []).map(r => ({
-      ...r,
-      codigo: r.grupo_codigo,
-      rq_solicitado: Number(r.rq_solicitado) || 0,
-      rq_ftes_solicitado: Number(r.rq_solicitado) || 0,
-      meta_dia_0: Number(r.meta_dia_0) || 0,
-      meta_dia_1: Number(r.meta_dia_1) || 0,
-      total_nomina: Number(r.total_nomina) || 0,
-      asistio_dia0: Number(r.asistio_dia0) || 0,
-      asistio_dia1: Number(r.asistio_dia1) || 0,
-      activos_ojt: Number(r.activos_ojt) || 0,
-      desertores_ct: Number(r.desertores_ct) || 0,
-      desertores_ojt: Number(r.desertores_ojt) || 0,
-      ingresos_iop: Number(r.ingresos_iop) || 0,
-      ingresos_iop_ftes: Number(r.ingresos_iop_ftes) || 0,
-      pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
-      from_db_view: true
-    }));
+    return (data || []).map(r => {
+      const d1 = Number(r.asistio_dia1) || 0;
+      const iop = Number(r.ingresos_iop) || 0;
+      const iopFtes = Number(r.ingresos_iop_ftes) || 0;
+      const actOjt = Number(r.activos_ojt) || 0;
+      let desCt = Number(r.desertores_ct) || 0;
+      let desOjt = Number(r.desertores_ojt) || 0;
+
+      // Calibración anti-duplicidad por arrastre de asistencia 'B' a fechas de OJT
+      const maxBajasAula = Math.max(0, d1 - iop - actOjt);
+      desCt = Math.min(desCt, maxBajasAula);
+
+      const maxEnOjt = Math.max(0, d1 - desCt);
+      const maxBajasOjt = Math.max(0, maxEnOjt - iop - actOjt);
+      desOjt = Math.min(desOjt, maxBajasOjt);
+
+      return {
+        ...r,
+        codigo: r.grupo_codigo,
+        rq_solicitado: Number(r.rq_solicitado) || 0,
+        rq_ftes_solicitado: Number(r.rq_solicitado) || 0,
+        meta_dia_0: Number(r.meta_dia_0) || 0,
+        meta_dia_1: Number(r.meta_dia_1) || 0,
+        total_nomina: Number(r.total_nomina) || 0,
+        asistio_dia0: Number(r.asistio_dia0) || 0,
+        asistio_dia1: d1,
+        activos_ojt: actOjt,
+        desertores_ct: desCt,
+        desertores_ojt: desOjt,
+        ingresos_iop: iop,
+        ingresos_iop_ftes: iopFtes,
+        pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
+        from_db_view: true
+      };
+    });
   });
 }
 
