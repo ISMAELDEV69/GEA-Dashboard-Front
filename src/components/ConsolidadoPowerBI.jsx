@@ -1346,13 +1346,26 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     let qDia1 = 0;
 
     docMap.forEach((rows, doc) => {
-      const docState = lastStateMap.get(doc) || 'SIN ESTADO';
-      const hasDescuento = docState === 'DESCUENTO';
-      if (hasDescuento) descuentosAprobados += 1;
+      const firstRow = rows[0] || {};
+      const rowCamp = normalizeCampana(firstRow._campana || firstRow.campana);
+      const rowGpe = normalizeGpe(firstRow._gpe || firstRow.codigo_grupo || firstRow.grupo);
+      const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
+
+      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || 'SIN ESTADO';
+      const hasDescuento = docState === 'DESCUENTO' || 
+                           descuentosDocSet.has(rowKey) || 
+                           descuentosDocSet.has(doc) || 
+                           rows.some(r => Boolean(r.isDescuento));
+
+      if (hasDescuento) {
+        descuentosAprobados += 1;
+        // Los descuentos autorizados están completamente exonerados de la cohorte operativa
+        return;
+      }
 
       const isActivo = docState === 'ACTIVO';
       const isB1 = docState === 'BAJA DIA 1';
-      const isCesado = docState === 'CESADO' && !hasDescuento;
+      const isCesado = docState === 'CESADO';
 
       const attendedAny = rows.some((r) => {
         const s = normalizeSigla(r.sigla);
@@ -1365,8 +1378,19 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         desertoresFormacion += 1;
       }
 
-      // Q Día 1: Asistentes efectivos a Día 1 de Capacitación (quienes realmente asistieron a aula, excluye Bajas Día 1)
+      // Q Día 1: Asistentes efectivos a Día 1 de Capacitación (quienes realmente asistieron a aula, excluye Bajas Día 1 y Descuentos autorizados)
       if (attendedAny && !isB1) qDia1 += 1;
+
+      // Contabilizar asistencias y ausencias de postulantes efectivos en sala
+      rows.forEach((r) => {
+        const sigla = normalizeSigla(r.sigla);
+        if (sigla === 'A' || sigla === 'I-OP') {
+          cantAsistencia += 1;
+        }
+        if (sigla === 'FI' || sigla === 'FJ') {
+          cantAusencia += 1;
+        }
+      });
     });
 
     let sumMetaDia1 = 0;
@@ -1406,7 +1430,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       });
     }
 
-    const baseFormacion = qDia1 > 0 ? qDia1 : Math.max(0, docMap.size - bajasDia1);
+    const baseFormacion = qDia1 > 0 ? qDia1 : Math.max(0, docMap.size - bajasDia1 - descuentosAprobados);
 
     return {
       activos,
@@ -1427,7 +1451,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     // 1. Cumplimiento Día 1: Métrica de Selección / RyS
     const cumpDia1 = kpis.sumMetaDia1 > 0 
       ? Math.round((kpis.qDia1 / kpis.sumMetaDia1) * 100) 
-      : (kpis.cantProg > 0 ? Math.round((kpis.qDia1 / kpis.cantProg) * 100) : 100);
+      : (kpis.cantProg > 0 ? Math.round((kpis.qDia1 / Math.max(1, kpis.cantProg - kpis.descuentosAprobados)) * 100) : 100);
 
     // 2. Deserción Formación: Métrica de Capacitación (Bajas en aula sin descuento sobre base de inicio en aula)
     const desercion = kpis.baseFormacion > 0 

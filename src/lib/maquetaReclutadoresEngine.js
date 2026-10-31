@@ -262,6 +262,8 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       bonoBruto: Number(eq.bono) > 0 ? Number(eq.bono) : (MATRIZ_CARGOS[clasificarCargoReclutador(eq.cargo)]?.bonoDefault || 400),
       pctEfectivo: Number(eq.pct_efectivo) >= 0 ? Number(eq.pct_efectivo) : 60,
       pctSodexo: Number(eq.pct_sodexo) >= 0 ? Number(eq.pct_sodexo) : 40,
+      fechaIngreso: eq.fecha_ingreso || null,
+      fechaCese: eq.fecha_cese || null,
     }
     if (full) equipoMap.set(full, info)
     if (fullInverted) equipoMap.set(fullInverted, info)
@@ -285,34 +287,83 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       operacionMap.set(n, {
         key: n,
         nombreOriginal: rawName,
+        nombresOriginalesSet: new Set([rawName]),
         dia1: 0,
+        dia1SinTope: 0,
+        dia1ConTope: 0,
         dia1Meta: 0,
         dotacion: 0,
+        dotacionSinTope: 0,
+        dotacionConTope: 0,
         rq: 0,
         nomina: 0,
         aptos: 0,
         evaluados: 0,
         gruposCount: 0,
         campanas: new Set(),
+        gruposDetalle: [],
       })
     }
 
     const rec = operacionMap.get(n)
-    const d1 = useTope ? Number(row.dia_1_tope || 0) : Number(row.dia_1 || 0)
+    rec.nombresOriginalesSet.add(rawName)
+
+    const d1SinTope = Number(row.dia_1 || 0)
+    const d1ConTope = Number(row.dia_1_tope ?? row.dia_1 ?? 0)
+    const d1 = useTope ? d1ConTope : d1SinTope
+
     // Meta Día 1: Se prioriza meta_dia_1_individual, luego dia_1_tope o rq_individual
     const d1Meta = Number(row.meta_dia_1_individual || row.dia_1_tope || row.rq_individual || row.meta_dia_1_campana || 0)
-    const dot = useTope ? Number(row.dotacion_q_tope || 0) : Number(row.dotacion_q || 0)
+
+    const dotSinTope = Number(row.dotacion_q || 0)
+    const dotConTope = Number(row.dotacion_q_tope ?? row.dotacion_q ?? 0)
+    const dot = useTope ? dotConTope : dotSinTope
+
     const rq = Number(row.rq_individual || row.rq || 0)
+    const nom = Number(row.nomina || 0)
+    const apt = Number(row.aptos || row.cantidad_aptos || 0)
+    const evl = Number(row.evaluados || row.cantidad_evaluados || row.postulantes_evaluados || 0)
 
     rec.dia1 += d1
+    rec.dia1SinTope += d1SinTope
+    rec.dia1ConTope += d1ConTope
     rec.dia1Meta += d1Meta
     rec.dotacion += dot
+    rec.dotacionSinTope += dotSinTope
+    rec.dotacionConTope += dotConTope
     rec.rq += rq
-    rec.nomina += Number(row.nomina || 0)
-    rec.aptos += Number(row.aptos || row.cantidad_aptos || 0)
-    rec.evaluados += Number(row.evaluados || row.cantidad_evaluados || row.postulantes_evaluados || 0)
+    rec.nomina += nom
+    rec.aptos += apt
+    rec.evaluados += evl
     rec.gruposCount += 1
     if (row.campana) rec.campanas.add(row.campana)
+
+    rec.gruposDetalle.push({
+      codigoGpe: row.codigo_gpe || row.grupo_g || 'GPE-S/C',
+      campana: row.campana || '-',
+      segmento: row.segmento || '-',
+      modalidad: row.modalidad || 'PRESENCIAL',
+      semana: row.semana || '-',
+      fechaInicio: row.fecha_inicio || '-',
+      fechaIngresoOp: row.fecha_ingreso_op || '-',
+      responsableOriginal: rawName,
+      nomina: nom,
+      dia1Meta: d1Meta,
+      dia1GrupalMeta: Number(row.meta_dia_1_campana || 0),
+      dia1: d1,
+      dia1SinTope: d1SinTope,
+      dia1ConTope: d1ConTope,
+      dotacion: dot,
+      dotacionSinTope: dotSinTope,
+      dotacionConTope: dotConTope,
+      rq: rq,
+      aptos: apt,
+      evaluados: evl,
+      origenFuente: row.origen_fuente || 'CONSOLIDADO_VIVO',
+      dia1Vivo: row.dia_1_vivo !== undefined ? Number(row.dia_1_vivo) : d1SinTope,
+      dotacionVivo: row.dotacion_vivo !== undefined ? Number(row.dotacion_vivo) : dotSinTope,
+      tieneDesfaseVivo: Boolean(row.tiene_desfase_vivo),
+    })
   }
 
   // 3. Cálculo de la MEDIA GENERAL PROMEDIO DEL EQUIPO OPERATIVO
@@ -339,57 +390,120 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
   const alcanceMediaEquipoDia1 = getAlcanceDia1(mediaEquipoPctDia1)
   const alcanceMediaEquipoDotacion = getAlcanceDotacion(mediaEquipoPctDotacion)
 
-  // 4. Procesamiento de cada reclutador (cálculo de maqueta individual)
-  // Unimos todos los reclutadores encontrados en operación + los del catálogo activo
-  const todosLosNombres = new Set([...operacionMap.keys()])
-  for (const [key, eq] of equipoMap.entries()) {
-    if (eq.estado === 'ACTIVO') {
-      todosLosNombres.add(key)
+  // Función auxiliar para resolver un nombre operativo contra el catálogo maestro
+  const resolverMaster = (key) => {
+    const direct = equipoMap.get(key)
+    if (direct) {
+      const isAliasMatch = norm(direct.alias) === key || norm(direct.alix) === key
+      return { master: direct, tipoMatch: isAliasMatch ? 'ALIAS' : 'EXACTO' }
+    }
+    const keyWords = key.split(' ').filter(w => w.length > 2)
+    for (const [k, v] of equipoMap.entries()) {
+      if (k.length > 5 && (key.includes(k) || k.includes(key))) {
+        return { master: v, tipoMatch: 'DIFUSO' }
+      }
+      if (keyWords.length >= 2) {
+        const matchCount = keyWords.filter(w => k.includes(w)).length
+        if (matchCount >= Math.min(2, keyWords.length)) {
+          return { master: v, tipoMatch: 'DIFUSO' }
+        }
+      }
+    }
+    return { master: null, tipoMatch: 'NO_EN_CATALOGO' }
+  }
+
+  // 4. Consolidar primero por persona (docKey) para no perder grupos si un reclutador aparece con alias y nombre completo
+  const personaMap = new Map()
+
+  for (const [key, op] of operacionMap.entries()) {
+    const { master, tipoMatch } = resolverMaster(key)
+    const docKey = master?.documento || master?.nombresCompletos || op.nombreOriginal
+
+    if (!personaMap.has(docKey)) {
+      personaMap.set(docKey, {
+        docKey,
+        master,
+        tipoMatch,
+        nombreOriginal: op.nombreOriginal,
+        nombresOriginalesSet: new Set(op.nombresOriginalesSet),
+        dia1: 0,
+        dia1SinTope: 0,
+        dia1ConTope: 0,
+        dia1Meta: 0,
+        dotacion: 0,
+        dotacionSinTope: 0,
+        dotacionConTope: 0,
+        rq: 0,
+        nomina: 0,
+        aptos: 0,
+        evaluados: 0,
+        gruposCount: 0,
+        campanas: new Set(),
+        gruposDetalle: [],
+      })
+    }
+
+    const p = personaMap.get(docKey)
+    if (!p.master && master) p.master = master
+    if (p.tipoMatch === 'NO_EN_CATALOGO' && tipoMatch !== 'NO_EN_CATALOGO') p.tipoMatch = tipoMatch
+    for (const nOrig of op.nombresOriginalesSet) p.nombresOriginalesSet.add(nOrig)
+
+    p.dia1 += op.dia1
+    p.dia1SinTope += op.dia1SinTope
+    p.dia1ConTope += op.dia1ConTope
+    p.dia1Meta += op.dia1Meta
+    p.dotacion += op.dotacion
+    p.dotacionSinTope += op.dotacionSinTope
+    p.dotacionConTope += op.dotacionConTope
+    p.rq += op.rq
+    p.nomina += op.nomina
+    p.aptos += op.aptos
+    p.evaluados += op.evaluados
+    p.gruposCount += op.gruposCount
+    for (const c of op.campanas) p.campanas.add(c)
+    p.gruposDetalle.push(...op.gruposDetalle)
+  }
+
+  // Agregar reclutadores activos del catálogo que no tuvieron grupos en el corte
+  for (const eq of equipoList || []) {
+    const estado = (eq.estado || 'ACTIVO').trim().toUpperCase()
+    if (estado !== 'ACTIVO') continue
+    const apP = eq.apellido_paterno || ''
+    const apM = eq.apellido_materno || ''
+    const nomb = eq.nombres_completos || ''
+    const full = norm(`${apP} ${apM} ${nomb}`)
+    const master = equipoMap.get(full) || equipoMap.get(String(eq.documento || '').trim())
+    if (!master) continue
+    const docKey = master.documento || master.nombresCompletos
+    if (!personaMap.has(docKey)) {
+      personaMap.set(docKey, {
+        docKey,
+        master,
+        tipoMatch: 'SIN_GRUPOS',
+        nombreOriginal: master.nombresCompletos,
+        nombresOriginalesSet: new Set(),
+        dia1: 0,
+        dia1SinTope: 0,
+        dia1ConTope: 0,
+        dia1Meta: 0,
+        dotacion: 0,
+        dotacionSinTope: 0,
+        dotacionConTope: 0,
+        rq: 0,
+        nomina: 0,
+        aptos: 0,
+        evaluados: 0,
+        gruposCount: 0,
+        campanas: new Set(),
+        gruposDetalle: [],
+      })
     }
   }
 
   const filasCalculadas = []
 
-  // Evitamos duplicar personas que tengan match por alias y nombre completo
-  const procesadosDoc = new Set()
-
-  for (const key of todosLosNombres) {
-    const op = operacionMap.get(key) || {
-      key,
-      nombreOriginal: key,
-      dia1: 0,
-      dia1Meta: 0,
-      dotacion: 0,
-      rq: 0,
-      nomina: 0,
-      gruposCount: 0,
-      campanas: new Set(),
-    }
-
-    // Buscar información en catálogo maestro
-    let master = equipoMap.get(key)
-    if (!master) {
-      // Búsqueda difusa por partes de nombre o intersección de tokens
-      const keyWords = key.split(' ').filter(w => w.length > 2)
-      for (const [k, v] of equipoMap.entries()) {
-        if (k.length > 5 && (key.includes(k) || k.includes(key))) {
-          master = v
-          break
-        }
-        if (keyWords.length >= 2) {
-          const matchCount = keyWords.filter(w => k.includes(w)).length
-          if (matchCount >= Math.min(2, keyWords.length)) {
-            master = v
-            break
-          }
-        }
-      }
-    }
-
-    const docKey = master?.documento || master?.nombresCompletos || op.nombreOriginal
-    if (procesadosDoc.has(docKey)) continue
-    procesadosDoc.add(docKey)
-
+  for (const op of personaMap.values()) {
+    const { docKey, master, tipoMatch } = op
     const cargoClave = master?.cargoClave || clasificarCargoReclutador(master?.cargo)
     const configCargo = MATRIZ_CARGOS[cargoClave] || MATRIZ_CARGOS.ASISTENTE
     const esLider = configCargo.esLiderazgo
@@ -422,18 +536,22 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const alcanceDotacion = objAlcanceDot.alcance
 
     // Calidad: Fórmula oficial: Calidad (%) = (Cantidad de Aptos / Cantidad de Evaluados). Objetivo meta: 80.00%
-    const overrides = manualOverrides[docKey] || manualOverrides[norm(op.nombreOriginal)] || manualOverrides[key] || {}
+    const overrides = manualOverrides[docKey] || manualOverrides[norm(op.nombreOriginal)] || {}
     let pctCalidadReal = 100.00
+    let origenCalidad = 'DEFAULT_100'
     if (overrides.calidad !== undefined) {
       pctCalidadReal = Number(overrides.calidad)
+      origenCalidad = 'AUDITORIA_MANUAL'
     } else if (op.evaluados > 0) {
       pctCalidadReal = round2((op.aptos / op.evaluados) * 100)
+      origenCalidad = 'OPERATIVO_EVALUADOS'
     }
 
     // % Alcance de Calidad según escala (<65%->0%, 65%->50%, 70%->70%, 75%->85%, >=80%->100%)
     const objAlcanceCalidad = getAlcanceCalidad(pctCalidadReal)
     const alcanceCalidad = objAlcanceCalidad.alcance
     const alcanceProcesosAdm = Number(overrides.procesosAdm !== undefined ? overrides.procesosAdm : 100.00)
+    const origenProcesosAdm = overrides.procesosAdm !== undefined ? 'AUDITORIA_MANUAL' : 'DEFAULT_100'
 
     // Cálculo de Puntos por Indicador: Puntos (%) = % Alcance * Peso (10.00% para Calidad)
     const puntosDia1 = round2((alcanceDia1 * pesoDia1) / 100)
@@ -449,9 +567,13 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const pctEfectivo = master?.pctEfectivo !== undefined ? master.pctEfectivo : (isSheetsOficial ? 60 : configCargo.pctEfectivoDefault)
     const pctSodexo = master?.pctSodexo !== undefined ? master.pctSodexo : (isSheetsOficial ? 40 : configCargo.pctSodexoDefault)
 
-    const bonoNeto = round2(bonoBruto * (totalPuntosPct / 100))
-    const bonoEfectivo = round2(bonoNeto * (pctEfectivo / 100))
-    const bonoSodexo = round2(bonoNeto * (pctSodexo / 100))
+    // Valla Mínima de Activación (Trigger): por defecto 45.00% para evitar pagos por inercia si no cumplieron metas operativas
+    const vallaMinima = options.vallaMinima !== undefined ? Number(options.vallaMinima) : 45.00
+    const pasaValla = totalPuntosPct >= vallaMinima
+
+    const bonoNeto = pasaValla ? round2(bonoBruto * (totalPuntosPct / 100)) : 0.00
+    const bonoEfectivo = pasaValla ? round2(bonoNeto * (pctEfectivo / 100)) : 0.00
+    const bonoSodexo = pasaValla ? round2(bonoNeto * (pctSodexo / 100)) : 0.00
 
     // Semáforo global del resultado
     let semaforoGlobal = 'ROJO'
@@ -467,21 +589,44 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       cargoClave,
       configCargo,
       estado: master?.estado || 'ACTIVO',
+      fechaIngreso: master?.fechaIngreso || null,
+      fechaCese: master?.fechaCese || null,
+      enCatalogo: Boolean(master),
+      tipoMatch,
+      pasaValla,
+      vallaMinima,
+      nombresNominaCruzados: Array.from(op.nombresOriginalesSet),
+      gruposDetalle: op.gruposDetalle,
+      tieneDesfaseVivo: op.gruposDetalle.some(g => g.tieneDesfaseVivo),
       evaluadoSobreEquipo,
       campanas: Array.from(op.campanas).join(', '),
       gruposCount: op.gruposCount,
       
-      // Métricas Operativas Individuales (para líderes se refleja la suma y media global del equipo)
+      // Métricas Operativas Individuales Directas (incluso si es líder, guardamos las propias para trazabilidad)
+      dia1Propio: op.dia1,
+      dia1MetaPropio: op.dia1Meta,
+      dotacionPropia: op.dotacion,
+      rqPropio: op.rq,
+
+      // Métricas Operativas Aplicadas (para líderes se refleja la suma y media global del equipo)
       dia1Real: evaluadoSobreEquipo ? sumaEquipoDia1 : op.dia1,
+      dia1SinTope: op.dia1SinTope,
+      dia1ConTope: op.dia1ConTope,
       dia1Meta: evaluadoSobreEquipo ? sumaEquipoDia1Meta : op.dia1Meta,
       pctDia1Operativo: evaluadoSobreEquipo ? mediaEquipoPctDia1 : pctDia1Operativo,
       dotacionReal: evaluadoSobreEquipo ? sumaEquipoDotacion : op.dotacion,
+      dotacionSinTope: op.dotacionSinTope,
+      dotacionConTope: op.dotacionConTope,
       rqReal: evaluadoSobreEquipo ? sumaEquipoRq : op.rq,
       pctDotacionOperativo: evaluadoSobreEquipo ? mediaEquipoPctDotacion : pctDotacionOperativo,
       nominaReal: op.nomina,
       aptosReal: op.aptos,
       evaluadosReal: op.evaluados,
       pctCalidadReal,
+      origenCalidad,
+      origenProcesosAdm,
+      auditNote: overrides.motivo || '',
+      auditUpdatedAt: overrides.fecha || null,
 
       // Valores Aplicados a Maqueta (si es líder, media del equipo)
       pctDia1Aplicado: pctDia1ParaMaqueta,
@@ -531,6 +676,9 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
   // 5. Totales y KPIs globales del corte
   const resumenGeneral = {
     totalEvaluados: filasCalculadas.length,
+    totalEnMeta: filasCalculadas.filter(f => f.totalPuntosPct >= 85).length,
+    totalSinCatalogo: filasCalculadas.filter(f => !f.enCatalogo).length,
+    totalConDesfaseVivo: filasCalculadas.filter(f => f.tieneDesfaseVivo).length,
     totalBonoBrutoPresupuestado: round2(filasCalculadas.reduce((acc, f) => acc + f.bonoBruto, 0)),
     totalBonoNetoAPagar: round2(filasCalculadas.reduce((acc, f) => acc + f.bonoNeto, 0)),
     totalPagoEfectivo: round2(filasCalculadas.reduce((acc, f) => acc + f.bonoEfectivo, 0)),
@@ -543,13 +691,13 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       ? round2(filasCalculadas.reduce((acc, f) => acc + f.totalPuntosPct, 0) / filasCalculadas.length)
       : 0,
     mediaEquipo: {
-      dia1Total: sumaEquipoDia1,
-      dia1MetaTotal: sumaEquipoDia1Meta,
+      dia1Total: Math.round(sumaEquipoDia1),
+      dia1MetaTotal: Math.round(sumaEquipoDia1Meta),
       pctDia1: mediaEquipoPctDia1,
       alcanceDia1: alcanceMediaEquipoDia1.alcance,
       tramoDia1: alcanceMediaEquipoDia1.tramo,
-      dotacionTotal: sumaEquipoDotacion,
-      rqTotal: sumaEquipoRq,
+      dotacionTotal: Math.round(sumaEquipoDotacion),
+      rqTotal: Math.round(sumaEquipoRq),
       pctDotacion: mediaEquipoPctDotacion,
       alcanceDotacion: alcanceMediaEquipoDotacion.alcance,
       tramoDotacion: alcanceMediaEquipoDotacion.tramo

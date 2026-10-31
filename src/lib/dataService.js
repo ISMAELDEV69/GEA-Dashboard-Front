@@ -5245,7 +5245,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
       if (resp.ok) {
         const buffer = await resp.arrayBuffer()
         console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] XLSX descargado con éxito:', buffer.byteLength, 'bytes')
-        const workbook = XLSX.read(buffer, { type: 'array', cellText: true, cellDates: true })
+        const workbook = XLSX.read(buffer, { type: 'array', cellText: false, cellDates: true, dateNF: 'yyyy-mm-dd' })
         const sheetNames = workbook.SheetNames || []
         if (sheetNames.length > 0) {
           console.info('[POOL-PIPELINE] [ETAPA 2: PARSEO PESTAÑAS] Pestañas en libro XLSX:', sheetNames)
@@ -6981,7 +6981,7 @@ function normalizePostulanteForAdjudicar(p = {}) {
   const celular = phonesCel.primary || phonesWsp.primary || phonesRef.primary || normalizePhoneValue(p.celular)
   const celularRef = phonesRef.primary || phonesCel.secondary || phonesRef.secondary || (phonesWsp.primary && phonesWsp.primary !== celular ? phonesWsp.primary : null) || normalizePhoneValue(p.celular_referencia)
 
-  const fechaNac = parseFechaNacimiento(p.fecha_nacimiento) || null
+  const fechaNac = parseFechaNacimiento(p.fecha_nacimiento, p.edad) || null
   const edad = parseEdadValue(p.edad, fechaNac)
 
   let nHijos = p.n_hijos
@@ -9905,7 +9905,7 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
 
   if (hasHierarchyFilter || (semana && semana !== 'TODAS')) {
     try {
-      let capQ = supabase.from('capacidad_rys').select('codigo, campana, segmento, semana_label, semana_trabajo, periodo');
+      let capQ = supabase.from('capacidad_rys').select('codigo, campana, segmento, semana_label, semana_trabajo, periodo').range(0, 4999);
       if (semana && semana !== 'TODAS') {
         const sNum = parseInt(String(semana).replace(/\D/g, '')) || null;
         capQ = capQ.or(`semana_label.eq.${semana},semana_trabajo.eq.${sNum}`);
@@ -10040,20 +10040,31 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     return true;
   });
 
-  // Mapa de personas únicas de formación
+  // Mapa de personas únicas por cohorte (documento|campana|grupo) para no pisar postulantes multi-grupo
   const personasMap = new Map();
+  const docsToKeysMap = new Map();
+  const addPersonaEntry = (key, doc, obj) => {
+    personasMap.set(key, obj);
+    if (!docsToKeysMap.has(doc)) docsToKeysMap.set(doc, []);
+    const arr = docsToKeysMap.get(doc);
+    if (!arr.includes(key)) arr.push(key);
+  };
+
   asisRowsFiltradas.forEach(r => {
     const doc = String(r.documento || '').trim();
     if (!doc) return;
-    if (!personasMap.has(doc)) {
-      personasMap.set(doc, {
+    const camp = String(r.campana || (campanasEfectivas.length === 1 ? campanasEfectivas[0] : '')).trim().toUpperCase();
+    const grp = String(r.codigo_grupo || r.grupo || (gruposFiltro.length === 1 ? gruposFiltro[0] : '')).trim().toUpperCase();
+    const cohortKey = `${doc}|${camp}|${grp}`;
+    if (!personasMap.has(cohortKey)) {
+      addPersonaEntry(cohortKey, doc, {
         documento: doc,
         apellido_paterno: r.apellido_paterno || '',
         apellido_materno: r.apellido_materno || '',
         nombres: r.nombres || '',
-        campana: r.campana || (campanasEfectivas.length === 1 ? campanasEfectivas[0] : ''),
+        campana: camp,
         segmento: segmentos.length === 1 ? segmentos[0] : '',
-        grupo_codigo: r.codigo_grupo || r.grupo || (gruposFiltro.length === 1 ? gruposFiltro[0] : ''),
+        grupo_codigo: grp,
         semana_trabajo: semana !== 'TODAS' ? semana : '',
         periodo_reclutado: periodos.length === 1 ? periodos[0] : '',
         status_final: 'ASISTENCIA REGISTRADA',
@@ -10068,7 +10079,7 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
 
   // 3. Enriquecer y unificar con datos de 'nominas' (sin filtrar por status_final para no excluir a nadie)
   // Permite mapear Día 0 (inducción), Día 1 y condición de Agregados
-  const docs = Array.from(personasMap.keys());
+  const docs = Array.from(docsToKeysMap.keys());
   if (docs.length > 0) {
     for (let i = 0; i < docs.length; i += 100) {
       const chunk = docs.slice(i, i + 100);
@@ -10083,35 +10094,55 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
 
       (nomRows || []).forEach(n => {
         const doc = String(n.documento || '').trim();
-        if (personasMap.has(doc)) {
-          const current = personasMap.get(doc);
-          personasMap.set(doc, {
+        const candidateKeys = docsToKeysMap.get(doc) || [];
+        if (!candidateKeys.length) return;
+
+        const nCamp = String(n.campana || '').trim().toUpperCase();
+        const nGrp = String(n.grupo_codigo || '').trim().toUpperCase();
+        const exactKey = `${doc}|${nCamp}|${nGrp}`;
+
+        // Si coincide exactamente con la cohorte, o si solo hay 1 cohorte para este DNI y el grupo coincide
+        const keysToEnrich = personasMap.has(exactKey)
+          ? [exactKey]
+          : candidateKeys.filter(k => {
+              const curr = personasMap.get(k);
+              if (!curr) return false;
+              const cGrp = String(curr.grupo_codigo || '').trim().toUpperCase();
+              const altNGrp = nGrp.startsWith('GPR-') ? nGrp.replace('GPR-', 'GPE-') : (nGrp.startsWith('GPE-') ? nGrp.replace('GPE-', 'GPR-') : '');
+              return !cGrp || cGrp === nGrp || (altNGrp && cGrp === altNGrp) || candidateKeys.length === 1;
+            });
+
+        keysToEnrich.forEach(targetKey => {
+          const current = personasMap.get(targetKey);
+          const sameGroup = !nGrp || !current.grupo_codigo || String(current.grupo_codigo).toUpperCase() === nGrp ||
+            String(current.grupo_codigo).toUpperCase().replace('GPR-', 'GPE-') === nGrp.replace('GPR-', 'GPE-');
+
+          personasMap.set(targetKey, {
             ...current,
             apellido_paterno: n.apellido_paterno || current.apellido_paterno,
             apellido_materno: n.apellido_materno || current.apellido_materno,
             nombres: n.nombres || current.nombres,
-            reclutador: n.reclutador || current.reclutador || '',
-            // Mantener la campaña y grupo que vinieron de la asistencia de este filtro
+            reclutador: (sameGroup ? n.reclutador : (current.reclutador || n.reclutador)) || '',
             campana: current.campana || n.campana,
             segmento: current.segmento || n.segmento,
             grupo_codigo: current.grupo_codigo || n.grupo_codigo,
-            semana_trabajo: current.semana_trabajo || n.semana_trabajo,
-            periodo_reclutado: current.periodo_reclutado || n.periodo_reclutado,
-            fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || current.fecha_inicio_capacitacion,
-            fecha_fin_capacitacion: n.fecha_fin_capacitacion || current.fecha_fin_capacitacion,
-            fecha_conexion_ojt: n.fecha_conexion_ojt || current.fecha_conexion_ojt,
-            fecha_conexion_op: n.fecha_conexion_op || current.fecha_conexion_op,
-            status_final: n.status_final || current.status_final,
-            dia_0: n.dia_0 || '',
-            dia_0_obs: n.dia_0_obs || '',
-            evaluacion_dia_0: n.evaluacion_dia_0 || '',
-            dia_1: n.dia_1 || '',
-            dia_1_obs: n.dia_1_obs || '',
-            status_dia_1: n.status_dia_1 || '',
-            condicion: n.condicion || '',
-            tipo_reclutado: n.condicion || '',
+            semana_trabajo: current.semana_trabajo || (sameGroup ? n.semana_trabajo : ''),
+            periodo_reclutado: current.periodo_reclutado || (sameGroup ? n.periodo_reclutado : ''),
+            fecha_inicio_capacitacion: (sameGroup && n.fecha_inicio_capacitacion) || current.fecha_inicio_capacitacion,
+            fecha_fin_capacitacion: (sameGroup && n.fecha_fin_capacitacion) || current.fecha_fin_capacitacion,
+            fecha_conexion_ojt: (sameGroup && n.fecha_conexion_ojt) || current.fecha_conexion_ojt,
+            fecha_conexion_op: (sameGroup && n.fecha_conexion_op) || current.fecha_conexion_op,
+            status_final: (sameGroup && n.status_final) || current.status_final,
+            dia_0: sameGroup ? (n.dia_0 || current.dia_0 || '') : (current.dia_0 || ''),
+            dia_0_obs: sameGroup ? (n.dia_0_obs || current.dia_0_obs || '') : (current.dia_0_obs || ''),
+            evaluacion_dia_0: sameGroup ? (n.evaluacion_dia_0 || current.evaluacion_dia_0 || '') : (current.evaluacion_dia_0 || ''),
+            dia_1: sameGroup ? (n.dia_1 || current.dia_1 || '') : (current.dia_1 || ''),
+            dia_1_obs: sameGroup ? (n.dia_1_obs || current.dia_1_obs || '') : (current.dia_1_obs || ''),
+            status_dia_1: sameGroup ? (n.status_dia_1 || current.status_dia_1 || '') : (current.status_dia_1 || ''),
+            condicion: sameGroup ? (n.condicion || current.condicion || '') : (current.condicion || ''),
+            tipo_reclutado: sameGroup ? (n.condicion || current.tipo_reclutado || '') : (current.tipo_reclutado || ''),
           });
-        }
+        });
       });
     }
   }
@@ -10122,14 +10153,18 @@ export async function fetchNominasPagosCapacitacion({ periodo, semana, segmento,
     const ingestExtraNoms = (extraNoms) => {
       (extraNoms || []).forEach(n => {
         const doc = String(n.documento || '').trim();
-        if (!doc || personasMap.has(doc)) return;
+        if (!doc) return;
         const camp = String(n.campana || '').trim().toUpperCase();
         const g = String(n.grupo_codigo || '').trim().toUpperCase();
+        const cohortKey = `${doc}|${camp}|${g}`;
+        const altG = g.startsWith('GPR-') ? g.replace('GPR-', 'GPE-') : (g.startsWith('GPE-') ? g.replace('GPE-', 'GPR-') : '');
+        const altCohortKey = altG ? `${doc}|${camp}|${altG}` : '';
+        if (personasMap.has(cohortKey) || (altCohortKey && personasMap.has(altCohortKey))) return;
         if (!campanaOk(camp)) return;
         if (!pairOk(g, camp)) return;
         const perNom = normalizePeriodoPagos(n.periodo_reclutado || n.periodo);
         if (hasPeriodoFilter && perNom && !periodos.includes(perNom)) return;
-        personasMap.set(doc, {
+        addPersonaEntry(cohortKey, doc, {
           documento: doc,
           apellido_paterno: n.apellido_paterno || '',
           apellido_materno: n.apellido_materno || '',
@@ -10230,7 +10265,7 @@ export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null)
         batch.map(async (chunk) => {
           let q = supabase
             .from('consolidado_asistencias')
-            .select('documento, fecha_registro_asistencia, sigla, estado, codigo_grupo, grupo, fecha_hora_registro, created_at')
+            .select('documento, fecha_registro_asistencia, sigla, estado, codigo_grupo, grupo, campana, fecha_hora_registro, created_at')
             .in('documento', chunk)
             .neq('sigla', 'DESC')
             .neq('estado', 'DESCUENTO');
@@ -10255,6 +10290,7 @@ export async function fetchAsistenciasPagos(documentos = [], grupoCodigo = null)
       fecha_original: r.fecha_registro_asistencia,
       sigla_asistencia: (r.sigla || (r.estado === 'ACTIVO' ? 'A' : (r.estado === 'CESADO' ? 'B' : 'FI'))).toUpperCase().trim(),
       grupo_codigo: r.codigo_grupo || r.grupo,
+      campana: r.campana || '',
       estado: r.estado,
       fecha_hora_registro: r.fecha_hora_registro,
       created_at: r.created_at,
@@ -10269,7 +10305,8 @@ export async function fetchGruposPagosDisponibles() {
       const { data, error } = await supabase
         .from('capacidad_rys')
         .select('codigo, campana, segmento, semana_label, semana_trabajo, periodo')
-        .order('periodo', { ascending: false });
+        .order('periodo', { ascending: false })
+        .range(0, 4999);
       if (error) throw error;
       if (data && data.length) {
         return data.map(row => {
@@ -10394,7 +10431,8 @@ export async function fetchLiquidacionesHistoricas() {
       const { data, error } = await supabase
         .from('liquidaciones_pagos_capacitacion')
         .select('*')
-        .order('cerrado_at', { ascending: false });
+        .order('cerrado_at', { ascending: false })
+        .range(0, 9999);
       if (error) {
         console.warn('Error fetching liquidaciones_pagos_capacitacion:', error);
         return [];
@@ -10419,7 +10457,8 @@ export async function fetchLiquidacionesLotes() {
       const { data, error } = await supabase
         .from('liquidaciones_pagos_capacitacion')
         .select('lote_id, periodo, mes_pago, semana_trabajo, segmento, campana, grupo_codigo, cerrado_por, cerrado_at, notas_lote, documento, total_general')
-        .order('cerrado_at', { ascending: false });
+        .order('cerrado_at', { ascending: false })
+        .range(0, 9999);
       if (error) throw error;
       return data || [];
     });
@@ -10828,27 +10867,264 @@ export async function guardarMaquetaBaseOperativa(records = []) {
 /**
  * Sincroniza automáticamente la base operativa de 16 columnas desde metas_equipos, capacidad_rys y nominas
  */
+function toIsoDate(val) {
+  if (!val) return null
+  const str = String(val).trim()
+  if (!str) return null
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10)
+
+  const slashParts = str.split('/')
+  if (slashParts.length === 3) {
+    let [d, m, y] = slashParts
+    if (y.length === 2) y = '20' + y
+    return `${y.padStart(4, '2026')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+
+  const dashParts = str.split('-')
+  if (dashParts.length === 3 && dashParts[0].length <= 2) {
+    let [d, m, y] = dashParts
+    if (y.length === 2) y = '20' + y
+    return `${y.padStart(4, '2026')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+
+  return null
+}
+
 export async function sincronizarMaquetaBaseDesdeConsolidado(periodo = '') {
   const pStr = String(periodo || '').trim()
   const pNorm = pStr.replace(/\D/g, '').slice(0, 6)
   
   if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase.rpc('sincronizar_maqueta_base', {
-        p_periodo: pNorm || (pStr !== 'TODOS' ? pStr : null)
-      })
-      if (!error && typeof data === 'number') {
-        return { success: true, count: data }
+      const targetPeriodo = pNorm || (pStr !== 'TODOS' ? pStr : '202610')
+
+      // 1. Obtener cohortes oficiales de capacidad_rys con periodo_ingreso_op
+      let { data: capAll, error: capErr } = await supabase
+        .from('capacidad_rys')
+        .select('*')
+        .eq('periodo_ingreso_op', targetPeriodo)
+
+      if (capErr || !capAll || !capAll.length) {
+        // Fallback si la columna tuviese formato con fecha
+        const { data: capAlt } = await supabase.from('capacidad_rys').select('*')
+        const mm = targetPeriodo.slice(4, 6)
+        const yyyy = targetPeriodo.slice(0, 4)
+        capAll = (capAlt || []).filter(c => {
+          const p = String(c.periodo_ingreso_op || '').trim()
+          const f = String(c.fecha_ingreso_op || '').trim()
+          return p === targetPeriodo || f.includes(`/${parseInt(mm, 10)}/${yyyy}`) || f.includes(`-${mm}-`) || f.startsWith(`${yyyy}-${mm}`)
+        })
       }
-      if (error) {
-        console.warn('[MaquetaBase] RPC sincronizar_maqueta_base fallback error:', error)
+
+      if (capAll && capAll.length > 0) {
+        const capMap = new Map()
+        for (const c of capAll) {
+          const cod = normTxt(c.codigo)
+          if (cod) capMap.set(cod, c)
+        }
+        const gpesList = Array.from(capMap.keys())
+
+        // 2. Traer asistencias I-OP de consolidado_asistencias con fecha en el mes
+        const mm = targetPeriodo.slice(4, 6)
+        const yyyy = targetPeriodo.slice(0, 4)
+        let asisOct = []
+        for (let i = 0; i < gpesList.length; i += 20) {
+          const chunk = gpesList.slice(i, i + 20)
+          const { data: batch } = await supabase
+            .from('consolidado_asistencias')
+            .select('documento, codigo_grupo, grupo, fecha_registro_asistencia, sigla, estado')
+            .in('codigo_grupo', chunk)
+            .or('sigla.eq.I-OP,sigla.eq.IOP,estado.ilike.%OPERACION%,estado.ilike.%INGRESO%')
+
+          if (batch) {
+            const octFiltered = batch.filter(b => {
+              const f = String(b.fecha_registro_asistencia || '').trim()
+              if (!mm || !yyyy) return true
+              return f.includes(`/${mm}/${yyyy}`) || f.includes(`/${parseInt(mm, 10)}/${yyyy}`) || f.includes(`-${mm}-`) || f.startsWith(`${yyyy}-${mm}`)
+            })
+            asisOct.push(...octFiltered)
+          }
+        }
+
+        // Deduplicar: cada persona cuenta 1 vez por grupo
+        const iopUnicosPorGrupo = new Map()
+        for (const a of asisOct) {
+          const doc = String(a.documento || '').trim()
+          const gpe = normTxt(a.codigo_grupo || a.grupo)
+          if (doc && gpe) {
+            iopUnicosPorGrupo.set(`${gpe}|${doc}`, true)
+          }
+        }
+
+        // 3. Traer postulantes en nóminas de estos grupos
+        let nomAll = []
+        for (let i = 0; i < gpesList.length; i += 20) {
+          const chunk = gpesList.slice(i, i + 20)
+          const { data: batch } = await supabase
+            .from('nominas')
+            .select('documento, grupo_codigo, reclutador, dia_0, evaluacion_dia_0, dia_1, status_dia_1')
+            .in('grupo_codigo', chunk)
+
+          if (batch) nomAll.push(...batch)
+        }
+
+        // 4. Traer asignaciones de metas_equipos para estos grupos
+        let meAll = []
+        for (let i = 0; i < gpesList.length; i += 20) {
+          const chunk = gpesList.slice(i, i + 20)
+          const { data: batch } = await supabase
+            .from('metas_equipos')
+            .select('*')
+            .in('grupo', chunk)
+
+          if (batch) meAll.push(...batch)
+        }
+
+        const meMap = new Map()
+        for (const m of meAll) {
+          const gpe = normTxt(m.grupo)
+          const resp = normTxt(m.responsable)
+          if (gpe && resp) {
+            meMap.set(`${gpe}|${resp}`, m)
+          }
+        }
+
+        // Catálogo de reclutadores para resolver nombres canónicos
+        const { data: eqAll } = await supabase.from('equipo_reclutamiento').select('*')
+        const aliasMap = new Map()
+        for (const e of (eqAll || [])) {
+          const fullName = normTxt(`${e.apellido_paterno || ''} ${e.apellido_materno || ''} ${e.nombres_completos || ''}`)
+          if (fullName) aliasMap.set(fullName, fullName)
+          if (e.alias) aliasMap.set(normTxt(e.alias), fullName)
+          if (e.alix) aliasMap.set(normTxt(e.alix), fullName)
+          if (e.documento) aliasMap.set(String(e.documento).trim(), fullName)
+        }
+
+        const PALABRAS_INVALIDAS = ['ADMIN', 'CAPACITACION', 'RECUPERADO', 'TRASLADO', 'SIN RECLUTADOR', 'SIN NOMINA', 'REASIGNADO', 'FORMADOR']
+        const resolverNombreReclutador = (nombreRaw) => {
+          const clean = normTxt(nombreRaw)
+          if (!clean || PALABRAS_INVALIDAS.some(p => clean === p || clean.startsWith(p))) return null
+          if (aliasMap.has(clean)) return aliasMap.get(clean)
+          if (clean.includes('TREVINO') || clean.includes('TREVIÑO')) return 'TREVIÑOS ARROYO SOLANS CAROL'
+          if (clean.includes('ELIAN') && clean.includes('REYES')) return 'REYES CANTARO ELIAN MOISES'
+          if (clean.includes('VALDIVIA')) return 'VALDIVIA RODRIGUEZ RAUL'
+          for (const [k, v] of aliasMap.entries()) {
+            if (k.length > 6 && (clean.includes(k) || k.includes(clean))) return v
+          }
+          return clean
+        }
+
+        // 5. Agrupar nóminas por Grupo + Reclutador
+        const statsPorGrupoYRec = new Map()
+        for (const n of nomAll) {
+          const gpe = normTxt(n.grupo_codigo)
+          const recNombre = resolverNombreReclutador(n.reclutador)
+          if (!gpe || !recNombre) continue
+
+          const key = `${gpe}|${recNombre}`
+          if (!statsPorGrupoYRec.has(key)) {
+            statsPorGrupoYRec.set(key, { nomina: 0, d0: 0, d1: 0, iop: 0 })
+          }
+          const item = statsPorGrupoYRec.get(key)
+          item.nomina++
+
+          const d0 = normTxt(n.dia_0 || n.evaluacion_dia_0)
+          if (d0 === 'ASISTIO' || d0 === '1') item.d0++
+
+          const d1 = normTxt(n.dia_1 || n.status_dia_1)
+          if (d1 === 'ASISTIO' || d1 === '1') item.d1++
+
+          const doc = String(n.documento || '').trim()
+          if (iopUnicosPorGrupo.has(`${gpe}|${doc}`)) {
+            item.iop++
+          }
+        }
+
+        // 6. Construir filas de 16 columnas
+        const combinaciones = new Map()
+        for (const [k] of statsPorGrupoYRec.entries()) {
+          const [gpe, rec] = k.split('|')
+          combinaciones.set(k, { gpe, rec })
+        }
+        for (const m of meAll) {
+          const gpe = normTxt(m.grupo)
+          const recNombre = resolverNombreReclutador(m.responsable)
+          if (gpe && recNombre) {
+            const k = `${gpe}|${recNombre}`
+            if (!combinaciones.has(k)) combinaciones.set(k, { gpe, rec: recNombre })
+          }
+        }
+
+        const records = []
+        for (const { gpe, rec } of combinaciones.values()) {
+          const cap = capMap.get(gpe) || {}
+          const stats = statsPorGrupoYRec.get(`${gpe}|${rec}`) || { nomina: 0, d0: 0, d1: 0, iop: 0 }
+          
+          let metaMe = meMap.get(`${gpe}|${rec}`)
+          if (!metaMe) {
+            for (const [k, v] of meMap.entries()) {
+              const [mGpe, mRec] = k.split('|')
+              if (mGpe === gpe && (mRec.includes(rec) || rec.includes(mRec))) {
+                metaMe = v
+                break
+              }
+            }
+          }
+
+          const rqGrupal = Number(cap.rq_solicitado || metaMe?.rq || metaMe?.meta_dia_1_grupal || 0)
+          const metaD1Grupal = Number(cap.meta_dia_1 || metaMe?.meta_dia_1_grupal || rqGrupal || 0)
+          
+          let rqInd = Number(metaMe?.rq_individual || 0)
+          let metaD1Ind = Number(metaMe?.meta_dia_1_individual || 0)
+
+          if (rqInd === 0 && stats.nomina > 0) {
+            rqInd = Math.max(1, Math.min(rqGrupal, stats.nomina))
+          }
+          if (metaD1Ind === 0 && stats.d1 > 0) {
+            metaD1Ind = Math.max(1, Math.min(metaD1Grupal, stats.d1))
+          }
+
+          records.push({
+            periodo_efectivo: targetPeriodo,
+            codigo_gpe: gpe,
+            semana: cap.semana_label || metaMe?.semana || 'SEM 41',
+            fecha_inicio_capa: toIsoDate(cap.fecha_registro || metaMe?.fecha),
+            fecha_fin_capa: toIsoDate(cap.fecha_ingreso_op || metaMe?.fecha_ingreso_op),
+            segmento: cap.segmento || 'CLARO PERU',
+            campana: cap.campana || metaMe?.campana || '',
+            modalidad: cap.modalidad || metaMe?.modalidad || 'PRESENCIAL',
+            tipo_reclutador: 'Asistente de Reclutamiento y Selección',
+            analista_reclutador: rec,
+            meta_dia_1_grupal: metaD1Grupal,
+            nomina: stats.nomina,
+            meta_dia_1_individual: metaD1Ind,
+            meta_dia_1_nuevo_criterio: metaD1Ind,
+            asistencia_dia_1: stats.d1,
+            dotacion: stats.iop,
+            rq_op: rqInd
+          })
+        }
+
+        if (records.length > 0) {
+          await supabase
+            .from('maqueta_reclutadores_base')
+            .delete()
+            .eq('periodo_efectivo', targetPeriodo)
+
+          for (let i = 0; i < records.length; i += 100) {
+            const batch = records.slice(i, i + 100)
+            await supabase.from('maqueta_reclutadores_base').insert(batch)
+          }
+
+          return { success: true, count: records.length, source: 'capacidad_rys' }
+        }
       }
     } catch (err) {
-      console.warn('[MaquetaBase] Error calling RPC sincronizar_maqueta_base:', err)
+      console.warn('[MaquetaBase] Error sincronizando desde capacidad y nóminas:', err)
     }
   }
 
-  // Fallback si RPC no estuviese disponible
+  // Fallback a kpi_reclutadores_consolidado
   const kpiRows = await fetchKpiReclutadoresConsolidado({ periodo: pStr || pNorm })
   if (!kpiRows || !kpiRows.length) return { success: false, count: 0, message: 'No hay filas consolidadas en este periodo' }
 
@@ -10875,21 +11151,27 @@ export async function sincronizarMaquetaBaseDesdeConsolidado(periodo = '') {
   return await guardarMaquetaBaseOperativa(mapped)
 }
 
-/**
- * Consulta la liquidación guardada o congelada de un periodo
- */
 export async function fetchLiquidacionesPeriodo(periodo) {
   if (!periodo) return []
 
   if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
     try {
+      const cleanP = String(periodo).trim()
       const { data, error } = await supabase
         .from('maqueta_reclutadores_liquidaciones')
         .select('*')
-        .eq('periodo', String(periodo).trim())
-        .order('nombre', { ascending: true })
+        .eq('periodo', cleanP)
+        .order('personal_rys', { ascending: true })
 
-      if (error) throw error
+      if (error) {
+        // Fallback sin order si la columna difiere en entorno
+        const retry = await supabase
+          .from('maqueta_reclutadores_liquidaciones')
+          .select('*')
+          .eq('periodo', cleanP)
+        if (retry.error) throw retry.error
+        return retry.data || []
+      }
       return data || []
     } catch (err) {
       console.warn('[Maqueta] Error al consultar liquidaciones:', err)
@@ -10899,6 +11181,125 @@ export async function fetchLiquidacionesPeriodo(periodo) {
     const storageKey = `gea_maqueta_liq_${periodo}`
     const raw = localStorage.getItem(storageKey)
     return raw ? JSON.parse(raw) : []
+  }
+}
+
+/**
+ * Consulta nominal de postulantes (Nivel 3 de trazabilidad) para un grupo GPE en Maquetas & Bonos
+ * Cruza nominas + consolidado_asistencias para mostrar exactamente quién asistió en Día 1 y quién ingresó a OP (I-OP)
+ */
+export async function fetchTrazabilidadPostulantesGrupoMaqueta({ codigoGpe, campana = '', nombresReclutador = [] } = {}) {
+  if (!codigoGpe || DB_MODE !== 'supabase' || !isSupabaseConfigured()) return []
+
+  const cleanGpe = String(codigoGpe).trim()
+  const norm = (s) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ')
+  const recTargets = (nombresReclutador || []).map(norm).filter(Boolean)
+
+  try {
+    const [nomRes, asisRes] = await Promise.all([
+      supabase
+        .from('nominas')
+        .select('documento, nombres_completos, apellido_paterno, apellido_materno, reclutador, dia_0, dia_1, condicion, estado_postulacion, activo, grupo_codigo, campana, segmento, fecha_inicio_capacitacion, fecha_ingreso')
+        .eq('grupo_codigo', cleanGpe)
+        .eq('activo', true),
+      supabase
+        .from('consolidado_asistencias')
+        .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, codigo_grupo, campana')
+        .eq('codigo_grupo', cleanGpe)
+    ])
+
+    let nominasRows = nomRes.data || []
+    if (campana && campana !== '-' && nominasRows.some(n => norm(n.campana) === norm(campana))) {
+      nominasRows = nominasRows.filter(n => norm(n.campana) === norm(campana))
+    }
+
+    const asisRows = asisRes.data || []
+    const asisByDoc = new Map()
+    for (const r of asisRows) {
+      const doc = String(r.documento || '').trim()
+      if (!doc) continue
+      if (!asisByDoc.has(doc)) asisByDoc.set(doc, [])
+      asisByDoc.get(doc).push(r)
+    }
+
+    const postulantes = nominasRows.map((n) => {
+      const doc = String(n.documento || '').trim()
+      const apP = String(n.apellido_paterno || '').trim()
+      const apM = String(n.apellido_materno || '').trim()
+      const nomb = String(n.nombres_completos || '').trim()
+      const nombreCompleto = `${apP} ${apM} ${nomb}`.trim() || nomb || doc
+      const recRaw = String(n.reclutador || '').trim()
+      const recNorm = norm(recRaw)
+
+      const records = (asisByDoc.get(doc) || []).sort(
+        (a, b) => new Date(a.fecha_registro_asistencia || 0) - new Date(b.fecha_registro_asistencia || 0)
+      )
+
+      const iopRecord = records.find(r => String(r.sigla || '').toUpperCase().trim() === 'I-OP')
+      const tieneIop = Boolean(iopRecord)
+
+      const d0 = String(n.dia_0 || '').toUpperCase().trim()
+      const asistioDia0 = d0 === 'ASISTIO' || d0.includes('FALTA') || d0.includes('BAJA') || tieneIop
+
+      const d1 = String(n.dia_1 || '').toUpperCase().trim()
+      const hasD1Nomina = Boolean(d1) && d1 !== 'NO' && d1 !== 'CANCELADO' && d1 !== 'DESCARTADO'
+      const hasD1Attendance = records.some(r => {
+        const s = String(r.sigla || '').toUpperCase().trim()
+        return s === 'A' || s === 'F' || s === 'B' || s === 'I-OP' || s === 'CAPACITACION'
+      })
+      const asistioDia1 = d1 === 'ASISTIO' || d1.includes('FALTA') || d1.includes('BAJA') || hasD1Nomina || hasD1Attendance || tieneIop
+
+      const diasAsistidos = records.filter(r => String(r.sigla || '').toUpperCase().trim() === 'A').length
+      const lastRecord = records.length > 0 ? records[records.length - 1] : null
+      const esBaja = records.some(r => {
+        const s = String(r.sigla || '').toUpperCase().trim()
+        const est = String(r.estado || '').toUpperCase().trim()
+        const mot = String(r.motivo_baja || '').toUpperCase().trim()
+        return s === 'B' || est.includes('BAJA') || est === 'CESADO' || Boolean(mot)
+      })
+      const motivoBaja = records.map(r => r.motivo_baja).filter(Boolean).pop() || ''
+
+      const perteneceAReclutador = recTargets.length === 0 || recTargets.some(
+        t => t === recNorm || (t.length > 4 && (recNorm.includes(t) || t.includes(recNorm)))
+      )
+
+      let estadoResumen = 'SIN ASISTENCIA'
+      if (tieneIop) estadoResumen = 'I-OP (DOTACIÓN)'
+      else if (esBaja) estadoResumen = 'BAJA'
+      else if (asistioDia1 || diasAsistidos > 0) estadoResumen = 'EN CAPA'
+
+      return {
+        documento: doc,
+        nombreCompleto,
+        reclutador: recRaw || 'SIN ASIGNAR',
+        perteneceAReclutador,
+        condicion: String(n.condicion || n.estado_postulacion || 'APTO').toUpperCase().trim(),
+        dia0Raw: d0 || '-',
+        dia1Raw: d1 || '-',
+        asistioDia0,
+        asistioDia1,
+        tieneIop,
+        fechaIop: iopRecord?.fecha_registro_asistencia ? String(iopRecord.fecha_registro_asistencia).slice(0, 10) : null,
+        diasAsistidos,
+        esBaja,
+        motivoBaja,
+        ultimoEstado: lastRecord?.estado || '-',
+        estadoResumen,
+      }
+    })
+
+    // Ordenar: primero los que pertenecen al reclutador, luego los que tienen I-OP, luego Día 1
+    postulantes.sort((a, b) => {
+      if (a.perteneceAReclutador !== b.perteneceAReclutador) return a.perteneceAReclutador ? -1 : 1
+      if (a.tieneIop !== b.tieneIop) return a.tieneIop ? -1 : 1
+      if (a.asistioDia1 !== b.asistioDia1) return a.asistioDia1 ? -1 : 1
+      return a.nombreCompleto.localeCompare(b.nombreCompleto)
+    })
+
+    return postulantes
+  } catch (err) {
+    console.warn('[MaquetaTrazabilidad] Error consultando postulantes del grupo:', err)
+    return []
   }
 }
 

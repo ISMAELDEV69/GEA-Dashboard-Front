@@ -111,6 +111,8 @@ BEGIN
           NULLIF(TRIM(COALESCE(v_item->>'exp_tiempo_campana', v_item->>'exp_tiempo_call')), ''),
           exp_tiempo_campana
         ),
+        exp_otra = COALESCE(NULLIF(TRIM(v_item->>'exp_otra'), ''), exp_otra),
+        exp_tiempo_otra = COALESCE(NULLIF(TRIM(v_item->>'exp_tiempo_otra'), ''), exp_tiempo_otra),
         fuente_oferta = COALESCE(NULLIF(TRIM(v_item->>'fuente_oferta'), ''), fuente_oferta),
         sede = COALESCE(NULLIF(TRIM(v_item->>'sede'), ''), sede),
         modalidad = COALESCE(NULLIF(TRIM(v_item->>'modalidad'), ''), modalidad),

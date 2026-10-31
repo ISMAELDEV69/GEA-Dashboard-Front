@@ -1,15 +1,28 @@
 
 function parseTimestamp(val) {
   if (!val) return null
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString()
+  }
   const s = String(val).trim()
   if (!s || s === '-' || s === '0') return null
   
-  // If DD/MM/YYYY HH:MM:SS or D/M/YYYY H:M:S
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
+  // If DD/MM/YYYY HH:MM:SS or MM/DD/YYYY HH:MM:SS or D/M/YY H:M:S
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
   if (m) {
-    const yyyy = m[3]
-    const mm = m[2].padStart(2, '0')
-    const dd = m[1].padStart(2, '0')
+    let yNum = parseInt(m[3], 10)
+    if (yNum < 100) yNum = yNum >= 70 ? 1900 + yNum : 2000 + yNum
+    const yyyy = String(yNum)
+    const p1 = parseInt(m[1], 10)
+    const p2 = parseInt(m[2], 10)
+    let ddNum = p1
+    let mmNum = p2
+    if (p2 > 12 && p1 <= 12) {
+      mmNum = p1
+      ddNum = p2
+    }
+    const mm = String(mmNum).padStart(2, '0')
+    const dd = String(ddNum).padStart(2, '0')
     const hh = (m[4] || '00').padStart(2, '0')
     const min = (m[5] || '00').padStart(2, '0')
     const ss = (m[6] || '00').padStart(2, '0')
@@ -86,20 +99,34 @@ export function calcEdadFromFechaISO(fecha) {
  * Soporta seriales de Excel, Date objects, texto en español (ej: "15 de mayo de 1998")
  * y separadores /, -, ., retornando siempre el formato ISO YYYY-MM-DD.
  */
-export function parseFechaNacimiento(val) {
+export function parseFechaNacimiento(val, edadHint = null) {
   if (val === null || val === undefined || val === '') return null
 
   const currentYear = new Date().getFullYear()
   const minYear = 1935
   const maxYear = currentYear - 14
 
+  const resolveYearWithHint = (y) => {
+    if (y >= minYear && y <= maxYear) return y
+    if (y > maxYear && y <= currentYear + 1 && edadHint !== null && edadHint !== undefined && edadHint !== '') {
+      const mEdad = String(edadHint).match(/\b(1[4-9]|[2-8][0-9])\b/)
+      if (mEdad) {
+        const ageNum = parseInt(mEdad[1], 10)
+        if (ageNum >= 14 && ageNum <= 85) {
+          return currentYear - ageNum
+        }
+      }
+    }
+    return y
+  }
+
   // 1. Si viene como Date object (evitar desfase de zona horaria UTC-5 de Perú)
   if (val instanceof Date && !isNaN(val.getTime())) {
-    const yUtc = val.getUTCFullYear()
+    const yUtc = resolveYearWithHint(val.getUTCFullYear())
     const mUtc = String(val.getUTCMonth() + 1).padStart(2, '0')
     const dUtc = String(val.getUTCDate()).padStart(2, '0')
     if (yUtc >= minYear && yUtc <= maxYear) return `${yUtc}-${mUtc}-${dUtc}`
-    const yLocal = val.getFullYear()
+    const yLocal = resolveYearWithHint(val.getFullYear())
     const mLocal = String(val.getMonth() + 1).padStart(2, '0')
     const dLocal = String(val.getDate()).padStart(2, '0')
     if (yLocal >= minYear && yLocal <= maxYear) return `${yLocal}-${mLocal}-${dLocal}`
@@ -111,13 +138,29 @@ export function parseFechaNacimiento(val) {
   // Limpiar comillas, apóstrofes y prefijos
   s = s.replace(/^['"`’‘“”\s]+|['"`’‘“”\s]+$/g, '')
 
+  // 1.5 Formato compacto de 8 dígitos continuos sin separadores (DDMMYYYY o YYYYMMDD)
+  if (/^\d{8}$/.test(s)) {
+    const p1 = parseInt(s.slice(0, 4), 10)
+    const p2 = parseInt(s.slice(4, 6), 10)
+    const p3 = parseInt(s.slice(6, 8), 10)
+    if (p1 >= minYear && p1 <= maxYear && p2 >= 1 && p2 <= 12 && p3 >= 1 && p3 <= 31) {
+      return `${p1}-${String(p2).padStart(2, '0')}-${String(p3).padStart(2, '0')}`
+    }
+    const dCompact = parseInt(s.slice(0, 2), 10)
+    const mCompact = parseInt(s.slice(2, 4), 10)
+    const yCompact = resolveYearWithHint(parseInt(s.slice(4, 8), 10))
+    if (yCompact >= minYear && yCompact <= maxYear && mCompact >= 1 && mCompact <= 12 && dCompact >= 1 && dCompact <= 31) {
+      return `${yCompact}-${String(mCompact).padStart(2, '0')}-${String(dCompact).padStart(2, '0')}`
+    }
+  }
+
   // 2. Número serial de Excel (ej. 36525 = 31/12/1999)
   if (/^\d{4,6}(?:\.\d+)?$/.test(s)) {
     const serial = parseFloat(s)
     if (serial >= 12000 && serial <= 50000) {
       const d = new Date(Math.round((serial - 25569) * 86400 * 1000))
       if (!isNaN(d.getTime())) {
-        const y = d.getUTCFullYear()
+        const y = resolveYearWithHint(d.getUTCFullYear())
         const m = String(d.getUTCMonth() + 1).padStart(2, '0')
         const day = String(d.getUTCDate()).padStart(2, '0')
         if (y >= minYear && y <= maxYear) return `${y}-${m}-${day}`
@@ -147,6 +190,7 @@ export function parseFechaNacimiento(val) {
     const yRaw = parseInt(matchTexto[3], 10)
     const m = MESES_MAP[mStr]
     let y = yRaw < 100 ? (yRaw >= 35 ? 1900 + yRaw : 2000 + yRaw) : yRaw
+    y = resolveYearWithHint(y)
     if (m && d >= 1 && d <= 31 && y >= minYear && y <= maxYear) {
       return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     }
@@ -155,7 +199,7 @@ export function parseFechaNacimiento(val) {
   // 4. Formato ISO estricto si vino como YYYY-MM-DD o YYYY/MM/DD
   const matchIso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
   if (matchIso) {
-    const y = parseInt(matchIso[1], 10)
+    const y = resolveYearWithHint(parseInt(matchIso[1], 10))
     const m = parseInt(matchIso[2], 10)
     const d = parseInt(matchIso[3], 10)
     if (y >= minYear && y <= maxYear && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
@@ -172,6 +216,7 @@ export function parseFechaNacimiento(val) {
     if (y < 100) {
       y = y >= 35 ? 1900 + y : 2000 + y
     }
+    y = resolveYearWithHint(y)
     // Caso 1: d > 12 y m <= 12 -> Ej: 25/08/1999 -> Día=25, Mes=08
     if (d > 12 && m <= 12) {
       if (y >= minYear && y <= maxYear && d <= 31 && m >= 1) {
@@ -195,8 +240,9 @@ export function parseFechaNacimiento(val) {
   // 6. Fallback clásico parseExcelDate
   const fallback = parseExcelDate(s)
   if (fallback) {
-    const y = parseInt(fallback.split('-')[0], 10)
-    if (y >= minYear && y <= maxYear) return fallback
+    const parts = fallback.split('-')
+    const y = resolveYearWithHint(parseInt(parts[0], 10))
+    if (y >= minYear && y <= maxYear) return `${y}-${parts[1]}-${parts[2]}`
   }
 
   return null
@@ -257,6 +303,9 @@ export function normalizeTiempoExperiencia(val) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
 
+  // Limpiar valores previamente corrompidos por reemplazo de preposición "A" -> "AÑOS"
+  s = s.replace(/\b12\s*MESES\s*ANOS\s*MAS\b/g, '12 MESES A MAS')
+
   // 2. Si es 0 / sin experiencia / ninguno
   if (
     s === '0' || s === '0M' || s === '0 MESES' || s === '0 MESE' || s === '0 ANOS' || s === '0 AÑOS' ||
@@ -277,9 +326,10 @@ export function normalizeTiempoExperiencia(val) {
   s = s.replace(/(\d+)([A-Z]+)/g, '$1 $2')
   s = s.replace(/([A-Z]+)(\d+)/g, '$1 $2')
 
-  // Normalizar palabras clave
+  // Normalizar palabras clave (sin reemplazar la preposición aislada "A")
   s = s.replace(/\bMESES?\b|\bMESE\b|\bMES\b|\bM\b/g, 'MESES')
-  s = s.replace(/\bANOS?\b|\bANIOS?\b|\bA\b/g, 'AÑOS')
+  s = s.replace(/\bANOS?\b|\bANIOS?\b/g, 'AÑOS')
+  s = s.replace(/(\d+)\s+A$/g, '$1 AÑOS')
   s = s.replace(/\s+/g, ' ').trim()
 
   // 5. Mapeo a rangos estándar de Call Center
@@ -289,18 +339,22 @@ export function normalizeTiempoExperiencia(val) {
   if (s.match(/3\s*(?:-|A|\/)\s*6\s*MESES?/i) || s === '3 - 6' || s === '3-6' || s === '3 A 6') {
     return '3 - 6 MESES'
   }
-  if (s.match(/6\s*(?:-|A|\/)\s*9\s*MESES?/i) || s === '6 - 9' || s === '6-9') {
+  if (s.match(/6\s*(?:-|A|\/)\s*9\s*MESES?/i) || s === '6 - 9' || s === '6-9' || s === '6 A 9') {
     return '6 - 9 MESES'
   }
-  if (s.match(/6\s*(?:-|A|\/)\s*12\s*MESES?/i) || s.match(/9\s*(?:-|A|\/)\s*12\s*MESES?/i) || s === '6 - 12' || s === '6-12') {
+  if (s.match(/9\s*(?:-|A|\/)\s*12\s*MESES?/i) || s === '9 - 12' || s === '9-12' || s === '9 A 12') {
+    return '9 - 12 MESES'
+  }
+  if (s.match(/6\s*(?:-|A|\/)\s*12\s*MESES?/i) || s === '6 - 12' || s === '6-12' || s === '6 A 12') {
     return '6 - 12 MESES'
   }
   if (
     s.includes('12 MESES A MAS') || s.includes('12 A MAS') || s.includes('1 ANO A MAS') ||
     s.includes('1 AÑO A MAS') || s.includes('MAS DE 1') || s.includes('12 MESES A MÁS') ||
-    s.includes('+12') || s.includes('1 AÑO A MÁS') || s.includes('2 AÑOS A MAS')
+    s.includes('+12') || s.includes('1 AÑO A MÁS') || s.includes('2 AÑOS A MAS') ||
+    s.includes('12 MESES AÑOS MAS')
   ) {
-    return '12 MESES A MÁS'
+    return '12 MESES A MAS'
   }
 
   // Casos simples: "3 MESES", "6 MESES", "1 AÑO", "2 AÑOS"
@@ -326,6 +380,7 @@ export function normalizeTiempoExperiencia(val) {
  */
 export function extractPhonesFromText(val) {
   if (val === null || val === undefined || val === '') return { primary: null, secondary: null }
+  if (val instanceof Date) return { primary: null, secondary: null }
 
   // 1. Número numérico de Excel
   if (typeof val === 'number' && Number.isFinite(val)) {
@@ -333,12 +388,24 @@ export function extractPhonesFromText(val) {
     if (asInt > 0) {
       let s = String(asInt)
       if (s.startsWith('51') && s.length === 11 && s[2] === '9') s = s.substring(2)
-      return { primary: s, secondary: null }
+      if (s.length >= 7 && s.length <= 11) {
+        return { primary: s, secondary: null }
+      }
+      return { primary: null, secondary: null }
     }
   }
 
   let s = String(val).trim()
   if (!s || s === '-' || s === '...' || s.toUpperCase() === 'NULL' || s === 'undefined') {
+    return { primary: null, secondary: null }
+  }
+
+  // 1.5 Blindaje contra fechas y marcas temporales (ej. "22/10/2026 9:04:38", "2026-10-22T09:04:38", o dígitos concatenados de timestamp "2210202690438")
+  if (
+    /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/.test(s) ||
+    /\b\d{1,2}:\d{2}(?::\d{2})?\b/.test(s) ||
+    (/^\d{12,15}$/.test(s) && /202[4-9]/.test(s))
+  ) {
     return { primary: null, secondary: null }
   }
 
@@ -348,7 +415,9 @@ export function extractPhonesFromText(val) {
     if (Number.isFinite(n) && n > 0) {
       let sNum = String(Math.round(n))
       if (sNum.startsWith('51') && sNum.length === 11 && sNum[2] === '9') sNum = sNum.substring(2)
-      return { primary: sNum, secondary: null }
+      if (sNum.length >= 7 && sNum.length <= 11) {
+        return { primary: sNum, secondary: null }
+      }
     }
   }
 
@@ -386,13 +455,15 @@ export function extractPhonesFromText(val) {
     }
   }
 
-  // 5. Fallback si no hubo match que inicie con 9 (fijos o internacionales)
+  // 5. Fallback si no hubo match que inicie con 9 (fijos de 7-8 dígitos o +51 con 11 dígitos)
   if (phonesFound.length === 0) {
     const allDigits = s.replace(/[^\d]/g, '')
-    if (allDigits.length >= 7 && allDigits.length <= 15) {
+    if (allDigits.length >= 7 && allDigits.length <= 11) {
       let f = allDigits
       if (f.startsWith('51') && f.length === 11 && f[2] === '9') f = f.substring(2)
-      phonesFound.push(f)
+      if (f.length >= 7 && f.length <= 9) {
+        phonesFound.push(f)
+      }
     }
   }
 
@@ -878,8 +949,8 @@ export function parseGoogleFormRow(row, colIdx) {
       rawDistrito = geo.distrito.toUpperCase()
     }
   }
-  // 1. Fecha de Nacimiento en formato Día Mes Año / ISO / Serials
-  const fechaNacParsed = parseFechaNacimiento(get('fecha_nacimiento'))
+  // 1. Fecha de Nacimiento en formato Día Mes Año / ISO / Serials (con soporte de edadHint)
+  const fechaNacParsed = parseFechaNacimiento(get('fecha_nacimiento'), get('edad'))
 
   // 2. Edad: parsear texto ("24", "23 años", "tengo 22", "veinticuatro") o calcular desde fecha_nacimiento
   const edadParsed = parseEdadValue(get('edad'), fechaNacParsed)
@@ -903,15 +974,30 @@ export function parseGoogleFormRow(row, colIdx) {
                        (phonesFromWsp.primary && phonesFromWsp.primary !== celularNorm ? phonesFromWsp.primary : null) ||
                        null
 
+  // Columnas excluidas del escaneo de emergencia de teléfonos (fechas, marcas temporales, DNI, edad, hijos)
+  const excludedPhoneCols = new Set(
+    [
+      colIdx.marca_temporal,
+      colIdx.fecha_nacimiento,
+      colIdx.edad,
+      colIdx.n_hijos,
+      colIdx.documento,
+      colIdx.periodo_reclutado,
+      colIdx.semana_trabajo
+    ].filter(idx => idx !== undefined && idx >= 0)
+  )
+
   // Fallback exhaustivo para celular si sigue vacío: buscar en toda la fila un número de 9 dígitos que inicie en 9
   if (!celularNorm) {
     for (let cIdx = 0; cIdx < row.length; cIdx++) {
+      if (excludedPhoneCols.has(cIdx)) continue
+      if (cIdx === 0 && colIdx.marca_temporal === undefined && /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/.test(String(row[0] || '').trim())) continue
       const cellVal = String(row[cIdx] || '').trim()
       if (!cellVal || cellVal === rawDoc) continue
       const candidate = extractPhonesFromText(cellVal)
-      if (candidate.primary && candidate.primary !== rawDoc) {
+      if (candidate.primary && /^9\d{8}$/.test(candidate.primary) && candidate.primary !== rawDoc) {
         celularNorm = candidate.primary
-        if (candidate.secondary && candidate.secondary !== rawDoc) {
+        if (candidate.secondary && /^9\d{8}$/.test(candidate.secondary) && candidate.secondary !== rawDoc) {
           celularRefNorm = candidate.secondary
         }
         break
@@ -923,14 +1009,16 @@ export function parseGoogleFormRow(row, colIdx) {
   // Buscar en toda la fila un número de 9 dígitos que sea diferente al celular principal y al DNI
   if (!celularRefNorm) {
     for (let cIdx = 0; cIdx < row.length; cIdx++) {
+      if (excludedPhoneCols.has(cIdx)) continue
+      if (cIdx === 0 && colIdx.marca_temporal === undefined && /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/.test(String(row[0] || '').trim())) continue
       const cellVal = String(row[cIdx] || '').trim()
       if (!cellVal || cellVal === rawDoc) continue
       const candidate = extractPhonesFromText(cellVal)
-      if (candidate.primary && candidate.primary !== rawDoc && candidate.primary !== celularNorm) {
+      if (candidate.primary && /^9\d{8}$/.test(candidate.primary) && candidate.primary !== rawDoc && candidate.primary !== celularNorm) {
         celularRefNorm = candidate.primary
         break
       }
-      if (candidate.secondary && candidate.secondary !== rawDoc && candidate.secondary !== celularNorm) {
+      if (candidate.secondary && /^9\d{8}$/.test(candidate.secondary) && candidate.secondary !== rawDoc && candidate.secondary !== celularNorm) {
         celularRefNorm = candidate.secondary
         break
       }
@@ -985,8 +1073,14 @@ export function parseGoogleFormRow(row, colIdx) {
     cleanUsuarioWhatsapp = celularNorm || celularRefNorm || null
   }
 
+  const rawMarcaTemporal = str('marca_temporal') || (
+    colIdx.marca_temporal === undefined && row[0] && /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/.test(String(row[0]).trim())
+      ? String(row[0]).trim()
+      : null
+  )
+
   return {
-    marca_temporal: parseTimestamp(str('marca_temporal')),
+    marca_temporal: parseTimestamp(rawMarcaTemporal),
     periodo_reclutado: normUpper('periodo_reclutado'),
     semana_trabajo: parseInt(get('semana_trabajo'), 10) || null,
     reclutador: normUpper('reclutador'),

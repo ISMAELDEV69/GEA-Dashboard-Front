@@ -9,6 +9,7 @@ import { updateGrupoFormador, getEquipoFormacion } from '../lib/dataService'
 import { isSubgroupCode } from '../lib/flujoOperativo'
 import { inferSegmento } from '../lib/capacidadRysSync'
 import DividirGrupoModal from '../components/asignacion/DividirGrupoModal'
+import FormadorSearchSelect from '../components/asignacion/FormadorSearchSelect'
 
 const PAGE_SIZE = 40
 
@@ -595,70 +596,14 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
                     {/* Formador */}
                     <td className="px-3.5 py-2">
                       <div className="relative w-full max-w-sm flex items-center gap-2">
-                        <select
+                        <FormadorSearchSelect
                           value={g.formador_documento || ''}
-                          onChange={(e) => handleAssign(g.codigo, g.campana, e.target.value)}
+                          onChange={(doc) => handleAssign(g.codigo, g.campana, doc)}
+                          formadoresActivos={formadoresActivos}
+                          targetSegmento={(supervisorSegmento || g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase()}
                           disabled={isSaving}
-                          className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all focus:outline-none focus:border-blue-500 cursor-pointer ${
-                            hasFormador
-                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:border-emerald-500/50 shadow-xs'
-                              : 'bg-rose-500/10 text-rose-300 border-rose-500/40 hover:border-rose-500/60 shadow-xs'
-                          } ${isSaving ? 'opacity-50 cursor-not-allowed' : ''} ${isSuccess ? 'border-emerald-400 bg-emerald-500/20' : ''}`}
-                        >
-                          <option value="" className="bg-[var(--bg-surface)] text-rose-400 font-bold">
-                            ● [PENDIENTE] Sin Formador Asignado
-                          </option>
-                          {(() => {
-                            const targetSegmento = (supervisorSegmento || g.segmento || inferSegmento(g.campana) || '').trim().toUpperCase();
-                            const currentDoc = String(g.formador_documento || '').trim();
-
-                            // 1. Filtrar formadores afines al segmento del grupo
-                            const formadoresDelSegmento = targetSegmento
-                              ? formadoresActivos.filter(f => {
-                                  const fSeg = (f.segmento || '').trim().toUpperCase();
-                                  if (!fSeg) return true;
-                                  return fSeg === targetSegmento || fSeg.includes(targetSegmento) || targetSegmento.includes(fSeg);
-                                })
-                              : formadoresActivos;
-
-                            const otrosFormadores = formadoresActivos.filter(f => !formadoresDelSegmento.some(fs => fs.documento === f.documento));
-                            const currentAsignado = currentDoc ? formadoresActivos.find(f => f.documento === currentDoc) : null;
-                            const isCurrentInList = formadoresActivos.some(f => f.documento === currentDoc);
-
-                            return (
-                              <>
-                                {formadoresDelSegmento.length > 0 ? (
-                                  <optgroup label={`Formadores de ${targetSegmento || 'este segmento'} (${formadoresDelSegmento.length})`} className="bg-[var(--bg-surface)] font-bold text-teal-400">
-                                    {formadoresDelSegmento.map(f => (
-                                      <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                        ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : (f.segmento ? `• ${f.segmento}` : '')}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                ) : null}
-
-                                {otrosFormadores.length > 0 && (
-                                  <optgroup label={`Otros Formadores Activos (${otrosFormadores.length})`} className="bg-[var(--bg-surface)] font-bold text-blue-400">
-                                    {otrosFormadores.map(f => (
-                                      <option key={f.documento} value={f.documento} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
-                                        ✓ {f.nombres_completos} {f.segmento ? `(${f.segmento})` : ''} {f.subcampana ? `• ${f.subcampana}` : ''}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                )}
-
-                                {/* Excepción visual: Si ya tenía asignado alguien que no está en la lista de activos */}
-                                {currentAsignado && !isCurrentInList && (
-                                  <optgroup label="⚠️ Asignado Previamente (Inactivo o No Registrado)" className="bg-[var(--bg-surface)] font-bold text-amber-400">
-                                    <option value={currentAsignado.documento} className="bg-[var(--bg-surface)] text-amber-300 font-semibold">
-                                      ⚠ {currentAsignado.nombres_completos} ({currentAsignado.segmento || 'Sin Segmento'})
-                                    </option>
-                                  </optgroup>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </select>
+                          isSuccess={isSuccess}
+                        />
                         
                         {/* Status Icon */}
                         <div className="w-5 flex-shrink-0 flex items-center justify-center">

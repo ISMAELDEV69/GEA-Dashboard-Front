@@ -36,7 +36,7 @@ function getRecordTimestamp(r) {
 
 function getFechaInicioDisplay(assignment, gruposList = []) {
   if (!assignment) return '—'
-  
+
   if (assignment.fecha_inicio_capacitacion) {
     const s = String(assignment.fecha_inicio_capacitacion).trim()
     const parts = s.split('T')[0].split('-')
@@ -46,7 +46,7 @@ function getFechaInicioDisplay(assignment, gruposList = []) {
 
   if (assignment.grupo_codigo && Array.isArray(gruposList) && gruposList.length > 0) {
     const cleanAssignGroup = String(assignment.grupo_codigo).trim().toUpperCase()
-    const g = gruposList.find(grp => 
+    const g = gruposList.find(grp =>
       String(grp.codigo || grp.grupo_codigo || '').trim().toUpperCase() === cleanAssignGroup
     )
     if (g) {
@@ -351,25 +351,25 @@ export default function NominaFormPool({
   reclutador,
   grupos = []
 }) {
-  const fileInputRef                        = React.useRef(null)
-  const [sheetUrl, setSheetUrl]             = useState(() => {
+  const fileInputRef = React.useRef(null)
+  const [sheetUrl, setSheetUrl] = useState(() => {
     const saved = localStorage.getItem('gea_pool_sheet_url')
     return saved || DEFAULT_GOOGLE_FORM_URL
   })
-  const [workbookData, setWorkbookData]     = useState(null)
-  const [sheetNames, setSheetNames]         = useState([])
-  const [selectedSheet, setSelectedSheet]   = useState('')
-  const [loading, setLoading]               = useState(false)
-  const [connecting, setConnecting]         = useState(false)
-  const [poolData, setPoolData]             = useState([])
+  const [workbookData, setWorkbookData] = useState(null)
+  const [sheetNames, setSheetNames] = useState([])
+  const [selectedSheet, setSelectedSheet] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [connecting, setConnecting] = useState(false)
+  const [poolData, setPoolData] = useState([])
   const [latestAssignedDocs, setLatestAssignedDocs] = useState(new Map())
-  const [selectedDocs, setSelectedDocs]     = useState(new Set())
-  const [search, setSearch]                 = useState('')
-  const [page, setPage]                     = useState(1)
-  const [pageSize, setPageSize]             = useState(50)
-  const [error, setError]                   = useState(null)
-  const [success, setSuccess]               = useState(null)
-  const [importing, setImporting]           = useState(false)
+  const [selectedDocs, setSelectedDocs] = useState(new Set())
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(null)
+  const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [duplicateWarningData, setDuplicateWarningData] = useState(null)
   const [conflictWarningData, setConflictWarningData] = useState(null)
@@ -470,7 +470,7 @@ export default function NominaFormPool({
       } else if (wbInfo.type === 'workbook') {
         const worksheet = wbInfo.workbook.Sheets[targetSheetName]
         if (worksheet) {
-          matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+          matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' })
           tabCacheRef.current.set(targetSheetName, matrix)
         }
       } else if (wbInfo.type === 'published_sheets') {
@@ -491,7 +491,7 @@ export default function NominaFormPool({
 
           let csvText = null
           const urlsToTry = []
-          
+
           if (docId && gid !== undefined) {
             urlsToTry.push(`https://docs.google.com/spreadsheets/d/${docId}/gviz/tq?tqx=out:csv&gid=${gid}`)
           }
@@ -536,7 +536,7 @@ export default function NominaFormPool({
 
       const data = await parseSheetMatrixCandidates(matrix, { limitLast2Months: false })
 
-      // Deduplicar postulantes por DNI (conservando la respuesta más reciente del formulario)
+      // Deduplicar postulantes por DNI (conservando la respuesta más reciente y fusionando campos demográficos no vacíos)
       const deduplicatedMap = new Map()
       data.forEach(item => {
         const doc = String(item.documento || '').trim()
@@ -547,9 +547,14 @@ export default function NominaFormPool({
           const existing = deduplicatedMap.get(doc)
           const tExisting = new Date(existing.marca_temporal || 0).getTime()
           const tItem = new Date(item.marca_temporal || 0).getTime()
-          if (tItem >= tExisting) {
-            deduplicatedMap.set(doc, item)
-          }
+          const [primary, secondary] = tItem >= tExisting ? [item, existing] : [existing, item]
+          const merged = { ...secondary, ...primary }
+          Object.keys(secondary).forEach(k => {
+            if ((merged[k] === null || merged[k] === undefined || merged[k] === '') && secondary[k] !== null && secondary[k] !== undefined && secondary[k] !== '') {
+              merged[k] = secondary[k]
+            }
+          })
+          deduplicatedMap.set(doc, merged)
         }
       })
       const uniqueData = Array.from(deduplicatedMap.values())
@@ -711,8 +716,8 @@ export default function NominaFormPool({
       list = list.filter(d => {
         const doc = String(d.documento || '').toLowerCase().trim()
         const docClean = doc.replace(/^0+/, '')
-        const matchDoc = doc.includes(q) || 
-                         (qClean.length >= 4 && (docClean.includes(qClean) || qClean.includes(docClean)))
+        const matchDoc = doc.includes(q) ||
+          (qClean.length >= 4 && (docClean.includes(qClean) || qClean.includes(docClean)))
 
         return (
           matchDoc ||
@@ -754,7 +759,7 @@ export default function NominaFormPool({
       // Bloqueante si está en capacitación activa en otro grupo o ya adjudicado en la semana en curso
       return !evalRes.isBloqueante
     })
-  , [availableData, latestAssignedDocs, bulkGrupo, currentContext])
+    , [availableData, latestAssignedDocs, bulkGrupo, currentContext])
 
   const poolStats = useMemo(() => ({
     total: poolData.length,
@@ -910,7 +915,7 @@ export default function NominaFormPool({
           ? new Date(d.marca_temporal).toISOString()
           : new Date().toISOString()
 
-        const fechaNac = parseFechaNacimiento(d.fecha_nacimiento) || null
+        const fechaNac = parseFechaNacimiento(d.fecha_nacimiento, d.edad) || null
         const edadVal = parseEdadValue(d.edad, fechaNac)
         const expTiempoCall = normalizeTiempoExperiencia(d.exp_tiempo_campana || d.exp_tiempo_call) || d.exp_tiempo_campana || d.exp_tiempo_call || null
         const expTiempoOtra = normalizeTiempoExperiencia(d.exp_tiempo_otra) || d.exp_tiempo_otra || null
@@ -918,8 +923,8 @@ export default function NominaFormPool({
         const phonesRef = extractPhonesFromText(d.celular_referencia)
         const phonesWsp = extractPhonesFromText(d.usuario_whatsapp)
 
-        const finalCelular = phonesCel.primary || phonesWsp.primary || phonesRef.primary || d.celular || null
-        const finalCelularRef = phonesRef.primary || phonesCel.secondary || phonesRef.secondary || (phonesWsp.primary && phonesWsp.primary !== finalCelular ? phonesWsp.primary : null) || d.celular_referencia || null
+        const finalCelular = phonesCel.primary || phonesWsp.primary || phonesRef.primary || null
+        const finalCelularRef = phonesRef.primary || phonesCel.secondary || phonesRef.secondary || (phonesWsp.primary && phonesWsp.primary !== finalCelular ? phonesWsp.primary : null) || null
 
         const rawPayload = {
           ...d,
@@ -994,16 +999,20 @@ export default function NominaFormPool({
         setImportProgress(p => Math.min(p + 20, 90))
       }, 150)
 
-      // 1. Insertar nuevos postulantes / reingresos mediante adjudicación atómica y segura
-      if (toInsert.length > 0) {
+      // 1. Insertar nuevos postulantes / reingresos y actualizar existentes mediante RPC atómico (SECURITY DEFINER)
+      const allRpcCandidates = [
+        ...toInsert,
+        ...toUpdate.map(u => ({ ...u.row, documento: u.doc }))
+      ]
+      if (allRpcCandidates.length > 0) {
         await adjudicarPostulantesPoolBulk({
           targetGrupo: cleanTargetGrupo,
           targetCampana: bulkCampana,
-          postulantes: toInsert
+          postulantes: allRpcCandidates
         })
       }
 
-      // 2. Actualizar postulantes existentes en este mismo grupo (Sin pisar seguimiento operativo)
+      // 2. Actualizar campos adicionales de postulantes existentes en este mismo grupo (Sin pisar seguimiento operativo)
       if (toUpdate.length > 0) {
         for (const item of toUpdate) {
           if (Object.keys(item.row).length > 0) {
@@ -1096,7 +1105,7 @@ export default function NominaFormPool({
 
       {/* ── 1. Google Sheets Link & Multi-Sheet Bar ── */}
       <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)]/40 space-y-3.5">
-        
+
         {/* URL Input Bar & File Upload */}
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2.5">
           <div className="flex-1 relative flex items-center">
@@ -1163,8 +1172,8 @@ export default function NominaFormPool({
                       onClick={() => handleSheetChange(name)}
                       className={`
                         px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border
-                        ${isActive 
-                          ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.35)] font-black' 
+                        ${isActive
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.35)] font-black'
                           : 'bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
                         }
                       `}
@@ -1190,10 +1199,10 @@ export default function NominaFormPool({
       <div className="p-4 sm:p-5 border-b border-[var(--border-subtle)] space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex gap-2.5 flex-wrap flex-1 items-center">
-            <PoolStat label="En la Hoja"           value={poolStats.total} color="var(--accent, #06b6d4)" icon={Users} />
-            <PoolStat label="Disponibles"          value={poolStats.disponibles}  color="#10b981" icon={CheckCircle2} />
-            <PoolStat label="Ya Adjudicados"       value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
-            <PoolStat label="Seleccionados"        value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
+            <PoolStat label="En la Hoja" value={poolStats.total} color="var(--accent, #06b6d4)" icon={Users} />
+            <PoolStat label="Disponibles" value={poolStats.disponibles} color="#10b981" icon={CheckCircle2} />
+            <PoolStat label="Ya Adjudicados" value={poolStats.yaIngresados} color="#64748b" icon={UserCheck} />
+            <PoolStat label="Seleccionados" value={poolStats.seleccionados} color="#f59e0b" icon={CheckSquare} />
           </div>
 
           {/* Target Group Badge */}
@@ -1240,7 +1249,7 @@ export default function NominaFormPool({
       {/* ── Alerts ── */}
       {error && (
         <div className="mx-5 mt-4 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-500 dark:text-rose-400 rounded-2xl flex items-center gap-2 text-xs font-semibold">
-          <AlertTriangle size={15} className="shrink-0" /> 
+          <AlertTriangle size={15} className="shrink-0" />
           <span className="flex-1">{error}</span>
           <button onClick={() => setError(null)} className="ml-auto"><X size={14} /></button>
         </div>
@@ -1370,7 +1379,7 @@ export default function NominaFormPool({
                 const latestAssignment = latestAssignedDocs.get(cleanDoc)
                 const isAssigned = Boolean(latestAssignment)
                 const isCurrentGroup = isAssigned && bulkGrupo && latestAssignment.grupo_codigo === bulkGrupo
-                
+
                 const evalRes = isAssigned ? evaluarHistorialPostulante(latestAssignment, currentContext) : null
                 const isOtherGroup = isAssigned && !isCurrentGroup && evalRes?.isBloqueante
                 const isSemanaEnCurso = isOtherGroup && evalRes?.isSemanaEnCurso
@@ -1391,8 +1400,7 @@ export default function NominaFormPool({
                         toggleSelect(cleanDoc, d.marca_temporal)
                       }
                     }}
-                    className={`transition-colors ${
-                      isSelected
+                    className={`transition-colors ${isSelected
                         ? 'bg-cyan-500/10 cursor-pointer'
                         : isCurrentGroup
                           ? 'bg-cyan-500/5 hover:bg-cyan-500/10 cursor-pointer'
@@ -1405,33 +1413,33 @@ export default function NominaFormPool({
                                 : isOtherGroup
                                   ? 'bg-amber-500/5 hover:bg-amber-500/10 cursor-pointer'
                                   : 'hover:bg-[var(--bg-elevated)] cursor-pointer'
-                    }`}
+                      }`}
                   >
                     {/* Selection Checkbox */}
                     <td className="p-3 text-center align-top sticky left-0 z-10 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)]" onClick={e => e.stopPropagation()}>
-                      <button 
+                      <button
                         onClick={() => {
                           if (isOtherGroup) {
                             handleDesadjudicar(latestAssignment, d)
                           } else {
                             toggleSelect(cleanDoc, d.marca_temporal)
                           }
-                        }} 
+                        }}
                         className="cursor-pointer pt-1"
                         title={
                           isSemanaEnCurso
                             ? `⚠️ Ya adjudicado por ${latestAssignment.reclutador || 'otro reclutador'} en ${latestAssignment.grupo_codigo} (${latestAssignment.semana_trabajo ? `Sem ${latestAssignment.semana_trabajo}` : 'Semana en curso'}). Haz clic para reasignar.`
-                            : isOtherGroup 
-                              ? `Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.` 
-                              : isNoLlegoCapa 
+                            : isOtherGroup
+                              ? `Postulante activo en ${latestAssignment.grupo_codigo}. Haz clic para habilitarlo.`
+                              : isNoLlegoCapa
                                 ? `Ingreso Apto (No asistió a Día 1 en ${latestAssignment.grupo_codigo})`
                                 : isReingreso
                                   ? `Reingreso disponible (Cesado en ${latestAssignment.grupo_codigo})`
                                   : 'Seleccionar'
                         }
                       >
-                        {isSelected 
-                          ? <CheckSquare size={16} className="text-cyan-400" /> 
+                        {isSelected
+                          ? <CheckSquare size={16} className="text-cyan-400" />
                           : <Square size={16} className="text-[var(--text-muted)] hover:text-cyan-400 transition-colors" />
                         }
                       </button>

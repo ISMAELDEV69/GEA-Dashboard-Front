@@ -1272,16 +1272,39 @@ function TablaConfigs({ configs, onDelete, onEdit, onRefresh }) {
 // ────────────────────────────────────────────────────────────────────────
 function TablaMatrizPagos({ filas = [] }) {
   const [searchTerm, setSearchTerm] = useState('')
+  const [quickFilter, setQuickFilter] = useState('ALL') // 'ALL' | 'PENDIENTE' | 'PAGADO' | 'SIN_PROPUESTA'
   const [sortKey, setSortKey] = useState('nombre_completo')
   const [sortDir, setSortDir] = useState(1)
+  const [detalleAsistenciaRow, setDetalleAsistenciaRow] = useState(null)
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => -d)
     else { setSortKey(key); setSortDir(1) }
   }
 
+  const quickCounts = useMemo(() => {
+    let pendientes = 0
+    let pagadas = 0
+    let sinProp = 0
+    filas.forEach(f => {
+      if (f.estado_pago === 'PAGADO') pagadas++
+      else if (f.estado_pago === 'PENDIENTE') pendientes++
+      if (f.sin_propuesta) sinProp++
+    })
+    return { total: filas.length, pendientes, pagadas, sinProp }
+  }, [filas])
+
   const filasFiltradas = useMemo(() => {
     let list = [...filas]
+
+    if (quickFilter === 'PENDIENTE') {
+      list = list.filter(f => f.estado_pago === 'PENDIENTE')
+    } else if (quickFilter === 'PAGADO') {
+      list = list.filter(f => f.estado_pago === 'PAGADO')
+    } else if (quickFilter === 'SIN_PROPUESTA') {
+      list = list.filter(f => f.sin_propuesta)
+    }
+
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim()
       list = list.filter(f => 
@@ -1303,6 +1326,8 @@ function TablaMatrizPagos({ filas = [] }) {
       if (sortKey === 'nombre_completo' || sortKey === 'documento') {
         const comp = String(va).localeCompare(String(vb)) * sortDir
         if (comp !== 0) return comp
+        const grpComp = String(a.grupo_codigo || '').localeCompare(String(b.grupo_codigo || ''))
+        if (grpComp !== 0) return grpComp
         return String(a.mes_pago || '').localeCompare(String(b.mes_pago || ''))
       }
       if (typeof va === 'number' && typeof vb === 'number') {
@@ -1310,7 +1335,11 @@ function TablaMatrizPagos({ filas = [] }) {
       }
       return String(va).localeCompare(String(vb)) * sortDir
     })
-  }, [filas, searchTerm, sortKey, sortDir])
+  }, [filas, quickFilter, searchTerm, sortKey, sortDir])
+
+  const personasUnicasEnTabla = useMemo(() => {
+    return new Set(filasFiltradas.map(f => `${f.documento}|${f.campana}|${f.grupo_codigo}`)).size
+  }, [filasFiltradas])
 
   const renderMonto = (v, color = 'text-slate-300') => {
     const num = Number(v) || 0
@@ -1320,31 +1349,93 @@ function TablaMatrizPagos({ filas = [] }) {
 
   return (
     <div className="space-y-3">
-      {/* Buscador y Conteo */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-        <div className="relative flex-1 max-w-sm w-full">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            type="text"
-            placeholder="Buscar por DNI, postulante, campaña, grupo o mes de pago..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-          />
+      {/* Buscador, Filtros Rápidos y Conteo */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto flex-1">
+          <div className="relative flex-1 min-w-[240px] max-w-sm">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Buscar por DNI, postulante, campaña, grupo o mes de pago..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-7 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* Píldoras de filtro rápido */}
+          <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-lg border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setQuickFilter('ALL')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                quickFilter === 'ALL'
+                  ? 'bg-slate-700 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Todas ({quickCounts.total})
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickFilter('PENDIENTE')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                quickFilter === 'PENDIENTE'
+                  ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
+                  : 'text-slate-400 hover:text-amber-300'
+              }`}
+            >
+              ⏳ Pendientes ({quickCounts.pendientes})
+            </button>
+            <button
+              type="button"
+              onClick={() => setQuickFilter('PAGADO')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                quickFilter === 'PAGADO'
+                  ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                  : 'text-slate-400 hover:text-emerald-300'
+              }`}
+            >
+              ✓ Pagadas ({quickCounts.pagadas})
+            </button>
+            {quickCounts.sinProp > 0 && (
+              <button
+                type="button"
+                onClick={() => setQuickFilter('SIN_PROPUESTA')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                  quickFilter === 'SIN_PROPUESTA'
+                    ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40'
+                    : 'text-rose-400/80 hover:text-rose-300'
+                }`}
+              >
+                ⚠ Sin Propuesta ({quickCounts.sinProp})
+              </button>
+            )}
+          </div>
         </div>
+
         <div className="text-xs text-slate-400 font-medium">
-          Mostrando <strong className="text-emerald-400">{filasFiltradas.length}</strong> cuotas mensuales en cronograma
+          Mostrando <strong className="text-emerald-400">{filasFiltradas.length}</strong> cuotas (<strong className="text-cyan-300">{personasUnicasEnTabla}</strong> personas)
         </div>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-700/80 shadow-lg bg-slate-900/60 max-h-[650px] relative">
         <table className="w-full text-xs whitespace-nowrap border-collapse">
-          <thead className="bg-slate-800/95 sticky top-0 z-20 text-slate-300 border-b border-slate-700">
+          <thead className="bg-slate-800/95 sticky top-0 z-30 text-slate-300 border-b border-slate-700">
             <tr className="uppercase text-[11px] font-bold tracking-wider">
-              <th onClick={() => handleSort('documento')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white">
+              <th onClick={() => handleSort('documento')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white sticky left-0 z-30 bg-slate-800">
                 DOCUMENTO
               </th>
-              <th onClick={() => handleSort('nombre_completo')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white">
+              <th onClick={() => handleSort('nombre_completo')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white sticky left-[88px] z-30 bg-slate-800 shadow-[4px_0_8px_rgba(0,0,0,0.35)]">
                 NOMBRE COMPLETO
               </th>
               <th onClick={() => handleSort('reclutador')} className="px-3 py-2.5 text-left cursor-pointer hover:text-white text-emerald-400">
@@ -1359,13 +1450,13 @@ function TablaMatrizPagos({ filas = [] }) {
               <th onClick={() => handleSort('status_final')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white" title="Ingreso a Operación confirmado en asistencia">
                 ESTADO / I-OP
               </th>
-              <th onClick={() => handleSort('dia_0_status')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-cyan-300" title="Día 0 de Inducción (Aptos lo cobran si asistieron; Agregados no lo cobran)">
+              <th onClick={() => handleSort('dia_0_status')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-cyan-300" title="Día 0 de Inducción (Aptos lo cobran +1 día si asistieron; si no llevó inducción no afecta Asistencia Perfecta)">
                 DÍA 0 (INDUCCIÓN)
               </th>
-              <th onClick={() => handleSort('dias_asistidos')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white">
+              <th onClick={() => handleSort('dias_asistidos')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white" title="Haz clic en el número de días para ver las fechas exactas de asistencia">
                 DÍAS ASIST.
               </th>
-              <th onClick={() => handleSort('asistencia_perfecta')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-rose-300" title="0 faltas durante la capacitación">
+              <th onClick={() => handleSort('asistencia_perfecta')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white text-rose-300" title="Evalúa solo faltas reales durante capacitación (FI/FJ). El Día 0 no penaliza">
                 ASIST. PERF.
               </th>
               <th onClick={() => handleSort('mes_pago')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white bg-slate-800 border-x border-slate-700 text-amber-300">
@@ -1383,10 +1474,10 @@ function TablaMatrizPagos({ filas = [] }) {
               <th onClick={() => handleSort('bono_asistencia_perfecta')} className="px-3 py-2.5 text-right cursor-pointer hover:text-white text-rose-400">
                 ASISTENCIA PERFECTA
               </th>
-              <th onClick={() => handleSort('total_mes')} className="px-3 py-2.5 text-right font-bold text-emerald-300 bg-emerald-950/20 cursor-pointer hover:text-white">
+              <th onClick={() => handleSort('total_mes')} className="px-3 py-2.5 text-right font-bold text-emerald-300 bg-slate-900 cursor-pointer hover:text-white sticky right-[106px] z-30 shadow-[-4px_0_8px_rgba(0,0,0,0.35)] border-l border-slate-700/80">
                 TOTAL MES
               </th>
-              <th onClick={() => handleSort('estado_pago')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white">
+              <th onClick={() => handleSort('estado_pago')} className="px-3 py-2.5 text-center cursor-pointer hover:text-white sticky right-0 z-30 bg-slate-800">
                 ESTADO DE PAGO
               </th>
               <th className="px-3 py-2.5 text-center text-slate-400">
@@ -1394,7 +1485,7 @@ function TablaMatrizPagos({ filas = [] }) {
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800 bg-slate-900/40">
+          <tbody className="divide-y divide-slate-800/70 bg-slate-900/40">
             {filasFiltradas.length === 0 ? (
               <tr>
                 <td colSpan={17} className="text-center py-10 text-slate-500">
@@ -1402,18 +1493,26 @@ function TablaMatrizPagos({ filas = [] }) {
                 </td>
               </tr>
             ) : (
-              filasFiltradas.map((r, i) => (
-                <tr
-                  key={`${r.documento}-${r.mes_pago}-${i}`}
-                  className={`hover:bg-slate-800/40 transition-colors ${
-                    r.es_baja ? 'bg-rose-950/20 opacity-70' : ''
-                  }`}
-                >
-                  {/* 1. Documento */}
-                  <td className="px-3 py-2 font-mono font-bold text-slate-300">{r.documento}</td>
+              filasFiltradas.map((r, i) => {
+                const prev = i > 0 ? filasFiltradas[i - 1] : null
+                const currPersonKey = `${r.documento}|${r.campana}|${r.grupo_codigo}`
+                const prevPersonKey = prev ? `${prev.documento}|${prev.campana}|${prev.grupo_codigo}` : null
+                const isNewPersonGroup = prevPersonKey && currPersonKey !== prevPersonKey
 
-                  {/* 2. Nombre Completo + Condición Apto / Agregado */}
-                  <td className="px-3 py-2 text-white font-medium uppercase">
+                return (
+                <tr
+                  key={`${r.documento}-${r.grupo_codigo}-${r.mes_pago}-${i}`}
+                  className={`hover:bg-slate-800/50 transition-colors ${
+                    r.es_baja ? 'bg-rose-950/20 opacity-70' : ''
+                  } ${isNewPersonGroup ? 'border-t-2 border-slate-700' : ''}`}
+                >
+                  {/* 1. Documento (Sticky Left) */}
+                  <td className="px-3 py-2 font-mono font-bold text-slate-300 sticky left-0 z-10 bg-slate-900/95">
+                    {r.documento}
+                  </td>
+
+                  {/* 2. Nombre Completo + Condición Apto / Agregado (Sticky Left) */}
+                  <td className="px-3 py-2 text-white font-medium uppercase sticky left-[88px] z-10 bg-slate-900/95 shadow-[4px_0_8px_rgba(0,0,0,0.35)]">
                     {r.nombre_completo}
                     {r.es_agregado ? (
                       <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Agregado/Recuperado: No cobra Día 0 de inducción">
@@ -1476,32 +1575,44 @@ function TablaMatrizPagos({ filas = [] }) {
                       </span>
                     ) : (
                       <span
-                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20"
-                        title="Apto faltó al Día 0"
+                        className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700"
+                        title="Ingresó en Día 1 o posterior sin llevar Día 0 de inducción (no afecta Asistencia Perfecta)"
                       >
-                        Falta
+                        Sin Inducción
                       </span>
                     )}
                   </td>
 
-                  {/* 8. Días Asistidos */}
+                  {/* 8. Días Asistidos (Clic para ver desglose de fechas) */}
                   <td className="px-3 py-2 text-center font-bold text-blue-400">
-                    <span className="text-sm font-black">{r.dias_asistidos}</span>
-                    {r.asistio_dia_0 && (
-                      <span className="block text-[9px] text-cyan-300 font-normal">
-                        (c/ Día 0)
+                    <button
+                      type="button"
+                      onClick={() => setDetalleAsistenciaRow(r)}
+                      className="group inline-flex flex-col items-center px-2 py-0.5 rounded-lg hover:bg-blue-500/15 border border-transparent hover:border-blue-500/30 transition-all cursor-pointer"
+                      title="Clic para ver fechas exactas de asistencia y desglose de tarifa"
+                    >
+                      <span className="text-sm font-black text-blue-400 group-hover:text-blue-300 underline decoration-dotted underline-offset-2">
+                        {r.dias_asistidos}
                       </span>
-                    )}
+                      {r.asistio_dia_0 && (
+                        <span className="block text-[9px] text-cyan-300 font-normal">
+                          (c/ Día 0)
+                        </span>
+                      )}
+                    </button>
                   </td>
 
                   {/* 9. Asistencia Perfecta */}
                   <td className="px-3 py-2 text-center">
                     {r.asistencia_perfecta ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" title="0 faltas registradas en capacitación">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" title="0 faltas durante los días de capacitación">
                         ✓ Perfecta
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20" title="Tuvo faltas o inasistencias en capacitación">
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20"
+                        title="Tuvo falta en capacitación (por convención de periodo de prueba en aula, sí percibe el bono al ingresar a operación)"
+                      >
                         Con Falta
                       </span>
                     )}
@@ -1530,13 +1641,13 @@ function TablaMatrizPagos({ filas = [] }) {
                     )}
                   </td>
 
-                  {/* 15. Total Mes */}
-                  <td className="px-3 py-2 text-right font-black bg-emerald-950/20 text-emerald-300">
+                  {/* 15. Total Mes (Sticky Right) */}
+                  <td className="px-3 py-2 text-right font-black bg-slate-900/95 text-emerald-300 sticky right-[106px] z-10 shadow-[-4px_0_8px_rgba(0,0,0,0.35)] border-l border-slate-800">
                     {soles(r.total_mes)}
                   </td>
 
-                  {/* 16. Estado de Pago */}
-                  <td className="px-3 py-2 text-center">
+                  {/* 16. Estado de Pago (Sticky Right) */}
+                  <td className="px-3 py-2 text-center sticky right-0 z-10 bg-slate-900/95">
                     {r.estado_pago === 'PAGADO' ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                         <CheckCircle2 size={11} /> PAGADO
@@ -1563,11 +1674,134 @@ function TablaMatrizPagos({ filas = [] }) {
                     )}
                   </td>
                 </tr>
-              ))
+              )})
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Modal de Auditoría de Días Asistidos y Tarifa */}
+      {detalleAsistenciaRow && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
+          onClick={() => setDetalleAsistenciaRow(null)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-800/60">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Calculator size={16} className="text-emerald-400" />
+                  Desglose de Asistencia y Cálculo de Capa
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                  {detalleAsistenciaRow.documento} • {detalleAsistenciaRow.nombre_completo}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetalleAsistenciaRow(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold">Grupo / Campaña</div>
+                  <div className="font-mono font-bold text-emerald-400 mt-0.5">{detalleAsistenciaRow.grupo_codigo}</div>
+                  <div className="text-[10px] text-slate-300 truncate">{detalleAsistenciaRow.campana}</div>
+                </div>
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold">Días Computados</div>
+                  <div className="text-base font-black text-blue-400 mt-0.5">
+                    {detalleAsistenciaRow.dias_asistidos} días
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    {detalleAsistenciaRow.dias_capacitacion > 0
+                      ? `Tope propuesta: ${detalleAsistenciaRow.dias_capacitacion} días`
+                      : 'Según asistencia efectiva'}
+                  </div>
+                </div>
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5 col-span-2 sm:col-span-1">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold">Tarifa Aplicada</div>
+                  <div className="text-base font-black text-emerald-400 mt-0.5">
+                    {detalleAsistenciaRow.pago_por_dia > 0 ? `${soles(detalleAsistenciaRow.pago_por_dia)} / día` : 'Según propuesta'}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    Ingreso OP: {detalleAsistenciaRow.fecha_primer_iop || 'Confirmado'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Día 0 */}
+              <div className="flex items-center justify-between bg-slate-800/40 border border-slate-800 rounded-xl px-3.5 py-2.5">
+                <span className="text-slate-300 font-semibold">Día 0 (Inducción):</span>
+                {detalleAsistenciaRow.asistio_dia_0 ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    ✓ Asistió (+1 día computado)
+                  </span>
+                ) : detalleAsistenciaRow.es_agregado ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    N/A (Agregado: no cobra Día 0)
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                    Sin Inducción (No penaliza Asistencia Perfecta)
+                  </span>
+                )}
+              </div>
+
+              {/* Fechas Asistidas */}
+              <div>
+                <div className="text-[11px] font-bold text-slate-300 uppercase mb-2 flex items-center justify-between">
+                  <span>Fechas con Asistencia Efectiva (A) antes de OJT</span>
+                  <span className="text-emerald-400 font-mono">{(detalleAsistenciaRow.fechas_asistidas || []).length} fechas</span>
+                </div>
+                {(detalleAsistenciaRow.fechas_asistidas || []).length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-slate-950/60 rounded-xl border border-slate-800">
+                    {detalleAsistenciaRow.fechas_asistidas.map(fecha => (
+                      <span
+                        key={fecha}
+                        className="px-2 py-1 rounded-md font-mono text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                      >
+                        ✓ {fecha}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-slate-500 italic bg-slate-950/40 p-3 rounded-xl border border-slate-800">
+                    No se detallan fechas individuales previas a OJT.
+                  </div>
+                )}
+              </div>
+
+              {/* Fechas con Falta si tuvo */}
+              {(detalleAsistenciaRow.fechas_faltas || []).length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold text-rose-400 uppercase mb-1.5">
+                    Inasistencias registradas en Aula ({detalleAsistenciaRow.fechas_faltas.length})
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-rose-950/20 rounded-xl border border-rose-500/20">
+                    {detalleAsistenciaRow.fechas_faltas.map((f, idx) => (
+                      <span
+                        key={`${f.fecha}-${idx}`}
+                        className="px-2 py-1 rounded-md font-mono text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                      >
+                        ✗ {f.fecha} ({f.sigla})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1625,10 +1859,11 @@ function TablaResumenPostulantes({ personas = [] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800 bg-slate-900/40">
-            {filtrados.map(p => {
-              const isExpanded = expandedDoc === p.documento
+            {filtrados.map((p, idx) => {
+              const rowKey = `${p.documento}|${p.campana}|${p.grupo_codigo}`
+              const isExpanded = expandedDoc === rowKey
               return (
-                <React.Fragment key={p.documento}>
+                <React.Fragment key={rowKey || idx}>
                   <tr className="hover:bg-slate-800/40 transition-colors">
                     <td className="px-3 py-2 font-mono font-bold text-slate-300">{p.documento}</td>
                     <td className="px-3 py-2 text-white font-medium uppercase">
@@ -1681,7 +1916,7 @@ function TablaResumenPostulantes({ personas = [] }) {
                     </td>
                     <td className="px-3 py-2 text-center">
                       <button
-                        onClick={() => setExpandedDoc(isExpanded ? null : p.documento)}
+                        onClick={() => setExpandedDoc(isExpanded ? null : rowKey)}
                         className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium flex items-center gap-1 mx-auto"
                       >
                         {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -1909,12 +2144,12 @@ function TablaPagos({ filas, maxCuotas }) {
                         <span>✓</span> Asistió
                       </span>
                     ) : row.es_agregado ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20">
-                        {row.dia_0_status === 'FALTA' ? 'Falta' : 'N/A'}
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300/80 border border-amber-500/20">
+                        N/A
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400/80 border border-rose-500/20">
-                        Falta
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                        Sin Inducción
                       </span>
                     )}
                   </td>
@@ -2730,7 +2965,7 @@ export default function PagosCapacitacion({ userProfile }) {
           {calculoReady && (
             vistaModo === 'matriz' ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <KpiCard icon={Users} label="Cuotas en Vista" value={resumenMatriz.total_cuotas} sub={`${resumenPorPersona.length} personas`} color="blue" />
+                <KpiCard icon={Users} label="Cuotas en Vista" value={resumenMatriz.total_cuotas} sub={`${resumenMatriz.personas_unicas ?? resumenPorPersona.length} personas`} color="blue" />
                 <KpiCard icon={DollarSign} label="Total Programado" value={soles(resumenMatriz.total_programado)} color="cyan" />
                 <KpiCard icon={CheckCircle2} label="Total Pagado" value={soles(resumenMatriz.total_pagado)} sub={`${resumenMatriz.cuotas_pagadas} cuotas liquidadas`} color="green" />
                 <KpiCard icon={Clock} label="Saldo Pendiente" value={soles(resumenMatriz.total_pendiente)} sub={`${resumenMatriz.cuotas_pendientes} cuotas por pagar`} color="amber" highlight />

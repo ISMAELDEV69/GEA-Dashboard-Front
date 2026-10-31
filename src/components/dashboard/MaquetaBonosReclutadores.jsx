@@ -22,7 +22,9 @@ import {
   guardarLiquidacionPeriodo, 
   fetchMaquetaBaseOperativa, 
   guardarMaquetaBaseOperativa, 
-  sincronizarMaquetaBaseDesdeConsolidado 
+  sincronizarMaquetaBaseDesdeConsolidado,
+  fetchLiquidacionesPeriodo,
+  fetchTrazabilidadPostulantesGrupoMaqueta
 } from '../../lib/dataService'
 import Card, { CardHeader, CardTitle, CardContent } from '../ui/Card'
 
@@ -39,27 +41,39 @@ export default function MaquetaBonosReclutadores({
   // ── 1. ESTADOS LOCALES ─────────────────────────────────────────────────────
   const [equipoList, setEquipoList] = useState([])
   const [loadingEquipo, setLoadingEquipo] = useState(true)
-  const [activeTab, setActiveTab] = useState('bonos_oficial') // 'bonos_oficial' | 'base_operativa' | 'simulador' | 'maqueta_reglas'
+  const [activeTab, setActiveTab] = useState('bonos_oficial') // 'bonos_oficial' | 'base_operativa' | 'simulador' | 'trazabilidad_auditoria' | 'maqueta_reglas'
   const [searchTerm, setSearchTerm] = useState('')
   const [searchBaseTerm, setSearchBaseTerm] = useState('')
   const [filterBaseCampana, setFilterBaseCampana] = useState('TODAS')
   const [filterBaseModalidad, setFilterBaseModalidad] = useState('TODAS')
   const [filterCargo, setFilterCargo] = useState('TODOS')
   const [filterSemaforo, setFilterSemaforo] = useState('TODOS')
+  const [filterEstado, setFilterEstado] = useState('TODOS') // 'TODOS' | 'ACTIVO' | 'CESE'
+  const [filterComision, setFilterComision] = useState('TODOS') // 'TODOS' | 'CON_BONO' | 'SIN_BONO'
   const [selectedPersona, setSelectedPersona] = useState(null)
   const [boletaPersona, setBoletaPersona] = useState(null)
+  const [boletaTab, setBoletaTab] = useState('resumen') // 'resumen' | 'grupos' | 'postulantes'
+  const [selectedGpeTrace, setSelectedGpeTrace] = useState(null)
+  const [postulantesTrace, setPostulantesTrace] = useState([])
+  const [loadingPostulantesTrace, setLoadingPostulantesTrace] = useState(false)
+  const [filterPostulantesTrace, setFilterPostulantesTrace] = useState('TODOS') // 'TODOS' | 'MIOS' | 'DIA1' | 'IOP' | 'BAJA'
+  const [expandedRecruiterKey, setExpandedRecruiterKey] = useState(null)
   const [isDispersionModalOpen, setIsDispersionModalOpen] = useState(false)
   const [useTope, setUseTope] = useState(false)
+  const [modeloMaqueta, setModeloMaqueta] = useState('sheets_oficial') // 'sheets_oficial' | 'diferenciado'
 
-  // Sobrescrituras manuales de auditoría en memoria: { [key]: { calidad: 100, procesosAdm: 100 } }
+  // Sobrescrituras manuales de auditoría persistidas por periodo: { [key]: { calidad: 100, procesosAdm: 100, motivo: '', fecha: '' } }
   const [manualAuditOverrides, setManualAuditOverrides] = useState({})
   const [editingAuditKey, setEditingAuditKey] = useState(null)
   const [tempCalidad, setTempCalidad] = useState(100)
   const [tempProcesos, setTempProcesos] = useState(100)
+  const [tempMotivoAudit, setTempMotivoAudit] = useState('')
 
-  // Estado de persistencia en base de datos
+  // Estado de persistencia y liquidaciones cerradas en base de datos
   const [savingLiq, setSavingLiq] = useState(false)
   const [liqSavedSuccess, setLiqSavedSuccess] = useState(false)
+  const [liquidacionesGuardadas, setLiquidacionesGuardadas] = useState([])
+  const [loadingLiqGuardadas, setLoadingLiqGuardadas] = useState(false)
 
   // Estado de Base Operativa Oficial (maqueta_reclutadores_base)
   const [baseFromDb, setBaseFromDb] = useState([])
@@ -67,7 +81,41 @@ export default function MaquetaBonosReclutadores({
   const [syncingBase, setSyncingBase] = useState(false)
   const [syncBaseSuccess, setSyncBaseSuccess] = useState(false)
 
-  // Carga inicial de la Base Operativa guardada en BD
+  // Cargar ajustes de auditoría persistidos en localStorage por periodo
+  useEffect(() => {
+    const pKey = `gea_maqueta_audit_${periodoSeleccionado || 'actual'}`
+    try {
+      const saved = localStorage.getItem(pKey)
+      setManualAuditOverrides(saved ? JSON.parse(saved) : {})
+    } catch {
+      setManualAuditOverrides({})
+    }
+  }, [periodoSeleccionado])
+
+  const guardarOverrideAuditoria = useCallback((personaKey, calidadVal, procesosVal, motivoVal = '') => {
+    const pKey = `gea_maqueta_audit_${periodoSeleccionado || 'actual'}`
+    setManualAuditOverrides((prev) => {
+      const next = {
+        ...prev,
+        [personaKey]: {
+          calidad: Math.min(100, Math.max(0, Number(calidadVal) || 0)),
+          procesosAdm: Math.min(100, Math.max(0, Number(procesosVal) || 0)),
+          motivo: String(motivoVal || '').trim(),
+          fecha: new Date().toISOString(),
+          por: userProfile?.nombre_completo || userProfile?.email || 'Auditor RyS'
+        }
+      }
+      try {
+        localStorage.setItem(pKey, JSON.stringify(next))
+      } catch (e) {
+        console.warn('[MaquetaAudit] No se pudo guardar en localStorage:', e)
+      }
+      return next
+    })
+    setEditingAuditKey(null)
+  }, [periodoSeleccionado, userProfile])
+
+  // Carga inicial de la Base Operativa y Liquidaciones guardadas en BD
   useEffect(() => {
     let isMounted = true
     setLoadingBaseDb(true)
@@ -79,6 +127,17 @@ export default function MaquetaBonosReclutadores({
       .finally(() => {
         if (isMounted) setLoadingBaseDb(false)
       })
+
+    setLoadingLiqGuardadas(true)
+    fetchLiquidacionesPeriodo(periodoSeleccionado)
+      .then((data) => {
+        if (isMounted) setLiquidacionesGuardadas(Array.isArray(data) ? data : [])
+      })
+      .catch((err) => console.warn('[MaquetaLiq] Error al cargar liquidaciones:', err))
+      .finally(() => {
+        if (isMounted) setLoadingLiqGuardadas(false)
+      })
+
     return () => { isMounted = false }
   }, [periodoSeleccionado])
 
@@ -99,35 +158,93 @@ export default function MaquetaBonosReclutadores({
     return () => { isMounted = false }
   }, [])
 
-  // Adaptador de filas operativas: prioriza maqueta_reclutadores_base si existe en BD
-  const effectiveKpiRows = useMemo(() => {
+  // Filtrar kpiRows en vivo únicamente para el periodo seleccionado
+  const kpiRowsPeriodo = useMemo(() => {
+    const pNorm = String(periodoSeleccionado || '').replace(/\D/g, '').slice(0, 6)
+    if (!pNorm) return kpiRows || []
+    const filtered = (kpiRows || []).filter((r) => {
+      const pEf = String(r.periodo_efectivo || '').replace(/\D/g, '').slice(0, 6)
+      const pRec = String(r.periodo_reclutado || '').replace(/\D/g, '').slice(0, 6)
+      return pEf === pNorm || (!pEf && pRec === pNorm)
+    })
+    return filtered.length > 0 ? filtered : (kpiRows || [])
+  }, [kpiRows, periodoSeleccionado])
+
+  // Adaptador de filas operativas: cruza maqueta_reclutadores_base con kpiRowsPeriodo para no perder topes, calidad ni alertas de desfase en vivo
+  const { effectiveKpiRows, syncDiagnostics } = useMemo(() => {
+    const norm = (s) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ')
+
+    // Mapa de filas en vivo por (codigo_gpe | campana | responsable) y (codigo_gpe | responsable)
+    const liveMapExact = new Map()
+    const liveMapByGpeResp = new Map()
+    for (const k of kpiRowsPeriodo) {
+      const gpe = norm(k.grupo_g || k.codigo_gpe)
+      const camp = norm(k.campana)
+      const resp = norm(k.responsable)
+      if (!gpe || !resp) continue
+      liveMapExact.set(`${gpe}|${camp}|${resp}`, k)
+      liveMapByGpeResp.set(`${gpe}|${resp}`, k)
+    }
+
     if (baseFromDb && baseFromDb.length > 0) {
-      const baseMapped = baseFromDb.map((b) => ({
-        responsable: b.analista_reclutador,
-        meta_dia_1_individual: Number(b.meta_dia_1_individual || 0),
-        meta_dia_1_campana: Number(b.meta_dia_1_grupal || 0),
-        dia_1: Number(b.asistencia_dia_1 || 0),
-        dotacion_q: Number(b.dotacion || 0),
-        rq: Number(b.rq_op || 0),
-        nomina: Number(b.nomina || 0),
-        campana: b.campana,
-        codigo_gpe: b.codigo_gpe,
-        grupo_g: b.codigo_gpe,
-        segmento: b.segmento,
-        modalidad: b.modalidad,
-        fecha_inicio: b.fecha_inicio_capa,
-        fecha_ingreso_op: b.fecha_fin_capa,
-        tipo_reclutador: b.tipo_reclutador,
-      }))
+      const matchedLiveKeys = new Set()
+      let totalConDesfase = 0
+
+      const baseMapped = baseFromDb.map((b) => {
+        const gpe = norm(b.codigo_gpe)
+        const camp = norm(b.campana)
+        const resp = norm(b.analista_reclutador)
+        const exactKey = `${gpe}|${camp}|${resp}`
+        const fallbackKey = `${gpe}|${resp}`
+        const liveRow = liveMapExact.get(exactKey) || liveMapByGpeResp.get(fallbackKey) || null
+        if (liveRow) {
+          matchedLiveKeys.add(`${norm(liveRow.grupo_g || liveRow.codigo_gpe)}|${norm(liveRow.campana)}|${norm(liveRow.responsable)}`)
+        }
+
+        const d1Base = Number(b.asistencia_dia_1 || 0)
+        const dotBase = Number(b.dotacion || 0)
+        const d1Vivo = liveRow ? Number(liveRow.dia_1 || 0) : d1Base
+        const dotVivo = liveRow ? Number(liveRow.dotacion_q || 0) : dotBase
+        const tieneDesfase = Boolean(liveRow && (d1Vivo !== d1Base || dotVivo !== dotBase))
+        if (tieneDesfase) totalConDesfase += 1
+
+        return {
+          responsable: b.analista_reclutador,
+          meta_dia_1_individual: Number(b.meta_dia_1_individual || liveRow?.meta_dia_1_individual || 0),
+          meta_dia_1_campana: Number(b.meta_dia_1_grupal || liveRow?.meta_dia_1_campana || 0),
+          dia_1: d1Base,
+          dia_1_tope: liveRow?.dia_1_tope !== undefined ? Number(liveRow.dia_1_tope) : Math.min(d1Base, Number(b.meta_dia_1_individual || d1Base)),
+          dotacion_q: dotBase,
+          dotacion_q_tope: liveRow?.dotacion_q_tope !== undefined ? Number(liveRow.dotacion_q_tope) : Math.min(dotBase, Number(b.rq_op || dotBase)),
+          rq: Number(b.rq_op || liveRow?.rq_individual || liveRow?.rq || 0),
+          nomina: Number(b.nomina || liveRow?.nomina || 0),
+          aptos: Number(liveRow?.aptos || liveRow?.cantidad_aptos || 0),
+          evaluados: Number(liveRow?.evaluados || liveRow?.cantidad_evaluados || 0),
+          campana: b.campana,
+          codigo_gpe: b.codigo_gpe,
+          grupo_g: b.codigo_gpe,
+          segmento: b.segmento,
+          modalidad: b.modalidad,
+          semana: b.semana,
+          fecha_inicio: b.fecha_inicio_capa,
+          fecha_ingreso_op: b.fecha_fin_capa,
+          tipo_reclutador: b.tipo_reclutador,
+          origen_fuente: 'BASE_BD',
+          dia_1_vivo: d1Vivo,
+          dotacion_vivo: dotVivo,
+          tiene_desfase_vivo: tieneDesfase,
+        }
+      })
 
       // Identificar reclutadores presentes en la base oficial
-      const norm = (s) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ')
       const reclutadoresEnBase = new Set(baseMapped.map(b => norm(b.responsable)))
 
-      // Si kpiRows tiene filas de un reclutador que NO está en la base oficial, agregarlas como respaldo operativo
-      const filasFaltantes = (kpiRows || []).filter(k => {
+      // Si kpiRowsPeriodo tiene filas de un reclutador o grupo nuevo que NO está en la base oficial, agregarlas como respaldo operativo
+      const filasFaltantes = kpiRowsPeriodo.filter(k => {
         const nom = norm(k.responsable)
         if (!nom || nom === 'ADMIN' || nom === 'RECLUTADOR' || nom.includes('SIN NOMINA') || nom === 'RECUPERADO') return false
+        const gpeKey = `${norm(k.grupo_g || k.codigo_gpe)}|${norm(k.campana)}|${nom}`
+        if (matchedLiveKeys.has(gpeKey)) return false
         const exists = Array.from(reclutadoresEnBase).some(r => r === nom || r.includes(nom) || nom.includes(r))
         return !exists
       }).map(k => ({
@@ -135,30 +252,65 @@ export default function MaquetaBonosReclutadores({
         meta_dia_1_individual: Number(k.meta_dia_1_individual || 0),
         meta_dia_1_campana: Number(k.meta_dia_1_campana || 0),
         dia_1: Number(k.dia_1 || 0),
-        dia_1_tope: Number(k.dia_1_tope || 0),
+        dia_1_tope: Number(k.dia_1_tope ?? k.dia_1 ?? 0),
         dotacion_q: Number(k.dotacion_q || 0),
-        dotacion_q_tope: Number(k.dotacion_q_tope || 0),
+        dotacion_q_tope: Number(k.dotacion_q_tope ?? k.dotacion_q ?? 0),
         rq: Number(k.rq_individual || k.rq || 0),
         nomina: Number(k.nomina || 0),
+        aptos: Number(k.aptos || k.cantidad_aptos || 0),
+        evaluados: Number(k.evaluados || k.cantidad_evaluados || 0),
         campana: k.campana,
         codigo_gpe: k.grupo_g,
         grupo_g: k.grupo_g,
         segmento: k.segmento,
         modalidad: k.modalidad,
+        semana: k.semana,
         fecha_inicio: k.fecha_inicio,
         fecha_ingreso_op: k.fecha_ingreso_op,
         tipo_reclutador: k.cargo || 'Asistente de Reclutamiento y Selección',
+        origen_fuente: 'RESPALDO_VIVO',
+        dia_1_vivo: Number(k.dia_1 || 0),
+        dotacion_vivo: Number(k.dotacion_q || 0),
+        tiene_desfase_vivo: false,
       }))
 
-      return [...baseMapped, ...filasFaltantes]
+      return {
+        effectiveKpiRows: [...baseMapped, ...filasFaltantes],
+        syncDiagnostics: {
+          usandoBaseDb: true,
+          totalBaseDb: baseMapped.length,
+          totalFaltantesEnBase: filasFaltantes.length,
+          totalConDesfase,
+          isSynced: totalConDesfase === 0 && filasFaltantes.length === 0
+        }
+      }
     }
-    return kpiRows
-  }, [baseFromDb, kpiRows])
+
+    return {
+      effectiveKpiRows: kpiRowsPeriodo.map(k => ({
+        ...k,
+        origen_fuente: 'CONSOLIDADO_VIVO',
+        dia_1_vivo: Number(k.dia_1 || 0),
+        dotacion_vivo: Number(k.dotacion_q || 0),
+        tiene_desfase_vivo: false,
+      })),
+      syncDiagnostics: {
+        usandoBaseDb: false,
+        totalBaseDb: 0,
+        totalFaltantesEnBase: kpiRowsPeriodo.length,
+        totalConDesfase: 0,
+        isSynced: false
+      }
+    }
+  }, [baseFromDb, kpiRowsPeriodo])
 
   // ── 3. EJECUCIÓN DEL MOTOR DE CÁLCULO DE MAQUETA ────────────────────────────
   const { filas, resumen, mediaEquipo } = useMemo(() => {
-    return calcularMaquetaBonosReclutadores(effectiveKpiRows, equipoList, manualAuditOverrides, { useTope })
-  }, [effectiveKpiRows, equipoList, manualAuditOverrides, useTope])
+    return calcularMaquetaBonosReclutadores(effectiveKpiRows, equipoList, manualAuditOverrides, {
+      useTope,
+      modelo: modeloMaqueta
+    })
+  }, [effectiveKpiRows, equipoList, manualAuditOverrides, useTope, modeloMaqueta])
 
   // Identificar usuario actual si es reclutador bloqueado
   const selfKey = useMemo(() => {
@@ -198,11 +350,37 @@ export default function MaquetaBonosReclutadores({
   }, [isLockedRecruiter, selfKey, filas])
 
   // ── 4. PARTICIONAMIENTO Y FILTRADO ──────────────────────────────────────────
+  const countsEstado = useMemo(() => {
+    let activos = 0
+    let cesados = 0
+    let conBono = 0
+    for (const f of filas) {
+      if (f.estado === 'CESE' || f.fechaCese) cesados++
+      else activos++
+      if (f.bonoNeto > 0) conBono++
+    }
+    return { activos, cesados, conBono, total: filas.length }
+  }, [filas])
+
   const filasFiltradas = useMemo(() => {
     return filas.filter((f) => {
       if (isLockedRecruiter && selfKey && f.key !== selfKey) return false
       if (filterCargo !== 'TODOS' && f.cargoClave !== filterCargo) return false
       if (filterSemaforo !== 'TODOS' && f.semaforoGlobal !== filterSemaforo) return false
+      
+      // Filtro de Estado Activo / Cesado
+      if (filterEstado !== 'TODOS') {
+        const isCese = f.estado === 'CESE' || Boolean(f.fechaCese)
+        if (filterEstado === 'ACTIVO' && isCese) return false
+        if (filterEstado === 'CESE' && !isCese) return false
+      }
+
+      // Filtro de Comisión
+      if (filterComision !== 'TODOS') {
+        if (filterComision === 'CON_BONO' && f.bonoNeto <= 0) return false
+        if (filterComision === 'SIN_BONO' && f.bonoNeto > 0) return false
+      }
+
       if (searchTerm.trim()) {
         const q = searchTerm.trim().toUpperCase()
         const match =
@@ -214,7 +392,7 @@ export default function MaquetaBonosReclutadores({
       }
       return true
     })
-  }, [filas, isLockedRecruiter, selfKey, filterCargo, filterSemaforo, searchTerm])
+  }, [filas, isLockedRecruiter, selfKey, filterCargo, filterSemaforo, filterEstado, filterComision, searchTerm])
 
   const totalesTabla = useMemo(() => {
     if (!filasFiltradas.length) {
@@ -250,26 +428,40 @@ export default function MaquetaBonosReclutadores({
   // ── 5. MODELADO DE LA TABLA "BASE OPERATIVA" (16 ENCABEZADOS) ──────────────
   const baseOperativaRows = useMemo(() => {
     if (baseFromDb && baseFromDb.length > 0) {
-      return baseFromDb.map((b, idx) => ({
-        id: b.id || `${b.codigo_gpe}-${idx}`,
-        periodoEfectivo: b.periodo_efectivo || '-',
-        codigoGpe: b.codigo_gpe || '-',
-        fechaInicioCapa: b.fecha_inicio_capa || '-',
-        fechaFinCapa: b.fecha_fin_capa || '-',
-        segmento: b.segmento || '-',
-        campana: b.campana || '-',
-        modalidad: b.modalidad || 'PRESENCIAL',
-        tipoReclutador: b.tipo_reclutador || 'Interno',
-        analistaReclutador: b.analista_reclutador || '-',
-        metaDia1Grupal: Number(b.meta_dia_1_grupal || 0),
-        nomina: Number(b.nomina || 0),
-        metaDia1Individual: Number(b.meta_dia_1_individual || 0),
-        metaDia1NuevoCriterio: Number(b.meta_dia_1_nuevo_criterio || 0),
-        asistenciaDia1: Number(b.asistencia_dia_1 || 0),
-        dotacion: Number(b.dotacion || 0),
-        rqOp: Number(b.rq_op || 0),
-        isDb: true
-      }))
+      return baseFromDb.map((b, idx) => {
+        const resp = String(b.analista_reclutador || '').trim().toUpperCase()
+        const matchedRec = (equipoList || []).find((eq) => {
+          const eqNom = String(eq.nombres_completos || eq.nombre_completo || eq.nombre || '').trim().toUpperCase()
+          const eqDoc = String(eq.documento || '').trim()
+          const eqAlias = String(eq.alias || '').trim().toUpperCase()
+          return (eqNom && (eqNom === resp || eqNom.includes(resp) || resp.includes(eqNom))) || (eqAlias && eqAlias === resp) || (eqDoc && eqDoc === resp)
+        })
+        const isCesado = (matchedRec?.estado || '').trim().toUpperCase() === 'CESE'
+        const fechaCese = matchedRec?.fecha_cese || null
+
+        return {
+          id: b.id || `${b.codigo_gpe}-${idx}`,
+          periodoEfectivo: b.periodo_efectivo || '-',
+          codigoGpe: b.codigo_gpe || '-',
+          fechaInicioCapa: b.fecha_inicio_capa || '-',
+          fechaFinCapa: b.fecha_fin_capa || '-',
+          segmento: b.segmento || '-',
+          campana: b.campana || '-',
+          modalidad: b.modalidad || 'PRESENCIAL',
+          tipoReclutador: b.tipo_reclutador || matchedRec?.cargo || 'Interno',
+          analistaReclutador: b.analista_reclutador || '-',
+          metaDia1Grupal: Number(b.meta_dia_1_grupal || 0),
+          nomina: Number(b.nomina || 0),
+          metaDia1Individual: Number(b.meta_dia_1_individual || 0),
+          metaDia1NuevoCriterio: Number(b.meta_dia_1_nuevo_criterio || 0),
+          asistenciaDia1: Number(b.asistencia_dia_1 || 0),
+          dotacion: Number(b.dotacion || 0),
+          rqOp: Number(b.rq_op || 0),
+          isDb: true,
+          isCesado,
+          fechaCese
+        }
+      })
     }
 
     return (kpiRows || []).map((r, idx) => {
@@ -389,6 +581,8 @@ export default function MaquetaBonosReclutadores({
       if (res.success) {
         setLiqSavedSuccess(true)
         setTimeout(() => setLiqSavedSuccess(false), 4500)
+        const updatedLiq = await fetchLiquidacionesPeriodo(periodoSeleccionado || 'actual')
+        setLiquidacionesGuardadas(Array.isArray(updatedLiq) ? updatedLiq : [])
       }
     } catch (err) {
       alert('Error al guardar liquidación: ' + (err?.message || err))
@@ -397,9 +591,57 @@ export default function MaquetaBonosReclutadores({
     }
   }, [periodoSeleccionado, filasFiltradas, userProfile])
 
+  const handleCargarPostulantesGrupo = useCallback(async (grupo, persona) => {
+    if (!grupo?.codigoGpe) return
+    setSelectedGpeTrace(grupo)
+    setBoletaTab('postulantes')
+    setLoadingPostulantesTrace(true)
+    setFilterPostulantesTrace('TODOS')
+    try {
+      const nombresRec = [
+        persona?.nombre,
+        persona?.alias,
+        ...(persona?.nombresNominaCruzados || []),
+        grupo.responsableOriginal
+      ].filter(Boolean)
+      const data = await fetchTrazabilidadPostulantesGrupoMaqueta({
+        codigoGpe: grupo.codigoGpe,
+        campana: grupo.campana,
+        nombresReclutador: nombresRec
+      })
+      setPostulantesTrace(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.warn('[MaquetaTrazabilidad] Error cargando postulantes:', err)
+      setPostulantesTrace([])
+    } finally {
+      setLoadingPostulantesTrace(false)
+    }
+  }, [])
+
+  const handleOpenBoletaTrazabilidad = useCallback((persona, initialTab = 'resumen', initialGrupo = null) => {
+    if (!persona) return
+    setBoletaPersona(persona)
+    setBoletaTab(initialTab)
+    const targetGrp = initialGrupo || persona.gruposDetalle?.[0] || null
+    setSelectedGpeTrace(targetGrp)
+    if (initialTab === 'postulantes' && targetGrp) {
+      handleCargarPostulantesGrupo(targetGrp, persona)
+    } else {
+      setPostulantesTrace([])
+    }
+  }, [handleCargarPostulantesGrupo])
+
+  // Mantener boletaPersona sincronizada si cambian los cálculos o auditoría manual
+  useEffect(() => {
+    if (boletaPersona) {
+      const updated = filas.find(f => f.key === boletaPersona.key)
+      if (updated) setBoletaPersona(updated)
+    }
+  }, [filas])
+
   const handleExportBaseCsv = useCallback(() => {
     const headers = [
-      'PERIODO EFECTIVO', 'CODIGPE-O GPE-', 'FECHA INICIO CAPA', 'FECHA FIN CAPA',
+      'PERIODO EFECTIVO', 'CÓDIGO GPE', 'FECHA INICIO CAPA', 'FECHA FIN CAPA',
       'SEGMENTO', 'CAMPAÑA', 'MODALIDAD', 'TIPO DE RECLUTADOR', 'ANALISTA / RECLUTADOR',
       'META DIA 1 GRUPAL', 'NOMINA', 'META DIA 1 INDIVIDUAL', 'META DIA 1 NUEVO CRITERIO',
       'ASISTENCIA DÍA 1', 'DOTACIÓN', 'RQ OP.'
@@ -565,10 +807,77 @@ export default function MaquetaBonosReclutadores({
                 ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
                 : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
+            title="Activa o desactiva los topes individuales por grupo en Día 1 y Dotación"
           >
             <span>Con Topes</span>
             <span className={`w-2 h-2 rounded-full ${useTope ? 'bg-amber-400' : 'bg-slate-500'}`} />
           </button>
+
+          {/* Selector de Modelo de Maqueta */}
+          <select
+            value={modeloMaqueta}
+            onChange={(e) => setModeloMaqueta(e.target.value)}
+            className="text-xs px-2.5 py-1.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] outline-none cursor-pointer focus:border-[var(--accent)] font-semibold"
+            title="Elige entre la Maqueta General 50/40/10 (Sheets Oficial) o Pesos Diferenciados por Cargo"
+          >
+            <option value="sheets_oficial">Modelo: Oficial (50/40/10)</option>
+            <option value="diferenciado">Modelo: Diferenciado por Cargo</option>
+          </select>
+
+          {/* Indicador en vivo de Sincronización Base vs Nóminas */}
+          {syncDiagnostics.usandoBaseDb ? (
+            syncDiagnostics.isSynced ? (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                  title="La tabla maqueta_reclutadores_base coincide con las asistencias registradas"
+                >
+                  <CheckCircle2 size={12} />
+                  <span>Base al Día ({syncDiagnostics.totalBaseDb} GPE)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSincronizarBase}
+                  disabled={syncingBase}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-[var(--bg-elevated)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                  title="Re-consultar asistencias de hoy en consolidado_asistencias para actualizar ingresos I-OP"
+                >
+                  <RefreshCw size={11} className={syncingBase ? 'animate-spin text-cyan-400' : 'text-cyan-400'} />
+                  <span>{syncingBase ? 'Actualizando...' : 'Actualizar'}</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSincronizarBase}
+                disabled={syncingBase}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 cursor-pointer transition-all animate-pulse"
+                title="Existen ingresos nuevos en consolidado_asistencias que difieren de la base guardada. Haz clic para actualizar."
+              >
+                <AlertTriangle size={12} className="text-amber-400" />
+                <span>
+                  {syncingBase
+                    ? 'Sincronizando...'
+                    : `${syncDiagnostics.totalConDesfase} GPE con ingresos nuevos · Clic para actualizar`}
+                </span>
+              </button>
+            )
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                <span>Fuente: Consolidado en Vivo ({effectiveKpiRows.length} GPE)</span>
+              </span>
+              <button
+                type="button"
+                onClick={handleSincronizarBase}
+                disabled={syncingBase}
+                className="flex items-center gap-1 px-2 py-1 rounded-xl text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-all cursor-pointer"
+              >
+                <RefreshCw size={11} className={syncingBase ? 'animate-spin' : ''} />
+                <span>Sincronizar</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Botones de Acción de Finanzas / Exportación */}
@@ -650,7 +959,7 @@ export default function MaquetaBonosReclutadores({
             </div>
           </div>
           <div className="text-[10px] text-[var(--text-muted)]">
-            Alimenta a Supervisores y Jefaturas
+            D1: {mediaEquipo.dia1Total}/{mediaEquipo.dia1MetaTotal} · Dot: {mediaEquipo.dotacionTotal}/{mediaEquipo.rqTotal}
           </div>
         </div>
 
@@ -714,6 +1023,24 @@ export default function MaquetaBonosReclutadores({
 
         <button
           type="button"
+          onClick={() => setActiveTab('trazabilidad_auditoria')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'trazabilidad_auditoria'
+              ? 'bg-[var(--accent)] text-white shadow-xs'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          }`}
+        >
+          <Shield size={13} />
+          <span>Trazabilidad y Cierres BD</span>
+          {liquidacionesGuardadas.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-mono">
+              {liquidacionesGuardadas.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('maqueta_reglas')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             activeTab === 'maqueta_reglas'
@@ -735,11 +1062,66 @@ export default function MaquetaBonosReclutadores({
                 <FileSpreadsheet size={15} className="text-amber-500" />
                 <span>Bonos_Reclutadores · Maqueta General de Pago</span>
               </CardTitle>
-              <span className="text-[10px] text-[var(--text-muted)]">Cálculo sistemático oficial según tramos acumulados en Base</span>
+              <span className="text-[10px] text-[var(--text-muted)]">
+                Haz clic en ▸ para desglosar grupos GPE o en el nombre para abrir la Boleta & Trazabilidad 360°
+              </span>
             </div>
 
-            {/* Controles: Filtro de Cargo y Buscador Rápido */}
+            {/* Controles: Filtros de Estado, Comisión, Cargo y Buscador */}
             <div className="flex flex-wrap items-center gap-2">
+              {/* Pills de Estado (Activos / Cesados) */}
+              <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setFilterEstado('TODOS')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                    filterEstado === 'TODOS'
+                      ? 'bg-cyan-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Todos ({countsEstado.total})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterEstado('ACTIVO')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                    filterEstado === 'ACTIVO'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-emerald-400 hover:text-emerald-300'
+                  }`}
+                >
+                  <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Activos ({countsEstado.activos})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterEstado('CESE')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                    filterEstado === 'CESE'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-rose-400 hover:text-rose-300'
+                  }`}
+                >
+                  <span className="size-1.5 rounded-full bg-rose-400" />
+                  Cesados ({countsEstado.cesados})
+                </button>
+              </div>
+
+              {/* Pill de Comisión (Con Bono / Sin Bono) */}
+              <button
+                type="button"
+                onClick={() => setFilterComision(filterComision === 'CON_BONO' ? 'TODOS' : 'CON_BONO')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                  filterComision === 'CON_BONO'
+                    ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 shadow-xs'
+                    : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-amber-300'
+                }`}
+                title="Mostrar solo colaboradores que superan la valla y cobran bono"
+              >
+                <Award size={12} className={filterComision === 'CON_BONO' ? 'text-amber-400' : 'text-slate-500'} />
+                <span>Solo con Bono ({countsEstado.conBono})</span>
+              </button>
               <select
                 value={filterCargo}
                 onChange={(e) => setFilterCargo(e.target.value)}
@@ -809,62 +1191,64 @@ export default function MaquetaBonosReclutadores({
             <div className="overflow-x-auto max-h-[620px] custom-scrollbar bg-[var(--bg-surface)]">
               <table className="w-full text-left text-xs border-collapse font-sans bg-[var(--bg-surface)]">
                 {/* ── CABECERA DE DOS NIVELES IDÉNTICA AL EXCEL ── */}
-                <thead className="sticky top-0 z-20 whitespace-nowrap shadow-xs">
-                  {/* NIVEL 1: BLOQUES TEMÁTICOS CON SUS COLORES OFICIALES */}
-                  <tr className="text-[11px] font-black uppercase tracking-wider text-white select-none">
-                    <th colSpan={2} className="bg-[var(--table-head-bg)] border-b border-r border-[var(--border-subtle)] py-1" />
-                    <th colSpan={2} className="bg-[#E65100] text-white text-center py-1.5 px-2 border-r border-white/20 shadow-xs">
-                      INDICADORES
+                <thead className="sticky top-0 z-20 whitespace-nowrap shadow-md">
+                  {/* NIVEL 1: BLOQUES TEMÁTICOS CON ESTILO LIMPIO DARK-GLASS */}
+                  <tr className="text-[10px] font-black uppercase tracking-wider text-white select-none">
+                    <th colSpan={2} className="bg-slate-900/95 border-b border-r border-slate-800 py-1.5 px-2.5 text-slate-300 text-left">
+                      COLABORADOR
                     </th>
-                    <th colSpan={3} className="bg-[#1E88E5] text-white text-center py-1.5 px-2 border-r border-white/20 shadow-xs">
-                      PESOS
+                    <th colSpan={2} className="bg-cyan-950/70 text-cyan-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                      CUMPLIMIENTO OPERATIVO
                     </th>
-                    <th colSpan={3} className="bg-[#FBC02D] text-slate-950 text-center py-1.5 px-2 border-r border-black/10 shadow-xs font-black">
-                      % ALCANCE
+                    <th colSpan={3} className="bg-slate-900/90 text-slate-400 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                      PESOS OFICIALES (50/40/10)
                     </th>
-                    <th colSpan={4} className="bg-[#26A69A] text-white text-center py-1.5 px-2 border-r border-white/20 shadow-xs">
-                      PUNTOS (%)
+                    <th colSpan={3} className="bg-indigo-950/70 text-indigo-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                      % ALCANCE TRAMOS
                     </th>
-                    <th colSpan={2} className="bg-[#FB8C00] text-white text-center py-1.5 px-2 border-r border-white/20 shadow-xs">
-                      RESULTADOS
+                    <th colSpan={4} className="bg-teal-950/70 text-teal-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                      PUNTOS PONDERADOS
                     </th>
-                    <th colSpan={2} className="bg-[#42A5F5] text-white text-center py-1.5 px-2 shadow-xs">
-                      SUBDIVIDIDO
+                    <th colSpan={2} className="bg-amber-950/70 text-amber-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                      LIQUIDACIÓN BRUTA / NETA
+                    </th>
+                    <th colSpan={2} className="bg-emerald-950/80 text-emerald-300 text-center py-1.5 px-2 shadow-xs">
+                      DISPERSIÓN (60% / 40%)
                     </th>
                   </tr>
 
                   {/* NIVEL 2: ENCABEZADOS DE CADA COLUMNA */}
-                  <tr className="text-[10px] font-black uppercase text-[var(--text-secondary)] bg-[var(--table-head-bg)] border-b border-[var(--border-normal)] select-none">
-                    <th className="py-2 px-2.5 text-left border-r border-[var(--border-subtle)] text-[var(--text-primary)]">PERSONAL</th>
-                    <th className="py-2 px-2.5 text-left border-r border-[var(--border-subtle)] text-[var(--text-secondary)]">CARGO</th>
+                  <tr className="text-[9.5px] font-bold uppercase text-slate-400 bg-slate-900/95 border-b border-slate-800 select-none">
+                    <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-200">PERSONAL</th>
+                    <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-300">CARGO</th>
                     
                     {/* INDICADORES */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-orange-500/10 text-orange-400">CUMP D1</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-orange-500/10 text-orange-400">DOTAC</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">CUMP D1</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">DOTAC</th>
                     
                     {/* PESOS */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-blue-500/10 text-blue-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-blue-500/10 text-blue-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-blue-500/10 text-blue-400">CAL</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">D1</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">DOT</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">CAL</th>
                     
                     {/* % ALCANCE */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-amber-500/10 text-amber-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-amber-500/10 text-amber-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-amber-500/10 text-amber-400">CAL</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">D1</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">DOT</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">CAL</th>
                     
                     {/* PUNTOS (%) */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-teal-500/10 text-teal-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-teal-500/10 text-teal-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-teal-500/10 text-teal-400">CAL</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-teal-500/20 text-teal-300">TOTAL</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">D1</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">DOT</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">CAL</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/40 text-teal-300 font-black">TOTAL</th>
                     
                     {/* RESULTADOS */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-orange-500/10 text-orange-400">BRUTO</th>
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-orange-500/10 text-orange-400">NETO</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">BRUTO</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/40 text-emerald-300 font-black">NETO</th>
                     
                     {/* SUBDIVIDIDO */}
-                    <th className="py-2 px-2 text-right border-r border-[var(--border-subtle)] bg-sky-500/10 text-sky-400">EFECTIVO 60</th>
-                    <th className="py-2 px-2 text-right bg-sky-500/10 text-sky-400">SODEXO 40</th>
+                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/20 text-emerald-400">EFECTIVO 60%</th>
+                    <th className="py-2 px-2 text-right bg-amber-950/20 text-amber-400">SODEXO 40%</th>
                   </tr>
                 </thead>
 
@@ -883,138 +1267,342 @@ export default function MaquetaBonosReclutadores({
                       const dotHigh = f.pctDotacionOperativo >= 100
                       const dotLow = f.pctDotacionOperativo < 70
                       const isMeta = f.totalPuntosPct >= 85
+                      const isExpanded = expandedRecruiterKey === f.key
 
                       return (
-                        <tr
-                          key={f.key}
-                          className="bg-[var(--bg-surface)] hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap group"
-                        >
-                          {/* PERSONAL */}
-                          <td
-                            className="py-1.5 px-2.5 font-bold text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)] cursor-pointer hover:text-cyan-400 transition-colors"
-                            onClick={() => setBoletaPersona(f)}
-                            title="Haz clic para ver la Boleta de Liquidación individual"
+                        <React.Fragment key={f.key}>
+                          <tr
+                            className="bg-[var(--bg-surface)] hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap group"
                           >
-                            <div className="flex items-center gap-1.5">
-                              <span>{f.alias || f.nombre.split(' ').slice(0, 2).join(' ')}</span>
-                              {f.estado === 'CESE' && (
-                                <span className="px-1 py-0.2 bg-[#DC2626] text-white text-[8.5px] font-black rounded-xs tracking-wider inline-block leading-tight">
-                                  CESE
-                                </span>
+                            {/* PERSONAL */}
+                            <td className="py-2 px-3 border-r border-b border-slate-800 bg-slate-900/30">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedRecruiterKey(isExpanded ? null : f.key)}
+                                    className="size-5 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400 flex items-center justify-center cursor-pointer transition-colors"
+                                    title="Desplegar grupos GPE"
+                                  >
+                                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                  </button>
+                                  
+                                  {/* Avatar iniciales */}
+                                  <div className="size-6 rounded-full bg-slate-800 border border-slate-700 text-cyan-400 flex items-center justify-center text-[10px] font-black shrink-0">
+                                    {(f.alias || f.nombre).slice(0, 2).toUpperCase()}
+                                  </div>
+
+                                  <div className="flex flex-col min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
+                                        className="font-bold text-slate-100 hover:text-cyan-400 cursor-pointer transition-colors text-[11.5px] truncate max-w-[190px]"
+                                        title={f.nombre}
+                                      >
+                                        {f.nombre}
+                                      </span>
+                                      
+                                      {/* Badge Estado */}
+                                      {f.estado === 'CESE' ? (
+                                        <span
+                                          className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-700/60 text-rose-300 text-[8.5px] font-black rounded tracking-wider inline-flex items-center gap-1 leading-tight shadow-xs"
+                                          title={f.fechaCese ? `Colaborador Cesado el ${f.fechaCese}` : 'Colaborador Cesado'}
+                                        >
+                                          <span className="size-1 rounded-full bg-rose-400" />
+                                          <span>CESE</span>
+                                          {f.fechaCese && <span className="opacity-90 font-mono text-[7.5px]">({f.fechaCese})</span>}
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 bg-emerald-950/60 border border-emerald-700/50 text-emerald-300 text-[8px] font-bold rounded inline-flex items-center gap-1">
+                                          <span className="size-1 rounded-full bg-emerald-400 animate-pulse" />
+                                          <span>ACTIVO</span>
+                                        </span>
+                                      )}
+
+                                      {!f.enCatalogo && (
+                                        <span
+                                          className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[8px] font-bold rounded-xs"
+                                          title="Sin registro en catálogo"
+                                        >
+                                          S/CAT
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[9.5px] text-slate-400 font-mono">
+                                      {f.documento ? `DNI: ${f.documento}` : ''} {f.alias ? `· Alias: ${f.alias}` : ''}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                  className="px-1.5 py-0.5 rounded bg-slate-800/90 hover:bg-cyan-500/20 text-[9px] font-mono text-slate-400 hover:text-cyan-300 border border-slate-700 cursor-pointer shrink-0"
+                                  title="Ver trazabilidad de grupos GPE y postulantes"
+                                >
+                                  {f.evaluadoSobreEquipo ? 'Eq' : `${f.gruposCount}G`}
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* CARGO */}
+                            <td
+                              className="py-2 px-2.5 text-[10px] uppercase font-medium border-r border-b border-slate-800 max-w-[180px] truncate"
+                              title={f.cargo}
+                            >
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700/70 text-slate-300 font-semibold tracking-wide">
+                                {f.cargo}
+                              </span>
+                            </td>
+
+                            {/* INDICADORES: CUMP D1 */}
+                            <td
+                              onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                              title={`Día 1: ${f.dia1Real} asistieron / ${f.dia1Meta} meta (${f.evaluadoSobreEquipo ? 'Media Equipo' : `${f.gruposCount} grupos`}) — Clic para ver grupos`}
+                              className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
+                                d1High
+                                  ? 'text-emerald-400 font-bold'
+                                  : d1Low
+                                  ? 'text-rose-400 font-bold'
+                                  : 'text-[var(--text-primary)] font-medium'
+                              }`}
+                            >
+                              {Number(f.pctDia1Operativo || 0).toFixed(2)}%
+                              <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
+                                ({f.dia1Real}/{f.dia1Meta})
+                              </span>
+                            </td>
+
+                            {/* INDICADORES: DOTAC */}
+                            <td
+                              onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                              title={`Dotación (I-OP): ${f.dotacionReal} ingresos / ${f.rqReal} RQ OP (${f.evaluadoSobreEquipo ? 'Media Equipo' : `${f.gruposCount} grupos`}) — Clic para ver grupos`}
+                              className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
+                                dotHigh
+                                  ? 'text-emerald-400 font-bold'
+                                  : dotLow
+                                  ? 'text-rose-400 font-bold'
+                                  : 'text-[var(--text-primary)] font-medium'
+                              }`}
+                            >
+                              {Number(f.pctDotacionOperativo || 0).toFixed(2)}%
+                              <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
+                                ({f.dotacionReal}/{f.rqReal})
+                              </span>
+                            </td>
+
+                            {/* PESOS: D1 */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.pesoDia1 || 50).toFixed(2)}%
+                            </td>
+
+                            {/* PESOS: DOT */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.pesoDotacion || 40).toFixed(2)}%
+                            </td>
+
+                            {/* PESOS: CAL */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.pesoCalidad + (f.pesoProcesosAdm || 0)).toFixed(2)}%
+                            </td>
+
+                            {/* % ALCANCE: D1 */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.alcanceDia1 || 0).toFixed(2)}%
+                            </td>
+
+                            {/* % ALCANCE: DOT */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.alcanceDotacion || 0).toFixed(2)}%
+                            </td>
+
+                            {/* % ALCANCE: CAL */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.alcanceCalidad || 100).toFixed(2)}%
+                            </td>
+
+                            {/* PUNTOS (%): D1 */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.puntosDia1 || 0).toFixed(2)}%
+                            </td>
+
+                            {/* PUNTOS (%): DOT */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.puntosDotacion || 0).toFixed(2)}%
+                            </td>
+
+                            {/* PUNTOS (%): CAL */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number((f.puntosCalidad || 0) + (f.puntosProcesosAdm || 0)).toFixed(2)}%
+                            </td>
+
+                            {/* PUNTOS (%): TOTAL */}
+                            <td
+                              className={`py-1.5 px-2 text-right font-mono font-bold border-r border-b border-[var(--border-subtle)] ${
+                                isMeta
+                                  ? 'text-emerald-400'
+                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                              }`}
+                            >
+                              {isMeta ? `▲ ${Number(f.totalPuntosPct || 0).toFixed(2)}%` : `▼ ${Number(f.totalPuntosPct || 0).toFixed(2)}%`}
+                            </td>
+
+                            {/* RESULTADOS: BRUTO */}
+                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                              {Number(f.bonoBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+
+                            {/* RESULTADOS: NETO */}
+                            <td className="py-2 px-2.5 text-right font-mono border-r border-b border-slate-800 bg-emerald-950/20">
+                              {f.bonoNeto > 0 ? (
+                                <div className="flex flex-col items-end">
+                                  <span className="font-black text-emerald-400 text-xs">
+                                    S/ {Number(f.bonoNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                  <span className="text-[8px] font-bold text-emerald-300 bg-emerald-950/80 px-1 rounded border border-emerald-700/50">
+                                    COMISIONA
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-end">
+                                  <span className="font-medium text-slate-500 text-xs">
+                                    S/ 0.00
+                                  </span>
+                                  <span className="text-[8px] font-medium text-slate-400">
+                                    Sin Valla
+                                  </span>
+                                </div>
                               )}
-                            </div>
-                          </td>
+                            </td>
 
-                          {/* CARGO */}
-                          <td
-                            className="py-1.5 px-2.5 text-[10px] uppercase font-medium text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)] max-w-[210px] truncate"
-                            title={f.cargo}
-                          >
-                            {f.cargo}
-                          </td>
+                            {/* SUBDIVIDIDO: EFECTIVO 60 */}
+                            <td className="py-2 px-2 text-right font-mono font-bold border-r border-b border-slate-800">
+                              {f.bonoEfectivo > 0 ? (
+                                <span className="text-emerald-300">
+                                  S/ {Number(f.bonoEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                            </td>
 
-                          {/* INDICADORES: CUMP D1 */}
-                          <td
-                            className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] ${
-                              d1High
-                                ? 'text-emerald-400 font-bold'
-                                : d1Low
-                                ? 'text-rose-400 font-bold'
-                                : 'text-[var(--text-primary)] font-medium'
-                            }`}
-                          >
-                            {Number(f.pctDia1Operativo || 0).toFixed(2)}%
-                          </td>
+                            {/* SUBDIVIDIDO: SODEXO 40 */}
+                            <td className="py-2 px-2 text-right font-mono font-bold border-b border-slate-800">
+                              {f.bonoSodexo > 0 ? (
+                                <span className="text-amber-300">
+                                  S/ {Number(f.bonoSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                            </td>
+                          </tr>
 
-                          {/* INDICADORES: DOTAC */}
-                          <td
-                            className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] ${
-                              dotHigh
-                                ? 'text-emerald-400 font-bold'
-                                : dotLow
-                                ? 'text-rose-400 font-bold'
-                                : 'text-[var(--text-primary)] font-medium'
-                            }`}
-                          >
-                            {Number(f.pctDotacionOperativo || 0).toFixed(2)}%
-                          </td>
+                          {/* SUB-FILA DESPLEGABLE DE TRAZABILIDAD POR GRUPOS (NIVEL 2 -> NIVEL 3) */}
+                          {isExpanded && (
+                            <tr className="bg-[var(--bg-elevated)]/90 border-b border-[var(--border-normal)]">
+                              <td colSpan={18} className="p-3">
+                                <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-3 space-y-2.5">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                                      <span className="font-black text-cyan-400 uppercase tracking-wider">
+                                        Trazabilidad de Origen · {f.nombre}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px] font-mono text-[var(--text-secondary)]">
+                                        Match Catálogo: {f.tipoMatch}
+                                      </span>
+                                      {f.nombresNominaCruzados?.length > 0 && (
+                                        <span className="text-[10px] text-[var(--text-muted)] font-mono">
+                                          Nómina: {f.nombresNominaCruzados.join(' | ')}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
+                                      className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold cursor-pointer"
+                                    >
+                                      Abrir Ficha & Auditoría 360°
+                                    </button>
+                                  </div>
 
-                          {/* PESOS: D1 */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.pesoDia1 || 50).toFixed(2)}%
-                          </td>
+                                  {f.evaluadoSobreEquipo && (
+                                    <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/30 text-[11px] text-purple-200 flex items-center justify-between">
+                                      <span>
+                                        <strong>Cargo de Liderazgo ({f.cargo}):</strong> Se evalúa sobre la <strong>Media General del Equipo Operativo</strong> (Día 1: {mediaEquipo.dia1Total}/{mediaEquipo.dia1MetaTotal} = {fmtPct(mediaEquipo.pctDia1)} · Dotación: {mediaEquipo.dotacionTotal}/{mediaEquipo.rqTotal} = {fmtPct(mediaEquipo.pctDotacion)}).
+                                      </span>
+                                    </div>
+                                  )}
 
-                          {/* PESOS: DOT */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.pesoDotacion || 40).toFixed(2)}%
-                          </td>
-
-                          {/* PESOS: CAL */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.pesoCalidad || 10).toFixed(2)}%
-                          </td>
-
-                          {/* % ALCANCE: D1 */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.alcanceDia1 || 0).toFixed(2)}%
-                          </td>
-
-                          {/* % ALCANCE: DOT */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.alcanceDotacion || 0).toFixed(2)}%
-                          </td>
-
-                          {/* % ALCANCE: CAL */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.alcanceCalidad || 100).toFixed(2)}%
-                          </td>
-
-                          {/* PUNTOS (%): D1 */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.puntosDia1 || 0).toFixed(2)}%
-                          </td>
-
-                          {/* PUNTOS (%): DOT */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.puntosDotacion || 0).toFixed(2)}%
-                          </td>
-
-                          {/* PUNTOS (%): CAL */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.puntosCalidad || 0).toFixed(2)}%
-                          </td>
-
-                          {/* PUNTOS (%): TOTAL */}
-                          <td
-                            className={`py-1.5 px-2 text-right font-mono font-bold border-r border-b border-[var(--border-subtle)] ${
-                              isMeta
-                                ? 'text-emerald-400'
-                                : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
-                            }`}
-                          >
-                            {isMeta ? `▲ ${Number(f.totalPuntosPct || 0).toFixed(2)}%` : `▼ ${Number(f.totalPuntosPct || 0).toFixed(2)}%`}
-                          </td>
-
-                          {/* RESULTADOS: BRUTO */}
-                          <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.bonoBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-
-                          {/* RESULTADOS: NETO */}
-                          <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-400 border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.bonoNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-
-                          {/* SUBDIVIDIDO: EFECTIVO 60 */}
-                          <td className="py-1.5 px-2 text-right font-mono font-bold text-cyan-300 border-r border-b border-[var(--border-subtle)]">
-                            {Number(f.bonoEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-
-                          {/* SUBDIVIDIDO: SODEXO 40 */}
-                          <td className="py-1.5 px-2 text-right font-mono font-bold text-amber-300 border-b border-[var(--border-subtle)]">
-                            {Number(f.bonoSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                        </tr>
+                                  {(!f.gruposDetalle || f.gruposDetalle.length === 0) ? (
+                                    <div className="text-[11px] text-[var(--text-muted)] py-2">
+                                      No registra grupos directos asignados como reclutador en este corte.
+                                    </div>
+                                  ) : (
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-[11px] border-collapse">
+                                        <thead>
+                                          <tr className="text-[10px] uppercase text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
+                                            <th className="py-1.5 px-2 text-left">Código GPE</th>
+                                            <th className="py-1.5 px-2 text-left">Campaña / Segmento</th>
+                                            <th className="py-1.5 px-2 text-left">Inicio → Fin Capa</th>
+                                            <th className="py-1.5 px-2 text-left">Fuente</th>
+                                            <th className="py-1.5 px-2 text-right">Nómina</th>
+                                            <th className="py-1.5 px-2 text-right">Asist. Día 1 / Meta</th>
+                                            <th className="py-1.5 px-2 text-right">Dotación (I-OP) / RQ</th>
+                                            <th className="py-1.5 px-2 text-right">Acción Nominal</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
+                                          {f.gruposDetalle.map((g, gIdx) => (
+                                            <tr key={`${g.codigoGpe}-${gIdx}`} className="hover:bg-[var(--bg-elevated)]">
+                                              <td className="py-1.5 px-2 font-bold text-cyan-400">{g.codigoGpe}</td>
+                                              <td className="py-1.5 px-2 font-sans">
+                                                <span className="font-semibold text-[var(--text-primary)]">{g.campana}</span>
+                                                <span className="text-[10px] text-[var(--text-muted)] ml-1.5">({g.segmento})</span>
+                                              </td>
+                                              <td className="py-1.5 px-2 text-[var(--text-muted)]">{g.fechaInicio} → {g.fechaIngresoOp}</td>
+                                              <td className="py-1.5 px-2 font-sans">
+                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                  g.origenFuente === 'BASE_BD'
+                                                    ? 'bg-emerald-500/15 text-emerald-400'
+                                                    : 'bg-cyan-500/15 text-cyan-300'
+                                                }`}>
+                                                  {g.origenFuente === 'BASE_BD' ? 'Base BD' : 'En Vivo'}
+                                                </span>
+                                                {g.tieneDesfaseVivo && (
+                                                  <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                                                    Vivo: D1={g.dia1Vivo} / Dot={g.dotacionVivo}
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right text-indigo-300 font-bold">{g.nomina}</td>
+                                              <td className="py-1.5 px-2 text-right text-amber-300 font-bold">
+                                                {g.dia1} / {g.dia1Meta}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right text-emerald-400 font-bold">
+                                                {g.dotacion} / {g.rq}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right font-sans">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'postulantes', g)}
+                                                  className="px-2 py-0.5 rounded bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold cursor-pointer"
+                                                >
+                                                  Ver Postulantes (DNI)
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       )
                     })
                   )}
@@ -1184,7 +1772,7 @@ export default function MaquetaBonosReclutadores({
                 <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)] shadow-xs z-10 whitespace-nowrap">
                   <tr>
                     <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">PERIODO EFECTIVO</th>
-                    <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">CODIGPE-O GPE-</th>
+                    <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">CÓDIGO GPE</th>
                     <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">FECHA INICIO CAPA</th>
                     <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">FECHA FIN CAPA</th>
                     <th className="py-2.5 px-2.5 border-b border-[var(--border-subtle)]">SEGMENTO</th>
@@ -1205,7 +1793,29 @@ export default function MaquetaBonosReclutadores({
                   {baseOperativaFiltrada.map((r, idx) => (
                     <tr key={r.id || idx} className="hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap text-[11px]">
                       <td className="py-2 px-2.5 font-mono text-[var(--text-muted)]">{r.periodoEfectivo}</td>
-                      <td className="py-2 px-2.5 font-mono font-bold text-cyan-400">{r.codigoGpe}</td>
+                      <td
+                        className="py-2 px-2.5 font-mono font-bold text-cyan-400 cursor-pointer hover:underline"
+                        title="Haz clic para ver los postulantes nominales (DNI) de este grupo"
+                        onClick={() => {
+                          const hitPersona = filas.find(f =>
+                            f.nombresNominaCruzados?.includes(r.analistaReclutador) ||
+                            f.nombre.toUpperCase().includes(String(r.analistaReclutador || '').toUpperCase())
+                          ) || filas[0]
+                          handleOpenBoletaTrazabilidad(hitPersona, 'postulantes', {
+                            codigoGpe: r.codigoGpe,
+                            campana: r.campana,
+                            segmento: r.segmento,
+                            responsableOriginal: r.analistaReclutador,
+                            nomina: r.nomina,
+                            dia1: r.asistenciaDia1,
+                            dia1Meta: r.metaDia1Individual,
+                            dotacion: r.dotacion,
+                            rq: r.rqOp,
+                          })
+                        }}
+                      >
+                        {r.codigoGpe}
+                      </td>
                       <td className="py-2 px-2.5 text-[var(--text-muted)]">{r.fechaInicioCapa}</td>
                       <td className="py-2 px-2.5 text-[var(--text-muted)]">{r.fechaFinCapa}</td>
                       <td className="py-2 px-2.5 text-[var(--text-secondary)]">{r.segmento}</td>
@@ -1218,7 +1828,19 @@ export default function MaquetaBonosReclutadores({
                         </span>
                       </td>
                       <td className="py-2 px-2.5 text-[var(--text-secondary)]">{r.tipoReclutador}</td>
-                      <td className="py-2 px-2.5 font-bold text-[var(--text-primary)] max-w-[170px] truncate">{r.analistaReclutador}</td>
+                      <td className="py-2 px-2.5 font-bold text-[var(--text-primary)] max-w-[200px]">
+                        <div className="flex items-center gap-1.5 truncate">
+                          <span className="truncate">{r.analistaReclutador}</span>
+                          {r.isCesado && (
+                            <span
+                              className="px-1 py-0.2 bg-rose-600 text-white text-[8px] font-black rounded shrink-0 shadow-xs"
+                              title={r.fechaCese ? `Cesado el ${r.fechaCese}` : 'Colaborador Cesado'}
+                            >
+                              CESE
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-2 px-2.5 font-mono text-right text-[var(--text-secondary)]">{r.metaDia1Grupal}</td>
                       <td className="py-2 px-2.5 font-mono text-right font-bold text-indigo-400">{r.nomina}</td>
                       <td className="py-2 px-2.5 font-mono text-right text-[var(--text-secondary)]">{r.metaDia1Individual}</td>
@@ -1260,13 +1882,16 @@ export default function MaquetaBonosReclutadores({
                   <span className="text-[10px] text-[var(--text-muted)] font-mono">{filas.length} registrados</span>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-2 max-h-[520px] overflow-y-auto custom-scrollbar space-y-1">
+              <CardContent className="p-2 max-h-[560px] overflow-y-auto custom-scrollbar space-y-1">
                 {filas.map((f) => {
                   const isSel = selectedPersona?.key === f.key
                   return (
                     <div
                       key={f.key}
-                      onClick={() => setSelectedPersona(f)}
+                      onClick={() => {
+                        setSelectedPersona(f)
+                        setEditingAuditKey(null)
+                      }}
                       className={`p-2.5 rounded-xl cursor-pointer transition-all border ${
                         isSel
                           ? 'bg-[var(--accent-soft)]/25 border-[var(--accent)] shadow-xs'
@@ -1278,7 +1903,7 @@ export default function MaquetaBonosReclutadores({
                         <span className="font-mono font-black text-xs text-emerald-400">{fmtMoney(f.bonoNeto)}</span>
                       </div>
                       <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] mt-1 font-sans">
-                        <span>{f.cargo}</span>
+                        <span>{f.cargo} · {f.evaluadoSobreEquipo ? 'Media Eq.' : `${f.gruposCount} GPE`}</span>
                         <span className="font-mono font-bold text-cyan-400">{fmtPct(f.totalPuntosPct)}</span>
                       </div>
                     </div>
@@ -1292,13 +1917,23 @@ export default function MaquetaBonosReclutadores({
             <Card>
               <CardHeader className="border-b border-[var(--border-subtle)] pb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-black text-[var(--text-primary)]">{selectedPersona.nombre}</span>
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                       {selectedPersona.cargo}
                     </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                      Cruce: {selectedPersona.tipoMatch}
+                    </span>
                   </div>
-                  <p className="text-xs text-[var(--text-muted)] mt-0.5">{selectedPersona.configCargo.descripcion}</p>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                    {selectedPersona.configCargo.descripcion}
+                    {selectedPersona.nombresNominaCruzados?.length > 0 && (
+                      <span className="ml-2 font-mono text-[10px] text-cyan-400">
+                        [Nómina: {selectedPersona.nombresNominaCruzados.join(', ')}]
+                      </span>
+                    )}
+                  </p>
                 </div>
 
                 <div className="text-right">
@@ -1310,17 +1945,25 @@ export default function MaquetaBonosReclutadores({
               <CardContent className="p-4 space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
-                    <span className="text-[10px] text-[var(--text-muted)] block">Día 1</span>
+                    <span className="text-[10px] text-[var(--text-muted)] block">
+                      Día 1 ({selectedPersona.pesoDia1}%)
+                    </span>
                     <strong className="text-sm font-mono text-white">{selectedPersona.dia1Real}</strong>
                     <span className="text-[10px] text-[var(--text-muted)]"> / {selectedPersona.dia1Meta}</span>
-                    <div className="font-mono font-bold text-purple-300 mt-1">{fmtPct(selectedPersona.pctDia1Operativo)}</div>
+                    <div className="font-mono font-bold text-purple-300 mt-1">
+                      {fmtPct(selectedPersona.pctDia1Operativo)} → {selectedPersona.puntosDia1} pts
+                    </div>
                   </div>
 
                   <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
-                    <span className="text-[10px] text-[var(--text-muted)] block">Dotación</span>
+                    <span className="text-[10px] text-[var(--text-muted)] block">
+                      Dotación ({selectedPersona.pesoDotacion}%)
+                    </span>
                     <strong className="text-sm font-mono text-white">{selectedPersona.dotacionReal}</strong>
                     <span className="text-[10px] text-[var(--text-muted)]"> / {selectedPersona.rqReal}</span>
-                    <div className="font-mono font-bold text-blue-300 mt-1">{fmtPct(selectedPersona.pctDotacionOperativo)}</div>
+                    <div className="font-mono font-bold text-blue-300 mt-1">
+                      {fmtPct(selectedPersona.pctDotacionOperativo)} → {selectedPersona.puntosDotacion} pts
+                    </div>
                   </div>
 
                   <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
@@ -1336,19 +1979,315 @@ export default function MaquetaBonosReclutadores({
                   </div>
                 </div>
 
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setBoletaPersona(selectedPersona)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all cursor-pointer shadow-xs"
-                  >
-                    <Eye size={14} />
-                    <span>Abrir Boleta de Liquidación Completa</span>
-                  </button>
+                {/* Panel de Auditoría Persistente de Calidad y Procesos Adm. */}
+                <div className="p-3.5 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-bold text-[var(--text-primary)] block">
+                        Auditoría de Calidad ({selectedPersona.pesoCalidad}%) y Procesos Adm. ({selectedPersona.pesoProcesosAdm}%)
+                      </span>
+                      <span className="text-[10px] text-[var(--text-muted)]">
+                        Calidad actual: <strong>{fmtPct(selectedPersona.pctCalidadReal)}</strong> ({selectedPersona.origenCalidad})
+                        {selectedPersona.auditNote ? ` · Nota: "${selectedPersona.auditNote}"` : ''}
+                      </span>
+                    </div>
+                    {editingAuditKey !== selectedPersona.key ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingAuditKey(selectedPersona.key)
+                          setTempCalidad(selectedPersona.pctCalidadReal ?? 100)
+                          setTempProcesos(selectedPersona.alcanceProcesosAdm ?? 100)
+                          setTempMotivoAudit(selectedPersona.auditNote || '')
+                        }}
+                        className="px-3 py-1 rounded-lg bg-[var(--bg-surface)] hover:bg-[var(--surface-hover)] border border-[var(--border-subtle)] text-xs font-bold text-amber-300 cursor-pointer"
+                      >
+                        Editar Auditoría
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => guardarOverrideAuditoria(selectedPersona.key, tempCalidad, tempProcesos, tempMotivoAudit)}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
+                        >
+                          Guardar Ajuste
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingAuditKey(null)}
+                          className="px-2.5 py-1 rounded-lg bg-[var(--bg-surface)] text-xs text-[var(--text-muted)] cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {editingAuditKey === selectedPersona.key && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[var(--border-subtle)] text-xs">
+                      <label className="space-y-1">
+                        <span className="text-[10px] text-[var(--text-muted)] font-bold block">% Cumplimiento Calidad</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={tempCalidad}
+                          onChange={(e) => setTempCalidad(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-mono"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[10px] text-[var(--text-muted)] font-bold block">% Alcance Procesos Adm.</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="5"
+                          value={tempProcesos}
+                          onChange={(e) => setTempProcesos(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)] font-mono"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-[10px] text-[var(--text-muted)] font-bold block">Motivo / Sustento de Auditoría</span>
+                        <input
+                          type="text"
+                          placeholder="Ej: Auditoría file postulantes..."
+                          value={tempMotivoAudit}
+                          onChange={(e) => setTempMotivoAudit(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)]"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                {/* Grupos del Reclutador en Ficha 360 */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[var(--text-muted)]">
+                      Grupos GPE que sustentan sus indicadores ({selectedPersona.gruposDetalle?.length || 0})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenBoletaTrazabilidad(selectedPersona, 'resumen')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all cursor-pointer shadow-xs"
+                    >
+                      <Eye size={13} />
+                      <span>Abrir Boleta & Trazabilidad Nominal</span>
+                    </button>
+                  </div>
+
+                  {selectedPersona.gruposDetalle?.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-[var(--border-subtle)] max-h-[240px] custom-scrollbar">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-[var(--bg-elevated)] text-[10px] uppercase text-[var(--text-muted)] sticky top-0">
+                          <tr>
+                            <th className="py-1.5 px-2.5 text-left">Grupo GPE</th>
+                            <th className="py-1.5 px-2.5 text-left">Campaña</th>
+                            <th className="py-1.5 px-2.5 text-right">Nómina</th>
+                            <th className="py-1.5 px-2.5 text-right">Día 1 / Meta</th>
+                            <th className="py-1.5 px-2.5 text-right">Dotación / RQ</th>
+                            <th className="py-1.5 px-2.5 text-right">Postulantes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
+                          {selectedPersona.gruposDetalle.map((g, i) => (
+                            <tr key={`${g.codigoGpe}-${i}`} className="hover:bg-[var(--bg-elevated)]">
+                              <td className="py-1.5 px-2.5 font-bold text-cyan-400">{g.codigoGpe}</td>
+                              <td className="py-1.5 px-2.5 font-sans text-[var(--text-primary)]">{g.campana}</td>
+                              <td className="py-1.5 px-2.5 text-right text-indigo-300">{g.nomina}</td>
+                              <td className="py-1.5 px-2.5 text-right text-amber-300">{g.dia1} / {g.dia1Meta}</td>
+                              <td className="py-1.5 px-2.5 text-right text-emerald-400">{g.dotacion} / {g.rq}</td>
+                              <td className="py-1.5 px-2.5 text-right font-sans">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenBoletaTrazabilidad(selectedPersona, 'postulantes', g)}
+                                  className="px-2 py-0.5 rounded bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-300 text-[10px] font-bold cursor-pointer"
+                                >
+                                  Ver DNI
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </div>
+        </div>
+      )}
+
+      {/* ── PESTAÑA NUEVA: TRAZABILIDAD Y CIERRES EN BD (AUDITORÍA HISTÓRICA VS EN VIVO) ── */}
+      {activeTab === 'trazabilidad_auditoria' && (
+        <div className="space-y-4">
+          {/* Bloque 1: Comparativa Liquidación Guardada en BD vs Cálculo Actual */}
+          <Card>
+            <CardHeader className="py-3 border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+                  <Shield size={14} className="text-indigo-400" />
+                  <span>Auditoría de Liquidación Guardada en BD vs. Tiempo Real ({periodoSeleccionado || 'Actual'})</span>
+                </CardTitle>
+                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  Compara la última foto congelada en <code className="text-cyan-300">maqueta_reclutadores_liquidaciones</code> contra el cálculo vivo actual para detectar variaciones post-cierre.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {liquidacionesGuardadas.length > 0 && (
+                  <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">
+                    Último cierre: {String(liquidacionesGuardadas[0]?.fecha_cierre || '').slice(0, 16).replace('T', ' ')} · Por: {liquidacionesGuardadas[0]?.liquidado_por || 'Admin'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGuardarEnBd}
+                  disabled={savingLiq}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer"
+                >
+                  <Shield size={13} />
+                  <span>{savingLiq ? 'Actualizando Cierre...' : 'Actualizar Cierre en BD'}</span>
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loadingLiqGuardadas ? (
+                <div className="py-8 text-center text-xs text-[var(--text-muted)]">Consultando liquidaciones cerradas...</div>
+              ) : liquidacionesGuardadas.length === 0 ? (
+                <div className="py-8 text-center space-y-2">
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Aún no se ha congelado ninguna liquidación en Base de Datos para el corte <strong>{periodoSeleccionado}</strong>.
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)]">
+                    Usa el botón <strong>"Guardar en BD"</strong> para registrar la foto oficial y habilitar la auditoría de variaciones.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto max-h-[420px] custom-scrollbar">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)] z-10">
+                      <tr>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)]">Personal RyS</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)]">Cargo</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">D1 (BD → Vivo)</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Dotación (BD → Vivo)</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Puntos BD</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Puntos Vivo</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Bono Neto BD</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Bono Neto Vivo</th>
+                        <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Variación (Δ S/)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border-subtle)] text-[11px] font-mono">
+                      {liquidacionesGuardadas.map((liq, idx) => {
+                        const vivo = filas.find(
+                          f => f.nombre.toUpperCase() === String(liq.personal_rys || '').toUpperCase() ||
+                               (f.documento && f.documento === String(liq.colaborador_id || ''))
+                        )
+                        const netoBd = Number(liq.bono_neto || 0)
+                        const netoVivo = vivo ? Number(vivo.bonoNeto || 0) : 0
+                        const deltaNeto = round2(netoVivo - netoBd)
+                        const hasDiff = Math.abs(deltaNeto) >= 0.01
+
+                        return (
+                          <tr key={liq.id || idx} className={hasDiff ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-[var(--surface-hover)]'}>
+                            <td className="py-2 px-3 font-sans font-bold text-[var(--text-primary)]">{liq.personal_rys}</td>
+                            <td className="py-2 px-3 font-sans text-[10px] text-[var(--text-muted)]">{liq.cargo}</td>
+                            <td className="py-2 px-3 text-right">
+                              {Number(liq.real_dia_1 || 0)}/{Number(liq.meta_dia_1 || 0)} →{' '}
+                              <span className="text-purple-300 font-bold">{vivo ? `${vivo.dia1Real}/${vivo.dia1Meta}` : '-'}</span>
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              {Number(liq.real_dotacion || 0)}/{Number(liq.rq_dotacion || 0)} →{' '}
+                              <span className="text-blue-300 font-bold">{vivo ? `${vivo.dotacionReal}/${vivo.rqReal}` : '-'}</span>
+                            </td>
+                            <td className="py-2 px-3 text-right text-[var(--text-secondary)]">{fmtPct(liq.total_puntos_pct || 0)}</td>
+                            <td className="py-2 px-3 text-right text-cyan-300 font-bold">{vivo ? fmtPct(vivo.totalPuntosPct) : '-'}</td>
+                            <td className="py-2 px-3 text-right text-[var(--text-secondary)]">{fmtMoney(netoBd)}</td>
+                            <td className="py-2 px-3 text-right text-emerald-400 font-bold">{vivo ? fmtMoney(netoVivo) : '-'}</td>
+                            <td className="py-2 px-3 text-right font-bold">
+                              {!hasDiff ? (
+                                <span className="text-emerald-400">✓ Sin cambio</span>
+                              ) : (
+                                <span className={deltaNeto > 0 ? 'text-amber-300' : 'text-rose-400'}>
+                                  {deltaNeto > 0 ? `+${fmtMoney(deltaNeto)}` : fmtMoney(deltaNeto)}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Bloque 2: Auditoría de Cruce de Nombres Nómina <-> Catálogo Equipo Reclutamiento */}
+          <Card>
+            <CardHeader className="py-3 border-b border-[var(--border-subtle)]">
+              <CardTitle className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+                <Users size={14} className="text-cyan-400" />
+                <span>Matriz de Trazabilidad de Identidad (Nómina ↔ Catálogo Equipo RyS)</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto max-h-[380px] custom-scrollbar">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="sticky top-0 bg-[var(--table-head-bg)] text-[10px] font-black uppercase text-[var(--text-muted)] z-10">
+                    <tr>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)]">Colaborador Consolidado</th>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)]">DNI</th>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)]">Tipo de Cruce</th>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)]">Nombres / Alias Detectados en Nómina</th>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Grupos GPE</th>
+                      <th className="py-2 px-3 border-b border-[var(--border-subtle)] text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)] text-[11px]">
+                    {filas.map((f) => (
+                      <tr key={f.key} className="hover:bg-[var(--surface-hover)]">
+                        <td className="py-2 px-3 font-bold text-[var(--text-primary)]">{f.nombre}</td>
+                        <td className="py-2 px-3 font-mono text-[var(--text-muted)]">{f.documento || 'S/D'}</td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            f.tipoMatch === 'EXACTO' || f.tipoMatch === 'ALIAS'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : f.tipoMatch === 'DIFUSO'
+                              ? 'bg-amber-500/15 text-amber-300'
+                              : f.tipoMatch === 'NO_EN_CATALOGO'
+                              ? 'bg-rose-500/20 text-rose-300'
+                              : 'bg-slate-500/20 text-slate-300'
+                          }`}>
+                            {f.tipoMatch}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 font-mono text-[10px] text-[var(--text-secondary)]">
+                          {f.nombresNominaCruzados?.length > 0 ? f.nombresNominaCruzados.join(' · ') : 'Sin grupos en nómina'}
+                        </td>
+                        <td className="py-2 px-3 font-mono text-right font-bold text-cyan-400">{f.gruposCount}</td>
+                        <td className="py-2 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                            className="px-2.5 py-0.5 rounded bg-[var(--bg-elevated)] hover:bg-cyan-500/20 text-cyan-300 text-[10px] font-bold border border-[var(--border-subtle)] cursor-pointer"
+                          >
+                            Inspeccionar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -1462,10 +2401,10 @@ export default function MaquetaBonosReclutadores({
         </div>
       )}
 
-      {/* ── MODAL SLIDE-OVER: BOLETA DE LIQUIDACIÓN INDIVIDUAL ──────────────── */}
+      {/* ── MODAL SLIDE-OVER: BOLETA Y TRAZABILIDAD 360° (3 NIVELES) ─────────── */}
       {boletaPersona && (
         <div className="fixed inset-0 z-50 flex items-center justify-center sm:justify-end bg-black/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in">
-          <div className="w-full max-w-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+          <div className="w-full max-w-2xl bg-[var(--bg-surface)] border border-[var(--border-normal)] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
             {/* Cabecera Boleta */}
             <div className="p-4 bg-[var(--bg-elevated)] border-b border-[var(--border-subtle)] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -1474,10 +2413,10 @@ export default function MaquetaBonosReclutadores({
                 </div>
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-                    Boleta de Liquidación RyS
+                    Boleta & Trazabilidad 360° RyS
                   </h3>
                   <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                    GEA Perú · Corte {periodoSeleccionado || 'Actual'}
+                    GEA Perú · Corte {periodoSeleccionado || 'Actual'} · {modeloMaqueta === 'sheets_oficial' ? 'Maqueta Oficial 50/40/10' : 'Maqueta por Cargo'}
                   </span>
                 </div>
               </div>
@@ -1490,15 +2429,68 @@ export default function MaquetaBonosReclutadores({
               </button>
             </div>
 
+            {/* Sub-pestañas de Trazabilidad dentro de la Boleta */}
+            <div className="px-5 pt-3 pb-2 bg-[var(--bg-elevated)]/60 border-b border-[var(--border-subtle)] flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setBoletaTab('resumen')}
+                className={`px-3 py-1 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                  boletaTab === 'resumen'
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                1. Boleta & Cálculo
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoletaTab('grupos')}
+                className={`px-3 py-1 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                  boletaTab === 'grupos'
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                2. Grupos GPE ({boletaPersona.gruposDetalle?.length || 0})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedGpeTrace && boletaPersona.gruposDetalle?.length > 0) {
+                    handleCargarPostulantesGrupo(boletaPersona.gruposDetalle[0], boletaPersona)
+                  } else {
+                    setBoletaTab('postulantes')
+                  }
+                }}
+                className={`px-3 py-1 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                  boletaTab === 'postulantes'
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                3. Postulantes Nominales (DNI)
+              </button>
+            </div>
+
             {/* Contenido Boleta */}
-            <div className="p-5 overflow-y-auto space-y-4 custom-scrollbar text-xs">
+            <div className="p-5 overflow-y-auto space-y-4 custom-scrollbar text-xs flex-1">
               {/* Info Colaborador */}
               <div className="p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-black text-[var(--text-primary)]">{boletaPersona.nombre}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-[var(--text-primary)]">{boletaPersona.nombre}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[9px] font-mono text-cyan-300">
+                      Cruce: {boletaPersona.tipoMatch}
+                    </span>
+                  </div>
                   <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">{boletaPersona.cargo}</div>
                   {boletaPersona.documento && (
                     <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">DNI: {boletaPersona.documento}</div>
+                  )}
+                  {boletaPersona.nombresNominaCruzados?.length > 0 && (
+                    <div className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">
+                      Nómina RYS: {boletaPersona.nombresNominaCruzados.join(' | ')}
+                    </div>
                   )}
                 </div>
                 <div className="text-right">
@@ -1513,117 +2505,338 @@ export default function MaquetaBonosReclutadores({
                 </div>
               </div>
 
-              {/* Detalle por Indicador */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-black uppercase text-[var(--text-muted)] tracking-wider block">
-                  Desglose de Indicadores & Maqueta
-                </span>
-
-                <div className="space-y-1.5 font-mono text-[11px]">
-                  {/* Día 1 */}
-                  {boletaPersona.configCargo.pesoDia1 > 0 && (
-                    <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
-                      <div>
-                        <div className="font-sans font-bold text-[var(--text-primary)]">% Cumplimiento Día 1</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">
-                          {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Logrado: '}
-                          {fmtPct(boletaPersona.pctDia1ParaMaqueta || boletaPersona.pctDia1Operativo)} → {boletaPersona.alcanceDia1}% Alcance
-                        </div>
-                      </div>
-                      <div className="text-right font-black text-purple-300">
-                        {boletaPersona.alcanceDia1}% × {boletaPersona.configCargo.pesoDia1}% = {fmtPct(boletaPersona.puntosDia1)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Dotación */}
-                  {boletaPersona.configCargo.pesoDotacion > 0 && (
-                    <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
-                      <div>
-                        <div className="font-sans font-bold text-[var(--text-primary)]">% Dotación (Ingresos OP)</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">
-                          {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Logrado: '}
-                          {fmtPct(boletaPersona.pctDotacionParaMaqueta || boletaPersona.pctDotacionOperativo)} → {boletaPersona.alcanceDotacion}% Alcance
-                        </div>
-                      </div>
-                      <div className="text-right font-black text-blue-300">
-                        {boletaPersona.alcanceDotacion}% × {boletaPersona.configCargo.pesoDotacion}% = {fmtPct(boletaPersona.puntosDotacion)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Calidad */}
-                  {boletaPersona.configCargo.pesoCalidad > 0 && (
-                    <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
-                      <div>
-                        <div className="font-sans font-bold text-[var(--text-primary)]">% Calidad (Aptos / Evaluados)</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">
-                          Resultado: {fmtPct(boletaPersona.pctCalidadReal || 100)}
-                          {boletaPersona.evaluadosReal > 0 ? ` (${boletaPersona.aptosReal || 0} Aptos / ${boletaPersona.evaluadosReal} Eval.)` : ''} 
-                          → {boletaPersona.alcanceCalidad}% Alcance
-                        </div>
-                      </div>
-                      <div className="text-right font-black text-emerald-300">
-                        {boletaPersona.alcanceCalidad}% × {boletaPersona.configCargo.pesoCalidad}% = {fmtPct(boletaPersona.puntosCalidad)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Procesos Adm */}
-                  {boletaPersona.configCargo.pesoProcesosAdm > 0 && (
-                    <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
-                      <div>
-                        <div className="font-sans font-bold text-[var(--text-primary)]">Procesos Administrativos</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">Alcance: {boletaPersona.alcanceProcesosAdm}%</div>
-                      </div>
-                      <div className="text-right font-black text-amber-300">
-                        {boletaPersona.alcanceProcesosAdm}% × {boletaPersona.configCargo.pesoProcesosAdm}% = {fmtPct(boletaPersona.puntosProcesosAdm)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Total Puntos */}
-                  <div className="p-2.5 rounded-xl bg-[var(--accent-soft)]/20 border border-[var(--accent)] flex items-center justify-between">
-                    <span className="font-sans font-black text-[var(--text-primary)]">TOTAL PUNTOS ALCANZADOS:</span>
-                    <span className="text-sm font-black text-emerald-400 font-mono">{fmtPct(boletaPersona.totalPuntosPct)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Resultado Financiero Final Subdividido */}
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-[var(--bg-elevated)] to-[var(--bg-base)] border border-[var(--border-normal)] space-y-3">
-                <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
-                  <span className="text-xs uppercase font-bold text-[var(--text-muted)]">Bono Neto Total:</span>
-                  <span className="text-xl font-black font-mono text-emerald-400">{fmtMoney(boletaPersona.bonoNeto)}</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="p-2.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
-                    <span className="text-[10px] text-[var(--text-muted)] uppercase block font-bold">
-                      Depósito Efectivo ({boletaPersona.pctEfectivo}%)
+              {/* TAB 1: RESUMEN Y FÓRMULA DE LIQUIDACIÓN */}
+              {boletaTab === 'resumen' && (
+                <>
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black uppercase text-[var(--text-muted)] tracking-wider block">
+                      Desglose Matemático de Indicadores & Maqueta
                     </span>
-                    <div className="text-base font-black font-mono text-cyan-400 mt-0.5">
-                      {fmtMoney(boletaPersona.bonoEfectivo)}
+
+                    <div className="space-y-1.5 font-mono text-[11px]">
+                      {/* Día 1 */}
+                      {boletaPersona.pesoDia1 > 0 && (
+                        <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
+                          <div>
+                            <div className="font-sans font-bold text-[var(--text-primary)]">
+                              % Cumplimiento Día 1 ({boletaPersona.dia1Real} / {boletaPersona.dia1Meta})
+                            </div>
+                            <div className="text-[10px] text-[var(--text-muted)]">
+                              {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Logrado: '}
+                              {fmtPct(boletaPersona.pctDia1Aplicado)} ({boletaPersona.tramoDia1}) → {boletaPersona.alcanceDia1}% Alcance
+                            </div>
+                          </div>
+                          <div className="text-right font-black text-purple-300">
+                            {boletaPersona.alcanceDia1}% × {boletaPersona.pesoDia1}% = {fmtPct(boletaPersona.puntosDia1)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Dotación */}
+                      {boletaPersona.pesoDotacion > 0 && (
+                        <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
+                          <div>
+                            <div className="font-sans font-bold text-[var(--text-primary)]">
+                              % Dotación Ingresos OP ({boletaPersona.dotacionReal} / {boletaPersona.rqReal})
+                            </div>
+                            <div className="text-[10px] text-[var(--text-muted)]">
+                              {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Logrado: '}
+                              {fmtPct(boletaPersona.pctDotacionAplicado)} ({boletaPersona.tramoDotacion}) → {boletaPersona.alcanceDotacion}% Alcance
+                            </div>
+                          </div>
+                          <div className="text-right font-black text-blue-300">
+                            {boletaPersona.alcanceDotacion}% × {boletaPersona.pesoDotacion}% = {fmtPct(boletaPersona.puntosDotacion)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Calidad */}
+                      {boletaPersona.pesoCalidad > 0 && (
+                        <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
+                          <div>
+                            <div className="font-sans font-bold text-[var(--text-primary)]">% Calidad (Aptos / Evaluados)</div>
+                            <div className="text-[10px] text-[var(--text-muted)]">
+                              Resultado: {fmtPct(boletaPersona.pctCalidadReal || 100)}
+                              {boletaPersona.evaluadosReal > 0 ? ` (${boletaPersona.aptosReal || 0} Aptos / ${boletaPersona.evaluadosReal} Eval.)` : ` (${boletaPersona.origenCalidad})`}
+                              {' '}→ {boletaPersona.alcanceCalidad}% Alcance
+                            </div>
+                          </div>
+                          <div className="text-right font-black text-emerald-300">
+                            {boletaPersona.alcanceCalidad}% × {boletaPersona.pesoCalidad}% = {fmtPct(boletaPersona.puntosCalidad)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Procesos Adm */}
+                      {boletaPersona.pesoProcesosAdm > 0 && (
+                        <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
+                          <div>
+                            <div className="font-sans font-bold text-[var(--text-primary)]">Procesos Administrativos</div>
+                            <div className="text-[10px] text-[var(--text-muted)]">
+                              Alcance: {boletaPersona.alcanceProcesosAdm}% ({boletaPersona.origenProcesosAdm})
+                            </div>
+                          </div>
+                          <div className="text-right font-black text-amber-300">
+                            {boletaPersona.alcanceProcesosAdm}% × {boletaPersona.pesoProcesosAdm}% = {fmtPct(boletaPersona.puntosProcesosAdm)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Total Puntos */}
+                      <div className="p-2.5 rounded-xl bg-[var(--accent-soft)]/20 border border-[var(--accent)] flex items-center justify-between">
+                        <span className="font-sans font-black text-[var(--text-primary)]">TOTAL PUNTOS ALCANZADOS:</span>
+                        <span className="text-sm font-black text-emerald-400 font-mono">{fmtPct(boletaPersona.totalPuntosPct)}</span>
+                      </div>
                     </div>
-                    <span className="text-[9px] text-[var(--text-muted)]">Transferencia BCP/BBVA</span>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
-                    <span className="text-[10px] text-[var(--text-muted)] uppercase block font-bold">
-                      Tarjeta Sodexo ({boletaPersona.pctSodexo}%)
-                    </span>
-                    <div className="text-base font-black font-mono text-amber-400 mt-0.5">
-                      {fmtMoney(boletaPersona.bonoSodexo)}
+                  {/* Resultado Financiero Final Subdividido */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-[var(--bg-elevated)] to-[var(--bg-base)] border border-[var(--border-normal)] space-y-3">
+                    <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
+                      <span className="text-xs uppercase font-bold text-[var(--text-muted)]">Bono Neto Total:</span>
+                      <span className="text-xl font-black font-mono text-emerald-400">{fmtMoney(boletaPersona.bonoNeto)}</span>
                     </div>
-                    <span className="text-[9px] text-[var(--text-muted)]">Vale de alimentos</span>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                        <span className="text-[10px] text-[var(--text-muted)] uppercase block font-bold">
+                          Depósito Efectivo ({boletaPersona.pctEfectivo}%)
+                        </span>
+                        <div className="text-base font-black font-mono text-cyan-400 mt-0.5">
+                          {fmtMoney(boletaPersona.bonoEfectivo)}
+                        </div>
+                        <span className="text-[9px] text-[var(--text-muted)]">Transferencia BCP/BBVA</span>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                        <span className="text-[10px] text-[var(--text-muted)] uppercase block font-bold">
+                          Tarjeta Sodexo ({boletaPersona.pctSodexo}%)
+                        </span>
+                        <div className="text-base font-black font-mono text-amber-400 mt-0.5">
+                          {fmtMoney(boletaPersona.bonoSodexo)}
+                        </div>
+                        <span className="text-[9px] text-[var(--text-muted)]">Vale de alimentos</span>
+                      </div>
+                    </div>
                   </div>
+                </>
+              )}
+
+              {/* TAB 2: DESGLOSE POR GRUPOS GPE (NIVEL 2) */}
+              {boletaTab === 'grupos' && (
+                <div className="space-y-3">
+                  {boletaPersona.evaluadoSobreEquipo && (
+                    <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-[11px] text-purple-200">
+                      <strong>Nota de Liderazgo:</strong> El cálculo de bono para <strong>{boletaPersona.cargo}</strong> se realiza sobre la <strong>Media General del Equipo Operativo</strong> (Día 1: {mediaEquipo.dia1Total}/{mediaEquipo.dia1MetaTotal} = {fmtPct(mediaEquipo.pctDia1)} · Dotación: {mediaEquipo.dotacionTotal}/{mediaEquipo.rqTotal} = {fmtPct(mediaEquipo.pctDotacion)}).
+                    </div>
+                  )}
+
+                  {(!boletaPersona.gruposDetalle || boletaPersona.gruposDetalle.length === 0) ? (
+                    <div className="p-6 text-center text-[var(--text-muted)] bg-[var(--bg-elevated)] rounded-2xl">
+                      No tiene grupos GPE directos registrados como reclutador en este corte.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)]">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-[var(--bg-elevated)] text-[10px] uppercase text-[var(--text-muted)]">
+                          <tr>
+                            <th className="py-2 px-2.5 text-left">Código GPE</th>
+                            <th className="py-2 px-2.5 text-left">Campaña</th>
+                            <th className="py-2 px-2.5 text-left">Fuente</th>
+                            <th className="py-2 px-2.5 text-right">Nómina</th>
+                            <th className="py-2 px-2.5 text-right">Día 1 / Meta</th>
+                            <th className="py-2 px-2.5 text-right">Dotación / RQ</th>
+                            <th className="py-2 px-2.5 text-right">Nivel 3</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border-subtle)] font-mono">
+                          {boletaPersona.gruposDetalle.map((g, i) => (
+                            <tr key={`${g.codigoGpe}-${i}`} className="hover:bg-[var(--bg-elevated)]">
+                              <td className="py-2 px-2.5 font-bold text-cyan-400">{g.codigoGpe}</td>
+                              <td className="py-2 px-2.5 font-sans">
+                                <div className="font-semibold text-[var(--text-primary)]">{g.campana}</div>
+                                <div className="text-[9px] text-[var(--text-muted)]">{g.segmento} · {g.fechaInicio}</div>
+                              </td>
+                              <td className="py-2 px-2.5 font-sans">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                  g.origenFuente === 'BASE_BD' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-cyan-500/15 text-cyan-300'
+                                }`}>
+                                  {g.origenFuente === 'BASE_BD' ? 'Base BD' : 'Vivo'}
+                                </span>
+                                {g.tieneDesfaseVivo && (
+                                  <div className="text-[9px] text-amber-300 font-bold mt-0.5">
+                                    Vivo: D1={g.dia1Vivo} / Dot={g.dotacionVivo}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-2.5 text-right text-indigo-300 font-bold">{g.nomina}</td>
+                              <td className="py-2 px-2.5 text-right text-amber-300 font-bold">{g.dia1} / {g.dia1Meta}</td>
+                              <td className="py-2 px-2.5 text-right text-emerald-400 font-bold">{g.dotacion} / {g.rq}</td>
+                              <td className="py-2 px-2.5 text-right font-sans">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCargarPostulantesGrupo(g, boletaPersona)}
+                                  className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold cursor-pointer"
+                                >
+                                  Ver Postulantes
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {/* TAB 3: POSTULANTES NOMINALES DEL GRUPO (NIVEL 3 - DNI) */}
+              {boletaTab === 'postulantes' && (
+                <div className="space-y-3">
+                  {/* Selector rápido de grupo GPE del reclutador */}
+                  {boletaPersona.gruposDetalle?.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-bold uppercase text-[var(--text-muted)] mr-1">Grupo GPE:</span>
+                      {boletaPersona.gruposDetalle.map((g, idx) => {
+                        const isActiveGpe = selectedGpeTrace?.codigoGpe === g.codigoGpe && selectedGpeTrace?.campana === g.campana
+                        return (
+                          <button
+                            key={`${g.codigoGpe}-${idx}`}
+                            type="button"
+                            onClick={() => handleCargarPostulantesGrupo(g, boletaPersona)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold cursor-pointer border transition-all ${
+                              isActiveGpe
+                                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                                : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            {g.codigoGpe} ({g.campana})
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {selectedGpeTrace && (
+                    <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <div>
+                        <strong className="text-cyan-400 font-mono">{selectedGpeTrace.codigoGpe}</strong>
+                        <span className="text-[var(--text-secondary)] ml-2">{selectedGpeTrace.campana}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {[
+                          { id: 'TODOS', label: `Todos (${postulantesTrace.length})` },
+                          { id: 'MIOS', label: `De este Reclutador (${postulantesTrace.filter(p => p.perteneceAReclutador).length})` },
+                          { id: 'DIA1', label: `Asistió D1 (${postulantesTrace.filter(p => p.perteneceAReclutador && p.asistioDia1).length})` },
+                          { id: 'IOP', label: `Dotación I-OP (${postulantesTrace.filter(p => p.perteneceAReclutador && p.tieneIop).length})` },
+                          { id: 'BAJA', label: `Bajas (${postulantesTrace.filter(p => p.perteneceAReclutador && p.esBaja).length})` },
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setFilterPostulantesTrace(tab.id)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                              filterPostulantesTrace === tab.id
+                                ? 'bg-[var(--accent)] text-white'
+                                : 'bg-[var(--bg-surface)] text-[var(--text-muted)]'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingPostulantesTrace ? (
+                    <div className="py-10 text-center text-xs text-[var(--text-muted)]">
+                      Cargando postulantes nominales desde <code className="text-cyan-400">nominas</code> y <code className="text-cyan-400">consolidado_asistencias</code>...
+                    </div>
+                  ) : postulantesTrace.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-[var(--text-muted)] bg-[var(--bg-elevated)] rounded-2xl">
+                      Selecciona un grupo GPE para inspeccionar sus postulantes nominales (DNI).
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-[var(--border-subtle)] max-h-[380px] custom-scrollbar">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-[var(--bg-elevated)] text-[10px] uppercase text-[var(--text-muted)] sticky top-0">
+                          <tr>
+                            <th className="py-2 px-2.5 text-left">DNI</th>
+                            <th className="py-2 px-2.5 text-left">Postulante</th>
+                            <th className="py-2 px-2.5 text-left">Reclutador Nómina</th>
+                            <th className="py-2 px-2.5 text-center">Día 1</th>
+                            <th className="py-2 px-2.5 text-center">Dotación (I-OP)</th>
+                            <th className="py-2 px-2.5 text-center">Estado / Asist.</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border-subtle)]">
+                          {postulantesTrace
+                            .filter((p) => {
+                              if (filterPostulantesTrace === 'MIOS') return p.perteneceAReclutador
+                              if (filterPostulantesTrace === 'DIA1') return p.perteneceAReclutador && p.asistioDia1
+                              if (filterPostulantesTrace === 'IOP') return p.perteneceAReclutador && p.tieneIop
+                              if (filterPostulantesTrace === 'BAJA') return p.perteneceAReclutador && p.esBaja
+                              return true
+                            })
+                            .map((p) => (
+                              <tr
+                                key={p.documento}
+                                className={p.perteneceAReclutador ? 'hover:bg-[var(--bg-elevated)]' : 'opacity-55 hover:opacity-90'}
+                              >
+                                <td className="py-1.5 px-2.5 font-mono font-bold text-cyan-300">{p.documento}</td>
+                                <td className="py-1.5 px-2.5 font-semibold text-[var(--text-primary)]">{p.nombreCompleto}</td>
+                                <td className="py-1.5 px-2.5 text-[10px] text-[var(--text-secondary)]">
+                                  {p.reclutador}
+                                  {p.perteneceAReclutador && (
+                                    <span className="ml-1 px-1 py-0.2 rounded bg-cyan-500/20 text-cyan-300 text-[8.5px] font-bold">
+                                      MÍO
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-2.5 text-center font-mono">
+                                  {p.asistioDia1 ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-bold">
+                                      ✓ Sí
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 text-[10px]">
+                                      No
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-2.5 text-center font-mono">
+                                  {p.tieneIop ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                      ✓ I-OP {p.fechaIop ? `(${p.fechaIop.slice(5)})` : ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-2.5 text-center">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
+                                    p.tieneIop
+                                      ? 'bg-emerald-500/15 text-emerald-400'
+                                      : p.esBaja
+                                      ? 'bg-rose-500/15 text-rose-400'
+                                      : 'bg-amber-500/15 text-amber-300'
+                                  }`}>
+                                    {p.estadoResumen} ({p.diasAsistidos}d)
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Pie Boleta con Botón Imprimir */}
             <div className="p-4 bg-[var(--bg-elevated)] border-t border-[var(--border-subtle)] flex items-center justify-between">
-              <span className="text-[10px] text-[var(--text-muted)]">Emitido por GEA WFM Platform</span>
+              <span className="text-[10px] text-[var(--text-muted)]">Emitido por GEA WFM Platform · Trazabilidad Nivel 1-2-3</span>
               <button
                 type="button"
                 onClick={() => window.print()}

@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { AREAS_BOLSA_CAPA, checkCalibracionDia1, fetchReclutadoresFull, invalidateCache, isAreaBolsaCapa } from '../../lib/dataService'
 import { resolveDistrictCoordinates } from '../../lib/geoMobilityService'
 import { nameMatches } from '../../lib/dashboardAnalytics'
-import { parseFechaNacimiento } from '../../lib/nominaConsolidadoSchema'
+import { parseFechaNacimiento, normalizeTiempoExperiencia, extractPhonesFromText } from '../../lib/nominaConsolidadoSchema'
 import { Loader2, Save, AlertCircle, CheckCircle2, Users, FileCheck, UserCheck, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, Trash2, AlertTriangle, Pencil, X, Eye, Lock, MessageSquare, Copy, Check, Sparkles, FileSpreadsheet, FileWarning, CheckCheck, Send, Filter } from 'lucide-react'
 import ColumnFilter from '../ui/ColumnFilter'
 
@@ -190,6 +190,28 @@ function sanitizeRowUpdatesForDb(rawUpdates) {
         sanitized[f] = Number.isFinite(val) ? val : null
       }
     }
+  }
+
+  // 6. Sincronizar y normalizar tiempos de experiencia (exp_tiempo_call <-> exp_tiempo_campana)
+  if ('exp_tiempo_call' in sanitized || 'exp_tiempo_campana' in sanitized) {
+    const rawVal = sanitized.exp_tiempo_call !== undefined ? sanitized.exp_tiempo_call : sanitized.exp_tiempo_campana
+    const normVal = normalizeTiempoExperiencia(rawVal) || (rawVal ? String(rawVal).trim().toUpperCase() : null)
+    sanitized.exp_tiempo_call = normVal
+    sanitized.exp_tiempo_campana = normVal
+  }
+  if ('exp_tiempo_otra' in sanitized) {
+    const rawVal = sanitized.exp_tiempo_otra
+    sanitized.exp_tiempo_otra = normalizeTiempoExperiencia(rawVal) || (rawVal ? String(rawVal).trim().toUpperCase() : null)
+  }
+
+  // 7. Sanitizar celulares si se editan manualmente
+  if ('celular' in sanitized && sanitized.celular) {
+    const p = extractPhonesFromText(sanitized.celular)
+    if (p.primary) sanitized.celular = p.primary
+  }
+  if ('celular_referencia' in sanitized && sanitized.celular_referencia) {
+    const p = extractPhonesFromText(sanitized.celular_referencia)
+    if (p.primary) sanitized.celular_referencia = p.primary
   }
 
   return sanitized
@@ -780,17 +802,24 @@ export default function NominaGridEditor({
       if (err) throw err
       
       let finalRows = (rows || []).map(raw => {
-        // Alias BD: algunos registros guardan exp_tiempo_campana y la grilla lee exp_tiempo_call
+        // Alias BD: priorizar exp_tiempo_campana (actualizado por RPC) y normalizar textos heredados
+        const rawTCall = raw.exp_tiempo_campana || raw.exp_tiempo_call || ''
+        const normTCall = rawTCall ? (normalizeTiempoExperiencia(rawTCall) || rawTCall) : ''
+        const rawTOtra = raw.exp_tiempo_otra || ''
+        const normTOtra = rawTOtra ? (normalizeTiempoExperiencia(rawTOtra) || rawTOtra) : ''
         const withAlias = {
           ...raw,
           exp_tipo_campana: raw.exp_tipo_campana || '',
-          exp_tiempo_call: raw.exp_tiempo_call || raw.exp_tiempo_campana || '',
-          exp_tiempo_campana: raw.exp_tiempo_campana || raw.exp_tiempo_call || '',
+          exp_tiempo_call: normTCall,
+          exp_tiempo_campana: normTCall,
           exp_otra: raw.exp_otra || '',
-          exp_tiempo_otra: raw.exp_tiempo_otra || '',
+          exp_tiempo_otra: normTOtra,
         }
-        const r = (!withAlias.edad && withAlias.edad !== 0 && withAlias.fecha_nacimiento)
-          ? { ...withAlias, edad: calcEdadFromFecha(withAlias.fecha_nacimiento) }
+        const computedEdad = (!withAlias.edad && withAlias.edad !== 0 && withAlias.fecha_nacimiento)
+          ? calcEdadFromFecha(withAlias.fecha_nacimiento)
+          : withAlias.edad
+        const r = computedEdad !== withAlias.edad
+          ? { ...withAlias, edad: computedEdad }
           : withAlias
         let dist = r.distrito_residencia
         if (!dist && (r.direccion_domicilio || r.lugar_residencia)) {
@@ -799,19 +828,31 @@ export default function NominaGridEditor({
             dist = geo.distrito.toUpperCase()
           }
         }
-        return dist && dist !== r.distrito_residencia ? { ...r, distrito_residencia: dist, _auto_resolved_distrito: true } : r
+        const autoPatch = {}
+        if (dist && dist !== raw.distrito_residencia) autoPatch.distrito_residencia = dist
+        if (computedEdad && !raw.edad) autoPatch.edad = computedEdad
+        if (normTCall && (raw.exp_tiempo_call !== normTCall || raw.exp_tiempo_campana !== normTCall)) {
+          autoPatch.exp_tiempo_call = normTCall
+          autoPatch.exp_tiempo_campana = normTCall
+        }
+        if (normTOtra && raw.exp_tiempo_otra !== normTOtra) {
+          autoPatch.exp_tiempo_otra = normTOtra
+        }
+        return Object.keys(autoPatch).length > 0
+          ? { ...r, ...(dist ? { distrito_residencia: dist } : {}), _auto_patch: autoPatch }
+          : r
       })
 
       setData(finalRows)
 
-      // Auto-backfill en base de datos para registros históricos con distrito_residencia en null
-      const toBackfill = finalRows.filter(r => r._auto_resolved_distrito && r.id && r.distrito_residencia)
+      // Auto-backfill en base de datos para registros históricos con distrito_residencia, edad o tiempo de experiencia desincronizados
+      const toBackfill = finalRows.filter(r => r._auto_patch && r.id)
       if (toBackfill.length > 0) {
         Promise.allSettled(
           toBackfill.map(r =>
-            supabase.from('nominas').update({ distrito_residencia: r.distrito_residencia }).eq('id', r.id)
+            supabase.from('nominas').update(r._auto_patch).eq('id', r.id)
           )
-        ).catch(e => console.warn('Auto backfill distrito error:', e))
+        ).catch(e => console.warn('Auto backfill nominas error:', e))
       }
 
       lastLoadedAtRef.current = new Date().toISOString()

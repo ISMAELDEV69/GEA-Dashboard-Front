@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { fetchPostulantesPorGrupo, dividirGrupoBulk } from '../../lib/dataService'
 import { isSubgroupCode } from '../../lib/flujoOperativo'
+import FormadorSearchSelect from './FormadorSearchSelect'
 
 export default function DividirGrupoModal({
   isOpen,
@@ -293,26 +294,13 @@ export default function DividirGrupoModal({
                     <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block mb-1">
                       Formador Asignado:
                     </label>
-                    <select
+                    <FormadorSearchSelect
                       value={subgrupoFormadores[idx] || ''}
-                      onChange={e => setSubgrupoFormadores(prev => ({ ...prev, [idx]: e.target.value }))}
+                      onChange={doc => setSubgrupoFormadores(prev => ({ ...prev, [idx]: doc }))}
+                      formadoresActivos={formadores}
+                      targetSegmento={(grupo?.segmento || '').trim().toUpperCase()}
                       disabled={submitting}
-                      className="form-input w-full py-1.5 px-2 text-xs rounded-lg font-semibold"
-                    >
-                      <option value="">● [Pendiente] Asignar Formador</option>
-                      {(() => {
-                        const targetSeg = (grupo?.segmento || '').trim().toUpperCase();
-                        const list = targetSeg 
-                          ? formadores.filter(f => (f.segmento || '').trim().toUpperCase() === targetSeg)
-                          : formadores;
-                        const finalFormadores = list.length > 0 ? list : formadores;
-                        return finalFormadores.map(f => (
-                          <option key={f.documento} value={f.documento}>
-                            ✓ {f.nombres_completos} {f.subcampana ? `• ${f.subcampana}` : ''}
-                          </option>
-                        ));
-                      })()}
-                    </select>
+                    />
                   </div>
                 </div>
               )

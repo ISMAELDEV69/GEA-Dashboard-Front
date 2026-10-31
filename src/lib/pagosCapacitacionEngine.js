@@ -279,12 +279,27 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     if (!doc) continue
 
     const rawGpe = String(n.grupo_codigo || '').trim().toUpperCase()
+    const rawCamp = String(n.campana || '').trim().toUpperCase()
+    const altGpe = rawGpe.startsWith('GPR-')
+      ? rawGpe.replace('GPR-', 'GPE-')
+      : (rawGpe.startsWith('GPE-') ? rawGpe.replace('GPE-', 'GPR-') : '')
 
     const config = lookupPorClaves(configPorGrupo, n)
     const capInfo = lookupPorClaves(capacidadPorGrupo, n)
     const sinPropuesta = !config || (!config.grupo_codigo && !config.grupo)
 
-    const rawAsistencias = asistenciasPorDoc.get(doc) || []
+    const allDocAsistencias = asistenciasPorDoc.get(doc) || []
+    // Aislar las asistencias de este grupo/cohorte específico (evita mezclar bajas o asistencias de otro grupo)
+    const cohortAsistencias = rawGpe
+      ? allDocAsistencias.filter(a => {
+          const ag = String(a.grupo_codigo || '').trim().toUpperCase()
+          if (!ag) return true
+          if (ag === rawGpe || (altGpe && ag === altGpe)) return true
+          if (ag.startsWith(`${rawGpe}-`) || rawGpe.startsWith(`${ag}-`)) return true
+          return false
+        })
+      : allDocAsistencias
+    const rawAsistencias = cohortAsistencias.length > 0 ? cohortAsistencias : (rawGpe ? [] : allDocAsistencias)
 
     // 1. Detectar si es Agregado
     const statusDia1Str = String(n.status_dia_1 || '').toUpperCase().trim()
@@ -363,8 +378,8 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       }
     }
 
-    const asistioDia0 = asistioDia0Nomina || asistioDia0Asistencia
-    const dia0StatusLabel = esAgregado && !asistioDia0 ? 'N/A' : (asistioDia0 ? 'ASISTIO' : (dia0Nomina ? dia0Nomina : 'FALTA'))
+    const asistioDia0 = !esAgregado && (asistioDia0Nomina || asistioDia0Asistencia)
+    const dia0StatusLabel = esAgregado ? 'N/A' : (asistioDia0 ? 'ASISTIO' : 'SIN INDUCCION')
 
     // 5. Deduplicación por fecha única tomando el ÚLTIMO corte del día
     const cortesPorFecha = new Map()
@@ -392,6 +407,24 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       return s === 'A' || s === 'ASISTIO' || s === 'PRESENTE'
     })
 
+    const asistenciasFaltas = asistenciasPersona.filter(a => {
+      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
+      return s === 'FI' || s === 'FJ' || s === 'F' || s === 'FALTA' || s === 'INASISTENCIA'
+    })
+
+    const fechasAsistidas = asistenciasValidas
+      .map(a => toIsoDate(a.fecha_asistencia))
+      .filter(Boolean)
+      .sort()
+
+    const fechasFaltas = asistenciasFaltas
+      .map(a => ({
+        fecha: toIsoDate(a.fecha_asistencia),
+        sigla: String(a.sigla_asistencia || 'FI').toUpperCase().trim()
+      }))
+      .filter(x => x.fecha)
+      .sort((a, b) => a.fecha.localeCompare(b.fecha))
+
     const dia0YaEnAsistencia = fInicioIso && asistenciasValidas.some(a => toIsoDate(a.fecha_asistencia) < fInicioIso)
 
     let diasAsistidos = asistenciasValidas.length
@@ -400,14 +433,12 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     }
 
     // 7. Faltas y asistencia perfecta
-    const tuvoFaltasAsistencia = asistenciasPersona.some(a => {
-      const s = String(a.sigla_asistencia || '').toUpperCase().trim()
-      return s === 'FI' || s === 'FJ' || s === 'F' || s === 'FALTA' || s === 'INASISTENCIA'
-    })
+    // REGLA OFICIAL: El Día 0 (Inducción) NUNCA afecta la Asistencia Perfecta (si no asistió a Día 0 es porque ingresó en Día 1 o posterior).
+    // Solo cuentan como falta las inasistencias reales en capacitación (FI / FJ / F).
+    const tuvoFaltasAsistencia = asistenciasFaltas.length > 0
     const dia1Nomina = String(n.dia_1 || '').toUpperCase().trim()
-    const faltoDia1Nomina = dia1Nomina === 'FALTA' || dia1Nomina === 'FI' || dia1Nomina === 'F'
-    const faltoDia0Nomina = !esAgregado && !asistioDia0 && dia0Nomina === 'FALTA'
-    const tuveFaltas = tuvoFaltasAsistencia || (!esAgregado && faltoDia1Nomina) || faltoDia0Nomina
+    const faltoDia1Nomina = asistenciasPersona.length === 0 && (dia1Nomina === 'FALTA' || dia1Nomina === 'FI' || dia1Nomina === 'F')
+    const tuveFaltas = tuvoFaltasAsistencia || (!esAgregado && faltoDia1Nomina)
 
     // 8. Estatus final e inspección de TODO el historial global (sin corte OJT para bajas)
     const sortedAsistenciasGlobal = [...rawAsistencias].sort((x, y) => {
@@ -495,6 +526,10 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
         tipo_reclutado: n.tipo_reclutado || '',
         es_baja: true,
         dias_asistidos: diasAsistidos,
+        fechas_asistidas: fechasAsistidas,
+        fechas_faltas: fechasFaltas,
+        pago_por_dia: parseFloat(config?.pagoPorDia || config?.monto_dia_capa) || 0,
+        dias_capacitacion: parseInt(config?.diasCapa) || 0,
         tuvo_faltas: tuveFaltas,
         asistencia_perfecta: false,
         sin_propuesta: false,
@@ -517,9 +552,11 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
     let bonoPermanencia = 0
     let cuotas = 1
     let mesBonoNumero = 1
+    const tarifaDiaConfig = parseFloat(config?.pagoPorDia || config?.monto_dia_capa) || 0
+    const diasCapaConfig = parseInt(config?.diasCapa) || 0
 
     if (!sinPropuesta) {
-      const tarifaDia = parseFloat(config.pagoPorDia || config.monto_dia_capa) || 0
+      const tarifaDia = tarifaDiaConfig
       
       // Mes de Afectación - Pago Capa
       const pClean = String(periodoConsulta || '').replace(/\D/g, '')
@@ -601,6 +638,10 @@ export function calcularPagosCapacitacion(nominas = [], asistencias = [], config
       tipo_reclutado: n.tipo_reclutado || '',
       es_baja: false,
       dias_asistidos: diasAsistidos,
+      fechas_asistidas: fechasAsistidas,
+      fechas_faltas: fechasFaltas,
+      pago_por_dia: tarifaDiaConfig,
+      dias_capacitacion: diasCapaConfig,
       tuvo_faltas: tuveFaltas,
       asistencia_perfecta: !tuveFaltas && diasAsistidos > 0,
       sin_propuesta: sinPropuesta,
@@ -725,10 +766,12 @@ export function generarMatrizCronogramaPagos(filasCalculadas = [], liquidaciones
           bono_asistencia_perfecta: 0,
           total_mes: 0,
           dias_asistidos: f.dias_asistidos || 0,
+          fechas_asistidas: f.fechas_asistidas || [],
+          fechas_faltas: f.fechas_faltas || [],
           asistencia_perfecta: Boolean(f.asistencia_perfecta),
           es_agregado: Boolean(f.es_agregado),
           asistio_dia_0: Boolean(f.asistio_dia_0),
-          dia_0_status: f.dia_0_status || (f.es_agregado && !f.asistio_dia_0 ? 'N/A' : (f.asistio_dia_0 ? 'ASISTIO' : 'FALTA')),
+          dia_0_status: f.dia_0_status || (f.es_agregado ? 'N/A' : (f.asistio_dia_0 ? 'ASISTIO' : 'SIN INDUCCION')),
           status_final: f.status_final || (f.tiene_iop ? 'I-OP' : (f.es_baja ? 'BAJA' : 'CALIFICA')),
           tiene_iop: Boolean(f.tiene_iop),
           total_iop: f.total_iop || 0,
@@ -893,9 +936,11 @@ export function generarMatrizCronogramaPagos(filasCalculadas = [], liquidaciones
 export function generarResumenMatrizPagos(matrizFilas = []) {
   const pagadas = matrizFilas.filter(f => f.estado_pago === 'PAGADO')
   const pendientes = matrizFilas.filter(f => f.estado_pago === 'PENDIENTE')
+  const personasSet = new Set(matrizFilas.map(f => `${f.documento}|${f.campana}|${f.grupo_codigo}`).filter(Boolean))
 
   return {
     total_cuotas: matrizFilas.length,
+    personas_unicas: personasSet.size,
     cuotas_pagadas: pagadas.length,
     cuotas_pendientes: pendientes.length,
     total_programado: +matrizFilas.reduce((s, f) => s + f.total_mes, 0).toFixed(2),
@@ -939,7 +984,7 @@ export function exportarCSVMatrizPagos(matrizFilas = []) {
     f.grupo_codigo,
     f.reclutador || '',
     f.es_baja ? 'BAJA' : (f.tiene_iop ? `I-OP (${f.fecha_primer_iop || 'OK'})` : 'CALIFICA'),
-    f.asistio_dia_0 ? 'ASISTIO' : (f.es_agregado ? 'N/A' : 'FALTA'),
+    f.asistio_dia_0 ? 'ASISTIO' : (f.es_agregado ? 'N/A' : 'SIN INDUCCION'),
     f.dias_asistidos,
     f.asistencia_perfecta ? 'PERFECTA' : 'CON FALTAS',
     f.mes_pago,

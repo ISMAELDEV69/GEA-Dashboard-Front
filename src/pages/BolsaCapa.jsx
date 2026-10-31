@@ -20,7 +20,14 @@ import {
   tipoReclutadoFromAreaCapa,
   parseSheetMatrixCandidates,
 } from '../lib/dataService'
-import { cleanDocumento, NOMINA_DB_FIELDS } from '../lib/nominaConsolidadoSchema'
+import {
+  cleanDocumento,
+  NOMINA_DB_FIELDS,
+  parseFechaNacimiento,
+  parseEdadValue,
+  normalizeTiempoExperiencia,
+  extractPhonesFromText,
+} from '../lib/nominaConsolidadoSchema'
 import { inferSegmento } from '../lib/capacidadRysSync'
 import { supabase } from '../lib/supabase'
 
@@ -51,7 +58,7 @@ function normHeader(value) {
 async function parseCapaExcel(file) {
   if (!file) return []
   const data = await file.arrayBuffer()
-  const wb = XLSX.read(data, { type: 'array' })
+  const wb = XLSX.read(data, { type: 'array', cellText: false, cellDates: true, dateNF: 'yyyy-mm-dd' })
   
   let bestRows = []
 
@@ -59,7 +66,7 @@ async function parseCapaExcel(file) {
   for (const sheetName of (wb.SheetNames || [])) {
     const worksheet = wb.Sheets[sheetName]
     if (!worksheet) continue
-    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' })
     if (!matrix || matrix.length < 2) continue
 
     try {
@@ -77,7 +84,7 @@ async function parseCapaExcel(file) {
     for (const sheetName of (wb.SheetNames || [])) {
       const worksheet = wb.Sheets[sheetName]
       if (!worksheet) continue
-      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+      const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' })
       if (!matrix || matrix.length < 2) continue
 
       // Buscar la fila de encabezados en las primeras 20 filas
@@ -132,8 +139,18 @@ async function parseCapaExcel(file) {
               if (colMap.distrito_residencia === undefined) colMap.distrito_residencia = cIdx
             } else if (h.includes('DIRECCION DE DOMICILIO') || h.includes('DIRECCION DOMICILIO') || h.includes('DIRECCION') || h.includes('DOMICILIO')) {
               if (colMap.direccion_domicilio === undefined) colMap.direccion_domicilio = cIdx
+            } else if (h.includes('TIPO DE EXPERIENCIA') || (h.includes('EXPERIENCIA') && h.includes('ORIENTADO'))) {
+              if (colMap.exp_tipo_campana === undefined) colMap.exp_tipo_campana = cIdx
             } else if (h.includes('CALL CENTER') || h.includes('EXP CALL')) {
               if (colMap.exp_call_center === undefined) colMap.exp_call_center = cIdx
+            } else if (h.includes('TIEMPO') && h.includes('EXPERIENCIA')) {
+              if (h.includes('OTRA') || colMap.exp_tiempo_call !== undefined) {
+                if (colMap.exp_tiempo_otra === undefined) colMap.exp_tiempo_otra = cIdx
+              } else {
+                colMap.exp_tiempo_call = cIdx
+              }
+            } else if (h.includes('OTRA EXPERIENCIA')) {
+              if (colMap.exp_otra === undefined) colMap.exp_otra = cIdx
             } else if (h.includes('FUENTE') || h.includes('MEDIO')) {
               if (colMap.fuente_oferta === undefined) colMap.fuente_oferta = cIdx
             } else if (h.includes('SEDE')) {
@@ -170,42 +187,28 @@ async function parseCapaExcel(file) {
             apeMat = fullApe.slice(1).join(' ') || ''
           }
 
+          const rawFnVal = colMap.fecha_nacimiento !== undefined ? row[colMap.fecha_nacimiento] : null
+          const rawEdadVal = colMap.edad !== undefined ? row[colMap.edad] : null
+          const parsedFn = parseFechaNacimiento(rawFnVal, rawEdadVal) || ''
+          const parsedEdad = parseEdadValue(rawEdadVal, parsedFn)
+          const rawCel = colMap.cel !== undefined ? row[colMap.cel] : ''
+          const rawRef = colMap.cel_ref !== undefined ? row[colMap.cel_ref] : ''
+          const celObj = extractPhonesFromText(rawCel)
+          const refObj = extractPhonesFromText(rawRef)
+          const expTCall = colMap.exp_tiempo_call !== undefined ? (normalizeTiempoExperiencia(row[colMap.exp_tiempo_call]) || String(row[colMap.exp_tiempo_call] || '').trim()) : ''
+          const expTOtra = colMap.exp_tiempo_otra !== undefined ? (normalizeTiempoExperiencia(row[colMap.exp_tiempo_otra]) || String(row[colMap.exp_tiempo_otra] || '').trim()) : ''
+
           rowsFound.push({
             documento: doc,
             apellido_paterno: apePat,
             apellido_materno: apeMat,
             nombres: nom,
-            celular: colMap.cel !== undefined ? String(row[colMap.cel] || '').trim() : '',
-            celular_referencia: colMap.cel_ref !== undefined ? String(row[colMap.cel_ref] || '').trim() : '',
+            celular: celObj.primary || '',
+            celular_referencia: refObj.primary || celObj.secondary || '',
             correo: colMap.correo !== undefined ? String(row[colMap.correo] || '').trim() : '',
             genero: colMap.genero !== undefined ? String(row[colMap.genero] || '').trim() : '',
-            fecha_nacimiento: colMap.fecha_nacimiento !== undefined ? String(row[colMap.fecha_nacimiento] || '').trim() : '',
-            edad: (() => {
-              const rawEdad = colMap.edad !== undefined ? String(row[colMap.edad] ?? '').trim() : ''
-              const m = rawEdad.match(/\d{1,3}/)
-              if (m && Number(m[0]) >= 14 && Number(m[0]) <= 90) return m[0]
-              // Calcular desde fecha de nacimiento si no hay edad
-              const rawFn = colMap.fecha_nacimiento !== undefined ? row[colMap.fecha_nacimiento] : null
-              if (rawFn === null || rawFn === undefined || rawFn === '') return ''
-              let d = null
-              if (typeof rawFn === 'number' || /^\d{5}$/.test(String(rawFn).trim())) {
-                d = new Date(Math.round((Number(rawFn) - 25569) * 86400 * 1000))
-              } else if (rawFn instanceof Date) {
-                d = rawFn
-              } else {
-                const s = String(rawFn).trim()
-                const dm = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/)
-                const iso = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/)
-                if (dm) d = new Date(Number(dm[3]), Number(dm[2]) - 1, Number(dm[1]))
-                else if (iso) d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
-              }
-              if (!d || isNaN(d.getTime())) return ''
-              const hoy = new Date()
-              let a = hoy.getFullYear() - d.getFullYear()
-              const md = hoy.getMonth() - d.getMonth()
-              if (md < 0 || (md === 0 && hoy.getDate() < d.getDate())) a--
-              return a >= 14 && a <= 90 ? String(a) : ''
-            })(),
+            fecha_nacimiento: parsedFn,
+            edad: parsedEdad !== null ? String(parsedEdad) : '',
             estado_civil: colMap.estado_civil !== undefined ? String(row[colMap.estado_civil] || '').trim() : '',
             n_hijos: colMap.n_hijos !== undefined ? String(row[colMap.n_hijos] || '').trim() : '',
             nivel_academico: colMap.nivel_academico !== undefined ? String(row[colMap.nivel_academico] || '').trim() : '',
@@ -215,6 +218,11 @@ async function parseCapaExcel(file) {
             distrito_residencia: colMap.distrito_residencia !== undefined ? String(row[colMap.distrito_residencia] || '').trim() : '',
             direccion_domicilio: colMap.direccion_domicilio !== undefined ? String(row[colMap.direccion_domicilio] || '').trim() : '',
             exp_call_center: colMap.exp_call_center !== undefined ? String(row[colMap.exp_call_center] || '').trim() : '',
+            exp_tipo_campana: colMap.exp_tipo_campana !== undefined ? String(row[colMap.exp_tipo_campana] || '').trim() : '',
+            exp_tiempo_call: expTCall,
+            exp_tiempo_campana: expTCall,
+            exp_otra: colMap.exp_otra !== undefined ? String(row[colMap.exp_otra] || '').trim() : '',
+            exp_tiempo_otra: expTOtra,
             fuente_oferta: colMap.fuente_oferta !== undefined ? String(row[colMap.fuente_oferta] || '').trim() : '',
             sede: colMap.sede !== undefined ? String(row[colMap.sede] || '').trim() : '',
             modalidad: colMap.modalidad !== undefined ? String(row[colMap.modalidad] || '').trim() : '',
