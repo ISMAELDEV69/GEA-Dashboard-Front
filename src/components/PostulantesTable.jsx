@@ -566,7 +566,7 @@ export default function PostulantesTable({
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const resetPage  = () => setPage(1)
 
-  const exportToExcel = () => {
+  const handleExportExcel = () => {
     const rows = filtered.map(p => ({
       DNI: p.documento,
       'Apellido Paterno': p.apellido_paterno,
@@ -600,7 +600,7 @@ export default function PostulantesTable({
       >
         <div className="flex gap-2 items-center">
           <button
-            onClick={exportToExcel}
+            onClick={handleExportExcel}
             title={`Exportar ${filtered.length} registros a Excel`}
             className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
           >

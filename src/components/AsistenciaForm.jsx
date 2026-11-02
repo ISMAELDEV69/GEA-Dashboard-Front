@@ -1932,7 +1932,7 @@ export default function AsistenciaForm({
     toast.info('Fecha seleccionada', `Cambiando a la fecha ${formatSpreadsheetDate(dateIso)} para editar su asistencia.`)
   }
 
-  const exportToExcel = () => {
+  const handleExportExcel = () => {
     if (attendanceList.length === 0) return
     const exportRows = attendanceList.map(item => ({
       DOCUMENTO: item.documento,
@@ -2825,7 +2825,7 @@ export default function AsistenciaForm({
             </button>
             
             <button 
-              onClick={exportToExcel} 
+              onClick={handleExportExcel} 
               disabled={displayedList.length === 0} 
               className="flex items-center gap-1 h-7 px-2.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shadow-xs"
               title="Exportar a Excel"

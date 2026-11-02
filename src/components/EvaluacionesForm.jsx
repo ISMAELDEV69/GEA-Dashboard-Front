@@ -163,7 +163,7 @@ export default function EvaluacionesForm({ grupos = [], postulantes = [], asiste
     }
   }
 
-  const exportToExcel = () => {
+  const handleExportExcel = () => {
     const exportRows = rows.map(r => ({
       DNI: r.documento,
       Nombre: r.nombre,
@@ -228,7 +228,7 @@ export default function EvaluacionesForm({ grupos = [], postulantes = [], asiste
                 <RefreshCw size={14} />
               </button>
               <button
-                onClick={exportToExcel}
+                onClick={handleExportExcel}
                 className="btn-secondary flex items-center gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
               >
                 <Download size={14} /> Excel

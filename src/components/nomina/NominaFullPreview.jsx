@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Loader2, DownloadCloud } from 'lucide-react'
-import { exportToExcel } from '../../lib/exportExcel'
+import { getXLSX } from '../../lib/exportExcel'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key) {
@@ -33,7 +33,7 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
     setFilters(prev => ({ ...prev, [key]: value }))
   }
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (filteredData.length === 0) return
 
     const exportData = filteredData.map(row => {
@@ -54,6 +54,7 @@ export default function NominaFullPreview({ grupoCodigo, campana, periodo, seman
       return newRow
     })
 
+    const XLSX = await getXLSX()
     const worksheet = XLSX.utils.json_to_sheet(exportData)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Nomina')

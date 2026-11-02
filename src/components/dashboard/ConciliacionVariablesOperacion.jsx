@@ -654,7 +654,7 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
   }
 
   // Exportar a Excel
-  const handleExportarExcel = (tipo = 'auditoria') => {
+  const handleExportarExcel = async (tipo = 'auditoria') => {
     let filasAExportar = []
 
     if (tipo === 'nomina_aprobada') {
@@ -700,6 +700,8 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
       })
     }
 
+    const { getXLSX } = await import('../../lib/exportExcel')
+    const XLSX = await getXLSX()
     const ws = XLSX.utils.json_to_sheet(filasAExportar)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, tipo === 'nomina_aprobada' ? 'Nomina_Pagos' : 'Auditoria_VS')
