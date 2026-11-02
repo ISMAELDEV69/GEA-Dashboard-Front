@@ -2,7 +2,6 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import * as XLSX from 'xlsx'
 import {
   UserCheck, AlertCircle, CheckCircle2,
   Award, Sparkles, TrendingUp, Flame, Check, User, Phone, Briefcase,
@@ -829,6 +828,8 @@ export default function NominaForm({
     reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target.result)
+        const { getXLSX } = await import('../lib/exportExcel')
+        const XLSX = await getXLSX()
         const workbook = XLSX.read(data, { type: 'array' })
         
         // Find best sheet (default to 'Nomina' or first worksheet)

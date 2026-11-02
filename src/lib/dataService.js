@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 /**
  * dataService.js
  * Capa de abstracción de datos: usa Supabase si está configurado,
@@ -811,15 +810,12 @@ export async function getFirstDateFormador(grupo_codigo, campana) {
   // 1. Prioridad: Fecha oficial de inicio según capacidad_rys
   let fechaInicioRef = null;
   try {
-    let qCap = supabase.from('capacidad_rys').select('fecha_registro, fecha_dia_1').eq('codigo', grupo_codigo);
+    let qCap = supabase.from('capacidad_rys').select('fecha_registro').eq('codigo', grupo_codigo);
     if (campana && campana !== 'Sin Campaña' && campana !== 'Todas') {
       qCap = qCap.ilike('campana', `%${campana}%`);
     }
     const { data: capData } = await qCap.limit(1).maybeSingle();
     if (capData) {
-      if (capData.fecha_dia_1) {
-        return capData.fecha_dia_1;
-      }
       if (capData.fecha_registro) {
         const start = new Date(capData.fecha_registro + 'T12:00:00Z');
         if (String(grupo_codigo).startsWith('GPE')) {
@@ -4878,13 +4874,13 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
 
-  let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
+  let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (periodo) {
     recQuery = recQuery.eq('periodo_reclutado', periodo)
   }
   let { data: rawRecAsis } = await recQuery
   if (!rawRecAsis || rawRecAsis.length === 0) {
-    let fbQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, fecha_registro, created_at').eq('grupo_codigo', grupo_codigo)
+    let fbQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at').eq('grupo_codigo', grupo_codigo)
     if (periodo) fbQuery = fbQuery.eq('periodo_reclutado', periodo)
     const { data: fb } = await fbQuery
     if (fb && fb.length > 0) rawRecAsis = fb
@@ -5245,6 +5241,7 @@ export async function fetchGoogleSpreadsheetWorkbookData(rawUrl) {
       if (resp.ok) {
         const buffer = await resp.arrayBuffer()
         console.info('[POOL-PIPELINE] [ETAPA 1: FETCH] XLSX descargado con éxito:', buffer.byteLength, 'bytes')
+        const XLSX = await import('xlsx')
         const workbook = XLSX.read(buffer, { type: 'array', cellText: false, cellDates: true, dateNF: 'yyyy-mm-dd' })
         const sheetNames = workbook.SheetNames || []
         if (sheetNames.length > 0) {
@@ -5510,6 +5507,7 @@ export async function fetchGoogleFormsPool(url, sheetName = null) {
         ? sheetName 
         : wbData.sheetNames[0]
       const worksheet = wbData.workbook.Sheets[targetSheet]
+      const XLSX = await import('xlsx')
       const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
       return await parseSheetMatrixCandidates(matrix)
     }
@@ -7374,7 +7372,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('postulante_documento, grupo_codigo, sigla_asistencia, motivo_baja')
         .in('grupo_codigo', codigos),
       supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, fecha_registro, created_at')
+        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, created_at')
         .in('grupo_codigo', codigos)
     ];
 

@@ -6,7 +6,6 @@ import {
   Clock, ArrowRight, ShieldAlert, Sparkles, Building2, UploadCloud,
   FileText, CheckSquare, AlertCircle, UserCheck, BarChart3, Layers, Award
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import {
   fetchVariablesValidacion,
   fetchPeriodosVariablesValidacion,
@@ -440,7 +439,9 @@ export default function ConciliacionVariablesOperacion({ userProfile }) {
     setResumenParseoExcel(null)
 
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
+        const { getXLSX } = await import('../../lib/exportExcel')
+        const XLSX = await getXLSX()
       try {
         const buffer = e.target.result
         const workbook = XLSX.read(buffer, { type: 'array' })

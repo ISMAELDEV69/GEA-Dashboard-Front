@@ -16,7 +16,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import { Download, ArrowLeft, Target, TrendingUp, Percent, GitCompare, LineChart, GraduationCap, UserPlus } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../lib/exportExcel'
 import ViewLoadingSkeleton from './ui/ViewLoadingSkeleton'
 import { fetchCoberturaDotacion, fetchCapacidadRysLookup } from '../lib/dataService'
 import {
@@ -772,10 +772,7 @@ function RequerimientosReport({
       'PROYECCION DE INGRESOS': r.proyeccion,
       INGRESOS: r.ingresos,
     }))
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Proyectados')
-    XLSX.writeFile(wb, `GEA_Proyectados_${effectivePeriodos.join('_') || 'all'}.xlsx`)
+    exportToExcel(rows, `GEA_Proyectados_${effectivePeriodos.join('_') || 'all'}.xlsx`, 'Proyectados')
   }, [view.tabla, effectivePeriodos])
 
   const reqLegend = [
@@ -1194,10 +1191,7 @@ function CoberturaDotacion() {
         TIPO: metricUnitLabel(tipo),
       },
     ]
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Cobertura')
-    XLSX.writeFile(wb, `GEA_Cobertura_Dotacion_${effectivePeriodos.join('_') || 'all'}.xlsx`)
+    exportToExcel(rows, `GEA_Cobertura_Dotacion_${effectivePeriodos.join('_') || 'all'}.xlsx`, 'Cobertura')
   }, [view.tabla, kpis, effectivePeriodos, tipo])
 
   const pieData = view.modalidad.filter((m) => m.ingresos > 0)

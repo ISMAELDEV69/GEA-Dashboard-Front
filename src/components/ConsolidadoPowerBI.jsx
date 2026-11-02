@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useId, useMemo, useState, useCallback, useRef } from 'react';
 import { 
   AlertCircle, 
   CalendarDays, 
@@ -26,7 +26,7 @@ import {
 import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import { isBajaDia1Motivo } from '../lib/bajaDia1Rules';
 import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
-import * as XLSX from 'xlsx';
+import { exportToExcel } from '../lib/exportExcel';
 import AsistenciaCeldaEditorModal from './AsistenciaCeldaEditorModal';
 import { isDescuentoVencido48h } from '../lib/businessHoursUtils';
 
@@ -532,6 +532,126 @@ function CompactVolumeCard({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABLA MATRIZ: COLUMNAS FIJAS Y SUBCOMPONENTES MEMOIZADOS PARA MÁXIMO RENDIMIENTO
+// ─────────────────────────────────────────────────────────────────────────────
+const FIXED_COLS = [
+  { id: 'documento', label: 'DOCUMENTO', width: 95, left: 0 },
+  { id: 'nombre', label: 'NOMBRE COMPLETO', width: 200, left: 95 },
+  { id: 'campana', label: 'CAMPAÑA', width: 150, left: 295 },
+  { id: 'gpe', label: 'GPE', width: 105, left: 445 },
+  { id: 'estado', label: 'ULT. ESTADO', width: 85, left: 550 },
+  { id: 'fecha', label: 'FECHA OJT', width: 90, left: 635 },
+  { id: 'condicion', label: 'CONDICIÓN', width: 85, left: 725 },
+  { id: 'tipo', label: 'TIPO REC.', width: 85, left: 810 },
+];
+
+const MatrixCell = React.memo(function MatrixCell({
+  date,
+  sigla,
+  isAdmin,
+  onCellClick,
+  row,
+}) {
+  const meta = STATUS_META[sigla];
+  return (
+    <td className="px-1 py-1 text-center border-b border-[var(--border-subtle)]">
+      <div
+        onClick={() => {
+          if (isAdmin) onCellClick(row, date, sigla);
+        }}
+        className={`heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${
+          isAdmin 
+            ? 'cursor-pointer hover:ring-2 hover:ring-cyan-400 hover:scale-110 active:scale-95' 
+            : 'group-hover:scale-105'
+        }`}
+        style={{
+          backgroundColor: meta ? meta.bg : 'var(--status-empty-bg)',
+          color: meta ? meta.text : 'var(--text-muted)',
+        }}
+        title={isAdmin ? `Admin: Clic para editar o regularizar asistencia del ${date}` : undefined}
+      >
+        {sigla || '—'}
+      </div>
+    </td>
+  );
+});
+
+const MatrixRow = React.memo(function MatrixRow({
+  row,
+  uniqueDates,
+  datesTimeMap,
+  nowLimit,
+  isAdmin,
+  onCellClick,
+}) {
+  return (
+    <tr className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 font-bold font-mono text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
+        {row.documento}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-semibold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[1].left, minWidth: FIXED_COLS[1].width, maxWidth: FIXED_COLS[1].width }}>
+        {row.nombre_completo}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--accent)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }} title={row.campana}>
+        {row.campana}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
+        {row.gpe}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
+        <div className="flex items-center gap-1">
+          <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+            row.ult_estado === 'ACTIVO'
+              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+              : row.ult_estado === 'BAJA DIA 1'
+              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+              : row.ult_estado === 'DESCUENTO'
+              ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30'
+              : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+          }`}>
+            {row.ult_estado}
+          </span>
+          {row.isDescuento && row.ult_estado !== 'DESCUENTO' && (
+            <span className="inline-flex rounded px-1 py-0.5 text-[8px] font-black uppercase tracking-tight bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30" title="Descuento autorizado por RyS/Capacitación (No penaliza)">
+              DESC
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
+        {row.fecha_inicio_ojt}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
+        {row.condicion_laboral}
+      </td>
+      <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[7].left, minWidth: FIXED_COLS[7].width, maxWidth: FIXED_COLS[7].width }}>
+        {row.tipo_reclutado}
+      </td>
+      {uniqueDates.map((date) => {
+        let sigla = row.fechas[date] || '';
+        // REGLA ESTRICTA: Solo proyectar 'B' en fechas pasadas o fecha actual (NUNCA en fechas futuras)
+        if (!sigla && (row.ult_estado === 'BAJA DIA 1' || row.ult_estado === 'CESADO')) {
+          const currentTime = datesTimeMap[date] || 0;
+          if (currentTime > 0 && currentTime <= nowLimit && row.minBajaTime < Infinity && currentTime >= row.minBajaTime) {
+            sigla = 'B';
+          }
+        }
+        return (
+          <MatrixCell
+            key={date}
+            date={date}
+            sigla={sigla}
+            isAdmin={isAdmin}
+            onCellClick={onCellClick}
+            row={row}
+          />
+        );
+      })}
+    </tr>
+  );
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL: CONSOLIDADO POWER BI
@@ -1158,7 +1278,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     });
   }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
 
-  const pivotRows = useMemo(() => {
+  const unsearchedPivotRows = useMemo(() => {
     const map = new Map();
     
     for (let i = 0; i < filteredData.length; i++) {
@@ -1222,6 +1342,17 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         continue;
       }
 
+      // Precalcular el timestamp mínimo de baja de la persona (1 sola vez por fila en vez de en cada celda)
+      let minBajaTime = Infinity;
+      for (const [fStr, fSigla] of Object.entries(entry.fechas || {})) {
+        if (normalizeSigla(fSigla) === 'B') {
+          const pD = parseLocalDate(fStr);
+          if (pD && pD.getTime() < minBajaTime) {
+            minBajaTime = pD.getTime();
+          }
+        }
+      }
+
       result.push({
         rowKey,
         documento: doc,
@@ -1237,25 +1368,28 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         documento_formador: entry.documento_formador || cap?.formador_documento || lastRow.documento_formador || '',
         nombre_formador: entry.nombre_formador || cap?.formador || lastRow.nombre_formador || '',
         fechas: entry.fechas,
+        minBajaTime,
         lastRow: lastRow,
         capInfo: cap,
       });
     }
-
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(
-        (r) => r.documento.toLowerCase().includes(q) ||
-               r.nombre_completo.toLowerCase().includes(q) ||
-               r.campana.toLowerCase().includes(q) ||
-               r.gpe.toLowerCase().includes(q)
-      );
-    }
     return result;
-  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, search, filters.estado]);
+  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, filters.estado]);
+
+  // Filtro de búsqueda optimizado: solo filtra la lista ya consolidada sin re-pivoter miles de registros
+  const pivotRows = useMemo(() => {
+    if (!search.trim()) return unsearchedPivotRows;
+    const q = search.toLowerCase();
+    return unsearchedPivotRows.filter(
+      (r) => r.documento.toLowerCase().includes(q) ||
+             r.nombre_completo.toLowerCase().includes(q) ||
+             r.campana.toLowerCase().includes(q) ||
+             r.gpe.toLowerCase().includes(q)
+    );
+  }, [unsearchedPivotRows, search]);
 
   const uniqueDates = useMemo(() => {
-    if (!pivotRows.length) return [];
+    if (!unsearchedPivotRows.length) return [];
 
     const todayLimit = new Date();
     todayLimit.setHours(23, 59, 59, 999);
@@ -1264,8 +1398,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     let minPersonTime = Infinity;
     const activeCohorts = new Set();
 
-    for (let i = 0; i < pivotRows.length; i++) {
-      const r = pivotRows[i];
+    for (let i = 0; i < unsearchedPivotRows.length; i++) {
+      const r = unsearchedPivotRows[i];
       if (r.campana && r.gpe) {
         activeCohorts.add(`${normalizeCampana(r.campana)}|${normalizeGpe(r.gpe)}`);
       }
@@ -1304,7 +1438,23 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     return Array.from(datesMap.entries())
       .sort((a, b) => a[1] - b[1])
       .map(([canonical]) => canonical);
-  }, [pivotRows, filteredData]);
+  }, [unsearchedPivotRows, filteredData]);
+
+  // Mapa de marcas de tiempo precalculado para no parsear fechas en cada celda
+  const datesTimeMap = useMemo(() => {
+    const map = {};
+    uniqueDates.forEach((date) => {
+      const pD = parseLocalDate(date);
+      map[date] = pD ? pD.getTime() : 0;
+    });
+    return map;
+  }, [uniqueDates]);
+
+  const nowLimit = useMemo(() => {
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    return todayEnd.getTime();
+  }, []);
 
   const totalPages = pageSize === 'Todas' ? 1 : Math.max(1, Math.ceil(pivotRows.length / Number(pageSize)));
   const currentPage = Math.min(page, totalPages);
@@ -1477,7 +1627,42 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     };
   }, [kpis]);
 
-  const handleExport = () => {
+  // Handler de clic en celda memoizado para no re-renderizar todas las filas al abrir/cerrar modal
+  const handleCellClick = useCallback((row, date, sigla) => {
+    if (!isAdmin) return;
+    const camp = (row.campana && row.campana !== '—') ? row.campana : (row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : ''));
+    const gpeVal = row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : '');
+    const cap = row.capInfo || getCapInfo(camp, gpeVal);
+    const docForm = row.documento_formador || cap?.formador_documento || row.lastRow?.documento_formador || '';
+    const nomForm = row.nombre_formador || cap?.formador || row.lastRow?.nombre_formador || '';
+    const cel = row.celular || row.lastRow?.celular || '';
+
+    setCeldaEditando({
+      documento: row.documento,
+      nombre_completo: row.nombre_completo,
+      gpe: gpeVal,
+      campana: camp,
+      semana: row.lastRow?._semana || row.lastRow?.semana || (filters.semana !== 'Todas' ? filters.semana : ''),
+      periodo: row.lastRow?._periodo || row.lastRow?.periodo || (filters.periodo !== 'Todas' ? filters.periodo : ''),
+      segmento: row.lastRow?._segmento || row.lastRow?.segmento || (filters.segmento !== 'Todas' ? filters.segmento : ''),
+      fecha: date,
+      siglaActual: sigla,
+      allCohortDates: uniqueDates,
+      personFechas: row.fechas,
+      documento_formador: docForm,
+      nombre_formador: nomForm,
+      celular: cel,
+      rowInfo: {
+        ...(row.lastRow || {}),
+        ...(row || {}),
+        documento_formador: docForm,
+        nombre_formador: nomForm,
+        celular: cel,
+      }
+    });
+  }, [isAdmin, filters.campana, filters.gpe, filters.semana, filters.periodo, filters.segmento, getCapInfo, uniqueDates]);
+
+  const handleExport = async () => {
     if (!pivotRows.length) return;
     const rowsToExport = pivotRows.map((r) => {
       const base = {
@@ -1491,16 +1676,21 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         'TIPO RECLUTADO': r.tipo_reclutado,
       };
       uniqueDates.forEach((date) => {
-        base[date] = r.fechas[date] || '';
+        let s = r.fechas[date] || '';
+        // REGLA ESTRICTA: Solo proyectar 'B' en fechas pasadas o fecha actual (NUNCA en fechas futuras)
+        if (!s && (r.ult_estado === 'BAJA DIA 1' || r.ult_estado === 'CESADO')) {
+          const currentTime = datesTimeMap[date] || 0;
+          if (currentTime > 0 && currentTime <= nowLimit && r.minBajaTime < Infinity && currentTime >= r.minBajaTime) {
+            s = 'B';
+          }
+        }
+        base[date] = s;
       });
       return base;
     });
 
-    const ws = XLSX.utils.json_to_sheet(rowsToExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Consolidado_Asistencias');
     const timestamp = new Date().toISOString().substring(0, 10);
-    XLSX.writeFile(wb, `Control_Asistencia_${timestamp}.xlsx`);
+    await exportToExcel(rowsToExport, `Control_Asistencia_${timestamp}.xlsx`, 'Consolidado_Asistencias');
   };
 
   const getSiglaColor = (sigla) => {
@@ -1513,17 +1703,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     if (s === 'S' || s === 'SUS') return 'bg-zinc-500/15 text-zinc-400 font-medium';
     return 'text-slate-600 dark:text-slate-500';
   };
-
-  const FIXED_COLS = [
-    { id: 'documento', label: 'DOCUMENTO', width: 95, left: 0 },
-    { id: 'nombre', label: 'NOMBRE COMPLETO', width: 200, left: 95 },
-    { id: 'campana', label: 'CAMPAÑA', width: 150, left: 295 },
-    { id: 'gpe', label: 'GPE', width: 105, left: 445 },
-    { id: 'estado', label: 'ULT. ESTADO', width: 85, left: 550 },
-    { id: 'fecha', label: 'FECHA OJT', width: 90, left: 635 },
-    { id: 'condicion', label: 'CONDICIÓN', width: 85, left: 725 },
-    { id: 'tipo', label: 'TIPO REC.', width: 85, left: 810 },
-  ];
 
   if (loading) {
     return (
@@ -1774,104 +1953,15 @@ export default function ConsolidadoPowerBI({ userProfile }) {
             </thead>
             <tbody>
               {paginatedRows.map((row) => (
-                <tr key={row.rowKey || row.documento} className="group transition-colors bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]">
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 font-bold font-mono text-[var(--text-primary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[0].left, minWidth: FIXED_COLS[0].width, maxWidth: FIXED_COLS[0].width }}>
-                    {row.documento}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-semibold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[11px]" style={{ left: FIXED_COLS[1].left, minWidth: FIXED_COLS[1].width, maxWidth: FIXED_COLS[1].width }}>
-                    {row.nombre_completo}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--accent)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[2].left, minWidth: FIXED_COLS[2].width, maxWidth: FIXED_COLS[2].width }} title={row.campana}>
-                    {row.campana}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-primary)] font-bold whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[3].left, minWidth: FIXED_COLS[3].width, maxWidth: FIXED_COLS[3].width }}>
-                    {row.gpe}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
-                    <div className="flex items-center gap-1">
-                      <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-                        row.ult_estado === 'ACTIVO'
-                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                          : row.ult_estado === 'BAJA DIA 1'
-                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                          : row.ult_estado === 'DESCUENTO'
-                          ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30'
-                          : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                      }`}>
-                        {row.ult_estado}
-                      </span>
-                      {row.isDescuento && row.ult_estado !== 'DESCUENTO' && (
-                        <span className="inline-flex rounded px-1 py-0.5 text-[8px] font-black uppercase tracking-tight bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30" title="Descuento autorizado por RyS/Capacitación (No penaliza)">
-                          DESC
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-secondary)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] font-mono text-[10px]" style={{ left: FIXED_COLS[5].left, minWidth: FIXED_COLS[5].width, maxWidth: FIXED_COLS[5].width }}>
-                    {row.fecha_inicio_ojt}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[6].left, minWidth: FIXED_COLS[6].width, maxWidth: FIXED_COLS[6].width }}>
-                    {row.condicion_laboral}
-                  </td>
-                  <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[var(--text-muted)] whitespace-nowrap truncate border-r border-b border-[var(--border-subtle)] text-[10px]" style={{ left: FIXED_COLS[7].left, minWidth: FIXED_COLS[7].width, maxWidth: FIXED_COLS[7].width }}>
-                    {row.tipo_reclutado}
-                  </td>
-                  {uniqueDates.map((date) => {
-                    const sigla = row.fechas[date] || '';
-                    const meta = STATUS_META[sigla];
-                    return (
-                      <td key={date} className="px-1 py-1 text-center border-b border-[var(--border-subtle)]">
-                        <div
-                          onClick={() => {
-                            if (!isAdmin) return;
-                            const camp = (row.campana && row.campana !== '—') ? row.campana : (row.lastRow?._campana || row.lastRow?.campana || (filters.campana !== 'Todas' ? filters.campana : ''));
-                            const gpeVal = row.gpe !== '—' ? row.gpe : (filters.gpe !== 'Todas' ? filters.gpe : '');
-                            const cap = row.capInfo || getCapInfo(camp, gpeVal);
-                            const docForm = row.documento_formador || cap?.formador_documento || row.lastRow?.documento_formador || '';
-                            const nomForm = row.nombre_formador || cap?.formador || row.lastRow?.nombre_formador || '';
-                            const cel = row.celular || row.lastRow?.celular || '';
-
-                            setCeldaEditando({
-                              documento: row.documento,
-                              nombre_completo: row.nombre_completo,
-                              gpe: gpeVal,
-                              campana: camp,
-                              semana: row.lastRow?._semana || row.lastRow?.semana || (filters.semana !== 'Todas' ? filters.semana : ''),
-                              periodo: row.lastRow?._periodo || row.lastRow?.periodo || (filters.periodo !== 'Todas' ? filters.periodo : ''),
-                              segmento: row.lastRow?._segmento || row.lastRow?.segmento || (filters.segmento !== 'Todas' ? filters.segmento : ''),
-                              fecha: date,
-                              siglaActual: sigla,
-                              allCohortDates: uniqueDates,
-                              personFechas: row.fechas,
-                              documento_formador: docForm,
-                              nombre_formador: nomForm,
-                              celular: cel,
-                              rowInfo: {
-                                ...(row.lastRow || {}),
-                                ...(row || {}),
-                                documento_formador: docForm,
-                                nombre_formador: nomForm,
-                                celular: cel,
-                              }
-                            });
-                          }}
-                          className={`heat-cell mx-auto flex h-6 min-w-[30px] items-center justify-center rounded-md text-[9px] font-black uppercase tracking-wider transition-all ${
-                            isAdmin 
-                              ? 'cursor-pointer hover:ring-2 hover:ring-cyan-400 hover:scale-110 active:scale-95' 
-                              : 'group-hover:scale-105'
-                          }`}
-                          style={{
-                            backgroundColor: meta ? meta.bg : 'var(--status-empty-bg)',
-                            color: meta ? meta.text : 'var(--text-muted)',
-                          }}
-                          title={isAdmin ? `Admin: Clic para editar o regularizar asistencia del ${date}` : undefined}
-                        >
-                          {sigla || '—'}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
+                <MatrixRow
+                  key={row.rowKey || row.documento}
+                  row={row}
+                  uniqueDates={uniqueDates}
+                  datesTimeMap={datesTimeMap}
+                  nowLimit={nowLimit}
+                  isAdmin={isAdmin}
+                  onCellClick={handleCellClick}
+                />
               ))}
 
               {pivotRows.length === 0 && (

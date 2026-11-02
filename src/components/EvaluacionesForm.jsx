@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../lib/exportExcel'
 import {
   GraduationCap, Save, Search, CheckCircle2, XCircle,
   AlertTriangle, Download, ChevronDown, Users, Star,
@@ -174,11 +174,7 @@ export default function EvaluacionesForm({ grupos = [], postulantes = [], asiste
       Resultado: r.resultado,
       Observaciones: r.observaciones
     }))
-    const ws = XLSX.utils.json_to_sheet(exportRows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Evaluaciones')
-    const today = new Date().toISOString().split('T')[0]
-    XLSX.writeFile(wb, `GEA_Evaluaciones_${selectedGrupo}_${today}.xlsx`)
+    exportToExcel(exportRows, `GEA_Evaluaciones_${selectedGrupo}_${today}.xlsx`, 'Evaluaciones')
   }
 
   const filteredRows = useMemo(() => {

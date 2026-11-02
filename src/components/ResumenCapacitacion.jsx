@@ -46,7 +46,7 @@ import {
   SlidersHorizontal,
   ChevronUp
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { exportToExcel } from '../lib/exportExcel';
 import { 
   BarChart, 
   Bar, 
@@ -1473,7 +1473,7 @@ export default function ResumenCapacitacion({
   // Exportar matriz a Excel
   const handleExport = () => {
     if (filteredData.length === 0) return;
-    const ws = XLSX.utils.json_to_sheet(filteredData.map(d => {
+    const exportRows = filteredData.map(d => {
       const req = getGrupoRq(d);
       const desertores = Math.max(0, (d.asistio_dia1 || 0) - (d.activos_actuales || 0) - (d.ingresos_iop || 0));
       const iopFtes = d.ingresos_iop_ftes !== undefined ? Number(d.ingresos_iop_ftes) : Number(d.ingresos_iop || 0);
@@ -1501,10 +1501,8 @@ export default function ResumenCapacitacion({
         'Desertores Formación': desertores,
         '% Cumplimiento RQ': pctCumpl
       };
-    }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Resumen Dotacion');
-    XLSX.writeFile(wb, `Resumen_Dotacion_Ejecutivo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    });
+    exportToExcel(exportRows, `Resumen_Dotacion_Ejecutivo_${new Date().toISOString().slice(0, 10)}.xlsx`, 'Resumen Dotacion');
   };
 
   return (

@@ -24,7 +24,7 @@ import {
   Laptop,
   Zap
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../lib/exportExcel'
 import { insertConsolidado, fetchGruposDia1, getEquipoFormacion, isAsistioStr, parseFechaAsistencia, DB_MODE, fetchDescuentosAprobadosSet, isDescuentoAprobado, levantarBajaPostulante, autocompletarDiasFaltantesGrupo } from '../lib/dataService'
 import {
   canAssignBajaDia1,
@@ -1765,17 +1765,10 @@ export default function AsistenciaForm({
       return alert(`Selecciona un motivo de baja válido de la lista para:\n\n${names}\n\n(No se permite dejar el motivo vacío ni usar 'OBSERVADO')`)
     }
 
-    // Regla Oficial de Negocio: Las Bajas Día 1 de Reclutamiento NO viajan a días posteriores de Formación.
-    // Si estamos en un día posterior al Día 1 y el postulante permanece como Baja Día 1 bloqueada,
-    // NO se persiste asistencia diaria para él en consolidado_asistencias.
+    // Persistencia continua: Las bajas (Baja Día 1 y Bajas de Formación) se guardan con su sigla 'B'
+    // en cada fecha registrada para garantizar la trazabilidad completa del grupo y evitar huecos en la matriz.
     const recordsToSave = sanitizedList
       .filter(item => !item.isLateInclusion)
-      .filter(item => {
-        if (item.trainingDayIndex > 1 && item.isLockedBaja && isBajaDia1Motivo(item.motivo_baja || item.pastMotive)) {
-          return false
-        }
-        return true
-      })
       .map(item => ({
         documento: item.documento,
         sigla: item.sigla,
@@ -1958,10 +1951,7 @@ export default function AsistenciaForm({
       SIGLA: item.sigla,
       'MOTIVO DE BAJA': item.motivo_baja || ''
     }))
-    const ws = XLSX.utils.json_to_sheet(exportRows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Asistencia')
-    XLSX.writeFile(wb, `Asistencia_${activeGrupoObj?.codigo || selectedGrupo}_${fecha}.xlsx`)
+    exportToExcel(exportRows, `Asistencia_${activeGrupoObj?.codigo || selectedGrupo}_${fecha}.xlsx`, 'Asistencia')
     toast.success('Excel exportado', `Se descargó la asistencia del grupo ${activeGrupoObj?.codigo || selectedGrupo}.`)
   }
 

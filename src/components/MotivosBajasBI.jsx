@@ -32,7 +32,7 @@ import {
   RotateCcw,
   MessageSquare
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../lib/exportExcel'
 import { fetchMotivosBajasData, invalidateCache, parseFechaAsistencia, isBajaCapacitacion, isBajaDia1, normalizarMotivo } from '../lib/dataService'
 import { isDescuentoVencido48h } from '../lib/businessHoursUtils'
 
@@ -423,10 +423,7 @@ export default function MotivosBajasBI() {
       'PERIODO': b._periodo || '-',
       'SEGMENTO': b._segmento || '-'
     }));
-    const ws = XLSX.utils.json_to_sheet(exportRows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Consolidado Bajas');
-    XLSX.writeFile(wb, `Consolidado_Bajas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    exportToExcel(exportRows, `Consolidado_Bajas_${new Date().toISOString().slice(0, 10)}.xlsx`, 'Consolidado Bajas');
   };
 
   // ── 3. CONSOLIDADO DE DESCUENTOS (Enriquecimiento, Filtrado y Exportación) ──
@@ -570,10 +567,7 @@ export default function MotivosBajasBI() {
       'FUERA_DE_PLAZO': d._fuera_de_plazo,
       'OBSERVACIONES': d._comentarios || '-'
     }));
-    const ws = XLSX.utils.json_to_sheet(exportRows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Consolidado Descuentos');
-    XLSX.writeFile(wb, `Consolidado_Descuentos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    exportToExcel(exportRows, `Consolidado_Descuentos_${new Date().toISOString().slice(0, 10)}.xlsx`, 'Consolidado Descuentos');
   };
 
   // 1. DESERCIÓN EN CAPACITACIÓN: (Total bajas capacitación / Total participantes iniciales) * 100

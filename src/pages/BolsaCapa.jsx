@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle, CheckCircle2, FileSpreadsheet, GraduationCap, Loader2, Upload, Users,
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import PageLayout from '../components/ui/PageLayout'
 import PageHeader from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
@@ -57,9 +56,11 @@ function normHeader(value) {
 
 async function parseCapaExcel(file) {
   if (!file) return []
+  const { getXLSX } = await import('../lib/exportExcel')
+  const XLSX = await getXLSX()
   const data = await file.arrayBuffer()
-  const wb = XLSX.read(data, { type: 'array', cellText: false, cellDates: true, dateNF: 'yyyy-mm-dd' })
-  
+  const wb = XLSX.read(data, { type: 'array', cellText: true, cellDates: true })
+
   let bestRows = []
 
   // 1. Probar primero con el motor oficial de Nómina Pool (el mismo que usa Bolsa de Postulantes) en cada pestaña
@@ -738,7 +739,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       const rows = await parseCapaExcel(file)
       setPeople(rows)
       setFileName(file.name)
-      
+
       // Pre-seleccionar automáticamente a los que NO están ya en la nómina
       const toSelect = new Set()
       rows.forEach(r => {
@@ -817,16 +818,16 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
       const docsList = seleccionados.map(p => cleanDocumento(p.documento)).filter(Boolean)
       const histMap = new Map()
 
-      // 1. Primero del prop 'postulantes' que ya tenemos en memoria
-      ;(postulantes || []).forEach(post => {
-        const d = cleanDocumento(post.documento)
-        if (d && docsList.includes(d)) {
-          const prev = histMap.get(d)
-          if (!prev || (post.created_at && (!prev.created_at || post.created_at > prev.created_at))) {
-            histMap.set(d, post)
+        // 1. Primero del prop 'postulantes' que ya tenemos en memoria
+        ; (postulantes || []).forEach(post => {
+          const d = cleanDocumento(post.documento)
+          if (d && docsList.includes(d)) {
+            const prev = histMap.get(d)
+            if (!prev || (post.created_at && (!prev.created_at || post.created_at > prev.created_at))) {
+              histMap.set(d, post)
+            }
           }
-        }
-      })
+        })
 
       // 2. Para asegurar completitud al 100%, consultar Supabase por estos DNIs
       try {
@@ -1020,13 +1021,12 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
 
       <div className="p-4 md:px-6 space-y-4 overflow-auto">
         {message && (
-          <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm ${
-            message.tone === 'ok'
-              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-              : message.tone === 'warn'
-                ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-                : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-          }`}>
+          <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm ${message.tone === 'ok'
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+            : message.tone === 'warn'
+              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+              : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+            }`}>
             {message.tone === 'ok' ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}
             <span>{message.text}</span>
             {duplicate && (
@@ -1421,13 +1421,12 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
                         <tr
                           key={p.documento}
                           onClick={() => toggleSelect(p.documento)}
-                          className={`cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-[var(--accent)]/10 text-[var(--text-primary)] font-medium'
-                              : inGroup
+                          className={`cursor-pointer transition-colors ${isSelected
+                            ? 'bg-[var(--accent)]/10 text-[var(--text-primary)] font-medium'
+                            : inGroup
                               ? 'opacity-60 bg-transparent text-[var(--text-muted)]'
                               : 'hover:bg-[var(--bg-elevated)]/50'
-                          }`}
+                            }`}
                         >
                           <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                             <input

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Loader2, DownloadCloud } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../../lib/exportExcel'
 import ColumnFilter from '../ui/ColumnFilter'
 
 function getHeaderColor(key) {

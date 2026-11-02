@@ -23,7 +23,6 @@ import {
   Layers, Sparkles, ExternalLink, ArrowRight, ShieldAlert, Check, Calendar, Tag, Activity,
   AlertCircle
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
 
 const DEFAULT_GOOGLE_FORM_URL = 'https://docs.google.com/spreadsheets/d/1eP1knjS4Dt2jT-HI6CAZlURw9LB215Go6QVlbbKaniU/edit?resourcekey=&gid=641275674#gid=641275674'
 
@@ -389,6 +388,8 @@ export default function NominaFormPool({
       setConnecting(true)
       setError(null)
       const data = await file.arrayBuffer()
+      const { getXLSX } = await import('../../lib/exportExcel')
+      const XLSX = await getXLSX()
       const workbook = XLSX.read(data, { type: 'array' })
       const names = workbook.SheetNames || []
       if (names.length === 0) throw new Error('El archivo no contiene hojas válidas.')
@@ -470,6 +471,8 @@ export default function NominaFormPool({
       } else if (wbInfo.type === 'workbook') {
         const worksheet = wbInfo.workbook.Sheets[targetSheetName]
         if (worksheet) {
+          const { getXLSX } = await import('../../lib/exportExcel')
+          const XLSX = await getXLSX()
           matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' })
           tabCacheRef.current.set(targetSheetName, matrix)
         }

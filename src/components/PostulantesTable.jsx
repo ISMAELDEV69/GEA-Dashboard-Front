@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import * as z from 'zod'
-import * as XLSX from 'xlsx'
+import { exportToExcel } from '../lib/exportExcel'
 import {
   FunnelChart, Funnel, LabelList, Tooltip as RechartsTooltip,
   AreaChart, Area, ResponsiveContainer
@@ -584,10 +584,7 @@ export default function PostulantesTable({
       Semana: p.semana_trabajo,
       'Fecha Registro': p.created_at ? p.created_at.split('T')[0] : ''
     }))
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Postulantes')
-    XLSX.writeFile(wb, `GEA_Postulantes_${new Date().toISOString().split('T')[0]}.xlsx`)
+    exportToExcel(rows, `GEA_Postulantes_${new Date().toISOString().split('T')[0]}.xlsx`, 'Postulantes')
   }
 
   const campanas = useMemo(() => [...new Set(postulantes.map(p => p.campana).filter(Boolean))], [postulantes])
