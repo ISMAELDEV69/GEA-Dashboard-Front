@@ -4907,14 +4907,18 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
 
-  let recQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
-  if (periodo) {
-    recQuery = recQuery.eq('periodo_reclutado', periodo)
+  let recQuery = supabase.from('nominas')
+    .select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at')
+    .eq('grupo_codigo', grupo_codigo)
+
+  if (campana) {
+    recQuery = recQuery.eq('campana', campana)
   }
   let { data: rawRecAsis } = await recQuery
   if (!rawRecAsis || rawRecAsis.length === 0) {
-    let fbQuery = supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at').eq('grupo_codigo', grupo_codigo)
-    if (periodo) fbQuery = fbQuery.eq('periodo_reclutado', periodo)
+    let fbQuery = supabase.from('nominas')
+      .select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at')
+      .eq('grupo_codigo', grupo_codigo)
     const { data: fb } = await fbQuery
     if (fb && fb.length > 0) rawRecAsis = fb
   }
@@ -5110,6 +5114,30 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     }
   }
   
+  // Respaldo de seguridad: si algún documento aún no tiene nombre, buscarlo directamente en nóminas
+  const missingNameDocs = discrepancias
+    .filter(d => !d.nombre || d.nombre.startsWith('Postulante') || d.nombre === ',')
+    .map(d => d.documento);
+
+  if (missingNameDocs.length > 0) {
+    try {
+      const { data: nomBackup } = await supabase.from('nominas')
+        .select('documento, apellido_paterno, apellido_materno, nombres')
+        .in('documento', missingNameDocs);
+      if (nomBackup && nomBackup.length > 0) {
+        const backupMap = new Map(nomBackup.map(b => [normDoc(b.documento), formatNombrePostulante(b, null, '')]));
+        discrepancias.forEach(d => {
+          const bNom = backupMap.get(normDoc(d.documento));
+          if (bNom && bNom !== 'Postulante' && bNom !== ',' && !bNom.startsWith('Postulante')) {
+            d.nombre = bNom;
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Aviso nomBackup en getDetalleCalibracion:', e);
+    }
+  }
+
   return discrepancias
 }
 
@@ -7414,7 +7442,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('postulante_documento, grupo_codigo, sigla_asistencia, motivo_baja')
         .in('grupo_codigo', codigos),
       supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, created_at')
+        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, created_at, apellido_paterno, apellido_materno, nombres')
         .in('grupo_codigo', codigos)
     ];
 
@@ -7422,7 +7450,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     if (activeAsistencias.length === 0) {
       promises.push(
         supabase.from('consolidado_asistencias')
-          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo, corte, fecha_hora_registro')
+          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo, corte, fecha_hora_registro, apellido_paterno, apellido_materno, nombres')
           .in('codigo_grupo', codigos)
       );
     } else {
@@ -7751,6 +7779,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
             motivo_baja: row.motivo_baja,
             estado: row.estado,
             tipo_reclutado: row.tipo_reclutado,
+            apellido_paterno: row.apellido_paterno,
+            apellido_materno: row.apellido_materno,
+            nombres: row.nombres,
             fecha_asistencia: parseFechaAsistencia(row.fecha_registro_asistencia || row.fecha_asistencia)
           }
         });

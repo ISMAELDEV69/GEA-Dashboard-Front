@@ -367,14 +367,15 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     setSelectedGroupDetail(row.grupo_codigo)
     setSelectedRowData(row)
     
-    // Si ya tenemos las discrepancias calculadas en memoria para esta fila exacta, usarlas de inmediato
-    if (row.discrepancias && row.discrepancias.length > 0) {
+    // Si ya tenemos las discrepancias calculadas en memoria con nombres válidos, usarlas de inmediato
+    const hasIncomplete = row.discrepancias && row.discrepancias.some(d => !d.nombre || d.nombre.startsWith('Postulante') || d.nombre === ',')
+    if (row.discrepancias && row.discrepancias.length > 0 && !hasIncomplete) {
       setDiscrepancias(row.discrepancias)
       setLoadingDetails(false)
       return
     }
 
-    if (row.estado !== 'DESCALIBRADO') {
+    if (row.estado !== 'DESCALIBRADO' && (!row.discrepancias || row.discrepancias.length === 0)) {
       setDiscrepancias([])
       setLoadingDetails(false)
       return
@@ -383,10 +384,14 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     setLoadingDetails(true)
     try {
       const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana, row.periodo, row.semana_label)
-      setDiscrepancias(detalles || [])
+      setDiscrepancias(detalles || row.discrepancias || [])
     } catch (err) {
       console.error('Error al cargar detalles de discrepancia:', err)
-      toast.error('Error al cargar detalles', err.message || 'No se pudo obtener el desglose de discrepancias.')
+      if (row.discrepancias && row.discrepancias.length > 0) {
+        setDiscrepancias(row.discrepancias)
+      } else {
+        toast.error('Error al cargar detalles', err.message || 'No se pudo obtener el desglose de discrepancias.')
+      }
     } finally {
       setLoadingDetails(false)
     }
