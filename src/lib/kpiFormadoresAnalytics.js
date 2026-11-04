@@ -5,7 +5,8 @@
  * Fuera: Baja Día 1 y descuentos.
  */
 
-import { isBajaDia1, isBajaCapacitacion, resolveFteWeight, parseFechaAsistencia } from './dataService'
+import { isBajaDia1, resolveFteWeight, parseFechaAsistencia } from './dataService'
+import { isMotivoExcluidoDesercionFormacion } from './bajaDia1Rules'
 import { normalize2026Period } from './dashboardAnalytics'
 
 /** Periodo de ingreso OP: campo explícito o mes de fecha_ingreso_op. No usa periodo de capa. */
@@ -392,18 +393,16 @@ function buildPeople(postulantes = [], asistencias = [], grupos = []) {
     // Día 1 oficial (idéntico a Resumen Capacitación & Dotación)
     const dia1 = !descuento && !bajaD1 && (hasAttendanceInClass || dia1InNomina || tieneIngreso)
 
-    // 4. Baja general en formación
+    // 4. Baja general en formación: último corte B, sin I-OP, sin Baja D1/sobredot/descuento
     let isBajaGeneral = false
     let fechaUltimaBaja = null
     let motivo = ''
-    if (!descuento && !bajaD1) {
-      if (last && (txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO')) {
+    if (!descuento && !bajaD1 && !tieneIngreso) {
+      const motivoExcluido = isMotivoExcluidoDesercionFormacion(txtMotivo, txtEstado, txtSigla)
+      if (last && txtSigla === 'B' && !motivoExcluido) {
         isBajaGeneral = true
         fechaUltimaBaja = parseFechaAsistencia(last.fecha_registro_asistencia || last.fecha_asistencia || last.fecha)
         motivo = String(last.motivo_baja || last.motivo || 'BAJA').trim()
-      } else if (isBajaCapacitacion(p)) {
-        isBajaGeneral = true
-        motivo = String(p.motivo_baja || p.dia_1_obs || 'BAJA').trim()
       }
     }
 

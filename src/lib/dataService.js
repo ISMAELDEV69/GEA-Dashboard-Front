@@ -1,4 +1,4 @@
-/**
+﻿/**
  * dataService.js
  * Capa de abstracción de datos: usa Supabase si está configurado,
  * si no, cae al mock de localStorage automáticamente.
@@ -20,7 +20,7 @@ import {
 } from './nominaConsolidadoSchema.js'
 import { asistenciaRecordsFromNominaRow, extractGruposFromRows } from './sheetImportUtils.js'
 import { atribuirBaja } from './flujoOperativo.js'
-import { analyzeDia1CorteRecords, isBajaDia1Motivo } from './bajaDia1Rules.js'
+import { analyzeDia1CorteRecords, isBajaDia1Motivo, isMotivoExcluidoDesercionFormacion } from './bajaDia1Rules.js'
 import { parseCapacidadRysCsv } from './capacidadRysSchema.js'
 import {
   getFromStorage,
@@ -8603,7 +8603,12 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       let fechaUltimaBaja = null;
       
       if (records.length > 0) {
-        const sortedRecords = [...records].sort((a, b) => new Date(a.fecha_registro_asistencia || a.fecha_asistencia || 0) - new Date(b.fecha_registro_asistencia || b.fecha_asistencia || 0));
+        const sortedRecords = [...records].sort((a, b) => {
+          const da = parseFechaAsistencia(a.fecha_registro_asistencia || a.fecha_asistencia || a.fecha) || '';
+          const db = parseFechaAsistencia(b.fecha_registro_asistencia || b.fecha_asistencia || b.fecha) || '';
+          if (da !== db) return da.localeCompare(db);
+          return (Number(a.id) || 0) - (Number(b.id) || 0);
+        });
         const lastRecord = sortedRecords[sortedRecords.length - 1];
         
         const txtEstado = String(lastRecord.estado || '').toUpperCase();
@@ -8611,8 +8616,9 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         const txtSigla = String(lastRecord.sigla || lastRecord.sigla_asistencia || '').toUpperCase().trim();
         const txtObs = String(lastRecord.observacion_estado || '').toUpperCase();
         
-        isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1');
-        isBajaGeneral = !isDescuentoDoc && (txtSigla === 'B' || txtMotivo.includes('BAJA') || txtEstado.includes('BAJA') || txtEstado === 'CESADO' || txtEstado === 'INACTIVO');
+        isBajaDia1 = txtMotivo.includes('BAJA DIA 1') || txtEstado.includes('BAJA DIA 1') || txtObs.includes('BAJA DIA 1') || isBajaDia1Motivo(txtMotivo);
+        const motivoExcluido = isMotivoExcluidoDesercionFormacion(txtMotivo, txtEstado, txtSigla);
+        isBajaGeneral = !isDescuentoDoc && !tieneIngreso && !motivoExcluido && txtSigla === 'B';
         if (isBajaGeneral) {
           fechaUltimaBaja = parseFechaAsistencia(lastRecord.fecha_registro_asistencia || lastRecord.fecha_asistencia);
         }
@@ -10888,30 +10894,69 @@ export async function guardarLiquidacionPeriodo(periodo, filas = [], userProfile
   }
 }
 
+function maquetaPeriodoKeys(periodo = '') {
+  const raw = String(periodo || '').trim()
+  const pNorm = raw.replace(/\D/g, '').slice(0, 6)
+  return Array.from(new Set([raw, pNorm].filter(Boolean)))
+}
+
+const MAQUETA_BASE_COLS = [
+  'periodo_efectivo',
+  'codigo_gpe',
+  'semana',
+  'fecha_inicio_capa',
+  'fecha_fin_capa',
+  'segmento',
+  'campana',
+  'modalidad',
+  'tipo_reclutador',
+  'analista_reclutador',
+  'meta_dia_1_grupal',
+  'nomina',
+  'meta_dia_1_individual',
+  'meta_dia_1_nuevo_criterio',
+  'asistencia_dia_1',
+  'dotacion',
+  'rq_op',
+].join(',')
+
 /**
- * Consulta la Base Operativa Oficial de 16 Columnas desde maqueta_reclutadores_base
+ * Consulta la base operativa de maquetas.
+ * Prefiere la vista viva (metas_equipos + nominas + consolidado_asistencias,
+ * filtrada por capacidad_rys.periodo_ingreso_op). Si PostgREST aún no expone
+ * la vista, cae a la tabla snapshot maqueta_reclutadores_base.
+ * @returns {{ rows: Array, source: 'live' | 'snapshot' | 'none' }}
  */
 export async function fetchMaquetaBaseOperativa(periodo = '') {
   if (DB_MODE !== 'supabase' || !isSupabaseConfigured()) {
-    return []
+    return { rows: [], source: 'none' }
   }
+
+  const applyPeriodo = (query) => {
+    if (!periodo || periodo === 'TODOS') return query
+    const keys = maquetaPeriodoKeys(periodo)
+    if (keys.length === 1) return query.eq('periodo_efectivo', keys[0])
+    if (keys.length > 1) return query.in('periodo_efectivo', keys)
+    return query
+  }
+
   try {
-    let query = supabase.from('maqueta_reclutadores_base').select('*')
-    if (periodo && periodo !== 'TODOS') {
-      const pNorm = String(periodo).replace(/\D/g, '').slice(0, 6)
-      const validPeriodos = Array.from(new Set([String(periodo).trim(), pNorm].filter(Boolean)))
-      if (validPeriodos.length === 1) {
-        query = query.eq('periodo_efectivo', validPeriodos[0])
-      } else if (validPeriodos.length > 1) {
-        query = query.in('periodo_efectivo', validPeriodos)
-      }
-    }
-    const { data, error } = await query.order('codigo_gpe', { ascending: true })
+    const live = applyPeriodo(supabase.from('v_maqueta_reclutadores_operativa').select(MAQUETA_BASE_COLS))
+    const { data, error } = await live.order('codigo_gpe', { ascending: true })
+    if (!error && Array.isArray(data)) return { rows: data, source: 'live' }
+    if (error) console.warn('[MaquetaBase] Vista viva no disponible, usando tabla:', error.message)
+  } catch (err) {
+    console.warn('[MaquetaBase] Vista viva no disponible, usando tabla:', err)
+  }
+
+  try {
+    const snap = applyPeriodo(supabase.from('maqueta_reclutadores_base').select(MAQUETA_BASE_COLS))
+    const { data, error } = await snap.order('codigo_gpe', { ascending: true })
     if (error) throw error
-    return data || []
+    return { rows: data || [], source: 'snapshot' }
   } catch (err) {
     console.error('[MaquetaBase] Error al consultar maqueta_reclutadores_base:', err)
-    return []
+    return { rows: [], source: 'none' }
   }
 }
 
@@ -10936,291 +10981,71 @@ export async function guardarMaquetaBaseOperativa(records = []) {
 }
 
 /**
- * Sincroniza automáticamente la base operativa de 16 columnas desde metas_equipos, capacidad_rys y nominas
+ * Congela el corte de pago en maqueta_reclutadores_base.
+ * La fuente viva es v_maqueta_reclutadores_operativa:
+ * metas_equipos (quién encargó el supervisor) + nominas (Día 1) +
+ * consolidado_asistencias (I-OP único), filtrado por capacidad.periodo_ingreso_op.
  */
-function toIsoDate(val) {
-  if (!val) return null
-  const str = String(val).trim()
-  if (!str) return null
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10)
-
-  const slashParts = str.split('/')
-  if (slashParts.length === 3) {
-    let [d, m, y] = slashParts
-    if (y.length === 2) y = '20' + y
-    return `${y.padStart(4, '2026')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-  }
-
-  const dashParts = str.split('-')
-  if (dashParts.length === 3 && dashParts[0].length <= 2) {
-    let [d, m, y] = dashParts
-    if (y.length === 2) y = '20' + y
-    return `${y.padStart(4, '2026')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-  }
-
-  return null
-}
-
 export async function sincronizarMaquetaBaseDesdeConsolidado(periodo = '') {
   const pStr = String(periodo || '').trim()
   const pNorm = pStr.replace(/\D/g, '').slice(0, 6)
-  
-  if (DB_MODE === 'supabase' && isSupabaseConfigured()) {
+  const targetPeriodo = pNorm || (pStr !== 'TODOS' ? pStr : '')
+  const emptyMsg = 'No hay grupos de Metas y Equipos para ese periodo de ingreso en capacidad. El corte de pago es periodo_ingreso_op, no el mes de reclutamiento.'
+
+  if (DB_MODE === 'supabase' && isSupabaseConfigured() && targetPeriodo) {
     try {
-      const targetPeriodo = pNorm || (pStr !== 'TODOS' ? pStr : '202610')
-
-      // 1. Obtener cohortes oficiales de capacidad_rys con periodo_ingreso_op
-      let { data: capAll, error: capErr } = await supabase
-        .from('capacidad_rys')
-        .select('*')
-        .eq('periodo_ingreso_op', targetPeriodo)
-
-      if (capErr || !capAll || !capAll.length) {
-        // Fallback si la columna tuviese formato con fecha
-        const { data: capAlt } = await supabase.from('capacidad_rys').select('*')
-        const mm = targetPeriodo.slice(4, 6)
-        const yyyy = targetPeriodo.slice(0, 4)
-        capAll = (capAlt || []).filter(c => {
-          const p = String(c.periodo_ingreso_op || '').trim()
-          const f = String(c.fecha_ingreso_op || '').trim()
-          return p === targetPeriodo || f.includes(`/${parseInt(mm, 10)}/${yyyy}`) || f.includes(`-${mm}-`) || f.startsWith(`${yyyy}-${mm}`)
-        })
-      }
-
-      if (capAll && capAll.length > 0) {
-        const capMap = new Map()
-        for (const c of capAll) {
-          const cod = normTxt(c.codigo)
-          if (cod) capMap.set(cod, c)
-        }
-        const gpesList = Array.from(capMap.keys())
-
-        // 2. Traer asistencias I-OP de consolidado_asistencias con fecha en el mes
-        const mm = targetPeriodo.slice(4, 6)
-        const yyyy = targetPeriodo.slice(0, 4)
-        let asisOct = []
-        for (let i = 0; i < gpesList.length; i += 20) {
-          const chunk = gpesList.slice(i, i + 20)
-          const { data: batch } = await supabase
-            .from('consolidado_asistencias')
-            .select('documento, codigo_grupo, grupo, fecha_registro_asistencia, sigla, estado')
-            .in('codigo_grupo', chunk)
-            .or('sigla.eq.I-OP,sigla.eq.IOP,estado.ilike.%OPERACION%,estado.ilike.%INGRESO%')
-
-          if (batch) {
-            const octFiltered = batch.filter(b => {
-              const f = String(b.fecha_registro_asistencia || '').trim()
-              if (!mm || !yyyy) return true
-              return f.includes(`/${mm}/${yyyy}`) || f.includes(`/${parseInt(mm, 10)}/${yyyy}`) || f.includes(`-${mm}-`) || f.startsWith(`${yyyy}-${mm}`)
-            })
-            asisOct.push(...octFiltered)
-          }
-        }
-
-        // Deduplicar: cada persona cuenta 1 vez por grupo
-        const iopUnicosPorGrupo = new Map()
-        for (const a of asisOct) {
-          const doc = String(a.documento || '').trim()
-          const gpe = normTxt(a.codigo_grupo || a.grupo)
-          if (doc && gpe) {
-            iopUnicosPorGrupo.set(`${gpe}|${doc}`, true)
-          }
-        }
-
-        // 3. Traer postulantes en nóminas de estos grupos
-        let nomAll = []
-        for (let i = 0; i < gpesList.length; i += 20) {
-          const chunk = gpesList.slice(i, i + 20)
-          const { data: batch } = await supabase
-            .from('nominas')
-            .select('documento, grupo_codigo, reclutador, dia_0, evaluacion_dia_0, dia_1, status_dia_1')
-            .in('grupo_codigo', chunk)
-
-          if (batch) nomAll.push(...batch)
-        }
-
-        // 4. Traer asignaciones de metas_equipos para estos grupos
-        let meAll = []
-        for (let i = 0; i < gpesList.length; i += 20) {
-          const chunk = gpesList.slice(i, i + 20)
-          const { data: batch } = await supabase
-            .from('metas_equipos')
-            .select('*')
-            .in('grupo', chunk)
-
-          if (batch) meAll.push(...batch)
-        }
-
-        const meMap = new Map()
-        for (const m of meAll) {
-          const gpe = normTxt(m.grupo)
-          const resp = normTxt(m.responsable)
-          if (gpe && resp) {
-            meMap.set(`${gpe}|${resp}`, m)
-          }
-        }
-
-        // Catálogo de reclutadores para resolver nombres canónicos
-        const { data: eqAll } = await supabase.from('equipo_reclutamiento').select('*')
-        const aliasMap = new Map()
-        for (const e of (eqAll || [])) {
-          const fullName = normTxt(`${e.apellido_paterno || ''} ${e.apellido_materno || ''} ${e.nombres_completos || ''}`)
-          if (fullName) aliasMap.set(fullName, fullName)
-          if (e.alias) aliasMap.set(normTxt(e.alias), fullName)
-          if (e.alix) aliasMap.set(normTxt(e.alix), fullName)
-          if (e.documento) aliasMap.set(String(e.documento).trim(), fullName)
-        }
-
-        const PALABRAS_INVALIDAS = ['ADMIN', 'CAPACITACION', 'RECUPERADO', 'TRASLADO', 'SIN RECLUTADOR', 'SIN NOMINA', 'REASIGNADO', 'FORMADOR']
-        const resolverNombreReclutador = (nombreRaw) => {
-          const clean = normTxt(nombreRaw)
-          if (!clean || PALABRAS_INVALIDAS.some(p => clean === p || clean.startsWith(p))) return null
-          if (aliasMap.has(clean)) return aliasMap.get(clean)
-          if (clean.includes('TREVINO') || clean.includes('TREVIÑO')) return 'TREVIÑOS ARROYO SOLANS CAROL'
-          if (clean.includes('ELIAN') && clean.includes('REYES')) return 'REYES CANTARO ELIAN MOISES'
-          if (clean.includes('VALDIVIA')) return 'VALDIVIA RODRIGUEZ RAUL'
-          for (const [k, v] of aliasMap.entries()) {
-            if (k.length > 6 && (clean.includes(k) || k.includes(clean))) return v
-          }
-          return clean
-        }
-
-        // 5. Agrupar nóminas por Grupo + Reclutador
-        const statsPorGrupoYRec = new Map()
-        for (const n of nomAll) {
-          const gpe = normTxt(n.grupo_codigo)
-          const recNombre = resolverNombreReclutador(n.reclutador)
-          if (!gpe || !recNombre) continue
-
-          const key = `${gpe}|${recNombre}`
-          if (!statsPorGrupoYRec.has(key)) {
-            statsPorGrupoYRec.set(key, { nomina: 0, d0: 0, d1: 0, iop: 0 })
-          }
-          const item = statsPorGrupoYRec.get(key)
-          item.nomina++
-
-          const d0 = normTxt(n.dia_0 || n.evaluacion_dia_0)
-          if (d0 === 'ASISTIO' || d0 === '1') item.d0++
-
-          const d1 = normTxt(n.dia_1 || n.status_dia_1)
-          if (d1 === 'ASISTIO' || d1 === '1') item.d1++
-
-          const doc = String(n.documento || '').trim()
-          if (iopUnicosPorGrupo.has(`${gpe}|${doc}`)) {
-            item.iop++
-          }
-        }
-
-        // 6. Construir filas de 16 columnas
-        const combinaciones = new Map()
-        for (const [k] of statsPorGrupoYRec.entries()) {
-          const [gpe, rec] = k.split('|')
-          combinaciones.set(k, { gpe, rec })
-        }
-        for (const m of meAll) {
-          const gpe = normTxt(m.grupo)
-          const recNombre = resolverNombreReclutador(m.responsable)
-          if (gpe && recNombre) {
-            const k = `${gpe}|${recNombre}`
-            if (!combinaciones.has(k)) combinaciones.set(k, { gpe, rec: recNombre })
-          }
-        }
-
-        const records = []
-        for (const { gpe, rec } of combinaciones.values()) {
-          const cap = capMap.get(gpe) || {}
-          const stats = statsPorGrupoYRec.get(`${gpe}|${rec}`) || { nomina: 0, d0: 0, d1: 0, iop: 0 }
-          
-          let metaMe = meMap.get(`${gpe}|${rec}`)
-          if (!metaMe) {
-            for (const [k, v] of meMap.entries()) {
-              const [mGpe, mRec] = k.split('|')
-              if (mGpe === gpe && (mRec.includes(rec) || rec.includes(mRec))) {
-                metaMe = v
-                break
-              }
-            }
-          }
-
-          const rqGrupal = Number(cap.rq_solicitado || metaMe?.rq || metaMe?.meta_dia_1_grupal || 0)
-          const metaD1Grupal = Number(cap.meta_dia_1 || metaMe?.meta_dia_1_grupal || rqGrupal || 0)
-          
-          let rqInd = Number(metaMe?.rq_individual || 0)
-          let metaD1Ind = Number(metaMe?.meta_dia_1_individual || 0)
-
-          if (rqInd === 0 && stats.nomina > 0) {
-            rqInd = Math.max(1, Math.min(rqGrupal, stats.nomina))
-          }
-          if (metaD1Ind === 0 && stats.d1 > 0) {
-            metaD1Ind = Math.max(1, Math.min(metaD1Grupal, stats.d1))
-          }
-
-          records.push({
-            periodo_efectivo: targetPeriodo,
-            codigo_gpe: gpe,
-            semana: cap.semana_label || metaMe?.semana || 'SEM 41',
-            fecha_inicio_capa: toIsoDate(cap.fecha_registro || metaMe?.fecha),
-            fecha_fin_capa: toIsoDate(cap.fecha_ingreso_op || metaMe?.fecha_ingreso_op),
-            segmento: cap.segmento || 'CLARO PERU',
-            campana: cap.campana || metaMe?.campana || '',
-            modalidad: cap.modalidad || metaMe?.modalidad || 'PRESENCIAL',
-            tipo_reclutador: 'Asistente de Reclutamiento y Selección',
-            analista_reclutador: rec,
-            meta_dia_1_grupal: metaD1Grupal,
-            nomina: stats.nomina,
-            meta_dia_1_individual: metaD1Ind,
-            meta_dia_1_nuevo_criterio: metaD1Ind,
-            asistencia_dia_1: stats.d1,
-            dotacion: stats.iop,
-            rq_op: rqInd
-          })
-        }
-
-        if (records.length > 0) {
-          await supabase
-            .from('maqueta_reclutadores_base')
-            .delete()
-            .eq('periodo_efectivo', targetPeriodo)
-
-          for (let i = 0; i < records.length; i += 100) {
-            const batch = records.slice(i, i + 100)
-            await supabase.from('maqueta_reclutadores_base').insert(batch)
-          }
-
-          return { success: true, count: records.length, source: 'capacidad_rys' }
+      const { data: refreshed, error: rpcErr } = await supabase.rpc('refresh_maqueta_reclutadores_base', {
+        p_periodo: targetPeriodo,
+      })
+      if (!rpcErr) {
+        const count = Number(refreshed) || 0
+        return {
+          success: true,
+          count,
+          source: 'v_maqueta_reclutadores_operativa',
+          message: count ? undefined : emptyMsg,
         }
       }
+      console.warn('[MaquetaBase] RPC refresh no disponible, usando cruce local:', rpcErr.message)
     } catch (err) {
-      console.warn('[MaquetaBase] Error sincronizando desde capacidad y nóminas:', err)
+      console.warn('[MaquetaBase] RPC refresh falló, usando cruce local:', err)
     }
   }
 
-  // Fallback a kpi_reclutadores_consolidado
-  const kpiRows = await fetchKpiReclutadoresConsolidado({ periodo: pStr || pNorm })
-  if (!kpiRows || !kpiRows.length) return { success: false, count: 0, message: 'No hay filas consolidadas en este periodo' }
+  if (DB_MODE === 'supabase' && isSupabaseConfigured() && targetPeriodo) {
+    const { rows: liveRows, source } = await fetchMaquetaBaseOperativa(targetPeriodo)
+    if (source === 'live' && liveRows.length) {
+      const mapped = liveRows.map((r) => ({
+        periodo_efectivo: r.periodo_efectivo || targetPeriodo,
+        codigo_gpe: r.codigo_gpe,
+        semana: r.semana || null,
+        fecha_inicio_capa: r.fecha_inicio_capa || null,
+        fecha_fin_capa: r.fecha_fin_capa || null,
+        segmento: r.segmento || '',
+        campana: r.campana || '',
+        modalidad: r.modalidad || 'PRESENCIAL',
+        tipo_reclutador: r.tipo_reclutador || 'Asistente de Reclutamiento y Selección',
+        analista_reclutador: r.analista_reclutador,
+        meta_dia_1_grupal: Number(r.meta_dia_1_grupal || 0),
+        nomina: Number(r.nomina || 0),
+        meta_dia_1_individual: Number(r.meta_dia_1_individual || 0),
+        meta_dia_1_nuevo_criterio: Number(r.meta_dia_1_nuevo_criterio || r.meta_dia_1_individual || 0),
+        asistencia_dia_1: Number(r.asistencia_dia_1 || 0),
+        dotacion: Number(r.dotacion || 0),
+        rq_op: Number(r.rq_op || 0),
+      }))
+      try {
+        await supabase.from('maqueta_reclutadores_base').delete().eq('periodo_efectivo', targetPeriodo)
+      } catch {
+        // si no hay permiso de delete, el upsert igual actualiza
+      }
+      return await guardarMaquetaBaseOperativa(mapped)
+    }
+  }
 
-  const mapped = kpiRows.map((r) => ({
-    periodo_efectivo: pStr || r.periodo_efectivo || pNorm,
-    codigo_gpe: r.grupo_g || r.codigo_gpe || 'GPE-S/C',
-    semana: r.semana ? `SEM ${r.semana}` : null,
-    fecha_inicio_capa: r.fecha_inicio || null,
-    fecha_fin_capa: r.fecha_ingreso_op || null,
-    segmento: r.segmento || '',
-    campana: r.campana || '',
-    modalidad: r.modalidad || 'PRESENCIAL',
-    tipo_reclutador: r.tipo_reclutador || 'Interno',
-    analista_reclutador: String(r.responsable || '').trim(),
-    meta_dia_1_grupal: Number(r.meta_dia_1_campana || r.rq || 0),
-    nomina: Number(r.nomina || 0),
-    meta_dia_1_individual: Number(r.meta_dia_1_individual || r.dia_1_tope || 0),
-    meta_dia_1_nuevo_criterio: Number(r.meta_dia_1_nuevo_criterio || 0),
-    asistencia_dia_1: Number(r.dia_1 || 0),
-    dotacion: Number(r.dotacion_q || 0),
-    rq_op: Number(r.rq_individual || r.rq || 0),
-  })).filter(r => r.analista_reclutador && !r.analista_reclutador.toUpperCase().includes('SIN NOMINA'))
-
-  return await guardarMaquetaBaseOperativa(mapped)
+  return { success: false, count: 0, message: emptyMsg }
 }
+
 
 export async function fetchLiquidacionesPeriodo(periodo) {
   if (!periodo) return []

@@ -44,6 +44,17 @@ export function isBajaDia1Motivo(motivo) {
   )
 }
 
+/** Baja Día 1, sobredotación y descuento no entran a deserción de formación. */
+export function isMotivoExcluidoDesercionFormacion(motivo, estado = '', sigla = '') {
+  const m = cleanUpper(motivo)
+  const e = cleanUpper(estado)
+  const s = cleanUpper(sigla)
+  if (s === 'DESC' || m.includes('DESCUENTO') || e.includes('DESCUENTO')) return true
+  if (m.includes('SOBREDOT') || e.includes('SOBREDOT')) return true
+  if (isBajaDia1Motivo(m) || e.includes('BAJA DIA 1') || e.includes('BAJA D1')) return true
+  return false
+}
+
 export function isRecuperadoCapProfile(row = {}) {
   const blob = profileBlob(row)
   return (

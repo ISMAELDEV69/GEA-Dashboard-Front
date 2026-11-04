@@ -75,11 +75,20 @@ export default function MaquetaBonosReclutadores({
   const [liquidacionesGuardadas, setLiquidacionesGuardadas] = useState([])
   const [loadingLiqGuardadas, setLoadingLiqGuardadas] = useState(false)
 
-  // Estado de Base Operativa Oficial (maqueta_reclutadores_base)
+  // Estado de Base Operativa Oficial (vista viva metas+nóminas+I-OP)
   const [baseFromDb, setBaseFromDb] = useState([])
+  const [baseSource, setBaseSource] = useState('loading') // 'live' | 'snapshot' | 'none' | 'loading'
   const [loadingBaseDb, setLoadingBaseDb] = useState(false)
   const [syncingBase, setSyncingBase] = useState(false)
   const [syncBaseSuccess, setSyncBaseSuccess] = useState(false)
+
+  const applyMaquetaBaseResult = useCallback((res) => {
+    const rows = Array.isArray(res) ? res : (res?.rows || [])
+    const source = Array.isArray(res) ? (rows.length ? 'live' : 'none') : (res?.source || 'none')
+    setBaseFromDb(rows)
+    setBaseSource(source)
+    return { rows, source }
+  }, [])
 
   // Cargar ajustes de auditoría persistidos en localStorage por periodo
   useEffect(() => {
@@ -119,11 +128,15 @@ export default function MaquetaBonosReclutadores({
   useEffect(() => {
     let isMounted = true
     setLoadingBaseDb(true)
+    setBaseSource('loading')
     fetchMaquetaBaseOperativa(periodoSeleccionado)
       .then((data) => {
-        if (isMounted) setBaseFromDb(Array.isArray(data) ? data : [])
+        if (isMounted) applyMaquetaBaseResult(data)
       })
-      .catch((err) => console.warn('[MaquetaBase] Error al cargar base:', err))
+      .catch((err) => {
+        console.warn('[MaquetaBase] Error al cargar base:', err)
+        if (isMounted) applyMaquetaBaseResult({ rows: [], source: 'none' })
+      })
       .finally(() => {
         if (isMounted) setLoadingBaseDb(false)
       })
@@ -139,7 +152,7 @@ export default function MaquetaBonosReclutadores({
       })
 
     return () => { isMounted = false }
-  }, [periodoSeleccionado])
+  }, [periodoSeleccionado, applyMaquetaBaseResult])
 
   // ── 2. CARGA DE CATÁLOGO MAESTRO (Lista_de_reclutadores) ───────────────────
   useEffect(() => {
@@ -186,8 +199,23 @@ export default function MaquetaBonosReclutadores({
       liveMapByGpeResp.set(`${gpe}|${resp}`, k)
     }
 
-    if (baseFromDb && baseFromDb.length > 0) {
-      const matchedLiveKeys = new Set()
+    const usaFuenteOficial = baseSource === 'live' || baseSource === 'snapshot'
+
+    if (baseSource === 'loading') {
+      return {
+        effectiveKpiRows: [],
+        syncDiagnostics: {
+          usandoBaseDb: false,
+          fuente: 'loading',
+          totalBaseDb: 0,
+          totalFaltantesEnBase: 0,
+          totalConDesfase: 0,
+          isSynced: false
+        }
+      }
+    }
+
+    if (usaFuenteOficial) {
       let totalConDesfase = 0
 
       const baseMapped = baseFromDb.map((b) => {
@@ -197,9 +225,6 @@ export default function MaquetaBonosReclutadores({
         const exactKey = `${gpe}|${camp}|${resp}`
         const fallbackKey = `${gpe}|${resp}`
         const liveRow = liveMapExact.get(exactKey) || liveMapByGpeResp.get(fallbackKey) || null
-        if (liveRow) {
-          matchedLiveKeys.add(`${norm(liveRow.grupo_g || liveRow.codigo_gpe)}|${norm(liveRow.campana)}|${norm(liveRow.responsable)}`)
-        }
 
         const d1Base = Number(b.asistencia_dia_1 || 0)
         const dotBase = Number(b.dotacion || 0)
@@ -210,13 +235,13 @@ export default function MaquetaBonosReclutadores({
 
         return {
           responsable: b.analista_reclutador,
-          meta_dia_1_individual: Number(b.meta_dia_1_individual || liveRow?.meta_dia_1_individual || 0),
-          meta_dia_1_campana: Number(b.meta_dia_1_grupal || liveRow?.meta_dia_1_campana || 0),
+          meta_dia_1_individual: Math.round(Number(b.meta_dia_1_individual ?? 0) || 0),
+          meta_dia_1_campana: Math.round(Number(b.meta_dia_1_grupal ?? 0) || 0),
           dia_1: d1Base,
           dia_1_tope: liveRow?.dia_1_tope !== undefined ? Number(liveRow.dia_1_tope) : Math.min(d1Base, Number(b.meta_dia_1_individual || d1Base)),
           dotacion_q: dotBase,
           dotacion_q_tope: liveRow?.dotacion_q_tope !== undefined ? Number(liveRow.dotacion_q_tope) : Math.min(dotBase, Number(b.rq_op || dotBase)),
-          rq: Number(b.rq_op || liveRow?.rq_individual || liveRow?.rq || 0),
+          rq: Math.round(Number(b.rq_op ?? 0) || 0),
           nomina: Number(b.nomina || liveRow?.nomina || 0),
           aptos: Number(liveRow?.aptos || liveRow?.cantidad_aptos || 0),
           evaluados: Number(liveRow?.evaluados || liveRow?.cantidad_evaluados || 0),
@@ -236,52 +261,15 @@ export default function MaquetaBonosReclutadores({
         }
       })
 
-      // Identificar reclutadores presentes en la base oficial
-      const reclutadoresEnBase = new Set(baseMapped.map(b => norm(b.responsable)))
-
-      // Si kpiRowsPeriodo tiene filas de un reclutador o grupo nuevo que NO está en la base oficial, agregarlas como respaldo operativo
-      const filasFaltantes = kpiRowsPeriodo.filter(k => {
-        const nom = norm(k.responsable)
-        if (!nom || nom === 'ADMIN' || nom === 'RECLUTADOR' || nom.includes('SIN NOMINA') || nom === 'RECUPERADO') return false
-        const gpeKey = `${norm(k.grupo_g || k.codigo_gpe)}|${norm(k.campana)}|${nom}`
-        if (matchedLiveKeys.has(gpeKey)) return false
-        const exists = Array.from(reclutadoresEnBase).some(r => r === nom || r.includes(nom) || nom.includes(r))
-        return !exists
-      }).map(k => ({
-        responsable: k.responsable,
-        meta_dia_1_individual: Number(k.meta_dia_1_individual || 0),
-        meta_dia_1_campana: Number(k.meta_dia_1_campana || 0),
-        dia_1: Number(k.dia_1 || 0),
-        dia_1_tope: Number(k.dia_1_tope ?? k.dia_1 ?? 0),
-        dotacion_q: Number(k.dotacion_q || 0),
-        dotacion_q_tope: Number(k.dotacion_q_tope ?? k.dotacion_q ?? 0),
-        rq: Number(k.rq_individual || k.rq || 0),
-        nomina: Number(k.nomina || 0),
-        aptos: Number(k.aptos || k.cantidad_aptos || 0),
-        evaluados: Number(k.evaluados || k.cantidad_evaluados || 0),
-        campana: k.campana,
-        codigo_gpe: k.grupo_g,
-        grupo_g: k.grupo_g,
-        segmento: k.segmento,
-        modalidad: k.modalidad,
-        semana: k.semana,
-        fecha_inicio: k.fecha_inicio,
-        fecha_ingreso_op: k.fecha_ingreso_op,
-        tipo_reclutador: k.cargo || 'Asistente de Reclutamiento y Selección',
-        origen_fuente: 'RESPALDO_VIVO',
-        dia_1_vivo: Number(k.dia_1 || 0),
-        dotacion_vivo: Number(k.dotacion_q || 0),
-        tiene_desfase_vivo: false,
-      }))
-
       return {
-        effectiveKpiRows: [...baseMapped, ...filasFaltantes],
+        effectiveKpiRows: baseMapped,
         syncDiagnostics: {
           usandoBaseDb: true,
+          fuente: baseSource,
           totalBaseDb: baseMapped.length,
-          totalFaltantesEnBase: filasFaltantes.length,
+          totalFaltantesEnBase: 0,
           totalConDesfase,
-          isSynced: totalConDesfase === 0 && filasFaltantes.length === 0
+          isSynced: totalConDesfase === 0
         }
       }
     }
@@ -302,7 +290,7 @@ export default function MaquetaBonosReclutadores({
         isSynced: false
       }
     }
-  }, [baseFromDb, kpiRowsPeriodo])
+  }, [baseFromDb, baseSource, kpiRowsPeriodo])
 
   // ── 3. EJECUCIÓN DEL MOTOR DE CÁLCULO DE MAQUETA ────────────────────────────
   const { filas, resumen, mediaEquipo } = useMemo(() => {
@@ -427,7 +415,8 @@ export default function MaquetaBonosReclutadores({
 
   // ── 5. MODELADO DE LA TABLA "BASE OPERATIVA" (16 ENCABEZADOS) ──────────────
   const baseOperativaRows = useMemo(() => {
-    if (baseFromDb && baseFromDb.length > 0) {
+    const usaFuenteOficial = baseSource === 'live' || baseSource === 'snapshot'
+    if (usaFuenteOficial || (baseFromDb && baseFromDb.length > 0)) {
       return baseFromDb.map((b, idx) => {
         const resp = String(b.analista_reclutador || '').trim().toUpperCase()
         const matchedRec = (equipoList || []).find((eq) => {
@@ -479,7 +468,7 @@ export default function MaquetaBonosReclutadores({
       const metaD1Nuevo = Number(r.meta_dia_1_nuevo_criterio ?? (r.meta_dia_1_individual || r.rq_individual || 0))
       const asistenciaD1 = Number(r.dia_1 || 0)
       const dotacion = Number(r.dotacion_q ?? r.dotacion_ftes ?? 0)
-      const rqOp = Number(r.rq_individual ?? r.rq ?? 0)
+      const rqOp = Number(r.rq ?? r.rq_op ?? 0)
 
       return {
         id: r.id || `${r.grupo_g || 'GRP'}-${idx}`,
@@ -501,7 +490,7 @@ export default function MaquetaBonosReclutadores({
         rqOp: rqOp,
       }
     })
-  }, [baseFromDb, kpiRows, equipoList])
+  }, [baseFromDb, baseSource, kpiRows, equipoList])
 
   const campanasBaseDisponibles = useMemo(() => {
     const set = new Set(baseOperativaRows.map((r) => r.campana).filter((c) => c && c !== '-'))
@@ -703,9 +692,10 @@ export default function MaquetaBonosReclutadores({
         setSyncBaseSuccess(true)
         setTimeout(() => setSyncBaseSuccess(false), 3000)
         const updated = await fetchMaquetaBaseOperativa(periodoSeleccionado)
-        setBaseFromDb(updated)
+        applyMaquetaBaseResult(updated)
+        if (!res.count && res.message) alert(res.message)
       } else {
-        alert(res.message || 'No se encontraron registros de nóminas para este periodo.')
+        alert(res.message || 'No hay grupos de Metas y Equipos para este periodo de ingreso.')
       }
     } catch (err) {
       console.error('Error al sincronizar base:', err)
@@ -752,7 +742,7 @@ export default function MaquetaBonosReclutadores({
         if (rows.length) {
           await guardarMaquetaBaseOperativa(rows)
           const updated = await fetchMaquetaBaseOperativa(periodoSeleccionado)
-          setBaseFromDb(updated)
+          applyMaquetaBaseResult(updated)
           alert(`¡Se guardaron ${rows.length} registros en maqueta_reclutadores_base!`)
         }
       } catch (err) {
@@ -793,10 +783,13 @@ export default function MaquetaBonosReclutadores({
               className="text-xs px-2.5 py-1.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] outline-none cursor-pointer focus:border-[var(--accent)] font-mono"
             >
               {periodosDisponibles.map((p) => (
-                <option key={p} value={p}>Corte: {p}</option>
+                <option key={p} value={p}>Ingreso OP {p}</option>
               ))}
             </select>
           )}
+          <span className="hidden lg:inline text-[10px] text-[var(--text-muted)] max-w-[340px] leading-tight">
+            Pago por periodo de ingreso a operación. Filas = reclutadores encargados en Metas y Equipos; Día 1 de nóminas; I-OP único de asistencia.
+          </span>
 
           {/* Switch de Topes */}
           <button
@@ -1369,7 +1362,7 @@ export default function MaquetaBonosReclutadores({
                             >
                               {Number(f.pctDia1Operativo || 0).toFixed(2)}%
                               <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
-                                ({f.dia1Real}/{f.dia1Meta})
+                                ({Math.round(Number(f.dia1Real) || 0)}/{Math.round(Number(f.dia1Meta) || 0)})
                               </span>
                             </td>
 
@@ -1387,7 +1380,7 @@ export default function MaquetaBonosReclutadores({
                             >
                               {Number(f.pctDotacionOperativo || 0).toFixed(2)}%
                               <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
-                                ({f.dotacionReal}/{f.rqReal})
+                                ({Math.round(Number(f.dotacionReal) || 0)}/{Math.round(Number(f.rqReal) || 0)})
                               </span>
                             </td>
 
@@ -1692,14 +1685,18 @@ export default function MaquetaBonosReclutadores({
                 Base Operativa Oficial (16 Columnas)
               </CardTitle>
               <span className="text-[10px] text-[var(--text-muted)] font-mono">{baseOperativaFiltrada.length} registros</span>
-              {baseFromDb.length > 0 ? (
+              {baseSource === 'live' ? (
                 <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  BD Conectada (maqueta_reclutadores_base)
+                  Viva · Metas + Nóminas + I-OP
+                </span>
+              ) : baseSource === 'snapshot' ? (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                  Corte congelado
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  Calculado en Memoria
+                  Sin asignación de metas para este ingreso
                 </span>
               )}
             </div>
@@ -1732,10 +1729,10 @@ export default function MaquetaBonosReclutadores({
                 onClick={handleSincronizarBase}
                 disabled={syncingBase}
                 className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all cursor-pointer shadow-xs disabled:opacity-50"
-                title="Cruza las nóminas de postulantes y control de asistencia para este periodo y guarda en maqueta_reclutadores_base"
+                title="Congela el corte de pago: grupos encargados en Metas y Equipos + Día 1 de nóminas + I-OP único de asistencia, filtrado por periodo de ingreso a operación"
               >
                 <RefreshCw size={13} className={syncingBase ? 'animate-spin' : ''} />
-                <span>{syncingBase ? 'Sincronizando...' : syncBaseSuccess ? '¡Sincronizado!' : 'Sincronizar Nóminas'}</span>
+                <span>{syncingBase ? 'Sincronizando...' : syncBaseSuccess ? '¡Sincronizado!' : 'Congelar corte'}</span>
               </button>
 
               <input
@@ -1850,6 +1847,15 @@ export default function MaquetaBonosReclutadores({
                       <td className="py-2 px-2.5 font-mono text-right font-bold text-blue-400">{r.rqOp}</td>
                     </tr>
                   ))}
+                  {baseOperativaFiltrada.length === 0 && (
+                    <tr>
+                      <td colSpan={16} className="py-10 px-4 text-center text-[var(--text-muted)]">
+                        {loadingBaseDb
+                          ? 'Cargando el corte de ingreso…'
+                          : 'No hay reclutadores encargados en Metas y Equipos para este periodo de ingreso a operación.'}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
                 <tfoot className="sticky bottom-0 bg-[var(--bg-elevated)] border-t-2 border-[var(--border-normal)] font-mono text-xs font-black z-10 whitespace-nowrap">
                   <tr>

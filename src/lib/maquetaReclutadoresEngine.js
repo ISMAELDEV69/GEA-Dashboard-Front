@@ -312,14 +312,15 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const d1ConTope = Number(row.dia_1_tope ?? row.dia_1 ?? 0)
     const d1 = useTope ? d1ConTope : d1SinTope
 
-    // Meta Día 1: Se prioriza meta_dia_1_individual, luego dia_1_tope o rq_individual
-    const d1Meta = Number(row.meta_dia_1_individual || row.dia_1_tope || row.rq_individual || row.meta_dia_1_campana || 0)
+    // Metas oficiales: solo las cargadas en metas_equipos. Nunca prorratear la grupal.
+    const d1Meta = Math.round(Number(row.meta_dia_1_individual ?? 0) || 0)
 
     const dotSinTope = Number(row.dotacion_q || 0)
     const dotConTope = Number(row.dotacion_q_tope ?? row.dotacion_q ?? 0)
     const dot = useTope ? dotConTope : dotSinTope
 
-    const rq = Number(row.rq_individual || row.rq || 0)
+    // RQ de ingresos = metas_equipos.rq (requerimiento del grupo). rq_individual es meta de Día 0, no de I-OP.
+    const rq = Math.round(Number(row.rq_op ?? row.rq ?? 0) || 0)
     const nom = Number(row.nomina || 0)
     const apt = Number(row.aptos || row.cantidad_aptos || 0)
     const evl = Number(row.evaluados || row.cantidad_evaluados || row.postulantes_evaluados || 0)

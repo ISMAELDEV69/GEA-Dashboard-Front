@@ -95,6 +95,10 @@ CREATE INDEX IF NOT EXISTS idx_nominas_grupo_campana_activo
   ON public.nominas (grupo_codigo, campana, activo);
 
 -- 4. Vista Principal: v_resumen_capacitacion_cohortes
+-- Deserción (todas las campañas): último corte sigla B, sin Baja Día 1,
+-- sin Sobredotación, sin Descuento, sin I-OP posterior. Quien se recuperó a A/I-OP no cuenta.
+-- CT vs OJT: OJT solo si hubo asistencia real en ventana OJT (A/FJ/OJT).
+-- B arrastrada a fechas de OJT sin pisar piso cuenta como deserción de aula.
 DROP VIEW IF EXISTS public.v_resumen_capacitacion_cohortes CASCADE;
 CREATE OR REPLACE VIEW public.v_resumen_capacitacion_cohortes AS
 WITH cohortes_base AS (
@@ -143,59 +147,104 @@ nominas_agg AS (
   WHERE n.activo = true
   GROUP BY n.grupo_codigo, n.campana
 ),
-postulantes_asistencias AS (
-  SELECT 
+ultimo_corte AS (
+  SELECT DISTINCT ON (ca.codigo_grupo, ca.campana, ca.documento)
     ca.codigo_grupo,
     ca.campana,
     ca.documento,
-    BOOL_OR(ca.sigla IN ('A', 'FJ', 'I-OP', 'CAPACITACION', 'OJT')) AS has_asistencia_valida,
-    BOOL_OR(ca.sigla = 'I-OP' OR UPPER(COALESCE(ca.estado, '')) IN ('INGRESO A OPERACION', 'I-OP')) AS has_iop,
-    BOOL_OR(UPPER(COALESCE(ca.motivo_baja, '')) LIKE '%BAJA DIA 1%' OR UPPER(COALESCE(ca.estado, '')) LIKE '%BAJA DIA 1%') AS is_baja_dia1,
-    MIN(CASE 
-      WHEN ca.sigla = 'B' 
-        AND UPPER(COALESCE(ca.estado, '')) NOT LIKE '%DESC%'
-        AND UPPER(COALESCE(ca.motivo_baja, '')) NOT LIKE '%DESC%'
-        AND UPPER(COALESCE(ca.motivo_baja, '')) NOT LIKE '%BAJA DIA 1%'
-      THEN parse_fecha_asistencia(ca.fecha_registro_asistencia)
-    END) AS fecha_primera_baja,
+    UPPER(TRIM(COALESCE(ca.sigla::text, ''))) AS sigla,
+    UPPER(TRIM(COALESCE(ca.motivo_baja::text, ''))) AS motivo,
+    UPPER(TRIM(COALESCE(ca.estado::text, ''))) AS estado,
+    parse_fecha_asistencia(ca.fecha_registro_asistencia::text) AS fecha_corte
+  FROM public.consolidado_asistencias ca
+  JOIN cohortes_base cb
+    ON cb.grupo_codigo::text = ca.codigo_grupo::text
+   AND cb.campana::text = ca.campana::text
+  ORDER BY ca.codigo_grupo, ca.campana, ca.documento,
+           parse_fecha_asistencia(ca.fecha_registro_asistencia::text) DESC NULLS LAST,
+           ca.id DESC
+),
+flags_asistencia AS (
+  SELECT
+    ca.codigo_grupo,
+    ca.campana,
+    ca.documento,
+    BOOL_OR(ca.sigla::text = ANY (ARRAY['A', 'FJ', 'I-OP', 'CAPACITACION', 'OJT'])) AS has_asistencia_valida,
     BOOL_OR(
-      ca.sigla IN ('A', 'OJT') 
-      AND cb.fecha_inicio_ojt IS NOT NULL 
-      AND parse_fecha_asistencia(ca.fecha_registro_asistencia) >= cb.fecha_inicio_ojt
+      ca.sigla::text = 'I-OP'
+      OR UPPER(COALESCE(ca.estado::text, '')) IN ('INGRESO A OPERACION', 'I-OP')
+    ) AS has_iop,
+    BOOL_OR(
+      ca.sigla::text IN ('A', 'FJ', 'OJT', 'CAPACITACION')
+      AND cb.fecha_inicio_ojt IS NOT NULL
+      AND parse_fecha_asistencia(ca.fecha_registro_asistencia::text) >= cb.fecha_inicio_ojt
     ) AS attended_ojt
   FROM public.consolidado_asistencias ca
-  JOIN cohortes_base cb ON cb.grupo_codigo = ca.codigo_grupo AND cb.campana = ca.campana
-  GROUP BY ca.codigo_grupo, ca.campana, ca.documento, cb.fecha_inicio_ojt
+  JOIN cohortes_base cb
+    ON cb.grupo_codigo::text = ca.codigo_grupo::text
+   AND cb.campana::text = ca.campana::text
+  GROUP BY ca.codigo_grupo, ca.campana, ca.documento
+),
+postulantes_asistencias AS (
+  SELECT
+    f.codigo_grupo,
+    f.campana,
+    f.documento,
+    f.has_asistencia_valida,
+    f.has_iop,
+    f.attended_ojt,
+    u.fecha_corte,
+    (
+      COALESCE(u.motivo, '') LIKE '%BAJA DIA 1%'
+      OR COALESCE(u.motivo, '') LIKE '%BAJA D1%'
+      OR COALESCE(u.estado, '') LIKE '%BAJA DIA 1%'
+    ) AS is_baja_dia1,
+    (
+      COALESCE(u.sigla, '') = 'B'
+      AND NOT COALESCE(f.has_iop, false)
+      AND COALESCE(u.motivo, '') NOT LIKE '%BAJA DIA 1%'
+      AND COALESCE(u.motivo, '') NOT LIKE '%BAJA D1%'
+      AND COALESCE(u.estado, '') NOT LIKE '%BAJA DIA 1%'
+      AND COALESCE(u.motivo, '') NOT LIKE '%SOBREDOT%'
+      AND COALESCE(u.motivo, '') NOT LIKE '%DESCUENTO%'
+      AND COALESCE(u.estado, '') NOT LIKE '%DESCUENTO%'
+    ) AS is_desertor_formacion
+  FROM flags_asistencia f
+  LEFT JOIN ultimo_corte u
+    ON u.codigo_grupo = f.codigo_grupo
+   AND u.campana = f.campana
+   AND u.documento = f.documento
 ),
 asistencias_agg AS (
-  SELECT 
+  SELECT
     pa.codigo_grupo,
     pa.campana,
-    COUNT(DISTINCT CASE 
-      WHEN (pa.has_asistencia_valida OR pa.has_iop) AND NOT pa.is_baja_dia1 
-      THEN pa.documento 
+    COUNT(DISTINCT CASE
+      WHEN (pa.has_asistencia_valida OR pa.has_iop) AND NOT pa.is_baja_dia1
+      THEN pa.documento
     END) AS asis_dia1,
-    COUNT(DISTINCT CASE 
-      WHEN NOT pa.has_iop 
-        AND pa.fecha_primera_baja IS NOT NULL 
-        AND (cb.fecha_inicio_ojt IS NULL OR pa.fecha_primera_baja < cb.fecha_inicio_ojt)
-      THEN pa.documento 
+    COUNT(DISTINCT CASE
+      WHEN pa.is_desertor_formacion
+        AND pa.has_asistencia_valida
+        AND NOT COALESCE(pa.attended_ojt, false)
+      THEN pa.documento
     END) AS desertores_ct,
-    COUNT(DISTINCT CASE 
-      WHEN NOT pa.has_iop 
-        AND pa.fecha_primera_baja IS NOT NULL 
-        AND cb.fecha_inicio_ojt IS NOT NULL 
-        AND pa.fecha_primera_baja >= cb.fecha_inicio_ojt
-      THEN pa.documento 
+    COUNT(DISTINCT CASE
+      WHEN pa.is_desertor_formacion
+        AND pa.has_asistencia_valida
+        AND COALESCE(pa.attended_ojt, false)
+      THEN pa.documento
     END) AS desertores_ojt,
-    COUNT(DISTINCT CASE 
-      WHEN NOT pa.has_iop 
-        AND pa.fecha_primera_baja IS NULL 
-        AND pa.attended_ojt 
-      THEN pa.documento 
+    COUNT(DISTINCT CASE
+      WHEN NOT pa.has_iop
+        AND NOT pa.is_desertor_formacion
+        AND pa.attended_ojt
+      THEN pa.documento
     END) AS activos_ojt
   FROM postulantes_asistencias pa
-  JOIN cohortes_base cb ON cb.grupo_codigo = pa.codigo_grupo AND cb.campana = pa.campana
+  JOIN cohortes_base cb
+    ON cb.grupo_codigo::text = pa.codigo_grupo::text
+   AND cb.campana::text = pa.campana::text
   GROUP BY pa.codigo_grupo, pa.campana
 ),
 iop_personas AS (
