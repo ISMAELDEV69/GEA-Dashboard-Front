@@ -4866,6 +4866,39 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
   return { rec: countRec, form: countForm, bajas_c3, bajas_dia1_rys }
 }
 
+// Helper para formatear nombre de postulante limpiando comas huérfanas
+export function formatNombrePostulante(recCandidate, formRecord = null, doc = '') {
+  const cleanField = (val) => String(val || '').trim();
+  
+  // 1. Intentar con Reclutamiento
+  const rApPat = cleanField(recCandidate?.apellido_paterno);
+  const rApMat = cleanField(recCandidate?.apellido_materno);
+  const rNom = cleanField(recCandidate?.nombres || recCandidate?.nombres_completos);
+  const rApellidos = `${rApPat} ${rApMat}`.trim();
+  
+  if (rApellidos && rNom) return `${rApellidos}, ${rNom}`;
+  if (rApellidos) return rApellidos;
+  if (rNom) return rNom;
+  if (recCandidate?.nombre_completo && cleanField(recCandidate.nombre_completo) !== ',') {
+    return cleanField(recCandidate.nombre_completo);
+  }
+
+  // 2. Fallback a Formación
+  const fApPat = cleanField(formRecord?.apellido_paterno);
+  const fApMat = cleanField(formRecord?.apellido_materno);
+  const fNom = cleanField(formRecord?.nombres);
+  const fApellidos = `${fApPat} ${fApMat}`.trim();
+
+  if (fApellidos && fNom) return `${fApellidos}, ${fNom}`;
+  if (fApellidos) return fApellidos;
+  if (fNom) return fNom;
+  if (formRecord?.nombre_completo && cleanField(formRecord.nombre_completo) !== ',') {
+    return cleanField(formRecord.nombre_completo);
+  }
+
+  return doc ? `Postulante (${doc})` : 'Postulante';
+}
+
 export async function getDetalleCalibracion(grupo_codigo, campana, periodo = null, semana_label = null) {
   if (DB_MODE !== 'supabase') return []
 
@@ -4931,14 +4964,21 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     if (doc) mapRec.set(doc, r)
   })
   
-  const mapNombres = new Map(recAsis.map(p => [normDoc(p.documento), `${p.apellido_paterno || ''} ${p.apellido_materno || ''}, ${p.nombres || ''}`.trim()]))
+  const mapNombres = new Map()
+  recAsis.forEach(p => {
+    const doc = normDoc(p.documento)
+    if (doc) {
+      const nom = formatNombrePostulante(p, null, '')
+      if (nom && nom !== 'Postulante') mapNombres.set(doc, nom)
+    }
+  })
   
-  // Poblar nombres de formador como fallback para alumnos agregados en sala
+  // Poblar nombres de formador como fallback para alumnos agregados en sala o sin nombres en nómina
   for (const f of formAsis) {
     const doc = normDoc(f.postulante_documento)
-    if (doc && (!mapNombres.has(doc) || !mapNombres.get(doc))) {
-      const nom = `${f.apellido_paterno || ''} ${f.apellido_materno || ''}, ${f.nombres || ''}`.trim()
-      if (nom && nom !== ',') {
+    if (doc && (!mapNombres.has(doc) || !mapNombres.get(doc) || mapNombres.get(doc) === ',')) {
+      const nom = formatNombrePostulante(null, f, '')
+      if (nom && nom !== 'Postulante' && nom !== ',') {
         mapNombres.set(doc, nom)
       }
     }
@@ -5061,7 +5101,9 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
 
       discrepancias.push({
         documento: doc,
-        nombre: mapNombres.get(doc) || 'Postulante',
+        nombre: (mapNombres.get(doc) && mapNombres.get(doc) !== ',') 
+          ? mapNombres.get(doc) 
+          : formatNombrePostulante(recCandidate, formRecord, doc),
         sigla_formador: displayFormSigla,
         sigla_reclutador: displayRecSigla
       })
@@ -7894,7 +7936,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 
           discrepanciasList.push({
             documento: doc,
-            nombre: `${recCandidate?.apellido_paterno || ''} ${recCandidate?.apellido_materno || ''}, ${recCandidate?.nombres || ''}`.trim() || 'Postulante',
+            nombre: formatNombrePostulante(recCandidate, formRecord, doc),
             sigla_reclutador: displayRecSigla,
             sigla_formador: displayFormSigla
           });

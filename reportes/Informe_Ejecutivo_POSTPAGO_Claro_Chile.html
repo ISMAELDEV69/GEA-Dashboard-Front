@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Informe Ejecutivo: POSTPAGO Claro Chile (Octubre - Noviembre)</title>
+  <style>
+    :root {
+      --primary: #0284c7;
+      --primary-dark: #0369a1;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 30px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--card);
+      padding: 35px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px -2px rgba(0,0,0,0.06);
+    }
+    .header {
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 {
+      font-size: 24px;
+      margin: 0 0 6px 0;
+      color: var(--primary-dark);
+    }
+    .header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 30px;
+    }
+    .kpi-card {
+      background: #f1f5f9;
+      padding: 16px;
+      border-radius: 12px;
+      border-left: 4px solid var(--primary);
+    }
+    .kpi-card.success { border-left-color: var(--success); }
+    .kpi-card.warning { border-left-color: var(--warning); }
+    .kpi-title { font-size: 12px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .kpi-value { font-size: 28px; font-weight: 800; margin: 6px 0 2px 0; color: var(--text); }
+    .kpi-sub { font-size: 13px; color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 25px;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      background: #f8fafc;
+      font-weight: 700;
+      color: #334155;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    tr:hover { background: #f8fafc; }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-success { background: #dcfce7; color: #15803d; }
+    .badge-warning { background: #fef3c7; color: #b45309; }
+    .badge-danger { background: #fee2e2; color: #b91c1c; }
+    .badge-info { background: #e0f2fe; color: #0369a1; }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      margin: 25px 0 15px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .action-plan {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .action-plan h3 { margin: 0 0 10px 0; color: #1e40af; font-size: 16px; }
+    .action-plan ol { margin: 0; padding-left: 20px; }
+    .action-plan li { margin-bottom: 8px; font-size: 14px; color: #1e3a8a; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .container { box-shadow: none; padding: 15px; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Informe Ejecutivo: Campaña POSTPAGO (Claro Chile)</h1>
+        <p>Cohortes con Ingreso en Octubre (202610) y Noviembre (202611) · Sistema Oficial WFM</p>
+      </div>
+      <button class="no-print" onclick="window.print()" style="padding: 10px 18px; background: #0284c7; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
+        🖨️ Imprimir / Guardar como PDF
+      </button>
+    </div>
+
+    <!-- KPI CARDS -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">Requerimiento Total</div>
+        <div class="kpi-value">92.0 FTEs</div>
+        <div class="kpi-sub">64 Octubre · 28 Noviembre</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-title">Asistentes Día 1 (Real)</div>
+        <div class="kpi-value">145</div>
+        <div class="kpi-sub">108.2% vs Meta Día 1 (134)</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-title">I-OP Octubre (Cumplimiento)</div>
+        <div class="kpi-value">58.0 FTEs</div>
+        <div class="kpi-sub"><strong>90.6%</strong> Cumplido vs 64 RQ</div>
+      </div>
+      <div class="kpi-card warning">
+        <div class="kpi-title">En OJT Activo (Noviembre)</div>
+        <div class="kpi-value">3 Asesores</div>
+        <div class="kpi-sub">GPE-2026059 próximos a pase I-OP</div>
+      </div>
+    </div>
+
+    <!-- TABLA OCTUBRE -->
+    <div class="section-title">📅 Octubre 2026 (202610) — 12 Cohortes Postpago (Cerrado al 90.6%)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Campaña</th>
+          <th>Sem.</th>
+          <th>Formador a Cargo</th>
+          <th>Estado</th>
+          <th>RQ FTE</th>
+          <th>Meta D1</th>
+          <th>Real D1</th>
+          <th>I-OP</th>
+          <th>FTEs</th>
+          <th>OJT Act.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>GPE-2026049</td><td>POSTPAGO</td><td>SEM 37</td><td>CINTHYA KATHERINE ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>10</strong></td><td><strong>5</strong></td><td>5.0</td><td>0</td></tr>
+        <tr><td>GPE-2026050</td><td>POSTPAGO</td><td>SEM 37</td><td>CINTHYA KATHERINE ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>3</strong></td><td><strong>1</strong></td><td>1.0</td><td>0</td></tr>
+        <tr><td>GPE-2026051</td><td>POSTPAGO</td><td>SEM 38</td><td>FERNANDO NOE OYARCE RAMIREZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>16</strong></td><td><strong>11</strong></td><td>11.0</td><td>0</td></tr>
+        <tr><td>GPE-2026052</td><td>POSTPAGO</td><td>SEM 38</td><td>JHON MILLER CARBAJAL VARGAS</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>14</td><td><strong>26</strong></td><td><strong>9</strong></td><td>9.0</td><td>0</td></tr>
+        <tr><td>GPE-2026053</td><td>POSTPAGO</td><td>SEM 38</td><td>JOHANA DESIREE LUGO CALDERÓN</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>9</strong></td><td><strong>6</strong></td><td>6.0</td><td>0</td></tr>
+        <tr><td>GPE-2026054</td><td>POSTPAGO</td><td>SEM 39</td><td>JEFFERSON EDUARDO PEVES ROJAS</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>9</strong></td><td><strong>7</strong></td><td>7.0</td><td>0</td></tr>
+        <tr><td>GPE-2026055</td><td>POSTPAGO</td><td>SEM 39</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>4</strong></td><td><strong>3</strong></td><td>3.0</td><td>0</td></tr>
+        <tr><td>GPE-2026056</td><td>POSTPAGO</td><td>SEM 40</td><td>CINTHYA KATHERINE ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>11</strong></td><td><strong>3</strong></td><td>3.0</td><td>0</td></tr>
+        <tr><td>GPE-2026057</td><td>POSTPAGO</td><td>SEM 40</td><td>FERNANDO NOE OYARCE RAMIREZ</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>18</strong></td><td><strong>8</strong></td><td>8.0</td><td>2</td></tr>
+        <tr><td>GPE-2026058</td><td>POSTPAGO</td><td>SEM 41</td><td>JHON MILLER CARBAJAL VARGAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>7</td><td>10</td><td><strong>12</strong></td><td><strong>4</strong></td><td>4.0</td><td>3</td></tr>
+        <tr><td>GPE-2026058X</td><td>POSTPAGO</td><td>SEM 41</td><td>JHON MILLER CARBAJAL VARGAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>0</td><td>0</td><td><strong>2</strong></td><td><strong>1</strong></td><td>1.0</td><td>1</td></tr>
+        <tr><td>GPE-2026004X</td><td>POSTPAGO</td><td>SEM 38</td><td>SIN ASIGNAR</td><td><span class="badge badge-info">CERRADO</span></td><td>0</td><td>0</td><td>0</td><td>0</td><td>0.0</td><td>0</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:#f1f5f9; font-weight: bold;">
+          <td colspan="5">SUBTOTAL OCTUBRE (POSTPAGO)</td>
+          <td>64</td>
+          <td>95</td>
+          <td>120</td>
+          <td>58</td>
+          <td>58.0</td>
+          <td>6</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- TABLA NOVIEMBRE -->
+    <div class="section-title">📅 Noviembre 2026 (202611) — 5 Cohortes Postpago (En Ejecución)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Campaña</th>
+          <th>Sem.</th>
+          <th>Formador a Cargo</th>
+          <th>Estado</th>
+          <th>RQ FTE</th>
+          <th>Meta D1</th>
+          <th>Real D1</th>
+          <th>I-OP</th>
+          <th>OJT Act.</th>
+          <th>Situación</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>GPE-2026059</td><td>POSTPAGO</td><td>SEM 42</td><td>JOHANA DESIREE LUGO CALDERÓN</td><td><span class="badge badge-warning">EN CURSO</span></td><td>8</td><td>11</td><td><strong>3</strong></td><td><strong>0</strong></td><td><strong>3</strong></td><td>🟡 3 en OJT próximos a I-OP</td></tr>
+        <tr><td>GPE-2026060</td><td>POSTPAGO</td><td>SEM 43</td><td>JEFFERSON EDUARDO PEVES ROJAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>7</td><td>10</td><td><strong>9</strong></td><td><strong>0</strong></td><td>0</td><td>🔵 En Capacitación Teórica</td></tr>
+        <tr><td>GPE-2026061</td><td>POSTPAGO</td><td>SEM 43</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-warning">EN CURSO</span></td><td>6</td><td>8</td><td><strong>11</strong></td><td><strong>0</strong></td><td>0</td><td>🔵 En Capacitación Teórica</td></tr>
+        <tr><td>GPE-2026061X</td><td>POSTPAGO</td><td>SEM 43</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-warning">EN CURSO</span></td><td>0</td><td>0</td><td><strong>2</strong></td><td><strong>0</strong></td><td>0</td><td>🔵 Refuerzo en Aula</td></tr>
+        <tr><td>GPE-2026062</td><td>POSTPAGO</td><td>SEM 45</td><td><span class="badge badge-danger">SIN ASIGNAR</span></td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>7</td><td>10</td><td>0</td><td>0</td><td>0</td><td>🔴 Pendiente Formador</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:#f1f5f9; font-weight: bold;">
+          <td colspan="5">SUBTOTAL NOVIEMBRE (POSTPAGO)</td>
+          <td>28</td>
+          <td>39</td>
+          <td>25</td>
+          <td>0</td>
+          <td>3</td>
+          <td>-</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- PLAN DE ACCIÓN POSTPAGO -->
+    <div class="action-plan">
+      <h3>🚀 Plan de Acción Inmediato para Postpago Claro Chile</h3>
+      <ol>
+        <li><strong>Asegurar Pase a Operación de OJT (GPE-2026059):</strong> Johana Lugo y el supervisor operativo deben acompañar a los 3 asesores que culminan OJT para que su I-OP sea 100% efectivo.</li>
+        <li><strong>Fidelización en Aula (Semana 43):</strong> En los grupos <code>GPE-2026060</code> (Jefferson Peves) y <code>GPE-2026061</code> (Gisela Adams) hay 22 personas en capacitación teórica. Mitigar deserciones para ingresar un mínimo de 13 a 15 FTEs.</li>
+        <li><strong>Asignación Urgente de Formador para Semana 45:</strong> Designar inmediatamente formador para <code>GPE-2026062</code> (RQ: 7 FTEs).</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
+

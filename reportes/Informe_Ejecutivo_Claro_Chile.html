@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Informe Ejecutivo: Claro Chile (Octubre - Noviembre)</title>
+  <style>
+    :root {
+      --primary: #0284c7;
+      --primary-dark: #0369a1;
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 30px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--card);
+      padding: 35px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px -2px rgba(0,0,0,0.06);
+    }
+    .header {
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 {
+      font-size: 24px;
+      margin: 0 0 6px 0;
+      color: var(--primary-dark);
+    }
+    .header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 30px;
+    }
+    .kpi-card {
+      background: #f1f5f9;
+      padding: 16px;
+      border-radius: 12px;
+      border-left: 4px solid var(--primary);
+    }
+    .kpi-card.success { border-left-color: var(--success); }
+    .kpi-card.warning { border-left-color: var(--warning); }
+    .kpi-title { font-size: 12px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .kpi-value { font-size: 28px; font-weight: 800; margin: 6px 0 2px 0; color: var(--text); }
+    .kpi-sub { font-size: 13px; color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 25px;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      background: #f8fafc;
+      font-weight: 700;
+      color: #334155;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    tr:hover { background: #f8fafc; }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-success { background: #dcfce7; color: #15803d; }
+    .badge-warning { background: #fef3c7; color: #b45309; }
+    .badge-danger { background: #fee2e2; color: #b91c1c; }
+    .badge-info { background: #e0f2fe; color: #0369a1; }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      margin: 25px 0 15px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .action-plan {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .action-plan h3 { margin: 0 0 10px 0; color: #1e40af; font-size: 16px; }
+    .action-plan ol { margin: 0; padding-left: 20px; }
+    .action-plan li { margin-bottom: 8px; font-size: 14px; color: #1e3a8a; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .container { box-shadow: none; padding: 15px; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Informe Ejecutivo: Ingresos Segmento Claro Chile</h1>
+        <p>Cohortes con Ingreso en Octubre (202610) y Noviembre (202611) · Sistema WFM</p>
+      </div>
+      <button class="no-print" onclick="window.print()" style="padding: 10px 18px; background: #0284c7; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
+        🖨️ Imprimir / Guardar como PDF
+      </button>
+    </div>
+
+    <!-- KPI CARDS -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">Requerimiento Total</div>
+        <div class="kpi-value">178 FTEs</div>
+        <div class="kpi-sub">111 Octubre · 67 Noviembre</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-title">Asistentes Día 1 (Real)</div>
+        <div class="kpi-value">291</div>
+        <div class="kpi-sub">107.8% vs Meta Día 1 (270)</div>
+      </div>
+      <div class="kpi-card warning">
+        <div class="kpi-title">Ingresos a Operación (I-OP)</div>
+        <div class="kpi-value">98.5 FTEs</div>
+        <div class="kpi-sub">93.5 Octubre · 5.0 Noviembre</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">En Proceso en OJT</div>
+        <div class="kpi-value">12 Pers.</div>
+        <div class="kpi-sub">8 Octubre · 4 Noviembre</div>
+      </div>
+    </div>
+
+    <!-- TABLA OCTUBRE -->
+    <div class="section-title">📅 Octubre 2026 (202610) — 23 Cohortes (Cierre Operativo)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Campaña</th>
+          <th>Sem.</th>
+          <th>Formador</th>
+          <th>Estado</th>
+          <th>RQ FTE</th>
+          <th>Meta D1</th>
+          <th>Real D1</th>
+          <th>I-OP</th>
+          <th>FTEs</th>
+          <th>OJT Act.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>GPE-2026002</td><td>TUVES FRONT</td><td>SEM 41</td><td>BRIGUITH BOCANEGRA CEOPA</td><td><span class="badge badge-info">CERRADO</span></td><td>4</td><td>6</td><td><strong>9</strong></td><td><strong>6</strong></td><td>6.0</td><td>0</td></tr>
+        <tr><td>GPE-2026003</td><td>ANULACIÓN</td><td>SEM 41</td><td>CARLOS OMAR CRUZ LOPES</td><td><span class="badge badge-info">CERRADO</span></td><td>4</td><td>6</td><td><strong>5</strong></td><td><strong>2</strong></td><td>2.0</td><td>0</td></tr>
+        <tr><td>GPE-2026003</td><td>TUVES BOLIVIA</td><td>SEM 40</td><td>AARON AMAYA MACALUPU</td><td><span class="badge badge-info">CERRADO</span></td><td>8</td><td>13</td><td><strong>39</strong></td><td><strong>11</strong></td><td>11.0</td><td>0</td></tr>
+        <tr><td>GPE-2026005</td><td>TUVES RETENCIONES</td><td>SEM 41</td><td>AARON AMAYA MACALUPU</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>8</td><td><strong>23</strong></td><td><strong>8</strong></td><td>8.0</td><td>0</td></tr>
+        <tr><td>GPE-2026006</td><td>DESCUENTO</td><td>SEM 39</td><td>STEFANO PURIZACA ABAD</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>8</td><td><strong>7</strong></td><td><strong>5</strong></td><td>3.5</td><td>0</td></tr>
+        <tr><td>GPE-2026007</td><td>DESCUENTO</td><td>SEM 41</td><td>CARLOS OMAR CRUZ LOPES</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>11</td><td><strong>8</strong></td><td><strong>0</strong></td><td>0.0</td><td>2</td></tr>
+        <tr><td>GPE-2026018</td><td>CONTENCIÓN</td><td>SEM 38</td><td>CARLOS OMAR CRUZ LOPES</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>11</td><td><strong>9</strong></td><td><strong>3</strong></td><td>3.0</td><td>0</td></tr>
+        <tr><td>GPE-2026019</td><td>CONTENCIÓN</td><td>SEM 39</td><td>STEFANO PURIZACA ABAD</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>11</td><td><strong>17</strong></td><td><strong>2</strong></td><td>2.0</td><td>0</td></tr>
+        <tr><td>GPE-2026049</td><td>POSTPAGO</td><td>SEM 37</td><td>CINTHYA ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>10</strong></td><td><strong>5</strong></td><td>5.0</td><td>0</td></tr>
+        <tr><td>GPE-2026050</td><td>POSTPAGO</td><td>SEM 37</td><td>CINTHYA ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>3</strong></td><td><strong>1</strong></td><td>1.0</td><td>0</td></tr>
+        <tr><td>GPE-2026051</td><td>POSTPAGO</td><td>SEM 38</td><td>FERNANDO OYARCE RAMIREZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>16</strong></td><td><strong>11</strong></td><td>11.0</td><td>0</td></tr>
+        <tr><td>GPE-2026052</td><td>POSTPAGO</td><td>SEM 38</td><td>JHON CARBAJAL VARGAS</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>14</td><td><strong>26</strong></td><td><strong>9</strong></td><td>9.0</td><td>0</td></tr>
+        <tr><td>GPE-2026053</td><td>POSTPAGO</td><td>SEM 38</td><td>JOHANA LUGO CALDERÓN</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>9</strong></td><td><strong>6</strong></td><td>6.0</td><td>0</td></tr>
+        <tr><td>GPE-2026054</td><td>POSTPAGO</td><td>SEM 39</td><td>JEFFERSON PEVES ROJAS</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>9</strong></td><td><strong>7</strong></td><td>7.0</td><td>0</td></tr>
+        <tr><td>GPE-2026055</td><td>POSTPAGO</td><td>SEM 39</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>4</strong></td><td><strong>3</strong></td><td>3.0</td><td>0</td></tr>
+        <tr><td>GPE-2026056</td><td>POSTPAGO</td><td>SEM 40</td><td>CINTHYA ARAUCO CHAVEZ</td><td><span class="badge badge-info">CERRADO</span></td><td>7</td><td>10</td><td><strong>11</strong></td><td><strong>3</strong></td><td>3.0</td><td>0</td></tr>
+        <tr><td>GPE-2026057</td><td>POSTPAGO</td><td>SEM 40</td><td>FERNANDO OYARCE RAMIREZ</td><td><span class="badge badge-info">CERRADO</span></td><td>5</td><td>7</td><td><strong>18</strong></td><td><strong>8</strong></td><td>8.0</td><td>2</td></tr>
+        <tr><td>GPE-2026058</td><td>POSTPAGO</td><td>SEM 41</td><td>JHON CARBAJAL VARGAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>7</td><td>10</td><td><strong>12</strong></td><td><strong>4</strong></td><td>4.0</td><td>3</td></tr>
+        <tr><td>GPE-2026058X</td><td>POSTPAGO</td><td>SEM 41</td><td>JHON CARBAJAL VARGAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>0</td><td>0</td><td><strong>2</strong></td><td><strong>1</strong></td><td>1.0</td><td>1</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:#f1f5f9; font-weight: bold;">
+          <td colspan="5">SUBTOTAL OCTUBRE</td>
+          <td>111</td>
+          <td>169</td>
+          <td>237</td>
+          <td>95</td>
+          <td>93.5</td>
+          <td>8</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- TABLA NOVIEMBRE -->
+    <div class="section-title">📅 Noviembre 2026 (202611) — 11 Cohortes (En Ejecución)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Campaña</th>
+          <th>Sem.</th>
+          <th>Formador</th>
+          <th>Estado</th>
+          <th>RQ FTE</th>
+          <th>Meta D1</th>
+          <th>Real D1</th>
+          <th>I-OP</th>
+          <th>OJT Act.</th>
+          <th>Situación</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>GPE-2026004</td><td>ANULACIÓN</td><td>SEM 42</td><td>STEFANO PURIZACA ABAD</td><td><span class="badge badge-warning">EN CURSO</span></td><td>5</td><td>8</td><td><strong>8</strong></td><td><strong>5</strong></td><td>0</td><td><span class="badge badge-success">100% RQ</span></td></tr>
+        <tr><td>GPE-2026059</td><td>POSTPAGO</td><td>SEM 42</td><td>JOHANA LUGO CALDERÓN</td><td><span class="badge badge-warning">EN CURSO</span></td><td>8</td><td>11</td><td><strong>3</strong></td><td><strong>0</strong></td><td><strong>3</strong></td><td>3 en OJT</td></tr>
+        <tr><td>GPE-2026020</td><td>CONTENCIÓN</td><td>SEM 42</td><td>CINTHYA ARAUCO CHAVEZ</td><td><span class="badge badge-warning">EN CURSO</span></td><td>7</td><td>11</td><td><strong>4</strong></td><td><strong>0</strong></td><td><strong>1</strong></td><td>1 en OJT</td></tr>
+        <tr><td>GPE-2026060</td><td>POSTPAGO</td><td>SEM 43</td><td>JEFFERSON PEVES ROJAS</td><td><span class="badge badge-warning">EN CURSO</span></td><td>7</td><td>10</td><td><strong>9</strong></td><td><strong>0</strong></td><td>0</td><td>En Capacitación</td></tr>
+        <tr><td>GPE-2026061</td><td>POSTPAGO</td><td>SEM 43</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-warning">EN CURSO</span></td><td>6</td><td>8</td><td><strong>11</strong></td><td><strong>0</strong></td><td>0</td><td>En Capacitación</td></tr>
+        <tr><td>GPE-2026061X</td><td>POSTPAGO</td><td>SEM 43</td><td>GISELA ADAMS RIBEYRO</td><td><span class="badge badge-warning">EN CURSO</span></td><td>0</td><td>0</td><td><strong>2</strong></td><td><strong>0</strong></td><td>0</td><td>En Capacitación</td></tr>
+        <tr><td>GPE-2026008</td><td>DESCUENTO</td><td>SEM 44</td><td>CINTHYA ARAUCO CHAVEZ</td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>7</td><td>11</td><td><strong>17</strong></td><td><strong>0</strong></td><td>0</td><td>Apertura</td></tr>
+        <tr><td>GPE-2026021</td><td>CONTENCIÓN</td><td>SEM 44</td><td><span class="badge badge-danger">SIN ASIGNAR</span></td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>6</td><td>10</td><td>0</td><td>0</td><td>0</td><td>Pendiente</td></tr>
+        <tr><td>GPE-2026003</td><td>TUVES FRONT</td><td>SEM 45</td><td><span class="badge badge-danger">SIN ASIGNAR</span></td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>7</td><td>11</td><td>0</td><td>0</td><td>0</td><td>Pendiente</td></tr>
+        <tr><td>GPE-2026009</td><td>DESCUENTO</td><td>SEM 45</td><td><span class="badge badge-danger">SIN ASIGNAR</span></td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>7</td><td>11</td><td>0</td><td>0</td><td>0</td><td>Pendiente</td></tr>
+        <tr><td>GPE-2026062</td><td>POSTPAGO</td><td>SEM 45</td><td><span class="badge badge-danger">SIN ASIGNAR</span></td><td><span class="badge badge-info">PROYECCIÓN</span></td><td>7</td><td>10</td><td>0</td><td>0</td><td>0</td><td>Pendiente</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:#f1f5f9; font-weight: bold;">
+          <td colspan="5">SUBTOTAL NOVIEMBRE</td>
+          <td>67</td>
+          <td>101</td>
+          <td>54</td>
+          <td>5</td>
+          <td>4</td>
+          <td>-</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- PLAN DE ACCIÓN -->
+    <div class="action-plan">
+      <h3>🚀 Plan de Acción Táctico Inmediato</h3>
+      <ol>
+        <li><strong>Asignación Inmediata de Formadores (24h):</strong> Registrar en el sistema a los formadores a cargo de los grupos <code>GPE-2026021</code>, <code>GPE-2026003</code>, <code>GPE-2026009</code> y <code>GPE-2026062</code> (27 FTEs en riesgo).</li>
+        <li><strong>Blindaje de Postulantes en OJT (48h):</strong> Hacer seguimiento nominal a los 4 postulantes activos en OJT de Noviembre (Postpago y Contención) para asegurar su firma e I-OP al 100%.</li>
+        <li><strong>Control de Retención en Aula (Semana 43):</strong> Aplicar entrevistas de fidelización al Día 3 en los grupos de Jefferson Peves y Gisela Adams para mitigar deserciones antes de OJT.</li>
+        <li><strong>Sobrecupo del 25% en Citación D1 (Sem 44 y 45):</strong> Citar con sobrecupo estratégico para compensar la curva de merma histórica de Claro Chile.</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
+

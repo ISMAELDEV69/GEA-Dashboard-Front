@@ -1131,10 +1131,14 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
                                 ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                                 : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'))
 
+                          const cleanNombre = (d.nombre && d.nombre.trim() !== ',' && d.nombre.trim() !== '') 
+                            ? d.nombre.trim() 
+                            : (d.documento ? `Postulante (${d.documento})` : 'Postulante')
+
                           return (
                             <tr key={d.documento} className="hover:bg-[var(--bg-elevated)]/50 transition-colors">
                               <td className="px-4 py-2.5 font-mono font-bold text-xs text-[var(--text-primary)]">{d.documento}</td>
-                              <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{d.nombre}</td>
+                              <td className="px-4 py-2.5 text-[var(--text-primary)] font-bold">{cleanNombre}</td>
                               <td className="px-4 py-2.5 text-center border-l border-[var(--border-normal)]">
                                 <span className={`px-2.5 py-1 rounded-md font-mono font-bold text-xs border ${recBadgeColor}`}>
                                   {d.sigla_reclutador || '—'}

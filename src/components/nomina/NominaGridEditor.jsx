@@ -174,10 +174,11 @@ function sanitizeRowUpdatesForDb(rawUpdates) {
     }
   }
 
-  // 5. Columnas NUMERIC / FLOAT
+  // 5. Columnas NUMERIC / FLOAT (sanitiza símbolos de moneda S/, $, etc.)
   const numFields = [
     'remuneracion', 'bono_variable', 'bono_movilidad',
-    'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno'
+    'bono_bienvenida', 'bono_permanencia', 'bono_asistencia_perfecta', 'bono_nocturno',
+    'pago_capacitacion', 'monto', 'monto_descuento', 'tarifa'
   ]
   for (const f of numFields) {
     if (f in sanitized) {
