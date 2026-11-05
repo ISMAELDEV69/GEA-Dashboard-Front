@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dataService.js
  * Capa de abstracción de datos: usa Supabase si está configurado,
  * si no, cae al mock de localStorage automáticamente.
@@ -2008,11 +2008,11 @@ export function isAreaBolsaCapa(area) {
 
 export function tipoReclutadoFromAreaCapa(area) {
   const a = String(area || '').trim().toUpperCase()
-  if (a === 'CAPACITACION') return 'CAPACITACION'
-  if (a === 'RECUPERADO') return 'RECUPERADO'
+  if (a === 'CAPACITACION' || a === 'CAPACITACIÓN') return 'AGREGADO CAP'
+  if (a === 'RECUPERADO') return 'RECUPERADO CAP'
   if (a === 'CAPACITACION TRASLADO') return 'TRASLADO'
   if (a === 'TRASLADO OP') return 'TRASLADO OP'
-  return a || 'CAPACITACION'
+  return a || 'AGREGADO CAP'
 }
 
 export function tipoReclutadorFromAreaCapa(area) {
@@ -2952,38 +2952,19 @@ export function fetchGruposConMetas(bypassCache = false) {
 export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas, grupoContext = {}) {
   if (DB_MODE === 'supabase') {
     if (!grupoCodigo) return false
-    const grupo_codigo = grupoCodigo
+    const grupo_codigo = String(grupoCodigo).trim().toUpperCase()
     
-    // 1. Delete existing assignments
-    const { error: delErr } = await supabase
-      .from('grupo_reclutadores')
-      .delete()
-      .eq('grupo_codigo', grupo_codigo)
-    if (delErr) throw delErr
+    // 1. Primario: Guardar en la tabla dedicada 'metas_equipos' (fuente oficial para Scorecards, Cartera y Cuotas)
+    try {
+      const { error: delMeErr } = await supabase
+        .from('metas_equipos')
+        .delete()
+        .eq('grupo', grupo_codigo)
+      if (delMeErr) {
+        console.warn('Aviso limpiando metas_equipos previas:', delMeErr)
+      }
 
-    // 2. Insert new assignments if any
-    if (reclutadoresMetas && reclutadoresMetas.length > 0) {
-      const rows = reclutadoresMetas.map(rm => ({
-        grupo_codigo: grupo_codigo,
-        reclutador_id: rm.reclutador_id,
-        documento: rm.documento || null,
-        reclutador_nombre: rm.nombre_completo || null,
-        periodo: grupoContext.periodo || null,
-        semana: grupoContext.semana || null,
-        segmento: grupoContext.segmento || null,
-        campana: grupoContext.campana || null,
-        meta_rq_individual: rm.meta_rq_individual || 0,
-        meta_dia_1_individual: rm.meta_dia_1_individual || 0,
-        updated_at: new Date().toISOString()
-      }))
-      const { error: insErr } = await supabase
-        .from('grupo_reclutadores')
-        .insert(rows)
-      if (insErr) throw insErr
-
-      // 3. Sync to new dedicated metas_equipos table
-      try {
-        await supabase.from('metas_equipos').delete().eq('grupo', grupo_codigo)
+      if (reclutadoresMetas && reclutadoresMetas.length > 0) {
         const metasEquiposRows = reclutadoresMetas.map(rm => ({
           semana: grupoContext.semana || null,
           periodo: grupoContext.periodo || null,
@@ -2994,33 +2975,89 @@ export async function saveGrupoMetas(grupoCodigo, reclutadoresMetas, grupoContex
           horario: grupoContext.horario || null,
           fecha: grupoContext.fecha || null,
           fecha_ingreso_op: grupoContext.fecha_ingreso_op || null,
-          rq: grupoContext.rq || 0,
+          rq: Number(grupoContext.rq) || 0,
           responsable: rm.nombre_completo || null,
           documento_responsable: rm.documento || null,
-          rq_individual: rm.meta_rq_individual || 0,
-          conteo_individual: rm.conteo_individual || 0,
-          lista_actual: grupoContext.lista_actual || 0,
-          meta_dia_0: grupoContext.meta_dia_0 || 0,
-          conectados_dia_0: grupoContext.conectados_dia_0 || 0,
-          meta_dia_1_individual: rm.meta_dia_1_individual || 0,
-          conectados_dia_1: rm.conectados_dia_1_individual || 0,
-          meta_dia_1_grupal: grupoContext.meta_dia_1 || 0,
-          total_dia_1: grupoContext.conectados_dia_1_grupal || 0,
+          rq_individual: Number(rm.meta_rq_individual) || 0,
+          conteo_individual: Number(rm.conteo_individual) || 0,
+          lista_actual: Number(grupoContext.lista_actual) || 0,
+          meta_dia_0: Number(grupoContext.meta_dia_0) || 0,
+          conectados_dia_0: Number(grupoContext.conectados_dia_0) || 0,
+          meta_dia_1_individual: Number(rm.meta_dia_1_individual) || 0,
+          conectados_dia_1: Number(rm.conectados_dia_1_individual) || 0,
+          meta_dia_1_grupal: Number(grupoContext.meta_dia_1) || 0,
+          total_dia_1: Number(grupoContext.conectados_dia_1_grupal) || 0,
           updated_at: new Date().toISOString()
         }))
-        await supabase.from('metas_equipos').insert(metasEquiposRows)
-      } catch (syncErr) {
-        console.warn('Sync to metas_equipos table warning:', syncErr)
+        const { error: insMeErr } = await supabase
+          .from('metas_equipos')
+          .insert(metasEquiposRows)
+        if (insMeErr) {
+          console.error('Error insertando en metas_equipos:', insMeErr)
+          throw new Error(insMeErr.message || 'Error al guardar metas en base de datos')
+        }
       }
-    } else {
-      // Si se removieron todos los reclutadores del grupo
-      try {
-        await supabase.from('metas_equipos').delete().eq('grupo', grupo_codigo)
-      } catch (syncErr) {
-        console.warn('Sync delete metas_equipos warning:', syncErr)
-      }
+    } catch (meError) {
+      console.error('Fallo crítico guardando en metas_equipos:', meError)
+      throw meError
     }
-    await invalidateCache('grupos_con_metas')
+
+    // 2. Sincronizar metas grupales a 'capacidad_rys' para que Capacidad y Resumen tengan las metas actualizadas
+    try {
+      const capUpdates = {}
+      if (grupoContext.meta_dia_0 !== undefined && grupoContext.meta_dia_0 !== null) {
+        capUpdates.meta_dia_0 = Number(grupoContext.meta_dia_0) || 0
+      }
+      if (grupoContext.meta_dia_1 !== undefined && grupoContext.meta_dia_1 !== null) {
+        capUpdates.meta_dia_1 = Number(grupoContext.meta_dia_1) || 0
+      }
+      if (grupoContext.rq !== undefined && grupoContext.rq !== null) {
+        capUpdates.rq_solicitado = Number(grupoContext.rq) || 0
+      }
+
+      if (Object.keys(capUpdates).length > 0) {
+        let qCap = supabase.from('capacidad_rys').update(capUpdates).eq('codigo', grupo_codigo)
+        if (grupoContext.campana && grupoContext.campana !== 'Sin Campaña') {
+          qCap = qCap.eq('campana', grupoContext.campana)
+        }
+        await qCap
+      }
+    } catch (capErr) {
+      console.warn('Aviso sincronizando capacidad_rys:', capErr)
+    }
+
+    // 3. Sincronización secundaria a 'grupo_reclutadores' (protegido en try/catch para no bloquear por políticas RLS)
+    try {
+      await supabase.from('grupo_reclutadores').delete().eq('grupo_codigo', grupo_codigo)
+      if (reclutadoresMetas && reclutadoresMetas.length > 0) {
+        const rows = reclutadoresMetas.map(rm => ({
+          grupo_codigo: grupo_codigo,
+          reclutador_id: rm.reclutador_id,
+          documento: rm.documento || null,
+          reclutador_nombre: rm.nombre_completo || null,
+          periodo: grupoContext.periodo || null,
+          semana: grupoContext.semana || null,
+          segmento: grupoContext.segmento || null,
+          campana: grupoContext.campana || null,
+          meta_rq_individual: Number(rm.meta_rq_individual) || 0,
+          meta_dia_1_individual: Number(rm.meta_dia_1_individual) || 0,
+          updated_at: new Date().toISOString()
+        }))
+        const { error: grErr } = await supabase.from('grupo_reclutadores').insert(rows)
+        if (grErr) console.warn('Aviso sincronizando grupo_reclutadores (RLS):', grErr.message)
+      }
+    } catch (grCatchErr) {
+      console.warn('Aviso en sync grupo_reclutadores:', grCatchErr.message)
+    }
+
+    // 4. Invalidar cachés y disparar eventos globales para que Cartera, Resumen, Capacidad y Dashboard se actualicen en vivo
+    invalidateCache('grupos_con_metas')
+    invalidateCache('grupos_capacidad')
+    invalidateCache('grupos_dia1')
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'))
+      window.dispatchEvent(new CustomEvent('gea-data-mutation'))
+    }
     return true
   }
   return true
@@ -6479,7 +6516,14 @@ export async function savePropuesta(payloadForm, payloadConsolidado) {
 
     // Invalidar cachés locales para refresco instantáneo
     invalidateCache();
-    window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+    invalidateCache('propuestas_consolidado');
+    invalidateCache('config_pagos_grupo');
+    invalidateCache('grupos_con_metas');
+    invalidateCache('grupos_capacidad');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+      window.dispatchEvent(new CustomEvent('gea-data-mutation'));
+    }
     return savedForm;
   }
 
@@ -6533,7 +6577,14 @@ export async function deletePropuesta(consolidadoId, propuestaId) {
         if (error && !propuestaId) throw error;
       }
       invalidateCache();
-      window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+      invalidateCache('propuestas_consolidado');
+      invalidateCache('config_pagos_grupo');
+      invalidateCache('grupos_con_metas');
+      invalidateCache('grupos_capacidad');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('gea-global-refresh'));
+        window.dispatchEvent(new CustomEvent('gea-data-mutation'));
+      }
       return true;
     } catch (e) {
       console.error("Error eliminando propuesta en Supabase:", e);

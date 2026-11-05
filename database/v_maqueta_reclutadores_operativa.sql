@@ -3,11 +3,9 @@
 -- Filtro de corte: capacidad_rys.periodo_ingreso_op
 -- Día 1: nominas.dia_1
 -- Dotación: I-OP único en consolidado_asistencias por DNI + grupo + campaña
--- Día 1 individual: tal cual metas_equipos.meta_dia_1_individual (no se prorratea).
--- RQ de ingresos: metas_equipos.rq es del GRUPO. Se reparte en enteros entre
--- los reclutadores encargados (6÷2 = 3 y 3). Si no divide exacto, el resto
--- (+1) va a quienes más I-OP/nómina aportaron, para no usar decimales y para
--- que la suma de RQ individuales sea exactamente el RQ del grupo.
+-- Día 1: asistencia individual del reclutador vs meta_dia_1_individual (no se prorratea).
+-- Dotación: GRUPAL. RQ = metas_equipos.rq del grupo. I-OP = únicos del grupo.
+-- Si 2 encargados y el grupo cerró 6/6, ambos heredan 6/6 = 100%, aunque uno no haya traído a nadie.
 -- rq_individual es meta de Día 0, no se usa como RQ OP.
 
 CREATE OR REPLACE FUNCTION public.norm_persona_nombre(p_nombre text)
@@ -105,33 +103,32 @@ nom_agg AS (
     COUNT(DISTINCT n.documento)::integer AS nomina,
     COUNT(DISTINCT n.documento) FILTER (
       WHERE n.dia_1 IN ('ASISTIO', 'ASISTIÓ', 'SI', 'OK', 'A')
-    )::integer AS dia1,
-    COUNT(DISTINCT n.documento) FILTER (
-      WHERE i.documento IS NOT NULL
-    )::integer AS iop
+    )::integer AS dia1
   FROM nom n
-  LEFT JOIN iop i
-    ON i.documento = n.documento
-   AND i.grupo = n.grupo
-   AND i.campana = n.campana
   GROUP BY 1, 2, 3
+),
+iop_grupo AS (
+  SELECT
+    grupo,
+    campana,
+    COUNT(DISTINCT documento)::integer AS iop_grupal
+  FROM iop
+  GROUP BY 1, 2
 ),
 me_share AS (
   SELECT
     me.*,
     COALESCE(na.nomina, 0) AS nomina,
     COALESCE(na.dia1, 0) AS dia1,
-    COALESCE(na.iop, 0) AS iop,
-    COUNT(*) OVER (PARTITION BY me.grupo, me.campana, me.semana) AS n_asig,
-    ROW_NUMBER() OVER (
-      PARTITION BY me.grupo, me.campana, me.semana
-      ORDER BY COALESCE(na.iop, 0) DESC, COALESCE(na.nomina, 0) DESC, me.responsable_norm
-    ) AS rn
+    COALESCE(ig.iop_grupal, 0) AS iop
   FROM me
   LEFT JOIN nom_agg na
     ON na.grupo = me.grupo
    AND na.campana = me.campana
    AND na.reclutador_norm = me.responsable_norm
+  LEFT JOIN iop_grupo ig
+    ON ig.grupo = me.grupo
+   AND ig.campana = me.campana
 )
 SELECT
   c.periodo_efectivo,
@@ -150,13 +147,7 @@ SELECT
   s.meta_d1_ind AS meta_dia_1_nuevo_criterio,
   s.dia1 AS asistencia_dia_1,
   s.iop AS dotacion,
-  (
-    CASE
-      WHEN COALESCE(s.n_asig, 0) <= 0 THEN s.rq_grupal
-      ELSE (s.rq_grupal / s.n_asig)
-         + CASE WHEN s.rn <= (s.rq_grupal % s.n_asig) THEN 1 ELSE 0 END
-    END
-  )::integer AS rq_op
+  s.rq_grupal AS rq_op
 FROM me_share s
 JOIN cap c
   ON c.grupo = s.grupo

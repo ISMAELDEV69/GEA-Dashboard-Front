@@ -1212,6 +1212,8 @@ export default function AsistenciaForm({
       // Regla de Negocio Oficial:
       // 1. Regular: Si el reclutador marcó ASISTIO en Día 0 -> Viaja a la marcación (incluye RECUPERO CAP)
       // 2. Extemporáneo / Reenganche: Si tuvo FALTA en Día 0 pero tiene AGREGADO / RECUPERADO / OBSERVADO o ASISTIO en Día 1 -> Viaja a la marcación
+      // 3. Capacitación / Bolsa de Capa: Grupos gestionados por Capacitación (area_traslado = 'CAPACITACIÓN' o código con sufijo X)
+      //    o postulantes adjudicados vía Bolsa de Capa / AGREGADO CAP / RECUPERADO CAP / CAPACITACIÓN / TRASLADO: viajan directamente a la marcación.
       const dia0Val = String(p.dia_0 || '').toUpperCase().trim()
       const dia1Val = String(p.dia_1 || '').toUpperCase().trim()
       const statusDia1Val = String(p.status_dia_1 || '').toUpperCase().trim()
@@ -1225,6 +1227,24 @@ export default function AsistenciaForm({
 
       if (isCese && !asistioD1) {
         return false
+      }
+
+      const isGrupoCapacitacion = 
+        String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACIÓN' ||
+        String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACION' ||
+        String(targetGrupoCodigo || '').toUpperCase().endsWith('X')
+
+      const isCapaCandidate = 
+        isRecuperoCap || 
+        isAgregadoORecuperado || 
+        statusDia1Val.includes('CAPACITAC') || 
+        tipoReclutadoVal.includes('CAPACITAC') || 
+        statusDia1Val.includes('TRASLADO') || 
+        String(p.observacion_reclutamiento || '').toUpperCase().includes('BOLSA_CAPA') || 
+        String(p.fuente_oferta || '').toUpperCase().includes('CAPACITAC')
+
+      if (isGrupoCapacitacion || isCapaCandidate) {
+        return true
       }
 
       if (asistioD0 || isRecuperoCap) {
@@ -1292,6 +1312,9 @@ export default function AsistenciaForm({
       const hadAttendanceInEarlierCuts = Boolean(corteFlagsToday.hadAttendanceInEarlierCuts)
       
       let rawTipo = (existing?.tipo_reclutado || p.tipo_reclutado || p.status_dia_1 || p.tipo || '').toString().toUpperCase().trim() || 'APTO'
+      if (rawTipo === 'CAPACITACION' || rawTipo === 'CAPACITACIÓN' || (isGrupoCapacitacion && rawTipo === 'APTO')) {
+        rawTipo = 'AGREGADO CAP'
+      }
       const dia0Val = (p.dia_0 || '').toString().toUpperCase().trim()
       const dia1Val = (p.dia_1 || '').toString().toUpperCase().trim()
       if ((dia0Val === 'FALTA' || dia0Val === 'NO ASISTIO' || dia0Val === 'DESERTO' || !dia0Val) && dia1Val === 'ASISTIO' && rawTipo === 'APTO') {

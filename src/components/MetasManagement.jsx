@@ -196,6 +196,13 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
 
   useEffect(() => {
     loadData(true)
+    const handleRefresh = () => loadData(false)
+    window.addEventListener('gea-global-refresh', handleRefresh)
+    window.addEventListener('gea-data-mutation', handleRefresh)
+    return () => {
+      window.removeEventListener('gea-global-refresh', handleRefresh)
+      window.removeEventListener('gea-data-mutation', handleRefresh)
+    }
   }, [loadData])
 
   useEffect(() => {

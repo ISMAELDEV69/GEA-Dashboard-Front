@@ -763,7 +763,7 @@ export default function NominaGridEditor({
       let query = supabase
         .from('nominas')
         .select('*')
-        .neq('estado', 'DESASIGNADO')
+        .or('estado.neq.DESASIGNADO,estado.is.null')
         .order('apellido_paterno', { ascending: true })
         .limit(5000)
 

@@ -16,6 +16,13 @@ export default function PropuestasConsolidado({ onEdit }) {
 
   useEffect(() => {
     loadData();
+    const handleRefresh = () => loadData();
+    window.addEventListener('gea-global-refresh', handleRefresh);
+    window.addEventListener('gea-data-mutation', handleRefresh);
+    return () => {
+      window.removeEventListener('gea-global-refresh', handleRefresh);
+      window.removeEventListener('gea-data-mutation', handleRefresh);
+    };
   }, []);
 
   const loadData = async () => {

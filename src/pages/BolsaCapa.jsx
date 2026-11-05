@@ -944,6 +944,7 @@ export default function BolsaCapa({ grupos = [], campanas = [], postulantes = []
           reclutador: tipo,
           fuente_oferta: selectedGrupo.area_traslado || tipo,
           status_dia_1: tipo === 'CAPACITACION' ? tipoReclutadoFromAreaCapa(selectedGrupo.area_traslado) : tipo,
+          estado: 'RECLUTADO',
           observacion_reclutamiento: `BOLSA_CAPA:${tipo}`,
           marca_temporal: new Date().toISOString(),
           activo: true,

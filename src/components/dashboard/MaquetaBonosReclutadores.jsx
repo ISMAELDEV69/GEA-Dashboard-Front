@@ -229,8 +229,8 @@ export default function MaquetaBonosReclutadores({
         const d1Base = Number(b.asistencia_dia_1 || 0)
         const dotBase = Number(b.dotacion || 0)
         const d1Vivo = liveRow ? Number(liveRow.dia_1 || 0) : d1Base
-        const dotVivo = liveRow ? Number(liveRow.dotacion_q || 0) : dotBase
-        const tieneDesfase = Boolean(liveRow && (d1Vivo !== d1Base || dotVivo !== dotBase))
+        const dotVivo = dotBase
+        const tieneDesfase = Boolean(liveRow && d1Vivo !== d1Base)
         if (tieneDesfase) totalConDesfase += 1
 
         return {
@@ -1369,7 +1369,7 @@ export default function MaquetaBonosReclutadores({
                             {/* INDICADORES: DOTAC */}
                             <td
                               onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
-                              title={`Dotación (I-OP): ${f.dotacionReal} ingresos / ${f.rqReal} RQ OP (${f.evaluadoSobreEquipo ? 'Media Equipo' : `${f.gruposCount} grupos`}) — Clic para ver grupos`}
+                              title={`Dotación grupal (I-OP / RQ del grupo). Si hay 2 encargados, ambos heredan el resultado del grupo. ${f.dotacionReal} / ${f.rqReal} — Clic para ver grupos`}
                               className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
                                 dotHigh
                                   ? 'text-emerald-400 font-bold'
@@ -2095,7 +2095,7 @@ export default function MaquetaBonosReclutadores({
                             <th className="py-1.5 px-2.5 text-left">Campaña</th>
                             <th className="py-1.5 px-2.5 text-right">Nómina</th>
                             <th className="py-1.5 px-2.5 text-right">Día 1 / Meta</th>
-                            <th className="py-1.5 px-2.5 text-right">Dotación / RQ</th>
+                            <th className="py-1.5 px-2.5 text-right">Dotación grupal / RQ</th>
                             <th className="py-1.5 px-2.5 text-right">Postulantes</th>
                           </tr>
                         </thead>
@@ -2543,11 +2543,11 @@ export default function MaquetaBonosReclutadores({
                         <div className="p-2.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
                           <div>
                             <div className="font-sans font-bold text-[var(--text-primary)]">
-                              % Dotación Ingresos OP ({boletaPersona.dotacionReal} / {boletaPersona.rqReal})
+                              % Dotación grupal Ingresos OP ({boletaPersona.dotacionReal} / {boletaPersona.rqReal})
                             </div>
                             <div className="text-[10px] text-[var(--text-muted)]">
-                              {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Logrado: '}
-                              {fmtPct(boletaPersona.pctDotacionAplicado)} ({boletaPersona.tramoDotacion}) → {boletaPersona.alcanceDotacion}% Alcance
+                              {boletaPersona.evaluadoSobreEquipo ? 'Media Eq: ' : 'Grupal: '}
+                              {fmtPct(boletaPersona.pctDotacionAplicado)} ({boletaPersona.tramoDotacion}) → {boletaPersona.alcanceDotacion}% Alcance. Todos los encargados heredan el I-OP y RQ del grupo.
                             </div>
                           </div>
                           <div className="text-right font-black text-blue-300">
@@ -2651,7 +2651,7 @@ export default function MaquetaBonosReclutadores({
                             <th className="py-2 px-2.5 text-left">Fuente</th>
                             <th className="py-2 px-2.5 text-right">Nómina</th>
                             <th className="py-2 px-2.5 text-right">Día 1 / Meta</th>
-                            <th className="py-2 px-2.5 text-right">Dotación / RQ</th>
+                            <th className="py-2 px-2.5 text-right">Dotación grupal / RQ</th>
                             <th className="py-2 px-2.5 text-right">Nivel 3</th>
                           </tr>
                         </thead>

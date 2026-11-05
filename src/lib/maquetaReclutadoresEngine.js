@@ -4,7 +4,7 @@
  * Plataforma Web GEA - Workforce Management
  * 
  * Reglas de Negocio Oficiales:
- * 1. Métricas operativas desde Base (Día 1 y Dotación / RQ OP).
+ * 1. Métricas operativas desde Base (Día 1 individual; Dotación grupal I-OP/RQ).
  * 2. Catálogo de reclutadores con cargo, bono bruto y modalidad (% Efectivo / % Sodexo).
  * 3. Matriz de pesos por cargo (Asistente 50/40/10, Analista 40/40/10/10, Coordinador 50/40/10, Supervisor 100% Día 1).
  * 4. Tramos de conversión a % de alcance por maqueta.
@@ -319,7 +319,7 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const dotConTope = Number(row.dotacion_q_tope ?? row.dotacion_q ?? 0)
     const dot = useTope ? dotConTope : dotSinTope
 
-    // RQ de ingresos = metas_equipos.rq (requerimiento del grupo). rq_individual es meta de Día 0, no de I-OP.
+    // RQ e I-OP grupales: todos los encargados del grupo heredan el mismo 6/6.
     const rq = Math.round(Number(row.rq_op ?? row.rq ?? 0) || 0)
     const nom = Number(row.nomina || 0)
     const apt = Number(row.aptos || row.cantidad_aptos || 0)
@@ -358,6 +358,7 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
       dotacionSinTope: dotSinTope,
       dotacionConTope: dotConTope,
       rq: rq,
+      dotacionGrupal: true,
       aptos: apt,
       evaluados: evl,
       origenFuente: row.origen_fuente || 'CONSOLIDADO_VIVO',
@@ -367,17 +368,27 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     })
   }
 
-  // 3. Cálculo de la MEDIA GENERAL PROMEDIO DEL EQUIPO OPERATIVO
+  // 3. MEDIA DEL EQUIPO: Día 1 se suma por reclutador; Dotación es grupal
+  // (si 2 encargados heredan el mismo 6/6, no se cuenta dos veces en el total del equipo).
   let sumaEquipoDia1 = 0
   let sumaEquipoDia1Meta = 0
   let sumaEquipoDotacion = 0
   let sumaEquipoRq = 0
+  const gruposDotUnicos = new Map()
 
   for (const op of operacionMap.values()) {
     sumaEquipoDia1 += op.dia1
     sumaEquipoDia1Meta += op.dia1Meta
-    sumaEquipoDotacion += op.dotacion
-    sumaEquipoRq += op.rq
+    for (const g of op.gruposDetalle) {
+      const gk = `${norm(g.codigoGpe)}|${norm(g.campana)}|${norm(g.semana)}`
+      if (!gruposDotUnicos.has(gk)) {
+        gruposDotUnicos.set(gk, { dotacion: Number(g.dotacion) || 0, rq: Number(g.rq) || 0 })
+      }
+    }
+  }
+  for (const g of gruposDotUnicos.values()) {
+    sumaEquipoDotacion += g.dotacion
+    sumaEquipoRq += g.rq
   }
 
   const mediaEquipoPctDia1 = sumaEquipoDia1Meta > 0
