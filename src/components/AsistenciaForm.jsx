@@ -1012,6 +1012,11 @@ export default function AsistenciaForm({
     const targetSemanaNum = parseInt(String(targetSemanaRaw).replace(/\D/g, ''), 10)
     const targetPeriodo = String(activeGrupoObj?.periodo || selectedPeriodo || '').replace(/\D/g, '').trim()
 
+    const isGrupoCapacitacion = 
+      String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACIÓN' ||
+      String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACION' ||
+      String(targetGrupoCodigo || '').toUpperCase().endsWith('X')
+
     const groupRecordsAll = []
     const mappedDocs = new Set()
     /** Misma fecha: varios cortes (C1/C2/C3) por documento */
@@ -1228,11 +1233,6 @@ export default function AsistenciaForm({
       if (isCese && !asistioD1) {
         return false
       }
-
-      const isGrupoCapacitacion = 
-        String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACIÓN' ||
-        String(activeGrupoObj?.area_traslado || '').trim().toUpperCase() === 'CAPACITACION' ||
-        String(targetGrupoCodigo || '').toUpperCase().endsWith('X')
 
       const isCapaCandidate = 
         isRecuperoCap || 
