@@ -644,18 +644,19 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
     cacheKey = `consolidado_since_${since}`;
   }
 
-  return withCache(cacheKey, 180000, async () => {
+  // TTL optimizado a 15 minutos (900s) para frenar sobreconsumo de Egress de Supabase
+  return withCache(cacheKey, 900000, async () => {
     let countQuery = supabase
       .from('consolidado_asistencias')
       .select('*', { count: 'exact', head: true });
 
     let cutoffIso = null;
     if (!all && !periodo) {
-      // Corte operativo: desde julio 2026 (margen sobre 202608) salvo que pidan histórico completo
-      const d = since ? new Date(since) : new Date(Date.UTC(2026, 6, 1));
+      // Corte operativo: ventana activa de 60 días (octubre 2026 en adelante) salvo petición explícita de histórico completo
+      const d = since ? new Date(since) : new Date(Date.UTC(2026, 9, 1));
       d.setHours(0, 0, 0, 0);
       cutoffIso = d.toISOString();
-      countQuery = countQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
+      countQuery = countQuery.gte('created_at', cutoffIso);
     } else if (periodo) {
       const pClean = String(periodo).trim();
       const yyyy = pClean.slice(0, 4);
@@ -675,12 +676,12 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
       chunkTasks.push(() => {
         let dataQuery = supabase
           .from('consolidado_asistencias')
-          .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro')
+          .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, tipo_reclutado, archivo_origen, corte')
           .order('id', { ascending: true })
           .range(from, from + step - 1);
 
         if (!all && !periodo && cutoffIso) {
-          dataQuery = dataQuery.or(`created_at.gte.${cutoffIso},created_at.is.null`);
+          dataQuery = dataQuery.gte('created_at', cutoffIso);
         } else if (periodo) {
           const pClean = String(periodo).trim();
           const yyyy = pClean.slice(0, 4);
@@ -2373,9 +2374,9 @@ export async function saveAsistenciaSession({ grupoMeta, grupo_codigo, fecha_asi
 // ─────────────────────────────────────────────
 // ASISTENCIAS
 // ─────────────────────────────────────────────
-export async function fetchAsistencias() {
+export async function fetchAsistencias({ since = '2026-10-01', all = false, periodo = null } = {}) {
   if (DB_MODE === 'supabase') {
-    const data = await fetchAllConsolidado({ since: '2026-07-01' });
+    const data = await fetchAllConsolidado({ since, all, periodo });
 
     // Map consolidado_asistencias → estructura estándar.
     // Clave con campaña para no pisar cohortes homónimas (mismo código de grupo).
@@ -4291,10 +4292,10 @@ export async function fetchConsolidado() {
   return []
 }
 
-export async function fetchDashboardData() {
+export async function fetchDashboardData(options = {}) {
   if (DB_MODE === 'supabase') {
     const [consData, capRes, descRes] = await Promise.all([
-      fetchAllConsolidado(),
+      fetchAllConsolidado(options),
       supabase.from('capacidad_rys').select('codigo, campana, meta_dia_1, rq_solicitado, rq_ftes_solicitado, fecha_registro, fecha_inicio_ojt, fecha_ingreso_op, periodo, periodo_ingreso_op, periodo_rys, segmento, semana_label, semana_trabajo, estado, area_traslado'),
       supabase.from('descuentos').select('dni_ce, campana, grupo_cap, procede, autoriza_rys, autoriza_cap, fecha_registro, fecha_baja')
     ])
@@ -8166,7 +8167,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
   if (DB_MODE === 'supabase') {
     if (!effPostulantes || effPostulantes.length === 0) {
       try {
-        effPostulantes = await fetchPostulantes({ all: true });
+        effPostulantes = await fetchPostulantes({ periodoMin: '202610' });
       } catch (e) {
         console.warn('Error fetching postulantes fallback:', e);
       }

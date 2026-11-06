@@ -385,10 +385,11 @@ export default function App() {
       hasLoadedOnceRef.current = true
 
       // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
+      // Ventana activa optimizada (Octubre-Noviembre 2026) para frenar Egress excesivo
       const [cm, p, a, al] = await Promise.all([
         fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
-        fetchPostulantes({ periodoMin: '202608' }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
-        fetchAsistencias().catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
+        fetchPostulantes({ periodoMin: '202610' }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
+        fetchAsistencias({ since: '2026-10-01' }).catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
         fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] })
       ])
 
@@ -528,7 +529,7 @@ export default function App() {
   }, [effectiveSession])
 
   const refreshCatalogs = useCallback(async () => {
-    const p = postulantes.length ? postulantes : await fetchPostulantes()
+    const p = postulantes.length ? postulantes : await fetchPostulantes({ periodoMin: '202610' })
     const [r, s, c, g, f] = await Promise.all([
       fetchReclutadores(),
       fetchSedes(),
@@ -578,8 +579,8 @@ export default function App() {
     await saveAsistenciaSession(payload)
     const [g, p, a, al, cm, f] = await Promise.all([
       fetchGrupos(postulantes),
-      fetchPostulantes(),
-      fetchAsistencias(),
+      fetchPostulantes({ periodoMin: '202610' }),
+      fetchAsistencias({ since: '2026-10-01' }),
       fetchAuditLogs(),
       fetchGruposConMetas(),
       fetchFormadores(),
