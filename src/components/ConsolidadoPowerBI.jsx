@@ -147,6 +147,7 @@ function normalizeSemana(label, trabajo, archivo) {
 
 function normalizeSigla(value) {
   const sigla = normalizeText(value, '').toUpperCase();
+  if (sigla === 'IOP' || sigla === 'I-OP' || sigla.includes('INGRESO A OPERACION') || sigla.includes('INGRESO OP')) return 'I-OP';
   return ['A', 'B', 'FI', 'FJ', 'I-OP', 'S', 'SUS'].includes(sigla) ? sigla : '';
 }
 
@@ -603,7 +604,9 @@ const MatrixRow = React.memo(function MatrixRow({
       <td className="sticky z-20 bg-[var(--bg-surface)] group-hover:bg-[var(--bg-elevated)] px-2.5 py-1.5 border-b border-[var(--border-subtle)]" style={{ left: FIXED_COLS[4].left, minWidth: FIXED_COLS[4].width, maxWidth: FIXED_COLS[4].width }}>
         <div className="flex items-center gap-1">
           <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider ${
-            row.ult_estado === 'ACTIVO'
+            row.ult_estado === 'I-OP'
+              ? 'bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30'
+              : row.ult_estado === 'ACTIVO'
               ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
               : row.ult_estado === 'BAJA DIA 1'
               ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
@@ -919,7 +922,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       }
     }
 
-    const estados = new Set(['ACTIVO', 'CESADO', 'BAJA DIA 1']);
+    const estados = new Set(['ACTIVO', 'I-OP', 'CESADO', 'BAJA DIA 1']);
 
     const sortedSemanas = Array.from(semanas).sort((a, b) => {
       const numA = parseInt(String(a).replace(/\D/g, '')) || 0;
@@ -1175,15 +1178,37 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
+      const corte = Number(row.corte) || 1;
+      const sigla = normalizeSigla(row.sigla);
       
       const prev = latestDocMap.get(doc);
-      if (!prev || time >= prev.time) {
-        latestDocMap.set(doc, { time, row });
+      let updateDoc = false;
+      if (!prev) updateDoc = true;
+      else if (time > prev.time) updateDoc = true;
+      else if (time === prev.time) {
+        if (corte > prev.corte) updateDoc = true;
+        else if (corte === prev.corte) {
+          if (sigla === 'I-OP') updateDoc = true;
+          else if ((row.created_at || '') >= (prev.row?.created_at || '')) updateDoc = true;
+        }
+      }
+      if (updateDoc) {
+        latestDocMap.set(doc, { time, corte, row });
       }
 
       const prevKey = latestKeyMap.get(rowKey);
-      if (!prevKey || time >= prevKey.time) {
-        latestKeyMap.set(rowKey, { time, row });
+      let updateKey = false;
+      if (!prevKey) updateKey = true;
+      else if (time > prevKey.time) updateKey = true;
+      else if (time === prevKey.time) {
+        if (corte > prevKey.corte) updateKey = true;
+        else if (corte === prevKey.corte) {
+          if (sigla === 'I-OP') updateKey = true;
+          else if ((row.created_at || '') >= (prevKey.row?.created_at || '')) updateKey = true;
+        }
+      }
+      if (updateKey) {
+        latestKeyMap.set(rowKey, { time, corte, row });
       }
     }
 
@@ -1219,10 +1244,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const isExplicitDescLatest = isDiscountInThisGroup || hasDescInRows || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || String(row?.sigla || '').toUpperCase() === 'DESC' || Boolean(row?.isDescuento);
 
       if (isExplicitDescLatest) return 'DESCUENTO';
-      if (hasAnyIop) return 'ACTIVO';
+      if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') return 'CESADO';
+      if (hasAnyIop || sigla === 'I-OP') return 'I-OP';
       if (isExplicitBajaD1 && !hasAttendedTraining) return 'BAJA DIA 1';
       if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) return 'BAJA DIA 1';
-      if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') return 'CESADO';
       if (isBajaDia1(motivo, sigla, row) && !hasAttendedTraining) return 'BAJA DIA 1';
       return 'ACTIVO';
     };
@@ -1273,7 +1298,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
 
       const isD1Baja = isBajaDia1Motivo(row.motivo_baja || row.motivo || row.observacion_estado);
-      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(row.estado));
+      const isLastIop = normalizeSigla(row.sigla) === 'I-OP';
+      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(row.estado)));
+      if (filters.estado === 'ACTIVO') {
+        return lastState === 'ACTIVO' || lastState === 'I-OP';
+      }
       return lastState === filters.estado;
     });
   }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
@@ -1292,6 +1321,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       
       const d = parseLocalDate(row.fecha_registro_asistencia);
       const time = d ? d.getTime() : 0;
+      const corte = Number(row.corte) || 1;
+      const sigla = normalizeSigla(row.sigla);
       
       let entry = map.get(rowKey);
       if (!entry) {
@@ -1301,16 +1332,28 @@ export default function ConsolidadoPowerBI({ userProfile }) {
           campana,
           gpe,
           latestTime: time,
+          latestCorte: corte,
           lastRow: row,
           celular: row.celular || '',
           documento_formador: row.documento_formador || '',
           nombre_formador: row.nombre_formador || '',
           fechas: {},
+          fechasMeta: {},
         };
         map.set(rowKey, entry);
       } else {
-        if (time >= entry.latestTime) {
+        let updateLatest = false;
+        if (time > entry.latestTime) updateLatest = true;
+        else if (time === entry.latestTime) {
+          if (corte > entry.latestCorte) updateLatest = true;
+          else if (corte === entry.latestCorte) {
+            if (sigla === 'I-OP') updateLatest = true;
+            else if ((row.created_at || '') >= (entry.lastRow?.created_at || '')) updateLatest = true;
+          }
+        }
+        if (updateLatest) {
           entry.latestTime = time;
+          entry.latestCorte = corte;
           entry.lastRow = row;
         }
         if (row.celular && !entry.celular) entry.celular = row.celular;
@@ -1321,7 +1364,23 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (row.fecha_registro_asistencia) {
         const canonical = formatCanonicalDate(row.fecha_registro_asistencia);
         if (canonical) {
-          entry.fechas[canonical] = normalizeSigla(row.sigla);
+          const prevMeta = entry.fechasMeta[canonical];
+          let shouldUpdate = false;
+          if (!prevMeta) {
+            shouldUpdate = true;
+          } else if (corte > prevMeta.corte) {
+            shouldUpdate = true;
+          } else if (corte === prevMeta.corte) {
+            if (sigla === 'I-OP') shouldUpdate = true;
+            else if (prevMeta.sigla !== 'I-OP' && (row.created_at || '') >= (prevMeta.created_at || '')) shouldUpdate = true;
+          } else if (sigla === 'I-OP' && prevMeta.sigla !== 'I-OP') {
+            shouldUpdate = true;
+          }
+
+          if (shouldUpdate) {
+            entry.fechas[canonical] = sigla;
+            entry.fechasMeta[canonical] = { corte, sigla, created_at: row.created_at };
+          }
         }
       }
     }
@@ -1334,7 +1393,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const gpe = entry.gpe || lastRow._gpe;
       const cap = getCapInfo(campana, gpe);
       const isD1Baja = isBajaDia1Motivo(lastRow.motivo_baja || lastRow.motivo || lastRow.observacion_estado);
-      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : normalizeEstado(lastRow.estado));
+      const isLastIop = normalizeSigla(lastRow.sigla) === 'I-OP';
+      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(lastRow.estado)));
       const hasDescuento = docState === 'DESCUENTO' || descuentosDocSet.has(rowKey) || descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
 
       // EXCLUSIÓN ESTRICTA: Los descuentos autorizados NO deben aparecer en la matriz de Control de Asistencia
@@ -1490,6 +1550,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     });
 
     let activos = 0;
+    let iops = 0;
     let desertoresFormacion = 0;
     let bajasDia1 = 0;
     let descuentosAprobados = 0;
@@ -1513,7 +1574,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         return;
       }
 
-      const isActivo = docState === 'ACTIVO';
+      const isIop = docState === 'I-OP';
+      const isActivo = docState === 'ACTIVO' || isIop;
       const isB1 = docState === 'BAJA DIA 1';
       const isCesado = docState === 'CESADO';
 
@@ -1522,6 +1584,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         return s === 'A' || s === 'I-OP';
       });
 
+      if (isIop) iops += 1;
       if (isActivo) activos += 1;
       if (isB1) bajasDia1 += 1;
       if (isCesado) {
@@ -1584,6 +1647,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
     return {
       activos,
+      iops,
       qDia1,
       desertoresFormacion,
       bajasDia1,
@@ -1816,8 +1880,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
             value={percentages.dotacion} 
             color={percentages.dotacion >= 95 ? '#10B981' : percentages.dotacion >= 80 ? '#06B6D4' : '#F43F5E'} 
             statusText={percentages.dotacion >= 95 ? 'Dentro de Meta' : percentages.dotacion >= 80 ? 'Aceptable' : 'Déficit'} 
-            sublabel={`RQ: ${kpis.sumRqSolicitado} · Activos: ${kpis.activos}`}
-            detail={`${kpis.activos} activos de ${kpis.sumRqSolicitado || kpis.cantProg} requeridos`}
+            sublabel={`RQ: ${kpis.sumRqSolicitado} · Activos: ${kpis.activos}${kpis.iops > 0 ? ` (${kpis.iops} I-OP)` : ''}`}
+            detail={`${kpis.activos} activos de ${kpis.sumRqSolicitado || kpis.cantProg} requeridos${kpis.iops > 0 ? ` · ${kpis.iops} con Ingreso a Operación` : ''}`}
           />
           <HeroIndicatorCard 
             art={KpiArt.Absence}
@@ -1838,7 +1902,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
             value={kpis.activos} 
             color="#06B6D4" 
             trend={[10, 15, 12, 19, 24, kpis.activos]} 
-            subcopy={`de ${kpis.cantProg} prog.`} 
+            subcopy={kpis.iops > 0 ? `${kpis.iops} con Pase I-OP` : `de ${kpis.cantProg} prog.`} 
           />
           <CompactVolumeCard 
             art={KpiArt.DayOne}
