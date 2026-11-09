@@ -10678,7 +10678,7 @@ export async function fetchAuditoriaFunnelReclutadores({ periodo = null, semana 
 
   let nomQuery = supabase
     .from('nominas')
-    .select('reclutador, documento, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, dia_0, dia_1, status_dia_1, tipo_reclutado, campana, grupo_codigo, fecha_inicio_capacitacion, fecha_conexion_ojt, fecha_conexion_op')
+    .select('reclutador, documento, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, dia_0, dia_1, status_dia_1, condicion, campana, grupo_codigo, fecha_inicio_capacitacion, fecha_conexion_ojt, fecha_conexion_op')
     .order('periodo_reclutado', { ascending: false });
 
   if (periodo && periodo !== 'TODOS' && periodo !== 'TODAS') {
@@ -10769,7 +10769,7 @@ export async function fetchAuditoriaFunnelReclutadores({ periodo = null, semana 
     const diasAsistidos = asisArray.filter(r => ['A', 'I-OP'].includes(norm(r.sigla))).length;
 
     const dia0Str = norm(n.dia_0);
-    const tipoRec = norm(n.tipo_reclutado || n.status_dia_1);
+    const tipoRec = norm(n.condicion || n.status_dia_1);
     const isAgregado = tipoRec.includes('AGREGADO');
     const asistioD0 = isAgregado ? 'N/A (AGREGADO)' : (['ASISTIO', 'SI', 'A', 'PRESENTE'].includes(dia0Str) ? 'SI' : 'NO');
 
