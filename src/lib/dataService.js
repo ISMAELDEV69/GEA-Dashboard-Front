@@ -10668,6 +10668,146 @@ export async function fetchLiquidacionDetalle(lote_id) {
   }
 }
 
+/**
+ * Auditoría del Embudo de Reclutadores:
+ * Convocados (Nómina) → Asistieron Día 0 (Inducción) → Asistieron Día 1 (Aula) → Ingreso a Operación (I-OP Único).
+ * Cruza con homologación estricta de Campaña y Grupo para evitar cruces indebidos de campañas pasadas.
+ */
+export async function fetchAuditoriaFunnelReclutadores({ periodo = null, semana = null, campana = null, grupo_codigo = null } = {}) {
+  if (DB_MODE !== 'supabase') return [];
+
+  let nomQuery = supabase
+    .from('nominas')
+    .select('reclutador, documento, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, dia_0, dia_1, status_dia_1, tipo_reclutado, campana, grupo_codigo, fecha_inicio_capacitacion, fecha_conexion_ojt, fecha_conexion_op')
+    .order('periodo_reclutado', { ascending: false });
+
+  if (periodo && periodo !== 'TODOS' && periodo !== 'TODAS') {
+    nomQuery = nomQuery.eq('periodo_reclutado', String(periodo).trim());
+  }
+  if (semana && semana !== 'TODAS') {
+    const sNum = parseInt(String(semana).replace(/\D/g, ''), 10);
+    nomQuery = nomQuery.or(`semana_trabajo.eq.${semana},semana_trabajo.eq.${sNum}`);
+  }
+  if (campana && campana !== 'TODAS' && campana !== 'TODOS') {
+    nomQuery = nomQuery.ilike('campana', `%${String(campana).trim()}%`);
+  }
+  if (grupo_codigo && grupo_codigo !== 'TODOS' && grupo_codigo !== 'TODAS') {
+    const grpClean = String(grupo_codigo).trim().toUpperCase();
+    const altGrp = grpClean.startsWith('GPE-') ? grpClean.replace('GPE-', 'GPR-') : (grpClean.startsWith('GPR-') ? grpClean.replace('GPR-', 'GPE-') : null);
+    if (altGrp) {
+      nomQuery = nomQuery.or(`grupo_codigo.eq.${grpClean},grupo_codigo.eq.${altGrp}`);
+    } else {
+      nomQuery = nomQuery.eq('grupo_codigo', grpClean);
+    }
+  }
+
+  const { data: nominas, error: nomErr } = await nomQuery.range(0, 4999);
+  if (nomErr) {
+    console.error('Error fetching nominas en fetchAuditoriaFunnelReclutadores:', nomErr);
+    return [];
+  }
+  if (!nominas || !nominas.length) return [];
+
+  const docs = [...new Set(nominas.map(n => String(n.documento || '').trim()).filter(Boolean))];
+  
+  let asisRows = [];
+  for (let i = 0; i < docs.length; i += 150) {
+    const chunk = docs.slice(i, i + 150);
+    const { data: asisData, error: asisErr } = await supabase
+      .from('consolidado_asistencias')
+      .select('documento, campana, codigo_grupo, grupo, sigla, estado, fecha_registro_asistencia, created_at')
+      .in('documento', chunk);
+
+    if (!asisErr && asisData) {
+      asisRows.push(...asisData);
+    }
+  }
+
+  const norm = (v) => String(v || '').trim().toUpperCase();
+  const cleanGrp = (g) => norm(g).replace('GPR-', 'GPE-');
+
+  const iopMap = new Map();
+  const asisMap = new Map();
+
+  for (const a of asisRows) {
+    const doc = norm(a.documento);
+    const camp = norm(a.campana);
+    const grp = cleanGrp(a.codigo_grupo || a.grupo);
+    const key = `${doc}|${camp}|${grp}`;
+
+    if (!asisMap.has(key)) asisMap.set(key, []);
+    asisMap.get(key).push(a);
+
+    const sigla = norm(a.sigla);
+    const est = norm(a.estado);
+    const isIop = sigla === 'I-OP' || est === 'I-OP';
+
+    if (isIop) {
+      if (!iopMap.has(key)) {
+        iopMap.set(key, {
+          primeraFecha: a.fecha_registro_asistencia,
+          totalMarcas: 1
+        });
+      } else {
+        const item = iopMap.get(key);
+        item.totalMarcas += 1;
+        if (a.fecha_registro_asistencia && (!item.primeraFecha || a.fecha_registro_asistencia < item.primeraFecha)) {
+          item.primeraFecha = a.fecha_registro_asistencia;
+        }
+      }
+    }
+  }
+
+  return nominas.map(n => {
+    const doc = norm(n.documento);
+    const camp = norm(n.campana);
+    const grp = cleanGrp(n.grupo_codigo);
+    const key = `${doc}|${camp}|${grp}`;
+
+    const iop = iopMap.get(key);
+    const asisArray = asisMap.get(key) || [];
+    const diasAsistidos = asisArray.filter(r => ['A', 'I-OP'].includes(norm(r.sigla))).length;
+
+    const dia0Str = norm(n.dia_0);
+    const tipoRec = norm(n.tipo_reclutado || n.status_dia_1);
+    const isAgregado = tipoRec.includes('AGREGADO');
+    const asistioD0 = isAgregado ? 'N/A (AGREGADO)' : (['ASISTIO', 'SI', 'A', 'PRESENTE'].includes(dia0Str) ? 'SI' : 'NO');
+
+    const dia1Str = norm(n.dia_1);
+    const statusD1 = norm(n.status_dia_1);
+    let asistioD1 = 'NO ASISTIO';
+    if (['ASISTIO', 'SI', 'A', 'PRESENTE'].includes(dia1Str) || diasAsistidos > 0) {
+      asistioD1 = 'SI';
+    } else if (dia1Str.includes('BAJA') || statusD1.includes('BAJA')) {
+      asistioD1 = 'BAJA DIA 1';
+    }
+
+    return {
+      reclutador: n.reclutador || 'SIN ASIGNAR',
+      documento: doc,
+      asesor: `${norm(n.apellido_paterno)} ${norm(n.apellido_materno)} ${norm(n.nombres)}`.trim(),
+      apellido_paterno: norm(n.apellido_paterno),
+      apellido_materno: norm(n.apellido_materno),
+      nombres: norm(n.nombres),
+      periodo_reclutado: n.periodo_reclutado || '',
+      semana_trabajo: n.semana_trabajo || '',
+      campana: camp,
+      grupo_codigo: grp,
+      fecha_inicio_capacitacion: n.fecha_inicio_capacitacion || null,
+      fecha_conexion_ojt: n.fecha_conexion_ojt || null,
+      fecha_conexion_op: n.fecha_conexion_op || null,
+      asistio_dia_0: asistioD0,
+      dia_0_detalle: n.dia_0 || 'SIN REGISTRO',
+      asistio_dia_1: asistioD1,
+      dia_1_detalle: n.dia_1 || n.status_dia_1 || 'SIN REGISTRO',
+      ingreso_operacion: iop ? 'SI' : 'NO',
+      fecha_real_ingreso_op: iop ? iop.primeraFecha : null,
+      total_marcas_iop: iop ? iop.totalMarcas : 0,
+      total_dias_asistidos: diasAsistidos,
+    };
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVICIO DE ALERTAS Y NOTIFICACIONES AUTOMÁTICAS
 // ─────────────────────────────────────────────────────────────────────────────
