@@ -743,7 +743,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (rawPeriodo && !isPeriodoOperativoValido(rawPeriodo, maxPeriodoOperativo)) continue;
 
       const rawAreaItem = String(item.area_traslado || '').trim().toUpperCase();
-      const isAreaReclutamiento = !rawAreaItem || rawAreaItem === 'RECLUTAMIENTO' || rawAreaItem.includes('RECUPER') || rawAreaItem.includes('RECLUTA');
+      const isAreaReclutamiento = (!rawAreaItem || rawAreaItem === 'RECLUTAMIENTO' || rawAreaItem.includes('RECLUTA')) && !rawAreaItem.includes('RECUPER');
       const capInfo = {
         codigo: gpe,
         rawCodigo: item.codigo || item.grupo_codigo,

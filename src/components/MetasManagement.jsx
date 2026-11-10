@@ -156,10 +156,10 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         fetchGruposConMetas(true),
         fetchReclutadoresFull()
       ])
-      // Filtrar estrictamente: solo grupos traídos por RECLUTAMIENTO o RECUPERADO
+      // Filtrar estrictamente: solo grupos traídos por RECLUTAMIENTO (se excluye RECUPERADO, TRASLADO, etc.)
       const recluGrupos = (gData || []).filter(g => {
         const area = String(g.area_traslado || '').trim().toUpperCase()
-        return area === 'RECLUTAMIENTO' || area === 'RECUPERADO'
+        return (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER')
       })
       setGrupos(recluGrupos)
       setReclutadores((rData || []).filter(r => r.activo))
@@ -397,7 +397,7 @@ export default function MetasManagement({ postulantes = [], asistencias = [] }) 
         actions={
           <div className="flex items-center gap-2">
             <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              Áreas: Reclutamiento y Recuperado
+              Área: Reclutamiento
             </span>
             <button
               type="button"

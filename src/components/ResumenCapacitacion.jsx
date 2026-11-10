@@ -138,11 +138,11 @@ const SEGMENTO_COLORS = {
   'LIPIGAS': '#00E676'
 };
 
-// RQ FTE del gauge: áreas válidas exclusivamente RECLUTAMIENTO y RECUPERADO (no TRASLADO interno, CAPACITACIÓN, OPERACIONES, etc.)
+// RQ FTE del gauge: áreas válidas exclusivamente RECLUTAMIENTO (se excluye RECUPERADO, TRASLADO interno, CAPACITACIÓN, OPERACIONES, etc.)
 const isAreaEligibleRq = (area) => {
   const a = String(area || '').trim().toUpperCase();
   if (!a) return false;
-  return a === 'RECLUTAMIENTO' || a.includes('RECUPER') || a.includes('RECLUTA');
+  return (a === 'RECLUTAMIENTO' || a.includes('RECLUTA')) && !a.includes('RECUPER');
 };
 
 const getGrupoRq = (g) => {

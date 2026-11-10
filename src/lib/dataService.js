@@ -2789,7 +2789,7 @@ export function fetchGruposConMetas(bypassCache = false) {
       let metaDia1 = g.meta_dia_1 || 0
       let listaActual = 0
       const rawAreaG = String(g.area_traslado || '').trim().toUpperCase()
-      const isEligibleAreaG = !rawAreaG || rawAreaG === 'RECLUTAMIENTO' || rawAreaG.includes('RECUPER') || rawAreaG.includes('RECLUTA')
+      const isEligibleAreaG = (!rawAreaG || rawAreaG === 'RECLUTAMIENTO' || rawAreaG.includes('RECLUTA')) && !rawAreaG.includes('RECUPER')
       let rqSolicitado = isEligibleAreaG ? (g.rq_solicitado || 0) : 0
       let rqFtes = isEligibleAreaG ? (g.rq_ftes_solicitado || 0) : 0
       let conectadosDia0 = 0
@@ -8953,7 +8953,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
@@ -8962,7 +8962,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       })(),
       rq_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '')
           ? Number(grupoInfo.rq_solicitado)
@@ -8971,7 +8971,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       })(),
       rq_ftes_solicitado: (() => {
         const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-        const isEligibleArea = rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECUPER') || rawArea.includes('RECLUTA');
+        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
