@@ -1243,12 +1243,27 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const isExplicitDescLatest = isDiscountInThisGroup || hasDescInRows || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || String(row?.sigla || '').toUpperCase() === 'DESC' || Boolean(row?.isDescuento);
 
+      // 1. Descuento autorizado
       if (isExplicitDescLatest) return 'DESCUENTO';
-      if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') return 'CESADO';
+
+      // 2. Ingreso a Operación
       if (hasAnyIop || sigla === 'I-OP') return 'I-OP';
+
+      // 3. Baja Día 1 (RyS / No Show):
+      // - Si tiene motivo explícito de Baja Día 1 y no asistió a capacitación
+      // - O si la regla isBajaDia1 detecta Baja Día 1 sin asistencia previa
+      // - O si NUNCA asistió a aula (hasAttendedTraining = false) y fue marcado como Baja / Cesado (no show que nunca entró a sala)
       if (isExplicitBajaD1 && !hasAttendedTraining) return 'BAJA DIA 1';
-      if (!hasAttendedTraining && isBajaDia1(motivo, sigla, { ...row, hasAttendance: false })) return 'BAJA DIA 1';
-      if (isBajaDia1(motivo, sigla, row) && !hasAttendedTraining) return 'BAJA DIA 1';
+      if (!hasAttendedTraining && (isBajaDia1(motivo, sigla, { ...row, hasAttendance: false }) || isBajaDia1(motivo, sigla, row))) return 'BAJA DIA 1';
+      if (!hasAttendedTraining && (sigla === 'B' || isBajaCapacitacion(row) || String(row?.estado || '').toUpperCase() === 'CESADO')) {
+        return 'BAJA DIA 1';
+      }
+
+      // 4. Bajas de Formación (Asistió a clase y luego causó baja en aula)
+      if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') {
+        return 'CESADO';
+      }
+
       return 'ACTIVO';
     };
 
@@ -1587,7 +1602,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (isIop) iops += 1;
       if (isActivo) activos += 1;
       if (isB1) bajasDia1 += 1;
-      if (isCesado) {
+      if (isCesado && attendedAny) {
         desertoresFormacion += 1;
       }
 
