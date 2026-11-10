@@ -145,6 +145,21 @@ const isAreaEligibleRq = (area) => {
   return (a === 'RECLUTAMIENTO' || a.includes('RECLUTA')) && !a.includes('RECUPER');
 };
 
+// Grupos gestionados o traídos por Capacitación (sufijo X o área CAPACITACIÓN)
+// No deben sumar a Base Día 1 ni Nómina Reclutada; SOLO deben sumar a los Ingresos a Operación (I-OP)
+export const isGrupoCapacitacion = (g) => {
+  if (!g) return false;
+  if (g.is_capacitacion === true) return true;
+  const area = String(g.area_traslado || '').trim().toUpperCase();
+  const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase();
+  return (
+    area.includes('CAPACITAC') || 
+    area === 'CAP' || 
+    code.endsWith('X') ||
+    code.includes('CAP')
+  );
+};
+
 const getGrupoRq = (g) => {
   if (!g) return 0;
   if (g.is_cancelado) return 0;
@@ -806,16 +821,24 @@ export default function ResumenCapacitacion({
     }, 0);
 
     const totals = filteredData.reduce((acc, curr) => {
-      // Requerimiento solicitado ponderado consistente
+      const isCap = isGrupoCapacitacion(curr);
+
+      // Requerimiento solicitado ponderado consistente (solo reclutamiento)
       acc.rq_solicitado += getGrupoRq(curr);
-      acc.total_nomina += (curr.total_nomina || 0);
-      acc.asistio_dia1 += (curr.asistio_dia1 || 0);
-      acc.activos_ojt += (curr.activos_ojt || 0);
-      acc.desertores_ct += (curr.desertores_ct || 0);
-      acc.desertores_ojt += (curr.desertores_ojt || 0);
+
+      // Grupos de Capacitación (sufijo X o área CAPACITACIÓN) NO suman a Día 1 ni a Nómina Reclutada
+      if (!isCap) {
+        acc.total_nomina += (curr.total_nomina || 0);
+        acc.asistio_dia1 += (curr.asistio_dia1 || 0);
+        acc.activos_ojt += (curr.activos_ojt || 0);
+        acc.desertores_ct += (curr.desertores_ct || 0);
+        acc.desertores_ojt += (curr.desertores_ojt || 0);
+        acc.activos_actuales += (curr.activos_actuales || 0);
+      }
+
+      // Los ingresos a operación (Pases I-OP) SÍ suman para TODOS los grupos (incluidos los de capacitación)
       acc.raw_ingresos_iop += (curr.ingresos_iop || 0);
       acc.raw_ingresos_iop_ftes += (curr.ingresos_iop_ftes !== undefined ? Number(curr.ingresos_iop_ftes) : Number(curr.ingresos_iop || 0));
-      acc.activos_actuales += (curr.activos_actuales || 0);
       return acc;
     }, {
       rq_solicitado: 0,
@@ -850,14 +873,17 @@ export default function ResumenCapacitacion({
     filteredData.forEach(d => {
       const segKey = normalizeSegmento(d.segmento, d.campana);
       const target = segMap[segKey] || (segMap[segKey] = { segmento: segKey, rq: 0, reclutados: 0, d1: 0, ojt: 0, iop: 0, iopFtes: 0, grupos: 0, desertores_ct: 0, desertores_ojt: 0, activos_actuales: 0, iopDocs: new Map() });
+      const isCap = isGrupoCapacitacion(d);
 
       target.rq += getGrupoRq(d);
-      target.reclutados += (d.total_nomina || 0);
-      target.d1 += (d.asistio_dia1 || 0);
-      target.ojt += (d.activos_ojt || 0);
-      target.desertores_ct += (d.desertores_ct || 0);
-      target.desertores_ojt += (d.desertores_ojt || 0);
-      target.activos_actuales += (d.activos_actuales || 0);
+      if (!isCap) {
+        target.reclutados += (d.total_nomina || 0);
+        target.d1 += (d.asistio_dia1 || 0);
+        target.ojt += (d.activos_ojt || 0);
+        target.desertores_ct += (d.desertores_ct || 0);
+        target.desertores_ojt += (d.desertores_ojt || 0);
+        target.activos_actuales += (d.activos_actuales || 0);
+      }
       target.grupos += 1;
 
       // Registrar docs únicos por segmento
@@ -2304,6 +2330,7 @@ export default function ResumenCapacitacion({
                   const areaNorm = String(d.area_traslado || '').trim().toUpperCase();
                   const req = getGrupoRq(d);
                   const estadoStr = String(d.estado || 'CERRADO').toUpperCase().trim();
+                  const isCap = isGrupoCapacitacion(d);
 
                   return (
                     <tr key={`${d.grupo_codigo}_${d.campana}_${i}`} className="hover:bg-[var(--surface-hover)] transition-colors font-medium">
@@ -2328,6 +2355,8 @@ export default function ResumenCapacitacion({
                             ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                             : areaNorm === 'RECUPERADO'
                             ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : isCap
+                            ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                             : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                         }`}>
                           {d.area_traslado || 'S/A'}
@@ -2361,8 +2390,8 @@ export default function ResumenCapacitacion({
                         )}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--text-secondary)]">{req}</td>
-                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold">{d.total_nomina}</td>
-                      <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold">{d.asistio_dia1}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap ? "Grupo de Capacitación: Excluido de Nómina Reclutada" : undefined}>{isCap ? '—' : (d.total_nomina || 0)}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold" title={isCap ? "Grupo de Capacitación: Excluido de Base Día 1" : undefined}>{isCap ? '—' : (d.asistio_dia1 || 0)}</td>
                       <td className="py-2.5 px-2 text-right font-mono">
                         {(d.activos_actuales || 0) > 0 ? (
                           <button

@@ -985,46 +985,34 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     const requestKey = `${targetGpe || 'all'}_${targetSemana || 'all'}_${targetPeriodo || 'all'}_${targetCampana || 'all'}`;
     if (fetchedFiltersRef.current.has(requestKey)) return;
 
-    // 1. Caso Semana / GPE específico
+    // 1. Caso Semana / GPE específico: Carga bajo demanda garantizando el historial completo de fechas
     if (targetGpe || targetSemana) {
-      const hasData = validData.some((row) => {
-        if (targetGpe && row._gpe === targetGpe) {
-          if (!targetCampana || row._campana === targetCampana) return true;
+      let isMounted = true;
+      setLoadingHistorical(true);
+      fetchedFiltersRef.current.add(requestKey);
+
+      fetchConsolidadoOnDemand({
+        semana: targetSemana,
+        gpe: targetGpe,
+        campana: targetCampana
+      }).then((newRows) => {
+        if (!isMounted) return;
+        if (newRows && newRows.length > 0) {
+          setData((prev) => {
+            const existingIds = new Set(prev.map((r) => r.id));
+            const fresh = newRows.filter((r) => !existingIds.has(r.id));
+            return fresh.length > 0 ? [...prev, ...fresh] : prev;
+          });
         }
-        if (!targetGpe && targetSemana && row._semana === targetSemana) {
-          if (!targetCampana || row._campana === targetCampana) return true;
-        }
-        return false;
+      }).catch((err) => {
+        console.error('Error al descargar registros históricos:', err);
+      }).finally(() => {
+        if (isMounted) setLoadingHistorical(false);
       });
 
-      if (!hasData) {
-        let isMounted = true;
-        setLoadingHistorical(true);
-        fetchedFiltersRef.current.add(requestKey);
-
-        fetchConsolidadoOnDemand({
-          semana: targetSemana,
-          gpe: targetGpe,
-          campana: targetCampana
-        }).then((newRows) => {
-          if (!isMounted) return;
-          if (newRows && newRows.length > 0) {
-            setData((prev) => {
-              const existingIds = new Set(prev.map((r) => r.id));
-              const fresh = newRows.filter((r) => !existingIds.has(r.id));
-              return fresh.length > 0 ? [...prev, ...fresh] : prev;
-            });
-          }
-        }).catch((err) => {
-          console.error('Error al descargar registros históricos:', err);
-        }).finally(() => {
-          if (isMounted) setLoadingHistorical(false);
-        });
-
-        return () => {
-          isMounted = false;
-        };
-      }
+      return () => {
+        isMounted = false;
+      };
     } else if (targetPeriodo && !targetSemana && !targetGpe) {
       // 2. Caso Período seleccionado pero sin semana específica
       const hasPeriodData = validData.some((row) => row._periodo === targetPeriodo);

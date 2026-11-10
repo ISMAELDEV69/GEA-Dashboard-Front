@@ -652,8 +652,8 @@ export async function fetchAllConsolidado({ periodo = null, all = false, since =
 
     let cutoffIso = null;
     if (!all && !periodo) {
-      // Corte operativo: ventana activa de 60 días (octubre 2026 en adelante) salvo petición explícita de histórico completo
-      const d = since ? new Date(since) : new Date(Date.UTC(2026, 9, 1));
+      // Corte operativo: ventana activa de 60 días (septiembre 2026 en adelante) salvo petición explícita de histórico completo
+      const d = since ? new Date(since) : new Date(Date.UTC(2026, 8, 1));
       d.setHours(0, 0, 0, 0);
       cutoffIso = d.toISOString();
       countQuery = countQuery.gte('created_at', cutoffIso);
@@ -8116,12 +8116,16 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       throw error;
     }
     return (data || []).map(r => {
-      const d1 = Number(r.asistio_dia1) || 0;
+      const area = String(r.area_traslado || '').trim().toUpperCase();
+      const code = String(r.grupo_codigo || '').trim().toUpperCase();
+      const isCap = area.includes('CAPACITAC') || area === 'CAP' || code.endsWith('X') || code.includes('CAP');
+
+      const d1 = isCap ? 0 : (Number(r.asistio_dia1) || 0);
       const iop = Number(r.ingresos_iop) || 0;
       const iopFtes = Number(r.ingresos_iop_ftes) || 0;
-      const actOjt = Number(r.activos_ojt) || 0;
-      let desCt = Number(r.desertores_ct) || 0;
-      let desOjt = Number(r.desertores_ojt) || 0;
+      const actOjt = isCap ? 0 : (Number(r.activos_ojt) || 0);
+      let desCt = isCap ? 0 : (Number(r.desertores_ct) || 0);
+      let desOjt = isCap ? 0 : (Number(r.desertores_ojt) || 0);
 
       // Calibración anti-duplicidad por arrastre de asistencia 'B' a fechas de OJT
       const maxBajasAula = Math.max(0, d1 - iop - actOjt);
@@ -8136,10 +8140,10 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         codigo: r.grupo_codigo,
         rq_solicitado: Number(r.rq_solicitado) || 0,
         rq_ftes_solicitado: Number(r.rq_solicitado) || 0,
-        meta_dia_0: Number(r.meta_dia_0) || 0,
-        meta_dia_1: Number(r.meta_dia_1) || 0,
-        total_nomina: Number(r.total_nomina) || 0,
-        asistio_dia0: Number(r.asistio_dia0) || 0,
+        meta_dia_0: isCap ? 0 : (Number(r.meta_dia_0) || 0),
+        meta_dia_1: isCap ? 0 : (Number(r.meta_dia_1) || 0),
+        total_nomina: isCap ? 0 : (Number(r.total_nomina) || 0),
+        asistio_dia0: isCap ? 0 : (Number(r.asistio_dia0) || 0),
         asistio_dia1: d1,
         activos_ojt: actOjt,
         desertores_ct: desCt,
@@ -8147,6 +8151,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
         pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
+        is_capacitacion: isCap,
         from_db_view: true
       };
     });
@@ -8936,6 +8941,9 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       return ''
     })()
 
+    const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+    const isCap = rawArea.includes('CAPACITAC') || rawArea === 'CAP' || String(grupo_codigo || '').toUpperCase().endsWith('X') || String(grupo_codigo || '').toUpperCase().includes('CAP');
+
     results.push({
       grupo_codigo,
       campana: campana || '',
@@ -8950,9 +8958,9 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       is_cancelado: isGrupoCancelado,
+      is_capacitacion: isCap,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
-        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
         const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
@@ -8961,7 +8969,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_solicitado: (() => {
-        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
         const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '')
@@ -8970,7 +8977,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_ftes_solicitado: (() => {
-        const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
         const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
         if (isGrupoCancelado || !isEligibleArea) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
@@ -8978,14 +8984,14 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
           : Number(grupoInfo.rq_solicitado || 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
-      total_nomina,
-      asistio_dia0,
-      asistio_dia1,
-      activos_actuales,
-      asesores_activos_detalle,
-      activos_ojt,
-      desertores_ct,
-      desertores_ojt,
+      total_nomina: isCap ? 0 : total_nomina,
+      asistio_dia0: isCap ? 0 : asistio_dia0,
+      asistio_dia1: isCap ? 0 : asistio_dia1,
+      activos_actuales: isCap ? 0 : activos_actuales,
+      asesores_activos_detalle: isCap ? [] : asesores_activos_detalle,
+      activos_ojt: isCap ? 0 : activos_ojt,
+      desertores_ct: isCap ? 0 : desertores_ct,
+      desertores_ojt: isCap ? 0 : desertores_ojt,
       ingresos_iop,
       ingresos_iop_ftes,
       docs_iop_detalle,
