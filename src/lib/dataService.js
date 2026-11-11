@@ -8137,35 +8137,68 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
 // ─────────────────────────────────────────────────────────────────────────────
 // Corrige discrepancias en BD producidas por sobredotación no-operativa,
 // no-shows en cortes tardíos o pases formales regularizados en planillas de control.
+
+// Helper de formateo estandarizado de fechas a DD/MM/YYYY
+export function formatFechaRegistro(rawDate) {
+  if (!rawDate) return '';
+  const str = String(rawDate).trim();
+  if (!str || str === '-' || str === 'No definida' || str === 'null' || str === 'undefined') return '';
+  
+  // Formato ISO: YYYY-MM-DD
+  const isoMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+  // Formato DD/MM/YYYY o D/M/YYYY o DD/MM/YY
+  const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+  if (dmyMatch) {
+    let [, d, m, y] = dmyMatch;
+    if (y.length === 2) y = `20${y}`;
+    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+  const dt = new Date(str);
+  if (!isNaN(dt.getTime())) {
+    const day = String(dt.getDate()).padStart(2, '0');
+    const month = String(dt.getMonth() + 1).padStart(2, '0');
+    const year = dt.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  return str;
+}
+
 export const COHORTES_CALIBRACION_OFICIAL = {
   // CLARO CHILE - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026049|POSTPAGO|202610': { d1: 10, desCt: 4, desOjt: 1, iop: 5 },
-  'GPE-2026050|POSTPAGO|202610': { d1: 2,  desCt: 1, desOjt: 0, iop: 1 },
-  'GPE-2026018|CONTENCIÓN|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3 },
-  'GPE-2026018|CONTENCION|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3 },
-  'GPE-2026051|POSTPAGO|202610': { d1: 16, desCt: 4, desOjt: 1, iop: 11 },
-  'GPE-2026052|POSTPAGO|202610': { d1: 16, desCt: 2, desOjt: 5, iop: 9 }, // Excluye 10 de sobredotación / no show en BD
-  'GPE-2026053|POSTPAGO|202610': { d1: 8,  desCt: 2, desOjt: 0, iop: 6 },
-  'GPE-2026019|CONTENCIÓN|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2 },
-  'GPE-2026019|CONTENCION|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2 },
-  'GPE-2026054|POSTPAGO|202610': { d1: 9,  desCt: 1, desOjt: 0, iop: 7 },
-  'GPE-2026055|POSTPAGO|202610': { d1: 4,  desCt: 1, desOjt: 0, iop: 3 },
-  'GPE-2026006|DESCUENTO|202610': { d1: 7, desCt: 0, desOjt: 2, iop: 5 },
-  'GPE-2026056|POSTPAGO|202610': { d1: 8,  desCt: 5, desOjt: 0, iop: 3 },
-  'GPE-2026057|POSTPAGO|202610': { d1: 18, desCt: 8, desOjt: 0, iop: 10 },
-  'GPE-2026058|POSTPAGO|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
-  'GPE-2026007|DESCUENTO|202610': { d1: 6, desCt: 3, desOjt: 1, iop: 0 },
+  'GPE-2026049|POSTPAGO|202610': { d1: 10, desCt: 4, desOjt: 1, iop: 5, ultimaFecha: '02/10/2026' },
+  'GPE-2026050|POSTPAGO|202610': { d1: 2,  desCt: 1, desOjt: 0, iop: 1, ultimaFecha: '02/10/2026' },
+  'GPE-2026018|CONTENCIÓN|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3, ultimaFecha: '09/10/2026' },
+  'GPE-2026018|CONTENCION|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3, ultimaFecha: '09/10/2026' },
+  'GPE-2026051|POSTPAGO|202610': { d1: 16, desCt: 4, desOjt: 1, iop: 11, ultimaFecha: '13/10/2026' },
+  'GPE-2026052|POSTPAGO|202610': { d1: 16, desCt: 2, desOjt: 5, iop: 9, ultimaFecha: '13/10/2026' }, // Excluye 10 de sobredotación / no show en BD
+  'GPE-2026053|POSTPAGO|202610': { d1: 8,  desCt: 2, desOjt: 0, iop: 6, ultimaFecha: '13/10/2026' },
+  'GPE-2026019|CONTENCIÓN|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2, ultimaFecha: '10/10/2026' },
+  'GPE-2026019|CONTENCION|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2, ultimaFecha: '10/10/2026' },
+  'GPE-2026054|POSTPAGO|202610': { d1: 9,  desCt: 1, desOjt: 0, iop: 7, ultimaFecha: '17/10/2026' },
+  'GPE-2026055|POSTPAGO|202610': { d1: 4,  desCt: 1, desOjt: 0, iop: 3, ultimaFecha: '17/10/2026' },
+  'GPE-2026006|DESCUENTO|202610': { d1: 7, desCt: 0, desOjt: 2, iop: 5, ultimaFecha: '10/10/2026' },
+  'GPE-2026056|POSTPAGO|202610': { d1: 8,  desCt: 5, desOjt: 0, iop: 3, ultimaFecha: '24/10/2026' },
+  'GPE-2026057|POSTPAGO|202610': { d1: 18, desCt: 8, desOjt: 0, iop: 10, ultimaFecha: '24/10/2026' },
+  'GPE-2026058|POSTPAGO|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7, ultimaFecha: '30/10/2026' },
+  'GPE-2026007|DESCUENTO|202610': { d1: 6, desCt: 3, desOjt: 1, iop: 0, ultimaFecha: '03/11/2026' },
+  'GPE-2026003|ANULACION|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '26/10/2026' },
+  'GPE-2026003|ANULACIÓN|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '26/10/2026' },
+  'GPE-2026058X|POSTPAGO|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '30/10/2026' },
 
   // CLARO PERU OUT - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2, actOjt: 1 },
-  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8, actOjt: 1 },
-  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8, actOjt: 0 },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14, actOjt: 0 },
-  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1, actOjt: 0 },
-  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6, actOjt: 0 },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
-  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
-  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
+  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2, actOjt: 1, ultimaFecha: '22/10/2026' },
+  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8, actOjt: 1, ultimaFecha: '22/10/2026' },
+  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8, actOjt: 0, ultimaFecha: '27/10/2026' },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14, actOjt: 0, ultimaFecha: '06/10/2026' },
+  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1, actOjt: 0, ultimaFecha: '06/10/2026' },
+  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6, actOjt: 0, ultimaFecha: '14/10/2026' },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '22/10/2026' },
+  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '24/10/2026' },
+  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '26/10/2026' },
 
   // CLARO PERU - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
   'GPE-2026001|HFC - FIJAMULTISKILL|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
@@ -8254,6 +8287,17 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         desOjt = Math.min(desOjt, maxBajasOjt);
       }
 
+      // Determinación de la última fecha de registro de la cohorte
+      let ultFecha = '';
+      if (calib && calib.ultimaFecha) {
+        ultFecha = calib.ultimaFecha;
+      } else if (r.ultima_fecha_asistencia && String(r.ultima_fecha_asistencia).trim() !== '' && r.ultima_fecha_asistencia !== '-') {
+        ultFecha = formatFechaRegistro(r.ultima_fecha_asistencia);
+      } else {
+        const rawDate = r.fecha_ingreso_op || r.fecha_inicio_ojt || r.fecha_registro || '';
+        ultFecha = formatFechaRegistro(rawDate);
+      }
+
       return {
         ...r,
         codigo: r.grupo_codigo,
@@ -8270,6 +8314,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
         pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
+        ultima_fecha_asistencia: ultFecha || '-',
         is_capacitacion: isExcludedD1,
         is_excluido_dia1: isExcludedD1,
         from_db_view: true
@@ -9089,7 +9134,13 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       semana: grupoInfo.semana_trabajo || grupoInfo.semana_label || grupoInfo.semana || '',
       segmento: grupoInfo.segmento || '',
       sede: sede || 'LIMA',
-      ultima_fecha_asistencia: ultima_fecha_asistencia || '-',
+      ultima_fecha_asistencia: (() => {
+        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
+        if (cal && cal.ultimaFecha) return cal.ultimaFecha;
+        if (ultima_fecha_asistencia && ultima_fecha_asistencia !== '-') return formatFechaRegistro(ultima_fecha_asistencia);
+        const rawDate = grupoInfo.fecha_ingreso_op || grupoInfo.fecha_inicio_ojt || grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha || '';
+        return formatFechaRegistro(rawDate) || '-';
+      })(),
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       is_cancelado: isGrupoCancelado,

@@ -4,6 +4,7 @@ import {
   fetchResumenCapacitacionOptimizado,
   calculateMetricasResumenCapacitacionFast, 
   parseFechaAsistencia, 
+  formatFechaRegistro,
   invalidateCache 
 } from '../lib/dataService';
 import { 
@@ -417,6 +418,16 @@ const isFormadorValido = (formador) => {
     return false;
   }
   return true;
+};
+
+// Resuelve y formatea la fecha del último corte/registro operativo de una cohorte
+const resolveUltimaFecha = (d) => {
+  if (!d) return '-';
+  if (d.ultima_fecha_asistencia && d.ultima_fecha_asistencia !== '-') {
+    return formatFechaRegistro(d.ultima_fecha_asistencia) || d.ultima_fecha_asistencia;
+  }
+  const raw = d.fecha_ingreso_op || d.fecha_inicio_ojt || d.fecha_registro || '';
+  return formatFechaRegistro(raw) || '-';
 };
 
 export default function ResumenCapacitacion({
@@ -1504,7 +1515,7 @@ export default function ResumenCapacitacion({
         'Semana': d.semana,
         'Estado': d.estado || (d.is_cerrado ? 'CERRADO' : 'EN CURSO'),
         'Formador': d.formador || 'Sin Asignar',
-        'Último Registro': d.ultima_fecha_asistencia || '-',
+        'Último Registro': resolveUltimaFecha(d),
         'Segmento': normalizeSegmento(d.segmento, d.campana),
         'Local / Sede': d.sede || 'LIMA',
         'Campaña': d.campana,
@@ -2375,9 +2386,9 @@ export default function ResumenCapacitacion({
                       </td>
                       <td className="py-2.5 px-2 text-center text-[var(--text-muted)] font-mono">{d.semana || '-'}</td>
                       <td className="py-2.5 px-3 text-center font-mono text-[11px] whitespace-nowrap">
-                        {d.ultima_fecha_asistencia && d.ultima_fecha_asistencia !== '-' ? (
+                        {resolveUltimaFecha(d) !== '-' ? (
                           <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold">
-                            {d.ultima_fecha_asistencia}
+                            {resolveUltimaFecha(d)}
                           </span>
                         ) : (
                           <span className="text-[var(--text-muted)] italic">-</span>
