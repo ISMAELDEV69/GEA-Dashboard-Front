@@ -8330,6 +8330,22 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         ultFecha = formatFechaRegistro(rawDate);
       }
 
+      // Activos al corte (en proceso de formación o en OJT sin pase formal I-OP y sin baja)
+      let actActuales = 0;
+      const isCerrado = isGrupoCerrado || String(r.estado || '').toUpperCase() === 'CERRADO' || String(r.estado || '').toUpperCase() === 'FINALIZADO';
+      if (calib && typeof calib.activosActuales === 'number') {
+        actActuales = calib.activosActuales;
+      } else if (calib && typeof calib.actOjt === 'number' && calib.actOjt > 0) {
+        actActuales = calib.actOjt;
+      } else if (r.activos_actuales !== undefined && r.activos_actuales !== null && !isNaN(Number(r.activos_actuales)) && Number(r.activos_actuales) > 0) {
+        actActuales = Number(r.activos_actuales);
+      } else if (isCerrado) {
+        actActuales = actOjt;
+      } else {
+        const enProceso = Math.max(0, d1 - iop - desCt - desOjt);
+        actActuales = Math.max(actOjt, enProceso);
+      }
+
       return {
         ...r,
         codigo: r.grupo_codigo,
@@ -8340,6 +8356,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         total_nomina: isReclutamiento ? (Number(r.total_nomina) || 0) : 0,
         asistio_dia0: isReclutamiento ? (Number(r.asistio_dia0) || 0) : 0,
         asistio_dia1: d1,
+        activos_actuales: actActuales,
         activos_ojt: actOjt,
         desertores_ct: desCt,
         desertores_ojt: desOjt,

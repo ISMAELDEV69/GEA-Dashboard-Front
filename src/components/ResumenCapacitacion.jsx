@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import SemicircleGauge from './dashboard/SemicircleGauge';
+import { supabase } from '../lib/supabase';
 import { 
   fetchResumenCapacitacionOptimizado,
   calculateMetricasResumenCapacitacionFast, 
@@ -435,6 +436,26 @@ const resolveUltimaFecha = (d) => {
   return formatFechaRegistro(raw) || '-';
 };
 
+// Resuelve la cantidad de alumnos activos al último corte de asistencia sin pase formal I-OP
+export const resolveActivosActuales = (d) => {
+  if (!d) return 0;
+  if (d.activos_actuales !== undefined && d.activos_actuales !== null && !isNaN(Number(d.activos_actuales)) && Number(d.activos_actuales) > 0) {
+    return Number(d.activos_actuales);
+  }
+  const ojt = Number(d.activos_ojt) || 0;
+  const st = String(d.estado || '').toUpperCase();
+  const isCerrado = d.is_cerrado || st === 'CERRADO' || st === 'FINALIZADO' || st === 'CULMINADO';
+  if (isCerrado) {
+    return ojt;
+  }
+  const d1 = Number(d.asistio_dia1) || 0;
+  const iop = Number(d.ingresos_iop) || 0;
+  const desCt = Number(d.desertores_ct) || 0;
+  const desOjt = Number(d.desertores_ojt) || 0;
+  const enProceso = Math.max(0, d1 - iop - desCt - desOjt);
+  return Math.max(ojt, enProceso);
+};
+
 export default function ResumenCapacitacion({
   grupos = [],
   campanasMetas = [],
@@ -462,6 +483,65 @@ export default function ResumenCapacitacion({
   const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
+
+  // Abre el modal de activos al último corte cargando detalle de asesores bajo demanda
+  const handleOpenActivosModal = useCallback(async (cohorte) => {
+    const actCount = resolveActivosActuales(cohorte);
+    setSelectedActivosModal({
+      ...cohorte,
+      activos_actuales: actCount,
+      asesores_activos_detalle: cohorte.asesores_activos_detalle || []
+    });
+
+    if (cohorte.asesores_activos_detalle && cohorte.asesores_activos_detalle.length > 0) {
+      return;
+    }
+
+    try {
+      const code = cohorte.grupo_codigo || cohorte.codigo;
+      const { data: asisRows } = await supabase
+        .from('consolidado_asistencias')
+        .select('*')
+        .eq('codigo_grupo', code);
+
+      if (asisRows && asisRows.length > 0) {
+        const docsMap = new Map();
+        asisRows.forEach(r => {
+          const doc = String(r.documento || '').trim();
+          if (!doc) return;
+          if (!docsMap.has(doc)) docsMap.set(doc, []);
+          docsMap.get(doc).push(r);
+        });
+
+        const activeList = [];
+        for (const [doc, recs] of docsMap.entries()) {
+          const tieneIop = recs.some(r => r.sigla === 'I-OP' || String(r.estado || '').toUpperCase().includes('INGRESO'));
+          const isBaja = recs.some(r => r.sigla === 'B' || String(r.estado || '').toUpperCase().includes('BAJA'));
+          if (!tieneIop && !isBaja) {
+            const sorted = [...recs].sort((a, b) => new Date(b.fecha_registro_asistencia || b.fecha_asistencia || 0) - new Date(a.fecha_registro_asistencia || a.fecha_asistencia || 0));
+            const last = sorted[0];
+            activeList.push({
+              documento: doc,
+              nombres: last.nombres || last.nombre || 'Asesor Registrado',
+              celular: last.celular || last.telefono || '-',
+              etapa: last.sigla === 'OJT' || (cohorte.fecha_inicio_ojt && last.fecha_registro_asistencia >= cohorte.fecha_inicio_ojt) ? 'OJT' : 'CAPACITACIÓN',
+              ultima_asistencia: formatFechaRegistro(last.fecha_registro_asistencia || last.fecha_asistencia || last.fecha) || '-'
+            });
+          }
+        }
+
+        if (activeList.length > 0) {
+          setSelectedActivosModal(prev => ({
+            ...prev,
+            activos_actuales: activeList.length,
+            asesores_activos_detalle: activeList
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('Error loading activos detalle:', e);
+    }
+  }, []);
 
   // Helpers de normalización robusta
   const norm = (val) => String(val || '').trim().toUpperCase();
@@ -845,7 +925,7 @@ export default function ResumenCapacitacion({
         acc.total_nomina += (curr.total_nomina || 0);
         acc.asistio_dia1 += (curr.asistio_dia1 || 0);
         acc.activos_ojt += (curr.activos_ojt || 0);
-        acc.activos_actuales += (curr.activos_actuales || 0);
+        acc.activos_actuales += resolveActivosActuales(curr);
       }
       // Las bajas de formación y OJT siempre suman
       acc.desertores_ct += (curr.desertores_ct || 0);
@@ -895,7 +975,7 @@ export default function ResumenCapacitacion({
         target.reclutados += (d.total_nomina || 0);
         target.d1 += (d.asistio_dia1 || 0);
         target.ojt += (d.activos_ojt || 0);
-        target.activos_actuales += (d.activos_actuales || 0);
+        target.activos_actuales += resolveActivosActuales(d);
       }
       target.desertores_ct += (d.desertores_ct || 0);
       target.desertores_ojt += (d.desertores_ojt || 0);
@@ -1530,7 +1610,7 @@ export default function ResumenCapacitacion({
         'RQ Solicitado': req,
         'Total Nómina': d.total_nomina,
         'Asistió Día 1 (Efectivo)': d.asistio_dia1,
-        'Activos (Últ. Corte)': d.activos_actuales !== undefined ? d.activos_actuales : 0,
+        'Activos (Últ. Corte)': resolveActivosActuales(d),
         'Activos en OJT': d.activos_ojt,
         'Pases I-OP (Personas)': d.ingresos_iop,
         'Pases I-OP (FTEs)': d.ingresos_iop_ftes !== undefined ? d.ingresos_iop_ftes : d.ingresos_iop,
@@ -2406,14 +2486,14 @@ export default function ResumenCapacitacion({
                         {(d.asistio_dia1 !== undefined && d.asistio_dia1 > 0) ? d.asistio_dia1 : (isCap ? '—' : (d.asistio_dia1 || 0))}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono">
-                        {(d.activos_actuales || 0) > 0 ? (
+                        {resolveActivosActuales(d) > 0 ? (
                           <button
                             type="button"
-                            onClick={() => setSelectedActivosModal(d)}
+                            onClick={() => handleOpenActivosModal(d)}
                             className="px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 font-bold transition-all cursor-pointer hover:scale-105 inline-flex items-center gap-1"
                             title="Ver detalle de asesores activos al último corte sin I-OP"
                           >
-                            <span>{d.activos_actuales}</span>
+                            <span>{resolveActivosActuales(d)}</span>
                             <Users className="w-3 h-3 opacity-80" />
                           </button>
                         ) : (
