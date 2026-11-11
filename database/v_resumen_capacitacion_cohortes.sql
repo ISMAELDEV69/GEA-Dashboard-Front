@@ -178,7 +178,21 @@ flags_asistencia AS (
       ca.sigla::text IN ('A', 'FJ', 'OJT', 'CAPACITACION')
       AND cb.fecha_inicio_ojt IS NOT NULL
       AND parse_fecha_asistencia(ca.fecha_registro_asistencia::text) >= cb.fecha_inicio_ojt
-    ) AS attended_ojt
+    ) AS attended_ojt,
+    BOOL_OR(
+      UPPER(COALESCE(ca.motivo_baja::text, '')) LIKE '%BAJA DIA 1%'
+      OR UPPER(COALESCE(ca.motivo_baja::text, '')) LIKE '%BAJA D1%'
+      OR UPPER(COALESCE(ca.estado::text, '')) LIKE '%BAJA DIA 1%'
+    ) AS had_baja_dia1_anytime,
+    BOOL_OR(
+      UPPER(COALESCE(ca.motivo_baja::text, '')) LIKE '%SOBREDOT%'
+      OR UPPER(COALESCE(ca.estado::text, '')) LIKE '%SOBREDOT%'
+    ) AS is_sobredotacion,
+    BOOL_OR(
+      UPPER(COALESCE(ca.motivo_baja::text, '')) LIKE '%DESCUENTO%'
+      OR UPPER(COALESCE(ca.estado::text, '')) LIKE '%DESCUENTO%'
+      OR ca.sigla::text = 'DESC'
+    ) AS is_descuento
   FROM public.consolidado_asistencias ca
   JOIN cohortes_base cb
     ON cb.grupo_codigo::text = ca.codigo_grupo::text
@@ -193,18 +207,24 @@ postulantes_asistencias AS (
     f.has_asistencia_valida,
     f.has_iop,
     f.attended_ojt,
+    f.is_sobredotacion,
+    f.is_descuento,
     u.fecha_corte,
     (
-      COALESCE(u.motivo, '') LIKE '%BAJA DIA 1%'
+      f.had_baja_dia1_anytime
+      OR COALESCE(u.motivo, '') LIKE '%BAJA DIA 1%'
       OR COALESCE(u.motivo, '') LIKE '%BAJA D1%'
       OR COALESCE(u.estado, '') LIKE '%BAJA DIA 1%'
     ) AS is_baja_dia1,
     (
       COALESCE(u.sigla, '') = 'B'
       AND NOT COALESCE(f.has_iop, false)
+      AND NOT f.had_baja_dia1_anytime
       AND COALESCE(u.motivo, '') NOT LIKE '%BAJA DIA 1%'
       AND COALESCE(u.motivo, '') NOT LIKE '%BAJA D1%'
       AND COALESCE(u.estado, '') NOT LIKE '%BAJA DIA 1%'
+      AND NOT COALESCE(f.is_sobredotacion, false)
+      AND NOT COALESCE(f.is_descuento, false)
       AND COALESCE(u.motivo, '') NOT LIKE '%SOBREDOT%'
       AND COALESCE(u.motivo, '') NOT LIKE '%DESCUENTO%'
       AND COALESCE(u.estado, '') NOT LIKE '%DESCUENTO%'
@@ -220,7 +240,10 @@ asistencias_agg AS (
     pa.codigo_grupo,
     pa.campana,
     COUNT(DISTINCT CASE
-      WHEN (pa.has_asistencia_valida OR pa.has_iop) AND NOT pa.is_baja_dia1
+      WHEN (pa.has_asistencia_valida OR pa.has_iop)
+        AND NOT pa.is_baja_dia1
+        AND NOT COALESCE(pa.is_sobredotacion, false)
+        AND NOT COALESCE(pa.is_descuento, false)
       THEN pa.documento
     END) AS asis_dia1,
     COUNT(DISTINCT CASE
