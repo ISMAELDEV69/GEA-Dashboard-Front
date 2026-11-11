@@ -148,12 +148,17 @@ const isAreaEligibleRq = (area) => {
 
 // Grupos que NO pertenecen a Reclutamiento puro (RECUPERADO, CAPACITACIÓN, TRASLADO o sufijo X):
 // No deben sumar a Base Día 1 ni Nómina Reclutada; SOLO deben sumar a los Ingresos a Operación (I-OP)
+// EXCEPCIÓN: TRASLADO OP (TDE) o cohortes con Día 1 / Bajas explícitas SÍ suman a Día 1 y Deserción
 export const isGrupoExcluidoDia1 = (g) => {
   if (!g) return false;
-  if (g.is_capacitacion === true || g.is_excluido_dia1 === true) return true;
+  if (g.asistio_dia1 !== undefined && g.asistio_dia1 !== null && Number(g.asistio_dia1) > 0) return false;
+  if (g.is_traslado_op === true) return false;
   const area = String(g.area_traslado || '').trim().toUpperCase();
+  if (area === 'TRASLADO OP' || area === 'TRASLADO' || area.includes('TRASLADO') || area === 'TDE') {
+    return false;
+  }
+  if (g.is_capacitacion === true || g.is_excluido_dia1 === true) return true;
   const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase();
-  
   const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
   return !isReclutamiento;
 };
@@ -835,15 +840,16 @@ export default function ResumenCapacitacion({
       // Requerimiento solicitado ponderado consistente (solo reclutamiento)
       acc.rq_solicitado += getGrupoRq(curr);
 
-      // Grupos de Capacitación (sufijo X o área CAPACITACIÓN) NO suman a Día 1 ni a Nómina Reclutada
+      // Grupos no excluidos suman a Nómina Reclutada, Día 1 y Activos
       if (!isCap) {
         acc.total_nomina += (curr.total_nomina || 0);
         acc.asistio_dia1 += (curr.asistio_dia1 || 0);
         acc.activos_ojt += (curr.activos_ojt || 0);
-        acc.desertores_ct += (curr.desertores_ct || 0);
-        acc.desertores_ojt += (curr.desertores_ojt || 0);
         acc.activos_actuales += (curr.activos_actuales || 0);
       }
+      // Las bajas de formación y OJT siempre suman
+      acc.desertores_ct += (curr.desertores_ct || 0);
+      acc.desertores_ojt += (curr.desertores_ojt || 0);
 
       // Los ingresos a operación (Pases I-OP) SÍ suman para TODOS los grupos (incluidos los de capacitación)
       acc.raw_ingresos_iop += (curr.ingresos_iop || 0);
@@ -889,10 +895,10 @@ export default function ResumenCapacitacion({
         target.reclutados += (d.total_nomina || 0);
         target.d1 += (d.asistio_dia1 || 0);
         target.ojt += (d.activos_ojt || 0);
-        target.desertores_ct += (d.desertores_ct || 0);
-        target.desertores_ojt += (d.desertores_ojt || 0);
         target.activos_actuales += (d.activos_actuales || 0);
       }
+      target.desertores_ct += (d.desertores_ct || 0);
+      target.desertores_ojt += (d.desertores_ojt || 0);
       target.grupos += 1;
 
       // Registrar docs únicos por segmento
@@ -2395,8 +2401,10 @@ export default function ResumenCapacitacion({
                         )}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--text-secondary)]">{req}</td>
-                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap ? "Grupo de Capacitación: Excluido de Nómina Reclutada" : undefined}>{isCap ? '—' : (d.total_nomina || 0)}</td>
-                      <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold" title={isCap ? "Grupo de Capacitación: Excluido de Base Día 1" : undefined}>{isCap ? '—' : (d.asistio_dia1 || 0)}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap ? "Excluido de Nómina Reclutada" : undefined}>{isCap ? '—' : (d.total_nomina || 0)}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold" title={isCap && !d.asistio_dia1 ? "Excluido de Base Día 1" : undefined}>
+                        {(d.asistio_dia1 !== undefined && d.asistio_dia1 > 0) ? d.asistio_dia1 : (isCap ? '—' : (d.asistio_dia1 || 0))}
+                      </td>
                       <td className="py-2.5 px-2 text-right font-mono">
                         {(d.activos_actuales || 0) > 0 ? (
                           <button

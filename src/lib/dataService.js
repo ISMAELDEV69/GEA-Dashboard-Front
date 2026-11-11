@@ -8169,57 +8169,73 @@ export function formatFechaRegistro(rawDate) {
 
 export const COHORTES_CALIBRACION_OFICIAL = {
   // CLARO CHILE - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026049|POSTPAGO|202610': { d1: 10, desCt: 4, desOjt: 1, iop: 5, ultimaFecha: '02/10/2026' },
-  'GPE-2026050|POSTPAGO|202610': { d1: 2,  desCt: 1, desOjt: 0, iop: 1, ultimaFecha: '02/10/2026' },
-  'GPE-2026018|CONTENCIÓN|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3, ultimaFecha: '09/10/2026' },
-  'GPE-2026018|CONTENCION|202610': { d1: 7, desCt: 4, desOjt: 0, iop: 3, ultimaFecha: '09/10/2026' },
-  'GPE-2026051|POSTPAGO|202610': { d1: 16, desCt: 4, desOjt: 1, iop: 11, ultimaFecha: '13/10/2026' },
-  'GPE-2026052|POSTPAGO|202610': { d1: 16, desCt: 2, desOjt: 5, iop: 9, ultimaFecha: '13/10/2026' }, // Excluye 10 de sobredotación / no show en BD
-  'GPE-2026053|POSTPAGO|202610': { d1: 8,  desCt: 2, desOjt: 0, iop: 6, ultimaFecha: '13/10/2026' },
-  'GPE-2026019|CONTENCIÓN|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2, ultimaFecha: '10/10/2026' },
-  'GPE-2026019|CONTENCION|202610': { d1: 4, desCt: 2, desOjt: 0, iop: 2, ultimaFecha: '10/10/2026' },
-  'GPE-2026054|POSTPAGO|202610': { d1: 9,  desCt: 1, desOjt: 0, iop: 7, ultimaFecha: '17/10/2026' },
-  'GPE-2026055|POSTPAGO|202610': { d1: 4,  desCt: 1, desOjt: 0, iop: 3, ultimaFecha: '17/10/2026' },
-  'GPE-2026006|DESCUENTO|202610': { d1: 7, desCt: 0, desOjt: 2, iop: 5, ultimaFecha: '10/10/2026' },
-  'GPE-2026056|POSTPAGO|202610': { d1: 8,  desCt: 5, desOjt: 0, iop: 3, ultimaFecha: '24/10/2026' },
-  'GPE-2026057|POSTPAGO|202610': { d1: 18, desCt: 8, desOjt: 0, iop: 10, ultimaFecha: '24/10/2026' },
-  'GPE-2026058|POSTPAGO|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7, ultimaFecha: '30/10/2026' },
-  'GPE-2026007|DESCUENTO|202610': { d1: 6, desCt: 3, desOjt: 1, iop: 0, ultimaFecha: '03/11/2026' },
-  'GPE-2026003|ANULACION|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '26/10/2026' },
-  'GPE-2026003|ANULACIÓN|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '26/10/2026' },
-  'GPE-2026058X|POSTPAGO|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 2, ultimaFecha: '30/10/2026' },
+  'GPE-2026049|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 9, desCt: 4, desOjt: 1, iop: 5, iopFtes: 5, ultimaFecha: '02/10/2026' },
+  'GPE-2026050|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 2, desCt: 1, desOjt: 0, iop: 1, iopFtes: 1, ultimaFecha: '02/10/2026' },
+  'GPE-2026018|CONTENCIÓN|202610': { rq: 7, rqFtes: 7, d1: 8, desCt: 4, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '09/10/2026' },
+  'GPE-2026018|CONTENCION|202610': { rq: 7, rqFtes: 7, d1: 8, desCt: 4, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '09/10/2026' },
+  'GPE-2026051|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 16, desCt: 4, desOjt: 1, iop: 11, iopFtes: 11, ultimaFecha: '13/10/2026' },
+  'GPE-2026052|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 14, desCt: 2, desOjt: 5, iop: 9, iopFtes: 9, ultimaFecha: '13/10/2026' },
+  'GPE-2026053|POSTPAGO|202610': { rq: 5, rqFtes: 5, d1: 8, desCt: 2, desOjt: 0, iop: 6, iopFtes: 6, ultimaFecha: '13/10/2026' },
+  'GPE-2026019|CONTENCIÓN|202610': { rq: 7, rqFtes: 7, d1: 4, desCt: 2, desOjt: 0, iop: 2, iopFtes: 2, ultimaFecha: '10/10/2026' },
+  'GPE-2026019|CONTENCION|202610': { rq: 7, rqFtes: 7, d1: 4, desCt: 2, desOjt: 0, iop: 2, iopFtes: 2, ultimaFecha: '10/10/2026' },
+  'GPE-2026054|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 9, desCt: 1, desOjt: 0, iop: 7, iopFtes: 7, ultimaFecha: '17/10/2026' },
+  'GPE-2026055|POSTPAGO|202610': { rq: 5, rqFtes: 5, d1: 4, desCt: 1, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '17/10/2026' },
+  'GPE-2026006|DESCUENTO|202610': { rq: 5, rqFtes: 5, d1: 7, desCt: 0, desOjt: 2, iop: 5, iopFtes: 3.5, ultimaFecha: '10/10/2026' },
+  'GPE-2026056|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 8, desCt: 5, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '24/10/2026' },
+  'GPE-2026057|POSTPAGO|202610': { rq: 5, rqFtes: 5, d1: 18, desCt: 8, desOjt: 0, iop: 10, iopFtes: 10, ultimaFecha: '24/10/2026' },
+  'GPE-2026058|POSTPAGO|202610': { rq: 7, rqFtes: 7, d1: 11, desCt: 4, desOjt: 0, iop: 7, iopFtes: 7, ultimaFecha: '30/10/2026' },
+  'GPE-2026007|DESCUENTO|202610': { rq: 7, rqFtes: 7, d1: 6, desCt: 3, desOjt: 1, iop: 2, iopFtes: 2, ultimaFecha: '03/11/2026' },
+  'GPE-2026003|ANULACION|202610': { rq: 0, rqFtes: 0, d1: 3, desCt: 1, desOjt: 0, iop: 2, iopFtes: 2, ultimaFecha: '26/10/2026' },
+  'GPE-2026003|ANULACIÓN|202610': { rq: 0, rqFtes: 0, d1: 3, desCt: 1, desOjt: 0, iop: 2, iopFtes: 2, ultimaFecha: '26/10/2026' },
+  'GPE-2026058X|POSTPAGO|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 2, iopFtes: 2, ultimaFecha: '30/10/2026' },
 
   // CLARO PERU OUT - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2, actOjt: 1, ultimaFecha: '22/10/2026' },
-  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8, actOjt: 1, ultimaFecha: '22/10/2026' },
-  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8, actOjt: 0, ultimaFecha: '27/10/2026' },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14, actOjt: 0, ultimaFecha: '06/10/2026' },
-  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1, actOjt: 0, ultimaFecha: '06/10/2026' },
-  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6, actOjt: 0, ultimaFecha: '14/10/2026' },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '22/10/2026' },
-  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '24/10/2026' },
-  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0, ultimaFecha: '26/10/2026' },
+  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { rq: 4, rqFtes: 4, d1: 9, desCt: 2, desOjt: 5, iop: 2, iopFtes: 2, actOjt: 0, ultimaFecha: '22/10/2026' },
+  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { rq: 12, rqFtes: 12, d1: 19, desCt: 2, desOjt: 8, iop: 9, iopFtes: 9, actOjt: 0, ultimaFecha: '22/10/2026' },
+  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { rq: 10, rqFtes: 10, d1: 15, desCt: 4, desOjt: 5, iop: 8, iopFtes: 8, actOjt: 0, ultimaFecha: '27/10/2026' },
+  'GPE-2026018X|MIGRACIONES ESPECIALES - OUT|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 4, desOjt: 5, iop: 8, iopFtes: 8, actOjt: 0, ultimaFecha: '27/10/2026' },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 14, iopFtes: 14, actOjt: 0, ultimaFecha: '06/10/2026' },
+  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 1, iopFtes: 1, actOjt: 0, ultimaFecha: '06/10/2026' },
+  'GPE-2026024|UPGRADE|202610': { rq: 0, rqFtes: 0, d1: 15, desCt: 0, desOjt: 0, iop: 6, iopFtes: 6, actOjt: 0, ultimaFecha: '14/10/2026' },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 0, iopFtes: 0, actOjt: 0, ultimaFecha: '22/10/2026' },
+  'GPE-2026024X|UPGRADE|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 1, iopFtes: 1, actOjt: 0, ultimaFecha: '24/10/2026' },
+  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 0, iopFtes: 5, actOjt: 0, ultimaFecha: '26/10/2026' },
 
   // CLARO PERU - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026001|HFC - FIJAMULTISKILL|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
-  'GPE-2026074|CLARO POSTPAGO|202610': { d1: 6,  desCt: 6, desOjt: 0, iop: 0 },
-  'GPE-2026014|CLARO POSTPAGO - CROSS|202610': { d1: 18, desCt: 6, desOjt: 4, iop: 8 },
-  'GPE-2026018|RETENCIONES FIJA INBOUND|202610': { d1: 11, desCt: 9, desOjt: 0, iop: 0 },
-  'GPE-2026075|CLARO POSTPAGO|202610': { d1: 22, desCt: 9, desOjt: 4, iop: 8 },
-  'GPE-2026002|HFC - FIJAMULTISKILL|202610': { d1: 17, desCt: 9, desOjt: 1, iop: 7 },
-  'GPE-2026003|HFC - FIJAMULTISKILL|202610': { d1: 6,  desCt: 5, desOjt: 0, iop: 1 },
-  'GPE-2026076|CLARO POSTPAGO|202610': { d1: 31, desCt: 11, desOjt: 5, iop: 15 },
-  'GPE-2026006|HFC - FIJAMULTISKILL|202610': { d1: 8,  desCt: 3, desOjt: 3, iop: 2 },
-  'GPE-2026019|RETENCIONES FIJA INBOUND|202610': { d1: 10, desCt: 6, desOjt: 3, iop: 1 },
-  'GPE-2026077|CLARO POSTPAGO|202610': { d1: 22, desCt: 4, desOjt: 5, iop: 13 },
-  'GPE-2026020|RETENCIONES FIJA INBOUND|202610': { d1: 18, desCt: 6, desOjt: 1, iop: 8 },
-  'GPE-2026021|RETENCIONES FIJA INBOUND|202610': { d1: 22, desCt: 8, desOjt: 0, iop: 0 },
-  'GPE-2026078|CLARO POSTPAGO|202610': { d1: 8,  desCt: 4, desOjt: 0, iop: 3 },
-  'GPE-2026079|CLARO POSTPAGO|202610': { d1: 29, desCt: 9, desOjt: 1, iop: 19 },
-  'GPE-2026080|CLARO POSTPAGO|202610': { d1: 36, desCt: 7, desOjt: 13, iop: 16 },
-  'GPE-2026081|CLARO POSTPAGO|202610': { d1: 10, desCt: 3, desOjt: 3, iop: 3 },
-  'GPE-2026082|CLARO POSTPAGO|202610': { d1: 12, desCt: 3, desOjt: 2, iop: 7 },
-  'GPE-2026022|RETENCIONES FIJA INBOUND|202610': { d1: 6,  desCt: 3, desOjt: 1, iop: 2 },
+  'GPE-2026001|HFC - FIJAMULTISKILL|202610': { rq: 5, rqFtes: 5, d1: 11, desCt: 4, desOjt: 0, iop: 7, iopFtes: 7, ultimaFecha: '03/10/2026' },
+  'GPE-2026074|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 6, desCt: 6, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '02/10/2026' },
+  'GPE-2026014|CLARO POSTPAGO - CROSS|202610': { rq: 12, rqFtes: 12, d1: 18, desCt: 6, desOjt: 4, iop: 8, iopFtes: 8, ultimaFecha: '06/10/2026' },
+  'GPE-2026018|RETENCIONES FIJA INBOUND|202610': { rq: 10, rqFtes: 10, d1: 11, desCt: 9, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '10/10/2026' },
+  'GPE-2026075|CLARO POSTPAGO|202610': { rq: 10, rqFtes: 10, d1: 22, desCt: 9, desOjt: 4, iop: 8, iopFtes: 8, ultimaFecha: '10/10/2026' },
+  'GPE-2026002|HFC - FIJAMULTISKILL|202610': { rq: 6, rqFtes: 6, d1: 17, desCt: 9, desOjt: 1, iop: 7, iopFtes: 7, ultimaFecha: '13/10/2026' },
+  'GPE-2026003|HFC - FIJAMULTISKILL|202610': { rq: 1, rqFtes: 1, d1: 6, desCt: 5, desOjt: 0, iop: 1, iopFtes: 1, ultimaFecha: '13/10/2026' },
+  'GPE-2026076|CLARO POSTPAGO|202610': { rq: 10, rqFtes: 10, d1: 31, desCt: 11, desOjt: 5, iop: 15, iopFtes: 15, ultimaFecha: '10/10/2026' },
+  'GPE-2026006|HFC - FIJAMULTISKILL|202610': { rq: 5, rqFtes: 5, d1: 8, desCt: 3, desOjt: 3, iop: 2, iopFtes: 2, ultimaFecha: '20/10/2026' },
+  'GPE-2026019|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 10, desCt: 6, desOjt: 3, iop: 1, iopFtes: 1, ultimaFecha: '17/10/2026' },
+  'GPE-2026077|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 22, desCt: 4, desOjt: 5, iop: 13, iopFtes: 6.5, ultimaFecha: '17/10/2026' },
+  'GPE-2026020|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 18, desCt: 6, desOjt: 1, iop: 8, iopFtes: 8, ultimaFecha: '23/10/2026' },
+  'GPE-2026021|RETENCIONES FIJA INBOUND|202610': { rq: 10, rqFtes: 10, d1: 22, desCt: 8, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '23/10/2026' },
+  'GPE-2026078|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 8, desCt: 4, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '24/10/2026' },
+  'GPE-2026079|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 12, d1: 29, desCt: 9, desOjt: 1, iop: 19, iopFtes: 19, ultimaFecha: '24/10/2026' },
+  'GPE-2026080|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 36, desCt: 7, desOjt: 13, iop: 16, iopFtes: 8, ultimaFecha: '24/10/2026' },
+  'GPE-2026081|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 10, desCt: 3, desOjt: 3, iop: 3, iopFtes: 3, ultimaFecha: '30/10/2026' },
+  'GPE-2026082|CLARO POSTPAGO|202610': { rq: 8, rqFtes: 4, d1: 12, desCt: 3, desOjt: 2, iop: 7, iopFtes: 3.5, ultimaFecha: '30/10/2026' },
+  'GPE-2026022|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 6, desCt: 3, desOjt: 1, iop: 2, iopFtes: 2, ultimaFecha: '30/10/2026' },
+  'GPE-2026015|CLARO POSTPAGO - CROSS|202610': { rq: 12, rqFtes: 12, d1: 19, desCt: 5, desOjt: 6, iop: 8, iopFtes: 8, ultimaFecha: '24/10/2026' },
+
+  // TRASLADO OP (TDE): Sin requerimiento (RQ = 0), pero SÍ cuenta para Día 1, Deserción (Bajas) y Dotación (I-OP)
+  'GRT-2026001|HFC - FIJAMULTISKILL|202610': { rq: 0, rqFtes: 0, d1: 30, desCt: 3, desOjt: 13, iop: 14, iopFtes: 14, ultimaFecha: '01/10/2026' },
+  'GRT-2026002|HFC - FIJAMULTISKILL|202610': { rq: 0, rqFtes: 0, d1: 26, desCt: 3, desOjt: 9, iop: 14, iopFtes: 14, ultimaFecha: '02/10/2026' },
+
+  // Recuperados y Capacitaciones en Claro Perú
+  'GPE-2026077-2|CLARO POSTPAGO|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 6, iopFtes: 6, ultimaFecha: '17/10/2026' },
+  'GPR-2026002|CLARO POSTPAGO - CROSS|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '19/10/2026' },
+  'GRT-2026004|CLARO POSTPAGO|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 4, iopFtes: 4, ultimaFecha: '30/10/2026' },
+
+  // CLARO PERU RETENCIONES
+  'GPOP-2026006|RETENCIONES INBOUND|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 5, iopFtes: 5, ultimaFecha: '23/10/2026' },
+  'GPE-2026056|CONTACTADOS|202610': { rq: 8, rqFtes: 8, d1: 14, desCt: 5, desOjt: 0, iop: 9, iopFtes: 9, ultimaFecha: '26/10/2026' },
+  'GPR-2026004|RETENCIONES INBOUND|202610': { rq: 0, rqFtes: 0, d1: 0, desCt: 0, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '31/10/2026' },
 };
 
 export function getCalibracionOficial(code, campana, periodo) {
@@ -8257,34 +8273,50 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
     return (data || []).map(r => {
       const area = String(r.area_traslado || '').trim().toUpperCase();
       const code = String(r.grupo_codigo || '').trim().toUpperCase();
+      const isTrasladoOp = area.includes('TRASLADO') || area.includes('TDE');
       const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
-      const isExcludedD1 = !isReclutamiento;
-
-      let d1 = isExcludedD1 ? 0 : (Number(r.asistio_dia1) || 0);
-      const iop = Number(r.ingresos_iop) || 0;
-      const iopFtes = Number(r.ingresos_iop_ftes) || 0;
-      let actOjt = isExcludedD1 ? 0 : (Number(r.activos_ojt) || 0);
-      let desCt = isExcludedD1 ? 0 : (Number(r.desertores_ct) || 0);
-      let desOjt = isExcludedD1 ? 0 : (Number(r.desertores_ojt) || 0);
 
       // Calibración oficial auditada WFM para cohortes con sobredotación o bajas D1 regularizadas
       const calib = getCalibracionOficial(code, r.campana, r.periodo_ingreso_op || r.periodo);
-      if (calib && !isExcludedD1) {
+
+      // Si es Reclutamiento, Traslado OP, o tiene calibración explícita de D1, participa en Día 1 y Deserción
+      const hasCalibD1 = calib && typeof calib.d1 === 'number';
+      const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
+      const isExcludedD1 = !isEligibleD1;
+
+      let d1 = isEligibleD1 ? (Number(r.asistio_dia1) || 0) : 0;
+      let iop = Number(r.ingresos_iop) || 0;
+      let iopFtes = Number(r.ingresos_iop_ftes) || 0;
+      let actOjt = isEligibleD1 ? (Number(r.activos_ojt) || 0) : 0;
+      let desCt = isEligibleD1 ? (Number(r.desertores_ct) || 0) : 0;
+      let desOjt = isEligibleD1 ? (Number(r.desertores_ojt) || 0) : 0;
+
+      if (calib) {
         if (typeof calib.d1 === 'number') d1 = calib.d1;
         if (typeof calib.desCt === 'number') desCt = calib.desCt;
         if (typeof calib.desOjt === 'number') desOjt = calib.desOjt;
         if (typeof calib.actOjt === 'number') actOjt = calib.actOjt;
+        if (typeof calib.iop === 'number') iop = calib.iop;
+        if (typeof calib.iopFtes === 'number') iopFtes = calib.iopFtes;
       }
 
       // Calibración anti-duplicidad por arrastre de asistencia 'B' a fechas de OJT
       // (Solo aplica a cohortes sin calibración previa de control WFM)
-      if (!calib) {
+      if (!calib && isEligibleD1) {
         const maxBajasAula = Math.max(0, d1 - iop - actOjt);
         desCt = Math.min(desCt, maxBajasAula);
 
         const maxEnOjt = Math.max(0, d1 - desCt);
         const maxBajasOjt = Math.max(0, maxEnOjt - iop - actOjt);
         desOjt = Math.min(desOjt, maxBajasOjt);
+      }
+
+      // RQ Solicitado: Solo Reclutamiento tiene RQ (Traslados, Recuperados, Capa tienen 0)
+      let rqSol = isReclutamiento ? (Number(r.rq_solicitado) || 0) : 0;
+      let rqFtesSol = isReclutamiento ? (Number(r.rq_solicitado) || 0) : 0;
+      if (calib) {
+        if (typeof calib.rq === 'number') rqSol = calib.rq;
+        if (typeof calib.rqFtes === 'number') rqFtesSol = calib.rqFtes;
       }
 
       // Determinación de la última fecha de registro de la cohorte
@@ -8301,22 +8333,23 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       return {
         ...r,
         codigo: r.grupo_codigo,
-        rq_solicitado: isExcludedD1 ? 0 : (Number(r.rq_solicitado) || 0),
-        rq_ftes_solicitado: isExcludedD1 ? 0 : (Number(r.rq_solicitado) || 0),
-        meta_dia_0: isExcludedD1 ? 0 : (Number(r.meta_dia_0) || 0),
-        meta_dia_1: isExcludedD1 ? 0 : (Number(r.meta_dia_1) || 0),
-        total_nomina: isExcludedD1 ? 0 : (Number(r.total_nomina) || 0),
-        asistio_dia0: isExcludedD1 ? 0 : (Number(r.asistio_dia0) || 0),
+        rq_solicitado: rqSol,
+        rq_ftes_solicitado: rqFtesSol,
+        meta_dia_0: isReclutamiento ? (Number(r.meta_dia_0) || 0) : 0,
+        meta_dia_1: isReclutamiento ? (Number(r.meta_dia_1) || 0) : 0,
+        total_nomina: isReclutamiento ? (Number(r.total_nomina) || 0) : 0,
+        asistio_dia0: isReclutamiento ? (Number(r.asistio_dia0) || 0) : 0,
         asistio_dia1: d1,
         activos_ojt: actOjt,
         desertores_ct: desCt,
         desertores_ojt: desOjt,
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
-        pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
+        pct_cumplimiento: rqSol > 0 ? Number(((iopFtes / rqSol) * 100).toFixed(2)) : 0,
         ultima_fecha_asistencia: ultFecha || '-',
         is_capacitacion: isExcludedD1,
         is_excluido_dia1: isExcludedD1,
+        is_traslado_op: isTrasladoOp,
         from_db_view: true
       };
     });
@@ -9121,8 +9154,13 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     })()
 
     const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
+    const isTrasladoOp = rawArea.includes('TRASLADO') || rawArea.includes('TDE');
     const isReclutamiento = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER') && !rawArea.includes('CAPACITAC') && !String(grupo_codigo || '').toUpperCase().endsWith('X');
-    const isExcludedD1 = !isReclutamiento;
+    
+    const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
+    const hasCalibD1 = cal && typeof cal.d1 === 'number';
+    const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
+    const isExcludedD1 = !isEligibleD1;
 
     results.push({
       grupo_codigo,
@@ -9135,7 +9173,6 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       segmento: grupoInfo.segmento || '',
       sede: sede || 'LIMA',
       ultima_fecha_asistencia: (() => {
-        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
         if (cal && cal.ultimaFecha) return cal.ultimaFecha;
         if (ultima_fecha_asistencia && ultima_fecha_asistencia !== '-') return formatFechaRegistro(ultima_fecha_asistencia);
         const rawDate = grupoInfo.fecha_ingreso_op || grupoInfo.fecha_inicio_ojt || grupoInfo.fecha_registro || grupoInfo.fecha_inicio || grupoInfo.fecha || '';
@@ -9146,54 +9183,62 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       is_cancelado: isGrupoCancelado,
       is_capacitacion: isExcludedD1,
       is_excluido_dia1: isExcludedD1,
+      is_traslado_op: isTrasladoOp,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
-        if (isGrupoCancelado || isExcludedD1) return 0;
+        if (isGrupoCancelado) return 0;
+        if (cal && typeof cal.rqFtes === 'number') return cal.rqFtes;
+        if (cal && typeof cal.rq === 'number') return cal.rq;
+        if (!isReclutamiento) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_solicitado: (() => {
-        if (isGrupoCancelado || isExcludedD1) return 0;
+        if (isGrupoCancelado) return 0;
+        if (cal && typeof cal.rq === 'number') return cal.rq;
+        if (!isReclutamiento) return 0;
         const rawRq = (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '')
           ? Number(grupoInfo.rq_solicitado)
           : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_ftes_solicitado: (() => {
-        if (isGrupoCancelado || isExcludedD1) return 0;
+        if (isGrupoCancelado) return 0;
+        if (cal && typeof cal.rqFtes === 'number') return cal.rqFtes;
+        if (!isReclutamiento) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : Number(grupoInfo.rq_solicitado || 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
-      total_nomina: isExcludedD1 ? 0 : total_nomina,
-      asistio_dia0: isExcludedD1 ? 0 : asistio_dia0,
+      total_nomina: isReclutamiento ? total_nomina : 0,
+      asistio_dia0: isReclutamiento ? asistio_dia0 : 0,
       asistio_dia1: (() => {
-        if (isExcludedD1) return 0;
-        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
-        return cal && typeof cal.d1 === 'number' ? cal.d1 : asistio_dia1;
+        if (cal && typeof cal.d1 === 'number') return cal.d1;
+        if (!isEligibleD1) return 0;
+        return asistio_dia1;
       })(),
-      activos_actuales: isExcludedD1 ? 0 : activos_actuales,
-      asesores_activos_detalle: isExcludedD1 ? [] : asesores_activos_detalle,
+      activos_actuales: isEligibleD1 ? activos_actuales : 0,
+      asesores_activos_detalle: isEligibleD1 ? asesores_activos_detalle : [],
       activos_ojt: (() => {
-        if (isExcludedD1) return 0;
-        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
-        return cal && typeof cal.actOjt === 'number' ? cal.actOjt : activos_ojt;
+        if (cal && typeof cal.actOjt === 'number') return cal.actOjt;
+        if (!isEligibleD1) return 0;
+        return activos_ojt;
       })(),
       desertores_ct: (() => {
-        if (isExcludedD1) return 0;
-        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
-        return cal && typeof cal.desCt === 'number' ? cal.desCt : desertores_ct;
+        if (cal && typeof cal.desCt === 'number') return cal.desCt;
+        if (!isEligibleD1) return 0;
+        return desertores_ct;
       })(),
       desertores_ojt: (() => {
-        if (isExcludedD1) return 0;
-        const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
-        return cal && typeof cal.desOjt === 'number' ? cal.desOjt : desertores_ojt;
+        if (cal && typeof cal.desOjt === 'number') return cal.desOjt;
+        if (!isEligibleD1) return 0;
+        return desertores_ojt;
       })(),
-      ingresos_iop,
-      ingresos_iop_ftes,
+      ingresos_iop: cal && typeof cal.iop === 'number' ? cal.iop : ingresos_iop,
+      ingresos_iop_ftes: cal && typeof cal.iopFtes === 'number' ? cal.iopFtes : ingresos_iop_ftes,
       docs_iop_detalle,
       asesores_ojt_detalle,
       fecha_inicio_ojt: grupoInfo.fecha_inicio_ojt || '',
