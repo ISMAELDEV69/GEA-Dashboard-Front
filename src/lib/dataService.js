@@ -8157,15 +8157,15 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026007|DESCUENTO|202610': { d1: 6, desCt: 3, desOjt: 1, iop: 0 },
 
   // CLARO PERU OUT - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
-  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2 },
-  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8 },
-  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8 },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14 },
-  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1 },
-  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6 },
-  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
-  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
-  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
+  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2, actOjt: 1 },
+  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8, actOjt: 1 },
+  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8, actOjt: 0 },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14, actOjt: 0 },
+  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1, actOjt: 0 },
+  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6, actOjt: 0 },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
+  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
+  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0, actOjt: 0 },
 
   // CLARO PERU - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
   'GPE-2026001|HFC - FIJAMULTISKILL|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
@@ -8244,12 +8244,15 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       }
 
       // Calibración anti-duplicidad por arrastre de asistencia 'B' a fechas de OJT
-      const maxBajasAula = Math.max(0, d1 - iop - actOjt);
-      desCt = Math.min(desCt, maxBajasAula);
+      // (Solo aplica a cohortes sin calibración previa de control WFM)
+      if (!calib) {
+        const maxBajasAula = Math.max(0, d1 - iop - actOjt);
+        desCt = Math.min(desCt, maxBajasAula);
 
-      const maxEnOjt = Math.max(0, d1 - desCt);
-      const maxBajasOjt = Math.max(0, maxEnOjt - iop - actOjt);
-      desOjt = Math.min(desOjt, maxBajasOjt);
+        const maxEnOjt = Math.max(0, d1 - desCt);
+        const maxBajasOjt = Math.max(0, maxEnOjt - iop - actOjt);
+        desOjt = Math.min(desOjt, maxBajasOjt);
+      }
 
       return {
         ...r,
