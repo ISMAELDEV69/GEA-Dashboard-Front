@@ -8155,6 +8155,38 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026057|POSTPAGO|202610': { d1: 18, desCt: 8, desOjt: 0, iop: 10 },
   'GPE-2026058|POSTPAGO|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
   'GPE-2026007|DESCUENTO|202610': { d1: 6, desCt: 3, desOjt: 1, iop: 0 },
+
+  // CLARO PERU OUT - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
+  'GPE-2026014|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 9,  desCt: 2, desOjt: 4, iop: 2 },
+  'GPE-2026008|RENOVACIONES ESPECIALES - WSP|202610': { d1: 19, desCt: 2, desOjt: 8, iop: 8 },
+  'GPE-2026017|MIGRACIONES ESPECIALES - OUT|202610': { d1: 17, desCt: 4, desOjt: 5, iop: 8 },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - WSP|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 14 },
+  'GPE-2026016X|MIGRACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 1 },
+  'GPE-2026024|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 6 },
+  'GPE-2026008X|RENOVACIONES ESPECIALES - OUT|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
+  'GPE-2026024X|UPGRADE|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
+  'GPE-2026014X|LA FIJA + PORTABILIDAD MOVIL|202610': { d1: 0, desCt: 0, desOjt: 0, iop: 0 },
+
+  // CLARO PERU - Periodo Ingreso OP 202610 (Validado y auditado WFM Sheets)
+  'GPE-2026001|HFC - FIJAMULTISKILL|202610': { d1: 11, desCt: 4, desOjt: 0, iop: 7 },
+  'GPE-2026074|CLARO POSTPAGO|202610': { d1: 6,  desCt: 6, desOjt: 0, iop: 0 },
+  'GPE-2026014|CLARO POSTPAGO - CROSS|202610': { d1: 18, desCt: 6, desOjt: 4, iop: 8 },
+  'GPE-2026018|RETENCIONES FIJA INBOUND|202610': { d1: 11, desCt: 9, desOjt: 0, iop: 0 },
+  'GPE-2026075|CLARO POSTPAGO|202610': { d1: 22, desCt: 9, desOjt: 4, iop: 8 },
+  'GPE-2026002|HFC - FIJAMULTISKILL|202610': { d1: 17, desCt: 9, desOjt: 1, iop: 7 },
+  'GPE-2026003|HFC - FIJAMULTISKILL|202610': { d1: 6,  desCt: 5, desOjt: 0, iop: 1 },
+  'GPE-2026076|CLARO POSTPAGO|202610': { d1: 31, desCt: 11, desOjt: 5, iop: 15 },
+  'GPE-2026006|HFC - FIJAMULTISKILL|202610': { d1: 8,  desCt: 3, desOjt: 3, iop: 2 },
+  'GPE-2026019|RETENCIONES FIJA INBOUND|202610': { d1: 10, desCt: 6, desOjt: 3, iop: 1 },
+  'GPE-2026077|CLARO POSTPAGO|202610': { d1: 22, desCt: 4, desOjt: 5, iop: 13 },
+  'GPE-2026020|RETENCIONES FIJA INBOUND|202610': { d1: 18, desCt: 6, desOjt: 1, iop: 8 },
+  'GPE-2026021|RETENCIONES FIJA INBOUND|202610': { d1: 22, desCt: 8, desOjt: 0, iop: 0 },
+  'GPE-2026078|CLARO POSTPAGO|202610': { d1: 8,  desCt: 4, desOjt: 0, iop: 3 },
+  'GPE-2026079|CLARO POSTPAGO|202610': { d1: 29, desCt: 9, desOjt: 1, iop: 19 },
+  'GPE-2026080|CLARO POSTPAGO|202610': { d1: 36, desCt: 7, desOjt: 13, iop: 16 },
+  'GPE-2026081|CLARO POSTPAGO|202610': { d1: 10, desCt: 3, desOjt: 3, iop: 3 },
+  'GPE-2026082|CLARO POSTPAGO|202610': { d1: 12, desCt: 3, desOjt: 2, iop: 7 },
+  'GPE-2026022|RETENCIONES FIJA INBOUND|202610': { d1: 6,  desCt: 3, desOjt: 1, iop: 2 },
 };
 
 export function getCalibracionOficial(code, campana, periodo) {
