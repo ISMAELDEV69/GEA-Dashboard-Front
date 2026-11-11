@@ -1259,13 +1259,10 @@ export default function ResumenCapacitacion({
     const desertoresOjt = kpis.desertores_ojt || 0;
     const activosActuales = kpis.activos_actuales || 0;
     
-    // 1. Deserción Global de Capacitación
-    // En cohortes finalizadas: (d1 - iop) / d1. En cohortes activas: protege a quienes siguen en aula u OJT.
-    const totalActivos = activosActuales + ojt;
-    const maxBajasPosibles = d1 > 0 ? Math.max(0, d1 - totalActivos - iop) : 0;
-    const desertoresRegistrados = desertoresCt + desertoresOjt;
-    const desertoresTotal = Math.min(maxBajasPosibles, desertoresRegistrados);
-    const pctDesercionGlobal = d1 > 0 ? Math.min(100, (desertoresTotal / d1) * 100) : 0;
+    // 1. Deserción Global de Capacitación (Regla A: Tasa directa Bajas Totales / Base Día 1)
+    // Bajas Totales = Bajas Aula (CT) + Bajas OJT (Piso)
+    const desertoresTotal = desertoresCt + desertoresOjt;
+    const pctDesercionGlobal = d1 > 0 ? (desertoresTotal / d1) * 100 : 0;
 
     // 2. Deserción CT (Aula): mismo flujo que el resumen WhatsApp.
     // Numerador = bajas formación (sigla B) antes de OJT. Denominador = Q Día 1.
@@ -1302,7 +1299,6 @@ export default function ResumenCapacitacion({
         metrics: [
           { label: 'Base Día 1', value: `${d1.toLocaleString('es-PE')} pers.` },
           { label: 'Bajas Totales', value: `${desertoresTotal.toLocaleString('es-PE')} pers.` },
-          { label: 'Retención Global', value: `${(100 - pctDesercionGlobal).toFixed(1)}%` },
         ],
         status: pctDesercionGlobal <= 20
           ? { label: 'En Meta', tone: 'healthy' }
