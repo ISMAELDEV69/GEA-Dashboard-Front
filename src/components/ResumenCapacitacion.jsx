@@ -145,20 +145,18 @@ const isAreaEligibleRq = (area) => {
   return (a === 'RECLUTAMIENTO' || a.includes('RECLUTA')) && !a.includes('RECUPER');
 };
 
-// Grupos gestionados o traídos por Capacitación (sufijo X o área CAPACITACIÓN)
+// Grupos que NO pertenecen a Reclutamiento puro (RECUPERADO, CAPACITACIÓN, TRASLADO o sufijo X):
 // No deben sumar a Base Día 1 ni Nómina Reclutada; SOLO deben sumar a los Ingresos a Operación (I-OP)
-export const isGrupoCapacitacion = (g) => {
+export const isGrupoExcluidoDia1 = (g) => {
   if (!g) return false;
-  if (g.is_capacitacion === true) return true;
+  if (g.is_capacitacion === true || g.is_excluido_dia1 === true) return true;
   const area = String(g.area_traslado || '').trim().toUpperCase();
   const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase();
-  return (
-    area.includes('CAPACITAC') || 
-    area === 'CAP' || 
-    code.endsWith('X') ||
-    code.includes('CAP')
-  );
+  
+  const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
+  return !isReclutamiento;
 };
+export const isGrupoCapacitacion = isGrupoExcluidoDia1;
 
 const getGrupoRq = (g) => {
   if (!g) return 0;

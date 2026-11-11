@@ -8153,14 +8153,15 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
     return (data || []).map(r => {
       const area = String(r.area_traslado || '').trim().toUpperCase();
       const code = String(r.grupo_codigo || '').trim().toUpperCase();
-      const isCap = area.includes('CAPACITAC') || area === 'CAP' || code.endsWith('X') || code.includes('CAP');
+      const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
+      const isExcludedD1 = !isReclutamiento;
 
-      const d1 = isCap ? 0 : (Number(r.asistio_dia1) || 0);
+      const d1 = isExcludedD1 ? 0 : (Number(r.asistio_dia1) || 0);
       const iop = Number(r.ingresos_iop) || 0;
       const iopFtes = Number(r.ingresos_iop_ftes) || 0;
-      const actOjt = isCap ? 0 : (Number(r.activos_ojt) || 0);
-      let desCt = isCap ? 0 : (Number(r.desertores_ct) || 0);
-      let desOjt = isCap ? 0 : (Number(r.desertores_ojt) || 0);
+      const actOjt = isExcludedD1 ? 0 : (Number(r.activos_ojt) || 0);
+      let desCt = isExcludedD1 ? 0 : (Number(r.desertores_ct) || 0);
+      let desOjt = isExcludedD1 ? 0 : (Number(r.desertores_ojt) || 0);
 
       // Calibración anti-duplicidad por arrastre de asistencia 'B' a fechas de OJT
       const maxBajasAula = Math.max(0, d1 - iop - actOjt);
@@ -8173,12 +8174,12 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       return {
         ...r,
         codigo: r.grupo_codigo,
-        rq_solicitado: Number(r.rq_solicitado) || 0,
-        rq_ftes_solicitado: Number(r.rq_solicitado) || 0,
-        meta_dia_0: isCap ? 0 : (Number(r.meta_dia_0) || 0),
-        meta_dia_1: isCap ? 0 : (Number(r.meta_dia_1) || 0),
-        total_nomina: isCap ? 0 : (Number(r.total_nomina) || 0),
-        asistio_dia0: isCap ? 0 : (Number(r.asistio_dia0) || 0),
+        rq_solicitado: isExcludedD1 ? 0 : (Number(r.rq_solicitado) || 0),
+        rq_ftes_solicitado: isExcludedD1 ? 0 : (Number(r.rq_solicitado) || 0),
+        meta_dia_0: isExcludedD1 ? 0 : (Number(r.meta_dia_0) || 0),
+        meta_dia_1: isExcludedD1 ? 0 : (Number(r.meta_dia_1) || 0),
+        total_nomina: isExcludedD1 ? 0 : (Number(r.total_nomina) || 0),
+        asistio_dia0: isExcludedD1 ? 0 : (Number(r.asistio_dia0) || 0),
         asistio_dia1: d1,
         activos_ojt: actOjt,
         desertores_ct: desCt,
@@ -8186,7 +8187,8 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
         pct_cumplimiento: Number(r.pct_cumplimiento) || 0,
-        is_capacitacion: isCap,
+        is_capacitacion: isExcludedD1,
+        is_excluido_dia1: isExcludedD1,
         from_db_view: true
       };
     });
@@ -8977,7 +8979,8 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
     })()
 
     const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
-    const isCap = rawArea.includes('CAPACITAC') || rawArea === 'CAP' || String(grupo_codigo || '').toUpperCase().endsWith('X') || String(grupo_codigo || '').toUpperCase().includes('CAP');
+    const isReclutamiento = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER') && !rawArea.includes('CAPACITAC') && !String(grupo_codigo || '').toUpperCase().endsWith('X');
+    const isExcludedD1 = !isReclutamiento;
 
     results.push({
       grupo_codigo,
@@ -8993,40 +8996,38 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       estado: estadoGrupo || 'EN CURSO',
       is_cerrado: isGrupoCerrado,
       is_cancelado: isGrupoCancelado,
-      is_capacitacion: isCap,
+      is_capacitacion: isExcludedD1,
+      is_excluido_dia1: isExcludedD1,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
-        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
-        if (isGrupoCancelado || !isEligibleArea) return 0;
+        if (isGrupoCancelado || isExcludedD1) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '' ? Number(grupoInfo.rq_solicitado) : 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_solicitado: (() => {
-        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
-        if (isGrupoCancelado || !isEligibleArea) return 0;
+        if (isGrupoCancelado || isExcludedD1) return 0;
         const rawRq = (grupoInfo.rq_solicitado !== undefined && grupoInfo.rq_solicitado !== null && grupoInfo.rq_solicitado !== '')
           ? Number(grupoInfo.rq_solicitado)
           : (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '' ? Number(grupoInfo.rq_ftes_solicitado) : 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
       rq_ftes_solicitado: (() => {
-        const isEligibleArea = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER');
-        if (isGrupoCancelado || !isEligibleArea) return 0;
+        if (isGrupoCancelado || isExcludedD1) return 0;
         const rawRq = (grupoInfo.rq_ftes_solicitado !== undefined && grupoInfo.rq_ftes_solicitado !== null && grupoInfo.rq_ftes_solicitado !== '')
           ? Number(grupoInfo.rq_ftes_solicitado)
           : Number(grupoInfo.rq_solicitado || 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
-      total_nomina: isCap ? 0 : total_nomina,
-      asistio_dia0: isCap ? 0 : asistio_dia0,
-      asistio_dia1: isCap ? 0 : asistio_dia1,
-      activos_actuales: isCap ? 0 : activos_actuales,
-      asesores_activos_detalle: isCap ? [] : asesores_activos_detalle,
-      activos_ojt: isCap ? 0 : activos_ojt,
-      desertores_ct: isCap ? 0 : desertores_ct,
-      desertores_ojt: isCap ? 0 : desertores_ojt,
+      total_nomina: isExcludedD1 ? 0 : total_nomina,
+      asistio_dia0: isExcludedD1 ? 0 : asistio_dia0,
+      asistio_dia1: isExcludedD1 ? 0 : asistio_dia1,
+      activos_actuales: isExcludedD1 ? 0 : activos_actuales,
+      asesores_activos_detalle: isExcludedD1 ? [] : asesores_activos_detalle,
+      activos_ojt: isExcludedD1 ? 0 : activos_ojt,
+      desertores_ct: isExcludedD1 ? 0 : desertores_ct,
+      desertores_ojt: isExcludedD1 ? 0 : desertores_ojt,
       ingresos_iop,
       ingresos_iop_ftes,
       docs_iop_detalle,
