@@ -18,12 +18,13 @@ import {
   Filter,
   CheckCircle2,
   X,
+  Info,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight
 } from 'lucide-react';
-import { fetchDashboardData, fetchConsolidadoOnDemand, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
+import { fetchDashboardData, fetchConsolidadoOnDemand, fetchConsolidadoBySearch, isBajaCapacitacion, isBajaDia1 } from '../lib/dataService';
 import { isBajaDia1Motivo } from '../lib/bajaDia1Rules';
 import { isCampanaProyectada, normalize2026Period } from '../lib/dashboardAnalytics';
 import { exportToExcel } from '../lib/exportExcel';
@@ -1310,11 +1311,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     });
   }, [kpiFilteredData, filters.estado, lastStateMap, descuentosDocSet]);
 
-  const unsearchedPivotRows = useMemo(() => {
+  const searchedTermsRef = useRef(new Set());
+
+  const buildPivotRowsFromData = useCallback((sourceData) => {
     const map = new Map();
     
-    for (let i = 0; i < filteredData.length; i++) {
-      const row = filteredData[i];
+    for (let i = 0; i < sourceData.length; i++) {
+      const row = sourceData[i];
       const doc = normalizeText(row.documento);
       if (!doc) continue;
 
@@ -1437,22 +1440,82 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       });
     }
     return result;
-  }, [filteredData, getCapInfo, lastStateMap, descuentosDocSet, filters.estado]);
+  }, [getCapInfo, lastStateMap, descuentosDocSet]);
 
-  // Filtro de búsqueda optimizado: solo filtra la lista ya consolidada sin re-pivoter miles de registros
-  const pivotRows = useMemo(() => {
-    if (!search.trim()) return unsearchedPivotRows;
-    const q = search.toLowerCase();
-    return unsearchedPivotRows.filter(
+  const unsearchedPivotRows = useMemo(() => {
+    return buildPivotRowsFromData(filteredData);
+  }, [filteredData, buildPivotRowsFromData]);
+
+  // Filtro de búsqueda optimizado con fallback global inteligente:
+  // Si el usuario escribe una búsqueda y no hay coincidencias bajo los filtros activos,
+  // busca en validData (todas las cohortes) para encontrar inmediatamente al asesor
+  const { pivotRows, isGlobalSearch, globalMatchingData } = useMemo(() => {
+    if (!search.trim()) {
+      return { pivotRows: unsearchedPivotRows, isGlobalSearch: false, globalMatchingData: [] };
+    }
+    const q = search.toLowerCase().trim();
+
+    // 1. Coincidencias dentro de los filtros actuales
+    const localFiltered = unsearchedPivotRows.filter(
       (r) => r.documento.toLowerCase().includes(q) ||
              r.nombre_completo.toLowerCase().includes(q) ||
              r.campana.toLowerCase().includes(q) ||
              r.gpe.toLowerCase().includes(q)
     );
-  }, [unsearchedPivotRows, search]);
+
+    if (localFiltered.length > 0) {
+      return { pivotRows: localFiltered, isGlobalSearch: false, globalMatchingData: [] };
+    }
+
+    // 2. Si no hay coincidencias bajo los filtros actuales y q tiene al menos 3 caracteres,
+    // buscamos en TODO validData (cohortes de otros periodos/semanas)
+    if (q.length >= 3) {
+      const globalRaw = validData.filter((r) => {
+        const doc = normalizeText(r.documento).toLowerCase();
+        const fullName = `${normalizeText(r.apellido_paterno)} ${normalizeText(r.apellido_materno)} ${normalizeText(r.nombres)}`.toLowerCase();
+        return doc.includes(q) || fullName.includes(q);
+      });
+
+      if (globalRaw.length > 0) {
+        const globalPivots = buildPivotRowsFromData(globalRaw);
+        return { pivotRows: globalPivots, isGlobalSearch: true, globalMatchingData: globalRaw };
+      }
+    }
+
+    return { pivotRows: [], isGlobalSearch: false, globalMatchingData: [] };
+  }, [unsearchedPivotRows, search, validData, buildPivotRowsFromData]);
+
+  // Búsqueda bajo demanda en la BD si no se encuentra en memoria local
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 3 || loading) return;
+    if (searchedTermsRef.current.has(q.toLowerCase())) return;
+
+    // Si ya hay coincidencias en pivotRows, no es necesario consultar el servidor
+    if (pivotRows.length > 0) return;
+
+    searchedTermsRef.current.add(q.toLowerCase());
+    setLoadingHistorical(true);
+
+    fetchConsolidadoBySearch(q).then((newRows) => {
+      if (newRows && newRows.length > 0) {
+        setData((prev) => {
+          const existingIds = new Set(prev.map((r) => r.id));
+          const fresh = newRows.filter((r) => !existingIds.has(r.id));
+          return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        });
+      }
+    }).catch((err) => {
+      console.error('Error al buscar asesor bajo demanda:', err);
+    }).finally(() => {
+      setLoadingHistorical(false);
+    });
+  }, [search, loading, pivotRows.length]);
 
   const uniqueDates = useMemo(() => {
-    if (!unsearchedPivotRows.length) return [];
+    const rowsForDates = isGlobalSearch ? pivotRows : unsearchedPivotRows;
+    const rawForDates = isGlobalSearch ? globalMatchingData : filteredData;
+    if (!rowsForDates.length) return [];
 
     const todayLimit = new Date();
     todayLimit.setHours(23, 59, 59, 999);
@@ -1461,8 +1524,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     let minPersonTime = Infinity;
     const activeCohorts = new Set();
 
-    for (let i = 0; i < unsearchedPivotRows.length; i++) {
-      const r = unsearchedPivotRows[i];
+    for (let i = 0; i < rowsForDates.length; i++) {
+      const r = rowsForDates[i];
       if (r.campana && r.gpe) {
         activeCohorts.add(`${normalizeCampana(r.campana)}|${normalizeGpe(r.gpe)}`);
       }
@@ -1479,8 +1542,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     }
 
     if (minPersonTime < Infinity) {
-      for (let i = 0; i < filteredData.length; i++) {
-        const row = filteredData[i];
+      for (let i = 0; i < rawForDates.length; i++) {
+        const row = rawForDates[i];
         const camp = normalizeCampana(row._campana || row.campana);
         const gpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
         if (!activeCohorts.has(`${camp}|${gpe}`)) continue;
@@ -1501,7 +1564,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     return Array.from(datesMap.entries())
       .sort((a, b) => a[1] - b[1])
       .map(([canonical]) => canonical);
-  }, [unsearchedPivotRows, filteredData]);
+  }, [unsearchedPivotRows, filteredData, isGlobalSearch, pivotRows, globalMatchingData]);
 
   // Mapa de marcas de tiempo precalculado para no parsear fechas en cada celda
   const datesTimeMap = useMemo(() => {
@@ -1963,14 +2026,36 @@ export default function ConsolidadoPowerBI({ userProfile }) {
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Buscar por documento o nombre..."
-              className="w-full h-7 pl-7 pr-6 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-cyan-500 transition-colors font-medium"
+              className="w-full h-7 pl-7 pr-12 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-normal)] text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] outline-none focus:border-cyan-500 transition-colors font-medium"
             />
+            {loadingHistorical && (
+              <Loader2 size={11} className="absolute right-6 top-1/2 -translate-y-1/2 text-cyan-400 animate-spin" />
+            )}
             {search && (
               <button onClick={() => { setSearch(''); setPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                 <X size={11} />
               </button>
             )}
           </div>
+
+          {isGlobalSearch && pivotRows.length > 0 && (
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-cyan-500/10 border border-cyan-500/30 rounded-md text-[10.5px] text-cyan-300">
+              <Info size={12} className="text-cyan-400 shrink-0" />
+              <span>
+                Encontrado en cohorte: <strong className="text-white">{pivotRows[0].gpe}</strong> ({pivotRows[0].campana})
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilters({ periodo: 'Todas', semana: 'Todas', segmento: 'Todas', campana: 'Todas', gpe: 'Todas', estado: 'Todas' });
+                }}
+                className="ml-1 underline text-cyan-200 hover:text-white font-semibold cursor-pointer"
+                title="Restablecer filtros superiores para ver toda la cohorte"
+              >
+                Ver cohorte completa
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-[var(--text-muted)] font-mono font-bold">

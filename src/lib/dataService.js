@@ -805,6 +805,41 @@ export async function fetchConsolidadoOnDemand({ semana = null, gpe = null, camp
   });
 }
 
+export async function fetchConsolidadoBySearch(query) {
+  if (DB_MODE !== 'supabase' || !query) return [];
+  const clean = String(query).trim();
+  if (clean.length < 3) return [];
+
+  const cacheKey = `search_asis_${clean.toLowerCase()}`;
+  return withCache(cacheKey, 120000, async () => {
+    let q = supabase
+      .from('consolidado_asistencias')
+      .select('id, documento, motivo_baja, fecha_registro_asistencia, campana, codigo_grupo, grupo, nombre_formador, apellido_paterno, apellido_materno, nombres, sigla, estado, condicion_laboral, tipo_reclutado, archivo_origen, corte, fecha_hora_registro');
+
+    if (/^\d+$/.test(clean)) {
+      q = q.ilike('documento', `%${clean}%`);
+    } else {
+      q = q.or(`nombres.ilike.%${clean}%,apellido_paterno.ilike.%${clean}%,apellido_materno.ilike.%${clean}%,documento.ilike.%${clean}%`);
+    }
+
+    const { data, error } = await q.order('created_at', { ascending: true }).limit(500);
+    if (error) {
+      console.error('Error buscando consolidado por query:', error);
+      return [];
+    }
+
+    const descSet = await getDescuentosSetGlobal();
+    if (descSet && descSet.size > 0 && data) {
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        row.isDescuento = descSet.has(makeDescuentoKey(row.documento, row.campana, row.codigo_grupo));
+      }
+    }
+
+    return data || [];
+  });
+}
+
 export async function getFirstDateFormador(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return null;
 
