@@ -19,6 +19,7 @@ import {
   currentOperativePeriodo,
   filterKpiRows,
   fmtNum,
+  isJunkResponsable,
   recentOperativePeriodos,
   resolveLockedRecruiter,
 } from '../../lib/kpiReclutadoresAnalytics'
@@ -635,6 +636,7 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
   const theme = useAppPresentation()
 
   const hasLoadedRef = useRef(false)
+  const autoRefreshedRef = useRef(false)
   const loadRows = useCallback(async () => {
     setError(null)
     if (!hasLoadedRef.current) setLoading(true)
@@ -647,7 +649,23 @@ function KpiReclutadoresDashboard({ userProfile = null }) {
           return []
         }),
       ])
-      const nextRows = data || []
+      let nextRows = data || []
+
+      // Auto-recuperación: si no hay filas o todas son 'SIN NOMINA' / junk, disparar refresh_kpi_reclutadores una vez
+      const hasActiveResponsables = nextRows.some(r => r.responsable && r.responsable !== 'SIN NOMINA' && r.responsable !== 'SIN ASIGNAR' && !isJunkResponsable(r.responsable))
+      if (!hasActiveResponsables && !autoRefreshedRef.current) {
+        autoRefreshedRef.current = true
+        try {
+          await refreshKpiReclutadores(31)
+          const freshData = await fetchKpiReclutadoresConsolidado({ periodo, periodoReclutado })
+          if (freshData && freshData.length > 0) {
+            nextRows = freshData
+          }
+        } catch (e) {
+          console.warn('[KpiReclutadores] Auto-refresh fallback error:', e)
+        }
+      }
+
       setRows(nextRows)
       setNominas(nominaRows || [])
       const stamp = nextRows.reduce((acc, row) => {

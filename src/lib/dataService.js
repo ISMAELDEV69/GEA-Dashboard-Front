@@ -126,11 +126,13 @@ export function invalidateCache(keyPrefix) {
     ? ['all_consolidado', 'consolidado', 'consolidado_', 'consolidado_asistencias', 'asistencias', 'all_asistencias_bajas', 'all_motivos_bajas']
     : (prefixStr.includes('postulante') || prefixStr.includes('nomina'))
     ? ['postulantes', 'postulantes_', 'nominas', 'nominas_']
+    : (prefixStr.includes('kpi_reclutador'))
+    ? ['kpi_reclutadores', 'kpi_reclutadores_consolidado', 'nominas_auditoria']
     : [keyPrefix];
 
   for (const p of prefixes) {
     for (const key of apiCache.keys()) {
-      if (key.startsWith(p)) {
+      if (key.startsWith(p) || key.includes(p)) {
         apiCache.delete(key);
       }
     }
