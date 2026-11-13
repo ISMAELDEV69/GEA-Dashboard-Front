@@ -30,15 +30,15 @@ export const MATRIZ_CARGOS = {
   ANALISTA: {
     id: 'ANALISTA',
     label: 'Analista de Reclutamiento y Selección',
-    pesoDia1: 40,
+    pesoDia1: 50,
     pesoDotacion: 40,
     pesoCalidad: 10,
-    pesoProcesosAdm: 10,
+    pesoProcesosAdm: 0,
     bonoDefault: 800,
     pctEfectivoDefault: 60,
     pctSodexoDefault: 40,
     esLiderazgo: false,
-    descripcion: 'Ponderación: 40% Día 1 + 40% Dotación + 10% Calidad + 10% Procesos Adm.'
+    descripcion: 'Ponderación: 50% Día 1 + 40% Dotación + 10% Calidad'
   },
   ANALISTA_ADMINISTRATIVO: {
     id: 'ANALISTA_ADMINISTRATIVO',
@@ -84,22 +84,18 @@ export const MATRIZ_CARGOS = {
 // ── 2. ESCALAS DE TRAMOS Y CONVERSIÓN A % DE ALCANCE (MAQUETAS) ──────────────
 
 /**
- * Escalas de Dotación según Cargo
+ * Escalas de Dotación según Cargo (Oficial Maqueta Sheets)
+ * Escala Unificada Operativa y Liderazgo:
+ * ≥ 80.00% -> 100.00%
+ * 75.00% a 79.99% -> 85.00%
+ * 65.00% a 74.99% -> 70.00%
+ * < 65.00% -> 0.00%
  */
 export function getAlcanceDotacion(pctCumplimiento, cargoClave = 'ASISTENTE') {
   const val = Number(pctCumplimiento) || 0
   const c = String(cargoClave).toUpperCase()
 
-  // Analista: 60%->50%, 70%->70%, 75%->85%, 80%->100%
-  if (c === 'ANALISTA') {
-    if (val >= 80.00) return { alcance: 100.00, tramo: '≥ 80.00%', semaforo: 'VERDE' }
-    if (val >= 75.00) return { alcance: 85.00, tramo: '75.00% a 79.99%', semaforo: 'AMBAR' }
-    if (val >= 70.00) return { alcance: 70.00, tramo: '70.00% a 74.99%', semaforo: 'AMBAR' }
-    if (val >= 60.00) return { alcance: 50.00, tramo: '60.00% a 69.99%', semaforo: 'AMBAR' }
-    return { alcance: 0.00, tramo: '< 60.00%', semaforo: 'ROJO' }
-  }
-
-  // Analista Administrativo: 65%->50%, 70%->70%, 75%->85%, 80%->100%
+  // Analista Administrativo (RQ Cerrados / Aperturados)
   if (c === 'ANALISTA_ADMINISTRATIVO') {
     if (val >= 80.00) return { alcance: 100.00, tramo: '≥ 80.00%', semaforo: 'VERDE' }
     if (val >= 75.00) return { alcance: 85.00, tramo: '75.00% a 79.99%', semaforo: 'AMBAR' }
@@ -108,30 +104,21 @@ export function getAlcanceDotacion(pctCumplimiento, cargoClave = 'ASISTENTE') {
     return { alcance: 0.00, tramo: '< 65.00%', semaforo: 'ROJO' }
   }
 
-  // Coordinador / Jefatura: 65%->70%, 75%->85%, 80%->100%
-  if (c === 'COORDINADOR') {
-    if (val >= 80.00) return { alcance: 100.00, tramo: '≥ 80.00%', semaforo: 'VERDE' }
-    if (val >= 75.00) return { alcance: 85.00, tramo: '75.00% a 79.99%', semaforo: 'AMBAR' }
-    if (val >= 65.00) return { alcance: 70.00, tramo: '65.00% a 74.99%', semaforo: 'AMBAR' }
-    return { alcance: 0.00, tramo: '< 65.00%', semaforo: 'ROJO' }
-  }
-
-  // Asistente (Default): 75%->70%, 80%->85%, 90%->100% (o 65%->70%)
-  if (val >= 90.00) return { alcance: 100.00, tramo: '≥ 90.00%', semaforo: 'VERDE' }
-  if (val >= 80.00) return { alcance: 85.00, tramo: '80.00% a 89.99%', semaforo: 'AMBAR' }
-  if (val >= 75.00) return { alcance: 70.00, tramo: '75.00% a 79.99%', semaforo: 'AMBAR' }
+  // Escala Estándar Oficial (Asistente, Analista, Coordinador Jr., Coordinador)
+  if (val >= 80.00) return { alcance: 100.00, tramo: '≥ 80.00%', semaforo: 'VERDE' }
+  if (val >= 75.00) return { alcance: 85.00, tramo: '75.00% a 79.99%', semaforo: 'AMBAR' }
   if (val >= 65.00) return { alcance: 70.00, tramo: '65.00% a 74.99%', semaforo: 'AMBAR' }
   return { alcance: 0.00, tramo: '< 65.00%', semaforo: 'ROJO' }
 }
 
 /**
- * Escalas de Día 1 según Cargo
+ * Escalas de Día 1 según Cargo (Oficial Maqueta Sheets)
  */
 export function getAlcanceDia1(pctCumplimiento, cargoClave = 'ASISTENTE') {
   const val = Number(pctCumplimiento) || 0
   const c = String(cargoClave).toUpperCase()
 
-  // Supervisor: <85%->0, 85%->70, 95%->80, 100%->90, 110%->95, >=120%->100
+  // Supervisor (Aldo Medina): Piso estricto en 85.00% para liberar bono
   if (c === 'SUPERVISOR') {
     if (val >= 120.00) return { alcance: 100.00, tramo: '≥ 120.00%', semaforo: 'VERDE' }
     if (val >= 110.00) return { alcance: 95.00, tramo: '110.00% a 119.99%', semaforo: 'VERDE' }
@@ -141,7 +128,7 @@ export function getAlcanceDia1(pctCumplimiento, cargoClave = 'ASISTENTE') {
     return { alcance: 0.00, tramo: '< 85.00%', semaforo: 'ROJO' }
   }
 
-  // Coordinador / Jefatura: 70%->70, 80%->80, >=100%->100
+  // Coordinador / Jefatura (Evaluado sobre media general del equipo)
   if (c === 'COORDINADOR') {
     if (val >= 100.00) return { alcance: 100.00, tramo: '≥ 100.00%', semaforo: 'VERDE' }
     if (val >= 80.00) return { alcance: 80.00, tramo: '80.00% a 99.99%', semaforo: 'AMBAR' }
@@ -149,16 +136,7 @@ export function getAlcanceDia1(pctCumplimiento, cargoClave = 'ASISTENTE') {
     return { alcance: 0.00, tramo: '< 70.00%', semaforo: 'ROJO' }
   }
 
-  // Analista: 60%->50%, 70%->70%, 85%->85%, >=100%->100%
-  if (c === 'ANALISTA') {
-    if (val >= 100.00) return { alcance: 100.00, tramo: '≥ 100.00%', semaforo: 'VERDE' }
-    if (val >= 85.00) return { alcance: 85.00, tramo: '85.00% a 99.99%', semaforo: 'AMBAR' }
-    if (val >= 70.00) return { alcance: 70.00, tramo: '70.00% a 84.99%', semaforo: 'AMBAR' }
-    if (val >= 60.00) return { alcance: 50.00, tramo: '60.00% a 69.99%', semaforo: 'AMBAR' }
-    return { alcance: 0.00, tramo: '< 60.00%', semaforo: 'ROJO' }
-  }
-
-  // Asistente (Default): 75%->70%, 85%->85%, >=100%->100%
+  // Asistente y Analista de Reclutamiento y Selección (Oficial Sheets)
   if (val >= 100.00) return { alcance: 100.00, tramo: '≥ 100.00%', semaforo: 'VERDE' }
   if (val >= 85.00) return { alcance: 85.00, tramo: '85.00% a 99.99%', semaforo: 'AMBAR' }
   if (val >= 75.00) return { alcance: 70.00, tramo: '75.00% a 84.99%', semaforo: 'AMBAR' }
@@ -579,11 +557,23 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const pctEfectivo = master?.pctEfectivo !== undefined ? master.pctEfectivo : (isSheetsOficial ? 60 : configCargo.pctEfectivoDefault)
     const pctSodexo = master?.pctSodexo !== undefined ? master.pctSodexo : (isSheetsOficial ? 40 : configCargo.pctSodexoDefault)
 
-    // Valla Mínima de Activación (Trigger): por defecto 45.00% para evitar pagos por inercia si no cumplieron metas operativas
-    const vallaMinima = options.vallaMinima !== undefined ? Number(options.vallaMinima) : 45.00
+    // Factor de Proporcionalidad por Cese (Regla Oficial: días trabajados / 30 si cesó en el mes)
+    let factorCese = 1.0
+    if (master?.fechaCese) {
+      try {
+        const dCese = new Date(master.fechaCese)
+        if (!isNaN(dCese.getTime())) {
+          const dayCese = dCese.getDate()
+          factorCese = Math.min(1.0, Math.max(0, dayCese / 30))
+        }
+      } catch {}
+    }
+
+    // Valla Mínima de Activación (Trigger): en modelo oficial Sheets no hay valla mínima (se liquidan los puntos acumulados)
+    const vallaMinima = options.vallaMinima !== undefined ? Number(options.vallaMinima) : (isSheetsOficial ? 0 : 45.00)
     const pasaValla = totalPuntosPct >= vallaMinima
 
-    const bonoNeto = pasaValla ? round2(bonoBruto * (totalPuntosPct / 100)) : 0.00
+    const bonoNeto = pasaValla ? round2(bonoBruto * (totalPuntosPct / 100) * factorCese) : 0.00
     const bonoEfectivo = pasaValla ? round2(bonoNeto * (pctEfectivo / 100)) : 0.00
     const bonoSodexo = pasaValla ? round2(bonoNeto * (pctSodexo / 100)) : 0.00
 
