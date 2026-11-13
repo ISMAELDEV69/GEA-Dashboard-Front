@@ -61,6 +61,7 @@ export default function MaquetaBonosReclutadores({
   const [isDispersionModalOpen, setIsDispersionModalOpen] = useState(false)
   const [useTope, setUseTope] = useState(false)
   const [modeloMaqueta, setModeloMaqueta] = useState('sheets_oficial') // 'sheets_oficial' | 'diferenciado'
+  const [tablaModo, setTablaModo] = useState('ejecutiva') // 'ejecutiva' (8 cols limpia) | 'auditoria' (18 cols detallada)
 
   // Sobrescrituras manuales de auditoría persistidas por periodo: { [key]: { calidad: 100, procesosAdm: 100, motivo: '', fecha: '' } }
   const [manualAuditOverrides, setManualAuditOverrides] = useState({})
@@ -1050,13 +1051,46 @@ export default function MaquetaBonosReclutadores({
       {activeTab === 'bonos_oficial' && (
         <Card className="border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-sm overflow-hidden">
           <CardHeader className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
               <CardTitle className="text-xs font-black uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
                 <FileSpreadsheet size={15} className="text-amber-500" />
                 <span>Bonos_Reclutadores · Maqueta General de Pago</span>
               </CardTitle>
-              <span className="text-[10px] text-[var(--text-muted)]">
-                Haz clic en ▸ para desglosar grupos GPE o en el nombre para abrir la Boleta & Trazabilidad 360°
+
+              {/* SWITCH DE VISTA: EJECUTIVA vs AUDITORÍA */}
+              <div className="flex items-center bg-slate-900/90 p-0.5 rounded-xl border border-slate-700/80 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setTablaModo('ejecutiva')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    tablaModo === 'ejecutiva'
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Vista ejecutiva limpia con métricas clave agrupadas (8 columnas)"
+                >
+                  <Eye size={12} />
+                  <span>Vista Ejecutiva</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTablaModo('auditoria')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    tablaModo === 'auditoria'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Vista de auditoría completa con 18 columnas (pesos 50/40/10, alcance de tramos y desglose de puntos)"
+                >
+                  <Layers size={12} />
+                  <span>Auditoría (18 cols)</span>
+                </button>
+              </div>
+
+              <span className="hidden xl:inline text-[10px] text-[var(--text-muted)]">
+                {tablaModo === 'ejecutiva'
+                  ? 'Vista simplificada y legible. Clic en ▸ para ver grupos GPE o en el nombre para abrir la Ficha 360°'
+                  : 'Desglose detallado paso a paso idéntico a las hojas de cálculo'}
               </span>
             </div>
 
@@ -1183,73 +1217,104 @@ export default function MaquetaBonosReclutadores({
           <CardContent className="p-0">
             <div className="overflow-x-auto max-h-[620px] custom-scrollbar bg-[var(--bg-surface)]">
               <table className="w-full text-left text-xs border-collapse font-sans bg-[var(--bg-surface)]">
-                {/* ── CABECERA DE DOS NIVELES IDÉNTICA AL EXCEL ── */}
+                {/* ── CABECERA DINÁMICA: MODO EJECUTIVO (8 COLS) vs MODO AUDITORÍA (18 COLS) ── */}
                 <thead className="sticky top-0 z-20 whitespace-nowrap shadow-md">
-                  {/* NIVEL 1: BLOQUES TEMÁTICOS CON ESTILO LIMPIO DARK-GLASS */}
-                  <tr className="text-[10px] font-black uppercase tracking-wider text-white select-none">
-                    <th colSpan={2} className="bg-slate-900/95 border-b border-r border-slate-800 py-1.5 px-2.5 text-slate-300 text-left">
-                      COLABORADOR
-                    </th>
-                    <th colSpan={2} className="bg-cyan-950/70 text-cyan-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
-                      CUMPLIMIENTO OPERATIVO
-                    </th>
-                    <th colSpan={3} className="bg-slate-900/90 text-slate-400 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
-                      PESOS OFICIALES (50/40/10)
-                    </th>
-                    <th colSpan={3} className="bg-indigo-950/70 text-indigo-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
-                      % ALCANCE TRAMOS
-                    </th>
-                    <th colSpan={4} className="bg-teal-950/70 text-teal-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
-                      PUNTOS PONDERADOS
-                    </th>
-                    <th colSpan={2} className="bg-amber-950/70 text-amber-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
-                      LIQUIDACIÓN BRUTA / NETA
-                    </th>
-                    <th colSpan={2} className="bg-emerald-950/80 text-emerald-300 text-center py-1.5 px-2 shadow-xs">
-                      DISPERSIÓN (60% / 40%)
-                    </th>
-                  </tr>
+                  {tablaModo === 'ejecutiva' ? (
+                    <tr className="text-[10px] font-black uppercase tracking-wider text-slate-300 bg-slate-900/95 border-b border-slate-800 select-none">
+                      <th className="py-2.5 px-3 text-left border-r border-slate-800 text-slate-200 min-w-[260px]">
+                        COLABORADOR
+                      </th>
+                      <th className="py-2.5 px-2.5 text-left border-r border-slate-800 text-slate-300">
+                        CARGO
+                      </th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-800 bg-cyan-950/40 text-cyan-300 min-w-[170px]">
+                        CUMPLIMIENTO (D1 / DOTAC)
+                      </th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-800 bg-teal-950/40 text-teal-300 min-w-[150px]">
+                        SCORE PONDERADO
+                      </th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-800 text-slate-300 min-w-[110px]">
+                        BONO BASE
+                      </th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-800 bg-emerald-950/60 text-emerald-300 font-black min-w-[130px]">
+                        BONO NETO
+                      </th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-800 bg-slate-900/90 text-slate-300 min-w-[170px]">
+                        DISPERSIÓN (60% / 40%)
+                      </th>
+                      <th className="py-2.5 px-2 text-center text-slate-400 w-12">
+                        FICHA
+                      </th>
+                    </tr>
+                  ) : (
+                    <>
+                      {/* NIVEL 1: BLOQUES TEMÁTICOS CON ESTILO LIMPIO DARK-GLASS */}
+                      <tr className="text-[10px] font-black uppercase tracking-wider text-white select-none">
+                        <th colSpan={2} className="bg-slate-900/95 border-b border-r border-slate-800 py-1.5 px-2.5 text-slate-300 text-left">
+                          COLABORADOR
+                        </th>
+                        <th colSpan={2} className="bg-cyan-950/70 text-cyan-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                          CUMPLIMIENTO OPERATIVO
+                        </th>
+                        <th colSpan={3} className="bg-slate-900/90 text-slate-400 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                          PESOS OFICIALES (50/40/10)
+                        </th>
+                        <th colSpan={3} className="bg-indigo-950/70 text-indigo-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                          % ALCANCE TRAMOS
+                        </th>
+                        <th colSpan={4} className="bg-teal-950/70 text-teal-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                          PUNTOS PONDERADOS
+                        </th>
+                        <th colSpan={2} className="bg-amber-950/70 text-amber-300 text-center py-1.5 px-2 border-r border-slate-800 shadow-xs">
+                          LIQUIDACIÓN BRUTA / NETA
+                        </th>
+                        <th colSpan={2} className="bg-emerald-950/80 text-emerald-300 text-center py-1.5 px-2 shadow-xs">
+                          DISPERSIÓN (60% / 40%)
+                        </th>
+                      </tr>
 
-                  {/* NIVEL 2: ENCABEZADOS DE CADA COLUMNA */}
-                  <tr className="text-[9.5px] font-bold uppercase text-slate-400 bg-slate-900/95 border-b border-slate-800 select-none">
-                    <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-200">PERSONAL</th>
-                    <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-300">CARGO</th>
-                    
-                    {/* INDICADORES */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">CUMP D1</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">DOTAC</th>
-                    
-                    {/* PESOS */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">CAL</th>
-                    
-                    {/* % ALCANCE */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">CAL</th>
-                    
-                    {/* PUNTOS (%) */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">D1</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">DOT</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">CAL</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/40 text-teal-300 font-black">TOTAL</th>
-                    
-                    {/* RESULTADOS */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">BRUTO</th>
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/40 text-emerald-300 font-black">NETO</th>
-                    
-                    {/* SUBDIVIDIDO */}
-                    <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/20 text-emerald-400">EFECTIVO 60%</th>
-                    <th className="py-2 px-2 text-right bg-amber-950/20 text-amber-400">SODEXO 40%</th>
-                  </tr>
+                      {/* NIVEL 2: ENCABEZADOS DE CADA COLUMNA */}
+                      <tr className="text-[9.5px] font-bold uppercase text-slate-400 bg-slate-900/95 border-b border-slate-800 select-none">
+                        <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-200">PERSONAL</th>
+                        <th className="py-2 px-2.5 text-left border-r border-slate-800 text-slate-300">CARGO</th>
+                        
+                        {/* INDICADORES */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">CUMP D1</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-cyan-950/20 text-cyan-400">DOTAC</th>
+                        
+                        {/* PESOS */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">D1</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">DOT</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">CAL</th>
+                        
+                        {/* % ALCANCE */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">D1</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">DOT</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-indigo-950/20 text-indigo-400">CAL</th>
+                        
+                        {/* PUNTOS (%) */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">D1</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">DOT</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/20 text-teal-400">CAL</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-teal-950/40 text-teal-300 font-black">TOTAL</th>
+                        
+                        {/* RESULTADOS */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 text-slate-400">BRUTO</th>
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/40 text-emerald-300 font-black">NETO</th>
+                        
+                        {/* SUBDIVIDIDO */}
+                        <th className="py-2 px-2 text-right border-r border-slate-800 bg-emerald-950/20 text-emerald-400">EFECTIVO 60%</th>
+                        <th className="py-2 px-2 text-right bg-amber-950/20 text-amber-400">SODEXO 40%</th>
+                      </tr>
+                    </>
+                  )}
                 </thead>
 
                 {/* ── CUERPO DE DATOS CON FORMATOS Y SEMÁFOROS EXACTOS ── */}
                 <tbody className="divide-y divide-[var(--border-subtle)] text-[11px] font-sans bg-[var(--bg-surface)]">
                   {filasFiltradas.length === 0 ? (
                     <tr>
-                      <td colSpan={18} className="py-12 text-center text-xs text-[var(--text-muted)]">
+                      <td colSpan={tablaModo === 'ejecutiva' ? 8 : 18} className="py-12 text-center text-xs text-[var(--text-muted)]">
                         No se encontraron colaboradores para el periodo y filtros actuales.
                       </td>
                     </tr>
@@ -1267,234 +1332,455 @@ export default function MaquetaBonosReclutadores({
                           <tr
                             className="bg-[var(--bg-surface)] hover:bg-[var(--surface-hover)] transition-colors whitespace-nowrap group"
                           >
-                            {/* PERSONAL */}
-                            <td className="py-2 px-3 border-r border-b border-slate-800 bg-slate-900/30">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedRecruiterKey(isExpanded ? null : f.key)}
-                                    className="size-5 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400 flex items-center justify-center cursor-pointer transition-colors"
-                                    title="Desplegar grupos GPE"
-                                  >
-                                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                  </button>
-                                  
-                                  {/* Avatar iniciales */}
-                                  <div className="size-6 rounded-full bg-slate-800 border border-slate-700 text-cyan-400 flex items-center justify-center text-[10px] font-black shrink-0">
-                                    {(f.alias || f.nombre).slice(0, 2).toUpperCase()}
-                                  </div>
-
-                                  <div className="flex flex-col min-w-0">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span
-                                        onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
-                                        className="font-bold text-slate-100 hover:text-cyan-400 cursor-pointer transition-colors text-[11.5px] truncate max-w-[190px]"
-                                        title={f.nombre}
+                            {tablaModo === 'ejecutiva' ? (
+                              <>
+                                {/* 1. COLABORADOR */}
+                                <td className="py-3 px-3 border-r border-b border-slate-800 bg-slate-900/30">
+                                  <div className="flex items-center justify-between gap-2.5">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedRecruiterKey(isExpanded ? null : f.key)}
+                                        className="size-6 rounded-md hover:bg-slate-800 text-slate-400 hover:text-cyan-400 flex items-center justify-center cursor-pointer transition-colors shrink-0"
+                                        title="Desplegar trazabilidad de grupos GPE"
                                       >
-                                        {f.nombre}
-                                      </span>
-                                      
-                                      {/* Badge Estado */}
-                                      {f.estado === 'CESE' ? (
-                                        <span
-                                          className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-700/60 text-rose-300 text-[8.5px] font-black rounded tracking-wider inline-flex items-center gap-1 leading-tight shadow-xs"
-                                          title={f.fechaCese ? `Colaborador Cesado el ${f.fechaCese}` : 'Colaborador Cesado'}
-                                        >
-                                          <span className="size-1 rounded-full bg-rose-400" />
-                                          <span>CESE</span>
-                                          {f.fechaCese && <span className="opacity-90 font-mono text-[7.5px]">({f.fechaCese})</span>}
-                                        </span>
-                                      ) : (
-                                        <span className="px-1.5 py-0.5 bg-emerald-950/60 border border-emerald-700/50 text-emerald-300 text-[8px] font-bold rounded inline-flex items-center gap-1">
-                                          <span className="size-1 rounded-full bg-emerald-400 animate-pulse" />
-                                          <span>ACTIVO</span>
-                                        </span>
-                                      )}
+                                        {isExpanded ? <ChevronDown size={14} className="text-cyan-400" /> : <ChevronRight size={14} />}
+                                      </button>
 
-                                      {!f.enCatalogo && (
-                                        <span
-                                          className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[8px] font-bold rounded-xs"
-                                          title="Sin registro en catálogo"
-                                        >
-                                          S/CAT
-                                        </span>
-                                      )}
+                                      <div className="size-8 rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700/80 text-cyan-300 flex items-center justify-center text-[11px] font-black shrink-0 shadow-inner">
+                                        {(f.alias || f.nombre).slice(0, 2).toUpperCase()}
+                                      </div>
+
+                                      <div className="flex flex-col min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span
+                                            onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
+                                            className="font-bold text-slate-100 hover:text-cyan-400 cursor-pointer transition-colors text-xs truncate max-w-[210px]"
+                                            title={f.nombre}
+                                          >
+                                            {f.nombre}
+                                          </span>
+
+                                          {f.estado === 'CESE' ? (
+                                            <span
+                                              className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-700/60 text-rose-300 text-[8.5px] font-black rounded tracking-wider inline-flex items-center gap-1 shadow-xs"
+                                              title={f.fechaCese ? `Colaborador Cesado el ${f.fechaCese}` : 'Colaborador Cesado'}
+                                            >
+                                              <span className="size-1.5 rounded-full bg-rose-400" />
+                                              <span>CESE</span>
+                                              {f.fechaCese && <span className="opacity-90 font-mono text-[7.5px]">({f.fechaCese})</span>}
+                                            </span>
+                                          ) : (
+                                            <span className="px-1.5 py-0.5 bg-emerald-950/60 border border-emerald-700/50 text-emerald-300 text-[8.5px] font-bold rounded inline-flex items-center gap-1">
+                                              <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                              <span>ACTIVO</span>
+                                            </span>
+                                          )}
+
+                                          {!f.enCatalogo && (
+                                            <span
+                                              className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[8px] font-bold rounded"
+                                              title="Sin registro en catálogo maestro"
+                                            >
+                                              S/CAT
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                                          {f.documento && <span>DNI: {f.documento}</span>}
+                                          {f.alias && <span>· Alias: <span className="text-slate-300 font-semibold">{f.alias}</span></span>}
+                                        </div>
+                                      </div>
                                     </div>
-                                    <span className="text-[9.5px] text-slate-400 font-mono">
-                                      {f.documento ? `DNI: ${f.documento}` : ''} {f.alias ? `· Alias: ${f.alias}` : ''}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                      className="px-2 py-0.5 rounded-md bg-slate-800/90 hover:bg-cyan-500/20 text-[10px] font-mono font-semibold text-slate-300 hover:text-cyan-300 border border-slate-700 cursor-pointer shrink-0 transition-colors"
+                                      title="Ver trazabilidad de grupos GPE asignados"
+                                    >
+                                      {f.evaluadoSobreEquipo ? 'Eq' : `${f.gruposCount} GPE`}
+                                    </button>
+                                  </div>
+                                </td>
+
+                                {/* 2. CARGO */}
+                                <td className="py-3 px-2.5 border-r border-b border-slate-800 max-w-[170px] truncate" title={f.cargo}>
+                                  <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold tracking-wide border ${
+                                    f.cargo?.toLowerCase().includes('coordinador')
+                                      ? 'bg-purple-950/60 border-purple-700/50 text-purple-300'
+                                      : f.cargo?.toLowerCase().includes('supervisor')
+                                      ? 'bg-amber-950/60 border-amber-700/50 text-amber-300'
+                                      : f.cargo?.toLowerCase().includes('analista')
+                                      ? 'bg-cyan-950/60 border-cyan-700/50 text-cyan-300'
+                                      : 'bg-slate-800/80 border-slate-700/70 text-slate-300'
+                                  }`}>
+                                    {f.cargo}
+                                  </span>
+                                </td>
+
+                                {/* 3. CUMPLIMIENTO OPERATIVO (D1 / DOTAC) */}
+                                <td
+                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                  className="py-2.5 px-3 border-r border-b border-slate-800 cursor-pointer hover:bg-slate-800/40 transition-colors"
+                                  title="Clic para ver detalle de grupos GPE"
+                                >
+                                  <div className="flex flex-col gap-1.5 min-w-[150px]">
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="text-[10px] font-bold text-slate-400 uppercase">Día 1:</span>
+                                      <div className="flex items-center gap-1.5 font-mono">
+                                        <span className={`font-black ${
+                                          f.pctDia1Operativo >= 100 ? 'text-emerald-400' : f.pctDia1Operativo >= 75 ? 'text-amber-300' : 'text-rose-400'
+                                        }`}>
+                                          {Number(f.pctDia1Operativo || 0).toFixed(1)}%
+                                        </span>
+                                        <span className="text-[9.5px] text-slate-400">
+                                          ({Math.round(Number(f.dia1Real) || 0)}/{Math.round(Number(f.dia1Meta) || 0)})
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs border-t border-slate-800/60 pt-1">
+                                      <span className="text-[10px] font-bold text-slate-400 uppercase">Dotac:</span>
+                                      <div className="flex items-center gap-1.5 font-mono">
+                                        <span className={`font-black ${
+                                          f.pctDotacionOperativo >= 80 ? 'text-emerald-400' : f.pctDotacionOperativo >= 65 ? 'text-amber-300' : 'text-rose-400'
+                                        }`}>
+                                          {Number(f.pctDotacionOperativo || 0).toFixed(1)}%
+                                        </span>
+                                        <span className="text-[9.5px] text-slate-400">
+                                          ({Math.round(Number(f.dotacionReal) || 0)}/{Math.round(Number(f.rqReal) || 0)})
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* 4. SCORE PONDERADO */}
+                                <td className="py-2.5 px-3 text-center border-r border-b border-slate-800">
+                                  <div className="flex flex-col items-center justify-center gap-1 min-w-[130px]">
+                                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg font-mono font-black text-xs border shadow-xs ${
+                                      isMeta
+                                        ? 'bg-emerald-950/60 border-emerald-700/60 text-emerald-300'
+                                        : f.totalPuntosPct >= 65
+                                        ? 'bg-amber-950/60 border-amber-700/60 text-amber-300'
+                                        : 'bg-rose-950/60 border-rose-700/60 text-rose-300'
+                                    }`}>
+                                      {isMeta ? '▲' : '▼'} {Number(f.totalPuntosPct || 0).toFixed(1)}%
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 font-mono">
+                                      D1:{Number(f.puntosDia1 || 0).toFixed(0)}% · Dot:{Number(f.puntosDotacion || 0).toFixed(0)}% · Cal:10%
                                     </span>
                                   </div>
-                                </div>
+                                </td>
 
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
-                                  className="px-1.5 py-0.5 rounded bg-slate-800/90 hover:bg-cyan-500/20 text-[9px] font-mono text-slate-400 hover:text-cyan-300 border border-slate-700 cursor-pointer shrink-0"
-                                  title="Ver trazabilidad de grupos GPE y postulantes"
+                                {/* 5. BONO BASE */}
+                                <td className="py-2.5 px-3 text-right font-mono border-r border-b border-slate-800">
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-slate-300 font-bold text-xs">
+                                      S/ {Number(f.bonoBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    {f.factorCese < 1 ? (
+                                      <span className="text-[8.5px] text-rose-400 font-medium" title={`Factor proporcional por cese: ${f.diasTrabajadosPeriodo || 0} días`}>
+                                        Proporc. {(f.factorCese * 100).toFixed(0)}% ({f.diasTrabajadosPeriodo || 0}d)
+                                      </span>
+                                    ) : (
+                                      <span className="text-[8.5px] text-slate-400">Base 100%</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 6. BONO NETO */}
+                                <td className="py-2.5 px-3 text-right font-mono border-r border-b border-slate-800 bg-emerald-950/20">
+                                  {f.bonoNeto > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-black text-emerald-400 text-sm tracking-tight">
+                                        S/ {Number(f.bonoNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                      <span className="text-[8px] font-black text-emerald-300 bg-emerald-950/90 px-1.5 py-0.5 rounded border border-emerald-600/60 uppercase tracking-wider">
+                                        COMISIONA
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-semibold text-slate-500 text-xs">
+                                        S/ 0.00
+                                      </span>
+                                      <span className="text-[8px] font-medium text-slate-400">
+                                        Sin Valla
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* 7. DISPERSIÓN */}
+                                <td className="py-2.5 px-3 border-r border-b border-slate-800">
+                                  <div className="flex flex-col items-end gap-1 font-mono text-[11px] min-w-[140px]">
+                                    {f.bonoNeto > 0 ? (
+                                      <>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[9px] text-slate-400 font-sans font-medium">Efectivo 60%:</span>
+                                          <span className="text-emerald-300 font-bold">
+                                            S/ {Number(f.bonoEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[9px] text-slate-400 font-sans font-medium">Sodexo 40%:</span>
+                                          <span className="text-amber-300 font-bold">
+                                            S/ {Number(f.bonoSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </span>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <span className="text-slate-600 text-xs">-</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 8. FICHA */}
+                                <td className="py-2.5 px-2 text-center border-b border-slate-800">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
+                                    className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 border border-slate-700/80 cursor-pointer transition-all hover:border-cyan-500/40 shadow-xs"
+                                    title="Abrir Boleta y Ficha 360°"
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                {/* PERSONAL */}
+                                <td className="py-2 px-3 border-r border-b border-slate-800 bg-slate-900/30">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedRecruiterKey(isExpanded ? null : f.key)}
+                                        className="size-5 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-400 flex items-center justify-center cursor-pointer transition-colors"
+                                        title="Desplegar grupos GPE"
+                                      >
+                                        {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                      </button>
+                                      
+                                      {/* Avatar iniciales */}
+                                      <div className="size-6 rounded-full bg-slate-800 border border-slate-700 text-cyan-400 flex items-center justify-center text-[10px] font-black shrink-0">
+                                        {(f.alias || f.nombre).slice(0, 2).toUpperCase()}
+                                      </div>
+
+                                      <div className="flex flex-col min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span
+                                            onClick={() => handleOpenBoletaTrazabilidad(f, 'resumen')}
+                                            className="font-bold text-slate-100 hover:text-cyan-400 cursor-pointer transition-colors text-[11.5px] truncate max-w-[190px]"
+                                            title={f.nombre}
+                                          >
+                                            {f.nombre}
+                                          </span>
+                                          
+                                          {/* Badge Estado */}
+                                          {f.estado === 'CESE' ? (
+                                            <span
+                                              className="px-1.5 py-0.5 bg-rose-950/80 border border-rose-700/60 text-rose-300 text-[8.5px] font-black rounded tracking-wider inline-flex items-center gap-1 leading-tight shadow-xs"
+                                              title={f.fechaCese ? `Colaborador Cesado el ${f.fechaCese}` : 'Colaborador Cesado'}
+                                            >
+                                              <span className="size-1 rounded-full bg-rose-400" />
+                                              <span>CESE</span>
+                                              {f.fechaCese && <span className="opacity-90 font-mono text-[7.5px]">({f.fechaCese})</span>}
+                                            </span>
+                                          ) : (
+                                            <span className="px-1.5 py-0.5 bg-emerald-950/60 border border-emerald-700/50 text-emerald-300 text-[8px] font-bold rounded inline-flex items-center gap-1">
+                                              <span className="size-1 rounded-full bg-emerald-400 animate-pulse" />
+                                              <span>ACTIVO</span>
+                                            </span>
+                                          )}
+
+                                          {!f.enCatalogo && (
+                                            <span
+                                              className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[8px] font-bold rounded-xs"
+                                              title="Sin registro en catálogo"
+                                            >
+                                              S/CAT
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="text-[9.5px] text-slate-400 font-mono">
+                                          {f.documento ? `DNI: ${f.documento}` : ''} {f.alias ? `· Alias: ${f.alias}` : ''}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                      className="px-1.5 py-0.5 rounded bg-slate-800/90 hover:bg-cyan-500/20 text-[9px] font-mono text-slate-400 hover:text-cyan-300 border border-slate-700 cursor-pointer shrink-0"
+                                      title="Ver trazabilidad de grupos GPE y postulantes"
+                                    >
+                                      {f.evaluadoSobreEquipo ? 'Eq' : `${f.gruposCount}G`}
+                                    </button>
+                                  </div>
+                                </td>
+
+                                {/* CARGO */}
+                                <td
+                                  className="py-2 px-2.5 text-[10px] uppercase font-medium border-r border-b border-slate-800 max-w-[180px] truncate"
+                                  title={f.cargo}
                                 >
-                                  {f.evaluadoSobreEquipo ? 'Eq' : `${f.gruposCount}G`}
-                                </button>
-                              </div>
-                            </td>
-
-                            {/* CARGO */}
-                            <td
-                              className="py-2 px-2.5 text-[10px] uppercase font-medium border-r border-b border-slate-800 max-w-[180px] truncate"
-                              title={f.cargo}
-                            >
-                              <span className="px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700/70 text-slate-300 font-semibold tracking-wide">
-                                {f.cargo}
-                              </span>
-                            </td>
-
-                            {/* INDICADORES: CUMP D1 */}
-                            <td
-                              onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
-                              title={`Día 1: ${f.dia1Real} asistieron / ${f.dia1Meta} meta (${f.evaluadoSobreEquipo ? 'Media Equipo' : `${f.gruposCount} grupos`}) — Clic para ver grupos`}
-                              className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
-                                d1High
-                                  ? 'text-emerald-400 font-bold'
-                                  : d1Low
-                                  ? 'text-rose-400 font-bold'
-                                  : 'text-[var(--text-primary)] font-medium'
-                              }`}
-                            >
-                              {Number(f.pctDia1Operativo || 0).toFixed(2)}%
-                              <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
-                                ({Math.round(Number(f.dia1Real) || 0)}/{Math.round(Number(f.dia1Meta) || 0)})
-                              </span>
-                            </td>
-
-                            {/* INDICADORES: DOTAC */}
-                            <td
-                              onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
-                              title={`Dotación grupal (I-OP / RQ del grupo). Si hay 2 encargados, ambos heredan el resultado del grupo. ${f.dotacionReal} / ${f.rqReal} — Clic para ver grupos`}
-                              className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
-                                dotHigh
-                                  ? 'text-emerald-400 font-bold'
-                                  : dotLow
-                                  ? 'text-rose-400 font-bold'
-                                  : 'text-[var(--text-primary)] font-medium'
-                              }`}
-                            >
-                              {Number(f.pctDotacionOperativo || 0).toFixed(2)}%
-                              <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
-                                ({Math.round(Number(f.dotacionReal) || 0)}/{Math.round(Number(f.rqReal) || 0)})
-                              </span>
-                            </td>
-
-                            {/* PESOS: D1 */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.pesoDia1 || 50).toFixed(2)}%
-                            </td>
-
-                            {/* PESOS: DOT */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.pesoDotacion || 40).toFixed(2)}%
-                            </td>
-
-                            {/* PESOS: CAL */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.pesoCalidad + (f.pesoProcesosAdm || 0)).toFixed(2)}%
-                            </td>
-
-                            {/* % ALCANCE: D1 */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.alcanceDia1 || 0).toFixed(2)}%
-                            </td>
-
-                            {/* % ALCANCE: DOT */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.alcanceDotacion || 0).toFixed(2)}%
-                            </td>
-
-                            {/* % ALCANCE: CAL */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.alcanceCalidad || 100).toFixed(2)}%
-                            </td>
-
-                            {/* PUNTOS (%): D1 */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.puntosDia1 || 0).toFixed(2)}%
-                            </td>
-
-                            {/* PUNTOS (%): DOT */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.puntosDotacion || 0).toFixed(2)}%
-                            </td>
-
-                            {/* PUNTOS (%): CAL */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number((f.puntosCalidad || 0) + (f.puntosProcesosAdm || 0)).toFixed(2)}%
-                            </td>
-
-                            {/* PUNTOS (%): TOTAL */}
-                            <td
-                              className={`py-1.5 px-2 text-right font-mono font-bold border-r border-b border-[var(--border-subtle)] ${
-                                isMeta
-                                  ? 'text-emerald-400'
-                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
-                              }`}
-                            >
-                              {isMeta ? `▲ ${Number(f.totalPuntosPct || 0).toFixed(2)}%` : `▼ ${Number(f.totalPuntosPct || 0).toFixed(2)}%`}
-                            </td>
-
-                            {/* RESULTADOS: BRUTO */}
-                            <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
-                              {Number(f.bonoBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-
-                            {/* RESULTADOS: NETO */}
-                            <td className="py-2 px-2.5 text-right font-mono border-r border-b border-slate-800 bg-emerald-950/20">
-                              {f.bonoNeto > 0 ? (
-                                <div className="flex flex-col items-end">
-                                  <span className="font-black text-emerald-400 text-xs">
-                                    S/ {Number(f.bonoNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700/70 text-slate-300 font-semibold tracking-wide">
+                                    {f.cargo}
                                   </span>
-                                  <span className="text-[8px] font-bold text-emerald-300 bg-emerald-950/80 px-1 rounded border border-emerald-700/50">
-                                    COMISIONA
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="flex flex-col items-end">
-                                  <span className="font-medium text-slate-500 text-xs">
-                                    S/ 0.00
-                                  </span>
-                                  <span className="text-[8px] font-medium text-slate-400">
-                                    Sin Valla
-                                  </span>
-                                </div>
-                              )}
-                            </td>
+                                </td>
 
-                            {/* SUBDIVIDIDO: EFECTIVO 60 */}
-                            <td className="py-2 px-2 text-right font-mono font-bold border-r border-b border-slate-800">
-                              {f.bonoEfectivo > 0 ? (
-                                <span className="text-emerald-300">
-                                  S/ {Number(f.bonoEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </span>
-                              ) : (
-                                <span className="text-slate-600">-</span>
-                              )}
-                            </td>
+                                {/* INDICADORES: CUMP D1 */}
+                                <td
+                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                  title={`Día 1: ${f.dia1Real} asistieron / ${f.dia1Meta} meta (${f.evaluadoSobreEquipo ? 'Media Equipo' : `${f.gruposCount} grupos`}) — Clic para ver grupos`}
+                                  className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
+                                    d1High
+                                      ? 'text-emerald-400 font-bold'
+                                      : d1Low
+                                      ? 'text-rose-400 font-bold'
+                                      : 'text-[var(--text-primary)] font-medium'
+                                  }`}
+                                >
+                                  {Number(f.pctDia1Operativo || 0).toFixed(2)}%
+                                  <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
+                                    ({Math.round(Number(f.dia1Real) || 0)}/{Math.round(Number(f.dia1Meta) || 0)})
+                                  </span>
+                                </td>
 
-                            {/* SUBDIVIDIDO: SODEXO 40 */}
-                            <td className="py-2 px-2 text-right font-mono font-bold border-b border-slate-800">
-                              {f.bonoSodexo > 0 ? (
-                                <span className="text-amber-300">
-                                  S/ {Number(f.bonoSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </span>
-                              ) : (
-                                <span className="text-slate-600">-</span>
-                              )}
-                            </td>
+                                {/* INDICADORES: DOTAC */}
+                                <td
+                                  onClick={() => handleOpenBoletaTrazabilidad(f, 'grupos')}
+                                  title={`Dotación grupal (I-OP / RQ del grupo). Si hay 2 encargados, ambos heredan el resultado del grupo. ${f.dotacionReal} / ${f.rqReal} — Clic para ver grupos`}
+                                  className={`py-1.5 px-2 text-right font-mono border-r border-b border-[var(--border-subtle)] cursor-pointer hover:underline ${
+                                    dotHigh
+                                      ? 'text-emerald-400 font-bold'
+                                      : dotLow
+                                      ? 'text-rose-400 font-bold'
+                                      : 'text-[var(--text-primary)] font-medium'
+                                  }`}
+                                >
+                                  {Number(f.pctDotacionOperativo || 0).toFixed(2)}%
+                                  <span className="text-[9px] text-[var(--text-muted)] ml-1 font-normal">
+                                    ({Math.round(Number(f.dotacionReal) || 0)}/{Math.round(Number(f.rqReal) || 0)})
+                                  </span>
+                                </td>
+
+                                {/* PESOS: D1 */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.pesoDia1 || 50).toFixed(2)}%
+                                </td>
+
+                                {/* PESOS: DOT */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.pesoDotacion || 40).toFixed(2)}%
+                                </td>
+
+                                {/* PESOS: CAL */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-muted)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.pesoCalidad + (f.pesoProcesosAdm || 0)).toFixed(2)}%
+                                </td>
+
+                                {/* % ALCANCE: D1 */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.alcanceDia1 || 0).toFixed(2)}%
+                                </td>
+
+                                {/* % ALCANCE: DOT */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.alcanceDotacion || 0).toFixed(2)}%
+                                </td>
+
+                                {/* % ALCANCE: CAL */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.alcanceCalidad || 100).toFixed(2)}%
+                                </td>
+
+                                {/* PUNTOS (%): D1 */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.puntosDia1 || 0).toFixed(2)}%
+                                </td>
+
+                                {/* PUNTOS (%): DOT */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.puntosDotacion || 0).toFixed(2)}%
+                                </td>
+
+                                {/* PUNTOS (%): CAL */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-primary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number((f.puntosCalidad || 0) + (f.puntosProcesosAdm || 0)).toFixed(2)}%
+                                </td>
+
+                                {/* PUNTOS (%): TOTAL */}
+                                <td
+                                  className={`py-1.5 px-2 text-right font-mono font-bold border-r border-b border-[var(--border-subtle)] ${
+                                    isMeta
+                                      ? 'text-emerald-400'
+                                      : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                                  }`}
+                                >
+                                  {isMeta ? `▲ ${Number(f.totalPuntosPct || 0).toFixed(2)}%` : `▼ ${Number(f.totalPuntosPct || 0).toFixed(2)}%`}
+                                </td>
+
+                                {/* RESULTADOS: BRUTO */}
+                                <td className="py-1.5 px-2 text-right font-mono text-[var(--text-secondary)] border-r border-b border-[var(--border-subtle)]">
+                                  {Number(f.bonoBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+
+                                {/* RESULTADOS: NETO */}
+                                <td className="py-2 px-2.5 text-right font-mono border-r border-b border-slate-800 bg-emerald-950/20">
+                                  {f.bonoNeto > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-black text-emerald-400 text-xs">
+                                        S/ {Number(f.bonoNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                      <span className="text-[8px] font-bold text-emerald-300 bg-emerald-950/80 px-1 rounded border border-emerald-700/50">
+                                        COMISIONA
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-end">
+                                      <span className="font-medium text-slate-500 text-xs">
+                                        S/ 0.00
+                                      </span>
+                                      <span className="text-[8px] font-medium text-slate-400">
+                                        Sin Valla
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* SUBDIVIDIDO: EFECTIVO 60 */}
+                                <td className="py-2 px-2 text-right font-mono font-bold border-r border-b border-slate-800">
+                                  {f.bonoEfectivo > 0 ? (
+                                    <span className="text-emerald-300">
+                                      S/ {Number(f.bonoEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600">-</span>
+                                  )}
+                                </td>
+
+                                {/* SUBDIVIDIDO: SODEXO 40 */}
+                                <td className="py-2 px-2 text-right font-mono font-bold border-b border-slate-800">
+                                  {f.bonoSodexo > 0 ? (
+                                    <span className="text-amber-300">
+                                      S/ {Number(f.bonoSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600">-</span>
+                                  )}
+                                </td>
+                              </>
+                            )}
                           </tr>
 
                           {/* SUB-FILA DESPLEGABLE DE TRAZABILIDAD POR GRUPOS (NIVEL 2 -> NIVEL 3) */}
                           {isExpanded && (
                             <tr className="bg-[var(--bg-elevated)]/90 border-b border-[var(--border-normal)]">
-                              <td colSpan={18} className="p-3">
+                              <td colSpan={tablaModo === 'ejecutiva' ? 8 : 18} className="p-3">
                                 <div className="rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] p-3 space-y-2.5">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1603,58 +1889,95 @@ export default function MaquetaBonosReclutadores({
 
                 {/* ── FILA FINAL DE TOTALES (SUMA Y PROMEDIOS EXACTOS) ── */}
                 <tfoot className="sticky bottom-0 bg-[var(--bg-elevated)] border-t-2 border-[var(--border-normal)] font-mono text-[11px] font-bold z-10 whitespace-nowrap shadow-md">
-                  <tr className="border-b border-[var(--border-subtle)]">
-                    <td
-                      colSpan={2}
-                      className="py-2.5 px-2.5 text-left font-sans font-black uppercase text-[11px] text-[var(--accent)] border-r border-[var(--border-subtle)]"
-                    >
-                      TOTAL ({filasFiltradas.length})
-                    </td>
-                    
-                    {/* Media Cump D1 */}
-                    <td className="py-2.5 px-2 text-right text-purple-300 border-r border-[var(--border-subtle)] font-black">
-                      {Number(totalesTabla.mediaDia1 || 0).toFixed(2)}%
-                    </td>
+                  {tablaModo === 'ejecutiva' ? (
+                    <tr className="border-b border-[var(--border-subtle)]">
+                      <td
+                        colSpan={2}
+                        className="py-3 px-3 text-left font-sans font-black uppercase text-xs text-[var(--accent)] border-r border-[var(--border-subtle)]"
+                      >
+                        TOTAL ({filasFiltradas.length} colaboradores)
+                      </td>
+                      <td className="py-3 px-3 text-center border-r border-[var(--border-subtle)] font-mono text-[11px]">
+                        <div className="flex flex-col gap-0.5 items-center">
+                          <span className="text-purple-300 font-bold">D1: {Number(totalesTabla.mediaDia1 || 0).toFixed(1)}%</span>
+                          <span className="text-blue-300 font-bold">Dot: {Number(totalesTabla.mediaDotacion || 0).toFixed(1)}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-center text-[var(--text-primary)] font-mono font-black text-xs border-r border-[var(--border-subtle)]">
+                        {Number(totalesTabla.mediaPuntos || 0).toFixed(1)}%
+                      </td>
+                      <td className="py-3 px-3 text-right text-[var(--text-secondary)] font-mono font-black text-xs border-r border-[var(--border-subtle)]">
+                        S/ {Number(totalesTabla.sumBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3 text-right text-emerald-400 font-mono font-black text-sm border-r border-[var(--border-subtle)] bg-emerald-950/30">
+                        S/ {Number(totalesTabla.sumNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono border-r border-[var(--border-subtle)] text-[11px]">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-cyan-300 font-bold">
+                            Ef: S/ {Number(totalesTabla.sumEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-amber-300 font-bold">
+                            Sod: S/ {Number(totalesTabla.sumSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 text-center" />
+                    </tr>
+                  ) : (
+                    <tr className="border-b border-[var(--border-subtle)]">
+                      <td
+                        colSpan={2}
+                        className="py-2.5 px-2.5 text-left font-sans font-black uppercase text-[11px] text-[var(--accent)] border-r border-[var(--border-subtle)]"
+                      >
+                        TOTAL ({filasFiltradas.length})
+                      </td>
+                      
+                      {/* Media Cump D1 */}
+                      <td className="py-2.5 px-2 text-right text-purple-300 border-r border-[var(--border-subtle)] font-black">
+                        {Number(totalesTabla.mediaDia1 || 0).toFixed(2)}%
+                      </td>
 
-                    {/* Media Dotac */}
-                    <td className="py-2.5 px-2 text-right text-blue-300 border-r border-[var(--border-subtle)] font-black">
-                      {Number(totalesTabla.mediaDotacion || 0).toFixed(2)}%
-                    </td>
+                      {/* Media Dotac */}
+                      <td className="py-2.5 px-2 text-right text-blue-300 border-r border-[var(--border-subtle)] font-black">
+                        {Number(totalesTabla.mediaDotacion || 0).toFixed(2)}%
+                      </td>
 
-                    {/* Pesos vacíos */}
-                    <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
+                      {/* Pesos vacíos */}
+                      <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
 
-                    {/* % Alcance vacíos */}
-                    <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
+                      {/* % Alcance vacíos */}
+                      <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
 
-                    {/* Puntos D1, DOT, CAL vacíos */}
-                    <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
+                      {/* Puntos D1, DOT, CAL vacíos */}
+                      <td colSpan={3} className="py-2.5 px-2 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]/50" />
 
-                    {/* Media Total Puntos */}
-                    <td className="py-2.5 px-2 text-right text-[var(--text-primary)] font-black border-r border-[var(--border-subtle)]">
-                      {Number(totalesTabla.mediaPuntos || 0).toFixed(2)}%
-                    </td>
+                      {/* Media Total Puntos */}
+                      <td className="py-2.5 px-2 text-right text-[var(--text-primary)] font-black border-r border-[var(--border-subtle)]">
+                        {Number(totalesTabla.mediaPuntos || 0).toFixed(2)}%
+                      </td>
 
-                    {/* Suma Bruto */}
-                    <td className="py-2.5 px-2 text-right text-[var(--text-secondary)] font-black border-r border-[var(--border-subtle)]">
-                      {Number(totalesTabla.sumBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
+                      {/* Suma Bruto */}
+                      <td className="py-2.5 px-2 text-right text-[var(--text-secondary)] font-black border-r border-[var(--border-subtle)]">
+                        {Number(totalesTabla.sumBruto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
 
-                    {/* Suma Neto */}
-                    <td className="py-2.5 px-2 text-right text-emerald-400 font-black border-r border-[var(--border-subtle)]">
-                      {Number(totalesTabla.sumNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
+                      {/* Suma Neto */}
+                      <td className="py-2.5 px-2 text-right text-emerald-400 font-black border-r border-[var(--border-subtle)]">
+                        {Number(totalesTabla.sumNeto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
 
-                    {/* Suma Efectivo */}
-                    <td className="py-2.5 px-2 text-right text-cyan-300 font-black border-r border-[var(--border-subtle)]">
-                      {Number(totalesTabla.sumEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
+                      {/* Suma Efectivo */}
+                      <td className="py-2.5 px-2 text-right text-cyan-300 font-black border-r border-[var(--border-subtle)]">
+                        {Number(totalesTabla.sumEfectivo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
 
-                    {/* Suma Sodexo */}
-                    <td className="py-2.5 px-2 text-right text-amber-300 font-black">
-                      {Number(totalesTabla.sumSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                  </tr>
+                      {/* Suma Sodexo */}
+                      <td className="py-2.5 px-2 text-right text-amber-300 font-black">
+                        {Number(totalesTabla.sumSodexo || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>
