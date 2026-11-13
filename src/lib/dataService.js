@@ -8217,7 +8217,7 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026077|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 22, desCt: 4, desOjt: 5, iop: 13, iopFtes: 6.5, ultimaFecha: '17/10/2026' },
   'GPE-2026020|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 18, desCt: 6, desOjt: 1, iop: 8, iopFtes: 8, ultimaFecha: '23/10/2026' },
   'GPE-2026021|RETENCIONES FIJA INBOUND|202610': { rq: 10, rqFtes: 10, d1: 22, desCt: 8, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '23/10/2026' },
-  'GPE-2026078|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 8, desCt: 4, desOjt: 0, iop: 3, iopFtes: 3, ultimaFecha: '24/10/2026' },
+  'GPE-2026078|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 8, desCt: 4, desOjt: 0, iop: 4, iopFtes: 4, ultimaFecha: '24/10/2026' },
   'GPE-2026079|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 12, d1: 29, desCt: 9, desOjt: 1, iop: 19, iopFtes: 19, ultimaFecha: '24/10/2026' },
   'GPE-2026080|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 36, desCt: 7, desOjt: 13, iop: 16, iopFtes: 8, ultimaFecha: '24/10/2026' },
   'GPE-2026081|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 10, desCt: 3, desOjt: 3, iop: 3, iopFtes: 3, ultimaFecha: '30/10/2026' },
