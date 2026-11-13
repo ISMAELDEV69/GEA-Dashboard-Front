@@ -443,8 +443,7 @@ export const resolveActivosActuales = (d) => {
     return Number(d.activos_actuales);
   }
   const ojt = Number(d.activos_ojt) || 0;
-  const st = String(d.estado || '').toUpperCase();
-  const isCerrado = d.is_cerrado || st === 'CERRADO' || st === 'FINALIZADO' || st === 'CULMINADO';
+  const isCerrado = (typeof isGrupoCerrado === 'function' ? isGrupoCerrado(d) : false) || d.is_cerrado || String(d.estado || '').toUpperCase() === 'CERRADO' || String(d.estado || '').toUpperCase() === 'FINALIZADO';
   if (isCerrado) {
     return ojt;
   }

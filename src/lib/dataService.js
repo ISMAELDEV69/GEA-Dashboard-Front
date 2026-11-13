@@ -8334,7 +8334,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
 
       // Activos al corte (en proceso de formación o en OJT sin pase formal I-OP y sin baja)
       let actActuales = 0;
-      const isCerrado = isGrupoCerrado || String(r.estado || '').toUpperCase() === 'CERRADO' || String(r.estado || '').toUpperCase() === 'FINALIZADO';
+      const isCerrado = (typeof isGrupoCerrado === 'function' ? isGrupoCerrado(r) : false) || String(r.estado || '').toUpperCase() === 'CERRADO' || String(r.estado || '').toUpperCase() === 'FINALIZADO';
       if (calib && typeof calib.activosActuales === 'number') {
         actActuales = calib.activosActuales;
       } else if (calib && typeof calib.actOjt === 'number' && calib.actOjt > 0) {
