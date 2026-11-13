@@ -212,7 +212,8 @@ export function fmtPct(num) {
  * @param {Object} options - Opciones de cálculo (useTope: boolean, etc.)
  */
 export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], manualOverrides = {}, options = {}) {
-  const { useTope = false, modelo = 'sheets_oficial' } = options
+  const { useTope = false, modelo = 'sheets_oficial', periodo = '' } = options
+  const isSheetsOficial = modelo !== 'diferenciado'
 
   // Normalizador de nombres para cruces exactos
   const norm = (s) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ')
@@ -369,13 +370,24 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     sumaEquipoRq += g.rq
   }
 
-  const mediaEquipoPctDia1 = sumaEquipoDia1Meta > 0
-    ? round2((sumaEquipoDia1 / sumaEquipoDia1Meta) * 100)
-    : 0
+  // Lista de operativos para promedios oficiales tipo Excel (celdas D2 y E2 de BONOS_OPERACION)
+  const opList = Array.from(operacionMap.values())
+  const sumPctD1 = opList.reduce((acc, op) => {
+    const pct = op.dia1Meta > 0 ? (op.dia1 / op.dia1Meta) * 100 : 0
+    return acc + pct
+  }, 0)
+  const sumPctDot = opList.reduce((acc, op) => {
+    const pct = op.rq > 0 ? (op.dotacion / op.rq) * 100 : 0
+    return acc + pct
+  }, 0)
 
-  const mediaEquipoPctDotacion = sumaEquipoRq > 0
-    ? round2((sumaEquipoDotacion / sumaEquipoRq) * 100)
-    : 0
+  const mediaEquipoPctDia1 = isSheetsOficial
+    ? (opList.length > 0 ? round2(sumPctD1 / opList.length) : 0)
+    : (sumaEquipoDia1Meta > 0 ? round2((sumaEquipoDia1 / sumaEquipoDia1Meta) * 100) : 0)
+
+  const mediaEquipoPctDotacion = isSheetsOficial
+    ? (opList.length > 0 ? round2(sumPctDot / opList.length) : 0)
+    : (sumaEquipoRq > 0 ? round2((sumaEquipoDotacion / sumaEquipoRq) * 100) : 0)
 
   const alcanceMediaEquipoDia1 = getAlcanceDia1(mediaEquipoPctDia1)
   const alcanceMediaEquipoDotacion = getAlcanceDotacion(mediaEquipoPctDotacion)
@@ -498,8 +510,6 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const configCargo = MATRIZ_CARGOS[cargoClave] || MATRIZ_CARGOS.ASISTENTE
     const esLider = configCargo.esLiderazgo
 
-    const isSheetsOficial = modelo !== 'diferenciado'
-
     // Metas y cumplimiento operativo del reclutador
     let pctDia1Operativo = op.dia1Meta > 0 ? round2((op.dia1 / op.dia1Meta) * 100) : 0
     let pctDotacionOperativo = op.rq > 0 ? round2((op.dotacion / op.rq) * 100) : 0
@@ -510,14 +520,15 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const pctDotacionParaMaqueta = evaluadoSobreEquipo ? mediaEquipoPctDotacion : pctDotacionOperativo
 
     // Pesos según modelo
-    const pesoDia1 = isSheetsOficial ? 50.00 : configCargo.pesoDia1
-    const pesoDotacion = isSheetsOficial ? 40.00 : configCargo.pesoDotacion
-    const pesoCalidad = isSheetsOficial ? 10.00 : configCargo.pesoCalidad
+    const isSupervisor = cargoClave === 'SUPERVISOR' || String(master?.cargo || '').toUpperCase().includes('SUPERVISOR')
+    const pesoDia1 = isSupervisor ? 100.00 : (isSheetsOficial ? 50.00 : configCargo.pesoDia1)
+    const pesoDotacion = isSupervisor ? 0.00 : (isSheetsOficial ? 40.00 : configCargo.pesoDotacion)
+    const pesoCalidad = isSupervisor ? 0.00 : (isSheetsOficial ? 10.00 : configCargo.pesoCalidad)
     const pesoProcesosAdm = isSheetsOficial ? 0.00 : configCargo.pesoProcesosAdm
 
     // Búsqueda en Maqueta (% Alcance)
-    const escalaCargoD1 = isSheetsOficial ? 'ASISTENTE' : cargoClave
-    const escalaCargoDot = isSheetsOficial ? 'ASISTENTE' : cargoClave
+    const escalaCargoD1 = isSupervisor ? 'SUPERVISOR' : (isSheetsOficial ? 'ASISTENTE' : cargoClave)
+    const escalaCargoDot = isSupervisor ? 'SUPERVISOR' : (isSheetsOficial ? 'ASISTENTE' : cargoClave)
 
     const objAlcanceD1 = getAlcanceDia1(pctDia1ParaMaqueta, escalaCargoD1)
     const objAlcanceDot = getAlcanceDotacion(pctDotacionParaMaqueta, escalaCargoDot)
@@ -557,14 +568,38 @@ export function calcularMaquetaBonosReclutadores(kpiRows = [], equipoList = [], 
     const pctEfectivo = master?.pctEfectivo !== undefined ? master.pctEfectivo : (isSheetsOficial ? 60 : configCargo.pctEfectivoDefault)
     const pctSodexo = master?.pctSodexo !== undefined ? master.pctSodexo : (isSheetsOficial ? 40 : configCargo.pctSodexoDefault)
 
-    // Factor de Proporcionalidad por Cese (Regla Oficial: días trabajados / 30 si cesó en el mes)
+    // Factor de Proporcionalidad por Cese (Regla Oficial: días trabajados / 30 si cesó dentro del periodo evaluado)
     let factorCese = 1.0
+    let diasTrabajadosPeriodo = 30
     if (master?.fechaCese) {
       try {
         const dCese = new Date(master.fechaCese)
         if (!isNaN(dCese.getTime())) {
-          const dayCese = dCese.getDate()
-          factorCese = Math.min(1.0, Math.max(0, dayCese / 30))
+          const yCese = dCese.getUTCFullYear()
+          const mCese = dCese.getUTCMonth() + 1
+          const pStr = String(periodo || options.periodo || kpiRows[0]?.periodo_efectivo || kpiRows[0]?.periodo || '').replace(/\D/g, '')
+          const yPer = pStr.length >= 6 ? parseInt(pStr.slice(0, 4), 10) : null
+          const mPer = pStr.length >= 6 ? parseInt(pStr.slice(4, 6), 10) : null
+
+          if (yPer && mPer) {
+            if (yCese === yPer && mCese === mPer) {
+              const dayCese = dCese.getUTCDate()
+              diasTrabajadosPeriodo = Math.min(30, Math.max(0, dayCese))
+              factorCese = round2(Math.min(1.0, Math.max(0, dayCese / 30)))
+            } else if (yCese < yPer || (yCese === yPer && mCese < mPer)) {
+              // Cesó antes del periodo evaluado
+              diasTrabajadosPeriodo = 0
+              factorCese = 0.0
+            } else {
+              // Cesó en un mes futuro respecto al periodo evaluado: laboró el mes completo
+              diasTrabajadosPeriodo = 30
+              factorCese = 1.0
+            }
+          } else {
+            const dayCese = dCese.getUTCDate()
+            diasTrabajadosPeriodo = Math.min(30, Math.max(0, dayCese))
+            factorCese = round2(Math.min(1.0, Math.max(0, dayCese / 30)))
+          }
         }
       } catch {}
     }

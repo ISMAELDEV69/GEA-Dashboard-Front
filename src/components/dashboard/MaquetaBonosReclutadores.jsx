@@ -297,9 +297,10 @@ export default function MaquetaBonosReclutadores({
   const { filas, resumen, mediaEquipo } = useMemo(() => {
     return calcularMaquetaBonosReclutadores(effectiveKpiRows, equipoList, manualAuditOverrides, {
       useTope,
-      modelo: modeloMaqueta
+      modelo: modeloMaqueta,
+      periodo: periodoSeleccionado
     })
-  }, [effectiveKpiRows, equipoList, manualAuditOverrides, useTope, modeloMaqueta])
+  }, [effectiveKpiRows, equipoList, manualAuditOverrides, useTope, modeloMaqueta, periodoSeleccionado])
 
   // Identificar usuario actual si es reclutador bloqueado
   const selfKey = useMemo(() => {
