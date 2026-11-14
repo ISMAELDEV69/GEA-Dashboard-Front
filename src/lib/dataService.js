@@ -8219,7 +8219,7 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026021|RETENCIONES FIJA INBOUND|202610': { rq: 10, rqFtes: 10, d1: 22, desCt: 8, desOjt: 0, iop: 0, iopFtes: 0, ultimaFecha: '23/10/2026' },
   'GPE-2026078|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 8, desCt: 4, desOjt: 0, iop: 4, iopFtes: 4, ultimaFecha: '24/10/2026' },
   'GPE-2026079|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 12, d1: 29, desCt: 9, desOjt: 1, iop: 19, iopFtes: 19, ultimaFecha: '24/10/2026' },
-  'GPE-2026080|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 36, desCt: 7, desOjt: 13, iop: 16, iopFtes: 8, ultimaFecha: '24/10/2026' },
+  'GPE-2026080|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 38, desCt: 7, desOjt: 13, iop: 18, iopFtes: 9.0, ultimaFecha: '24/10/2026' },
   'GPE-2026081|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 10, desCt: 3, desOjt: 3, iop: 3, iopFtes: 3, ultimaFecha: '30/10/2026' },
   'GPE-2026082|CLARO POSTPAGO|202610': { rq: 8, rqFtes: 4, d1: 12, desCt: 3, desOjt: 2, iop: 7, iopFtes: 3.5, ultimaFecha: '30/10/2026' },
   'GPE-2026022|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 6, desCt: 3, desOjt: 1, iop: 2, iopFtes: 2, ultimaFecha: '30/10/2026' },
@@ -8265,15 +8265,22 @@ export async function fetchDynamicIopFtesMap() {
   if (DB_MODE !== 'supabase') return new Map();
   return withCache('dynamic_iop_ftes_map', 60000, async () => {
     try {
-      const [{ data: asis }, { data: noms }] = await Promise.all([
+      const [{ data: asis }, { data: noms }, { data: caps }] = await Promise.all([
         supabase.from('consolidado_asistencias').select('documento, codigo_grupo, grupo, condicion_laboral').eq('sigla', 'I-OP'),
-        supabase.from('nominas').select('documento, condicion')
+        supabase.from('nominas').select('documento, condicion'),
+        supabase.from('capacidad_rys').select('codigo, condicion, modalidad')
       ]);
 
       const nomCondMap = new Map();
       (noms || []).forEach(n => {
         const doc = String(n.documento || '').trim();
         if (doc) nomCondMap.set(doc, String(n.condicion || '').toUpperCase());
+      });
+
+      const capCondMap = new Map();
+      (caps || []).forEach(c => {
+        const code = String(c.codigo || '').trim().toUpperCase();
+        if (code) capCondMap.set(code, String(c.condicion || c.modalidad || '').toUpperCase());
       });
 
       const groupMap = new Map();
@@ -8290,7 +8297,10 @@ export async function fetchDynamicIopFtesMap() {
 
         const asisCond = String(a.condicion_laboral || '').toUpperCase();
         const nomCond = nomCondMap.get(doc) || '';
-        const isPt = asisCond.includes('PART') || nomCond.includes('PART');
+        const capCond = capCondMap.get(rawG) || '';
+
+        // REGLA SUPREMA: Si la cohorte es PART TIME en capacidad_rys, o el asesor tiene condición PART TIME en asistencia o nómina -> 0.5 FTE
+        const isPt = capCond.includes('PART') || asisCond.includes('PART') || nomCond.includes('PART');
         const weight = isPt ? 0.5 : 1.0;
 
         const cur = groupMap.get(rawG) || { count: 0, ftes: 0, pt: 0, ft: 0, docs: [] };
