@@ -1132,14 +1132,14 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       if (dni) {
         const gpeNorm = normalizeGpe(d.grupo_cap);
         const campNorm = normalizeCampana(d.campana);
-        if (campNorm && campNorm !== 'SIN CAMPAÑA') {
-          if (gpeNorm && gpeNorm !== 'Sin GPE') {
+        if (gpeNorm && gpeNorm !== 'Sin GPE') {
+          approvedGroupDescSet.add(`${dni}|${gpeNorm}`);
+          approvedGroupDescSet.add(`${dni}|${cleanCodeKey(gpeNorm)}`);
+          if (campNorm && campNorm !== 'SIN CAMPAÑA') {
             approvedGroupDescSet.add(`${dni}|${campNorm}|${gpeNorm}`);
             approvedGroupDescSet.add(`${dni}|${campNorm}|${cleanCodeKey(gpeNorm)}`);
           }
-          approvedGroupDescSet.add(`${dni}|${campNorm}`);
         }
-        approvedGroupDescSet.add(dni);
       }
     });
 
@@ -1209,6 +1209,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const hasAnyIop = sigla === 'I-OP' || rows.some(r => normalizeSigla(r.sigla) === 'I-OP');
 
+      // PRIORIDAD SUPREMA: Si el asesor tiene pase a operación (I-OP) en este grupo, es un INGRESO REAL.
+      // Jamás se excluye ni se marca como descuento si ya ingresó a operar formalmente.
+      if (hasAnyIop || sigla === 'I-OP') return 'I-OP';
+
       const hasAttendedTraining = rows.some(r => {
         const s = normalizeSigla(r.sigla);
         return s === 'A' || s === 'I-OP';
@@ -1216,10 +1220,11 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
       const rowCamp = normalizeCampana(row._campana || row.campana);
-      const isDiscountInThisGroup = approvedGroupDescSet.has(doc) ||
-                                   (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${rowGpe}`)) || 
-                                   (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${cleanCodeKey(rowGpe)}`)) ||
-                                   (rowCamp && approvedGroupDescSet.has(`${doc}|${rowCamp}`));
+      const isDiscountInThisGroup = 
+        (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${rowGpe}`)) || 
+        (rowCamp && rowGpe && approvedGroupDescSet.has(`${doc}|${rowCamp}|${cleanCodeKey(rowGpe)}`)) ||
+        (rowGpe && approvedGroupDescSet.has(`${doc}|${rowGpe}`)) ||
+        (rowGpe && approvedGroupDescSet.has(`${doc}|${cleanCodeKey(rowGpe)}`));
 
       const hasDescInRows = rows.some(r => {
         const st = String(r.estado || '').toUpperCase();
@@ -1232,13 +1237,10 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const isExplicitDescLatest = isDiscountInThisGroup || hasDescInRows || String(row?.estado || '').toUpperCase() === 'DESCUENTO' || String(motivo || '').toUpperCase().includes('DESCUENTO') || String(row?.sigla || '').toUpperCase() === 'DESC' || Boolean(row?.isDescuento);
 
-      // 1. Descuento autorizado
+      // 1. Descuento autorizado (acotado a su grupo y si no tiene I-OP)
       if (isExplicitDescLatest) return 'DESCUENTO';
 
-      // 2. Ingreso a Operación
-      if (hasAnyIop || sigla === 'I-OP') return 'I-OP';
-
-      // 3. Baja Día 1 (RyS / No Show):
+      // 2. Baja Día 1 (RyS / No Show):
       // - Si tiene motivo explícito de Baja Día 1 y no asistió a capacitación
       // - O si la regla isBajaDia1 detecta Baja Día 1 sin asistencia previa
       // - O si NUNCA asistió a aula (hasAttendedTraining = false) y fue marcado como Baja / Cesado (no show que nunca entró a sala)
@@ -1248,7 +1250,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
         return 'BAJA DIA 1';
       }
 
-      // 4. Bajas de Formación (Asistió a clase y luego causó baja en aula)
+      // 3. Bajas de Formación (Asistió a clase y luego causó baja en aula)
       if (isBajaCapacitacion(row) || sigla === 'B' || String(row?.estado || '').toUpperCase() === 'CESADO') {
         return 'CESADO';
       }
@@ -1259,7 +1261,6 @@ export default function ConsolidadoPowerBI({ userProfile }) {
     for (const [doc, { row }] of latestDocMap.entries()) {
       const rows = docRowsMap.get(doc) || [];
       const st = computeStateForGroup(doc, row, rows);
-      if (st === 'DESCUENTO') descSet.add(doc);
       stateMap.set(doc, st);
     }
 
@@ -1282,14 +1283,13 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const rowGpe = normalizeGpe(row._gpe || row.codigo_grupo || row.grupo);
       const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
 
-      if (descuentosDocSet.has(rowKey) || descuentosDocSet.has(doc)) return false;
-      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc);
+      if (descuentosDocSet.has(rowKey)) return false;
+      const lastState = lastStateMap.get(rowKey);
       if (lastState === 'DESCUENTO') return false;
-      if (row.isDescuento) return false;
       const sg = String(row.sigla || '').toUpperCase();
       const st = String(row.estado || '').toUpperCase();
       const m = String(row.motivo_baja || row.motivo || '').toUpperCase();
-      if (sg === 'DESC' || st === 'DESCUENTO' || m.includes('DESCUENTO')) return false;
+      if ((sg === 'DESC' || st === 'DESCUENTO' || m.includes('DESCUENTO')) && sg !== 'I-OP') return false;
       return true;
     });
 
@@ -1303,7 +1303,7 @@ export default function ConsolidadoPowerBI({ userProfile }) {
 
       const isD1Baja = isBajaDia1Motivo(row.motivo_baja || row.motivo || row.observacion_estado);
       const isLastIop = normalizeSigla(row.sigla) === 'I-OP';
-      const lastState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(row.estado)));
+      const lastState = lastStateMap.get(rowKey) || (normalizeSigla(row.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(row.estado)));
       if (filters.estado === 'ACTIVO') {
         return lastState === 'ACTIVO' || lastState === 'I-OP';
       }
@@ -1400,8 +1400,8 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const cap = getCapInfo(campana, gpe);
       const isD1Baja = isBajaDia1Motivo(lastRow.motivo_baja || lastRow.motivo || lastRow.observacion_estado);
       const isLastIop = normalizeSigla(lastRow.sigla) === 'I-OP';
-      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(lastRow.estado)));
-      const hasDescuento = docState === 'DESCUENTO' || descuentosDocSet.has(rowKey) || descuentosDocSet.has(doc) || Boolean(lastRow.isDescuento);
+      const docState = lastStateMap.get(rowKey) || (normalizeSigla(lastRow.sigla) === 'B' ? (isD1Baja ? 'BAJA DIA 1' : 'CESADO') : (isLastIop ? 'I-OP' : normalizeEstado(lastRow.estado)));
+      const hasDescuento = (docState === 'DESCUENTO' || descuentosDocSet.has(rowKey)) && docState !== 'I-OP' && !isLastIop;
 
       // EXCLUSIÓN ESTRICTA: Los descuentos autorizados NO deben aparecer en la matriz de Control de Asistencia
       if (hasDescuento) {
@@ -1628,11 +1628,9 @@ export default function ConsolidadoPowerBI({ userProfile }) {
       const rowGpe = normalizeGpe(firstRow._gpe || firstRow.codigo_grupo || firstRow.grupo);
       const rowKey = `${doc}|${rowCamp}|${rowGpe}`;
 
-      const docState = lastStateMap.get(rowKey) || lastStateMap.get(doc) || 'SIN ESTADO';
-      const hasDescuento = docState === 'DESCUENTO' || 
-                           descuentosDocSet.has(rowKey) || 
-                           descuentosDocSet.has(doc) || 
-                           rows.some(r => Boolean(r.isDescuento));
+      const docState = lastStateMap.get(rowKey) || 'SIN ESTADO';
+      const hasAnyIopInDoc = docState === 'I-OP' || rows.some(r => normalizeSigla(r.sigla) === 'I-OP');
+      const hasDescuento = !hasAnyIopInDoc && (docState === 'DESCUENTO' || descuentosDocSet.has(rowKey));
 
       if (hasDescuento) {
         descuentosAprobados += 1;
