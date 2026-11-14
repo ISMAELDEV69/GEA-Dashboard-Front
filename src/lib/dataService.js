@@ -8265,10 +8265,12 @@ export async function fetchDynamicIopFtesMap() {
   if (DB_MODE !== 'supabase') return new Map();
   return withCache('dynamic_iop_ftes_map', 60000, async () => {
     try {
+      const normC = s => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
       const [{ data: asis }, { data: noms }, { data: caps }] = await Promise.all([
-        supabase.from('consolidado_asistencias').select('documento, codigo_grupo, grupo, condicion_laboral').eq('sigla', 'I-OP'),
+        supabase.from('consolidado_asistencias').select('documento, codigo_grupo, grupo, condicion_laboral, campana').eq('sigla', 'I-OP'),
         supabase.from('nominas').select('documento, condicion'),
-        supabase.from('capacidad_rys').select('codigo, condicion, modalidad')
+        supabase.from('capacidad_rys').select('codigo, condicion, modalidad, campana')
       ]);
 
       const nomCondMap = new Map();
@@ -8280,24 +8282,32 @@ export async function fetchDynamicIopFtesMap() {
       const capCondMap = new Map();
       (caps || []).forEach(c => {
         const code = String(c.codigo || '').trim().toUpperCase();
-        if (code) capCondMap.set(code, String(c.condicion || c.modalidad || '').toUpperCase());
+        const camp = normC(c.campana);
+        const cond = String(c.condicion || c.modalidad || '').toUpperCase();
+        if (code) {
+          if (camp) capCondMap.set(`${code}|${camp}`, cond);
+          if (!capCondMap.has(code)) capCondMap.set(code, cond);
+        }
       });
 
       const groupMap = new Map();
+      const codeSeenCamps = new Map();
       const seen = new Set();
 
       (asis || []).forEach(a => {
         const rawG = String(a.codigo_grupo || a.grupo || '').trim().toUpperCase();
         const doc = String(a.documento || '').trim();
+        const camp = normC(a.campana);
         if (!rawG || !doc) return;
 
-        const key = `${rawG}|${doc}`;
+        // Desduplicar asesor por cohorte y campaña
+        const key = `${rawG}|${camp}|${doc}`;
         if (seen.has(key)) return;
         seen.add(key);
 
         const asisCond = String(a.condicion_laboral || '').toUpperCase().trim();
         const nomCond = String(nomCondMap.get(doc) || '').toUpperCase().trim();
-        const capCond = String(capCondMap.get(rawG) || '').toUpperCase().trim();
+        const capCond = String(capCondMap.get(`${rawG}|${camp}`) || capCondMap.get(rawG) || '').toUpperCase().trim();
 
         // Jerarquía de condición laboral:
         // 1. Nómina individual del asesor (prevalece si el usuario actualizó a FULL TIME o PART TIME)
@@ -8318,12 +8328,27 @@ export async function fetchDynamicIopFtesMap() {
 
         const weight = isPt ? 0.5 : 1.0;
 
-        const cur = groupMap.get(rawG) || { count: 0, ftes: 0, pt: 0, ft: 0, docs: [] };
+        // Agrupación canónica por clave compuesta cohorte|campaña (evita contaminación entre campañas con mismo código de grupo)
+        const compositeKey = `${rawG}|${camp}`;
+        const cur = groupMap.get(compositeKey) || { count: 0, ftes: 0, pt: 0, ft: 0, docs: [] };
         cur.count++;
         cur.ftes += weight;
         if (isPt) cur.pt++; else cur.ft++;
         cur.docs.push({ documento: doc, fte: weight, condicion: isPt ? 'PART TIME' : 'FULL TIME' });
-        groupMap.set(rawG, cur);
+        groupMap.set(compositeKey, cur);
+
+        // Rastrear campañas por código simple para saber si es unívoco
+        if (!codeSeenCamps.has(rawG)) {
+          codeSeenCamps.set(rawG, new Set([camp]));
+          groupMap.set(rawG, cur);
+        } else {
+          const setC = codeSeenCamps.get(rawG);
+          if (!setC.has(camp)) {
+            setC.add(camp);
+            // Código repetido en múltiples campañas -> anular acceso ambiguo por código simple
+            groupMap.set(rawG, null);
+          }
+        }
       });
 
       return groupMap;
@@ -8370,7 +8395,8 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
       const isExcludedD1 = !isEligibleD1;
 
-      const dyn = dynamicFtesMap?.get(code);
+      const campNorm = String(r.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const dyn = dynamicFtesMap?.get(`${code}|${campNorm}`) || dynamicFtesMap?.get(code);
 
       let d1 = isEligibleD1 ? (Number(r.asistio_dia1) || 0) : 0;
       let iop = dyn ? dyn.count : (Number(r.ingresos_iop) || 0);
@@ -8450,7 +8476,9 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         desertores_ojt: desOjt,
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
-        docs_iop_detalle: dyn?.docs || r.docs_iop_detalle || [],
+        docs_iop_detalle: (calib && typeof calib.iop === 'number' && (dyn?.docs?.length || 0) > calib.iop)
+          ? dyn.docs.slice(0, calib.iop)
+          : (dyn?.docs || r.docs_iop_detalle || []),
         pct_cumplimiento: rqSol > 0 ? Number(((iopFtes / rqSol) * 100).toFixed(2)) : 0,
         ultima_fecha_asistencia: ultFecha || '-',
         is_capacitacion: isExcludedD1,
