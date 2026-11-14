@@ -8221,7 +8221,7 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026079|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 12, d1: 29, desCt: 9, desOjt: 1, iop: 19, iopFtes: 19, ultimaFecha: '24/10/2026' },
   'GPE-2026080|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 38, desCt: 7, desOjt: 13, iop: 18, iopFtes: 9.0, ultimaFecha: '24/10/2026' },
   'GPE-2026081|CLARO POSTPAGO|202610': { rq: 6, rqFtes: 6, d1: 10, desCt: 3, desOjt: 3, iop: 3, iopFtes: 3, ultimaFecha: '30/10/2026' },
-  'GPE-2026082|CLARO POSTPAGO|202610': { rq: 8, rqFtes: 4, d1: 12, desCt: 3, desOjt: 2, iop: 7, iopFtes: 3.5, ultimaFecha: '30/10/2026' },
+  'GPE-2026082|CLARO POSTPAGO|202610': { rq: 8, rqFtes: 4, d1: 12, desCt: 3, desOjt: 2, iop: 7, iopFtes: 5.5, ultimaFecha: '30/10/2026' },
   'GPE-2026022|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 6, desCt: 3, desOjt: 1, iop: 2, iopFtes: 2, ultimaFecha: '30/10/2026' },
   'GPE-2026015|CLARO POSTPAGO - CROSS|202610': { rq: 12, rqFtes: 12, d1: 19, desCt: 5, desOjt: 6, iop: 8, iopFtes: 8, ultimaFecha: '24/10/2026' },
 
@@ -8295,12 +8295,27 @@ export async function fetchDynamicIopFtesMap() {
         if (seen.has(key)) return;
         seen.add(key);
 
-        const asisCond = String(a.condicion_laboral || '').toUpperCase();
-        const nomCond = nomCondMap.get(doc) || '';
-        const capCond = capCondMap.get(rawG) || '';
+        const asisCond = String(a.condicion_laboral || '').toUpperCase().trim();
+        const nomCond = String(nomCondMap.get(doc) || '').toUpperCase().trim();
+        const capCond = String(capCondMap.get(rawG) || '').toUpperCase().trim();
 
-        // REGLA SUPREMA: Si la cohorte es PART TIME en capacidad_rys, o el asesor tiene condición PART TIME en asistencia o nómina -> 0.5 FTE
-        const isPt = capCond.includes('PART') || asisCond.includes('PART') || nomCond.includes('PART');
+        // Jerarquía de condición laboral:
+        // 1. Nómina individual del asesor (prevalece si el usuario actualizó a FULL TIME o PART TIME)
+        // 2. Registro individual de asistencia
+        // 3. Condición general de la escuela en capacidad_rys (fallback)
+        let isPt = false;
+        if (nomCond.includes('FULL') || nomCond.includes('COMPLETO') || nomCond === 'FT') {
+          isPt = false;
+        } else if (nomCond.includes('PART') || nomCond.includes('MEDIO') || nomCond === 'PT') {
+          isPt = true;
+        } else if (asisCond.includes('FULL') || asisCond.includes('COMPLETO') || asisCond === 'FT') {
+          isPt = false;
+        } else if (asisCond.includes('PART') || asisCond.includes('MEDIO') || asisCond === 'PT') {
+          isPt = true;
+        } else if (capCond.includes('PART') || capCond.includes('MEDIO') || capCond === 'PT') {
+          isPt = true;
+        }
+
         const weight = isPt ? 0.5 : 1.0;
 
         const cur = groupMap.get(rawG) || { count: 0, ftes: 0, pt: 0, ft: 0, docs: [] };
