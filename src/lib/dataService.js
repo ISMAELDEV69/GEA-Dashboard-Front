@@ -8211,7 +8211,7 @@ export const COHORTES_CALIBRACION_OFICIAL = {
   'GPE-2026075|CLARO POSTPAGO|202610': { rq: 10, rqFtes: 10, d1: 22, desCt: 9, desOjt: 4, iop: 9, iopFtes: 7.5, ultimaFecha: '10/10/2026' },
   'GPE-2026002|HFC - FIJAMULTISKILL|202610': { rq: 6, rqFtes: 6, d1: 17, desCt: 9, desOjt: 1, iop: 7, iopFtes: 7, ultimaFecha: '13/10/2026' },
   'GPE-2026003|HFC - FIJAMULTISKILL|202610': { rq: 1, rqFtes: 1, d1: 6, desCt: 5, desOjt: 0, iop: 1, iopFtes: 1, ultimaFecha: '13/10/2026' },
-  'GPE-2026076|CLARO POSTPAGO|202610': { rq: 10, rqFtes: 10, d1: 31, desCt: 11, desOjt: 5, iop: 15, iopFtes: 15, ultimaFecha: '10/10/2026' },
+  'GPE-2026076|CLARO POSTPAGO|202610': { rq: 10, rqFtes: 10, d1: 31, desCt: 11, desOjt: 5, iop: 15, iopFtes: 14.5, ultimaFecha: '10/10/2026' },
   'GPE-2026006|HFC - FIJAMULTISKILL|202610': { rq: 5, rqFtes: 5, d1: 8, desCt: 3, desOjt: 3, iop: 2, iopFtes: 2, ultimaFecha: '20/10/2026' },
   'GPE-2026019|RETENCIONES FIJA INBOUND|202610': { rq: 8, rqFtes: 8, d1: 10, desCt: 6, desOjt: 3, iop: 1, iopFtes: 1, ultimaFecha: '17/10/2026' },
   'GPE-2026077|CLARO POSTPAGO|202610': { rq: 12, rqFtes: 6, d1: 22, desCt: 4, desOjt: 5, iop: 13, iopFtes: 6.5, ultimaFecha: '17/10/2026' },
@@ -8255,6 +8255,61 @@ export function getCalibracionOficial(code, campana, periodo) {
 }
 
 /**
+ * Mapeo dinámico y general de Ingresos a Operación (I-OP) por grupo.
+ * Regla de negocio universal:
+ * - PART TIME = 0.5 FTE
+ * - FULL TIME = 1.0 FTE
+ * Cruza los pases I-OP reales de consolidado_asistencias con la condición laboral de nóminas y consolidado.
+ */
+export async function fetchDynamicIopFtesMap() {
+  if (DB_MODE !== 'supabase') return new Map();
+  return withCache('dynamic_iop_ftes_map', 60000, async () => {
+    try {
+      const [{ data: asis }, { data: noms }] = await Promise.all([
+        supabase.from('consolidado_asistencias').select('documento, codigo_grupo, grupo, condicion_laboral').eq('sigla', 'I-OP'),
+        supabase.from('nominas').select('documento, condicion')
+      ]);
+
+      const nomCondMap = new Map();
+      (noms || []).forEach(n => {
+        const doc = String(n.documento || '').trim();
+        if (doc) nomCondMap.set(doc, String(n.condicion || '').toUpperCase());
+      });
+
+      const groupMap = new Map();
+      const seen = new Set();
+
+      (asis || []).forEach(a => {
+        const rawG = String(a.codigo_grupo || a.grupo || '').trim().toUpperCase();
+        const doc = String(a.documento || '').trim();
+        if (!rawG || !doc) return;
+
+        const key = `${rawG}|${doc}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const asisCond = String(a.condicion_laboral || '').toUpperCase();
+        const nomCond = nomCondMap.get(doc) || '';
+        const isPt = asisCond.includes('PART') || nomCond.includes('PART');
+        const weight = isPt ? 0.5 : 1.0;
+
+        const cur = groupMap.get(rawG) || { count: 0, ftes: 0, pt: 0, ft: 0, docs: [] };
+        cur.count++;
+        cur.ftes += weight;
+        if (isPt) cur.pt++; else cur.ft++;
+        cur.docs.push({ documento: doc, fte: weight, condicion: isPt ? 'PART TIME' : 'FULL TIME' });
+        groupMap.set(rawG, cur);
+      });
+
+      return groupMap;
+    } catch (e) {
+      console.warn('Error fetching dynamic IOP FTEs map:', e);
+      return new Map();
+    }
+  });
+}
+
+/**
  * Consulta la vista pre-agregada v_resumen_capacitacion_cohortes en PostgreSQL (Supabase).
  * Descarga directamente las cohortes ya totalizadas en <100ms sin saturar la red ni la memoria.
  */
@@ -8262,12 +8317,16 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
   if (DB_MODE !== 'supabase') return [];
   if (force) {
     invalidateCache('v_resumen_capacitacion_cohortes');
+    invalidateCache('dynamic_iop_ftes_map');
   }
   return withCache('v_resumen_capacitacion_cohortes', 60000, async () => {
-    const { data, error } = await supabase
-      .from('v_resumen_capacitacion_cohortes')
-      .select('*')
-      .order('grupo_codigo');
+    const [{ data, error }, dynamicFtesMap] = await Promise.all([
+      supabase
+        .from('v_resumen_capacitacion_cohortes')
+        .select('*')
+        .order('grupo_codigo'),
+      fetchDynamicIopFtesMap()
+    ]);
     if (error) {
       console.warn('Error fetching v_resumen_capacitacion_cohortes:', error);
       throw error;
@@ -8286,9 +8345,11 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
       const isExcludedD1 = !isEligibleD1;
 
+      const dyn = dynamicFtesMap?.get(code);
+
       let d1 = isEligibleD1 ? (Number(r.asistio_dia1) || 0) : 0;
-      let iop = Number(r.ingresos_iop) || 0;
-      let iopFtes = Number(r.ingresos_iop_ftes) || 0;
+      let iop = dyn ? dyn.count : (Number(r.ingresos_iop) || 0);
+      let iopFtes = dyn ? dyn.ftes : (Number(r.ingresos_iop_ftes) || 0);
       let actOjt = isEligibleD1 ? (Number(r.activos_ojt) || 0) : 0;
       let desCt = isEligibleD1 ? (Number(r.desertores_ct) || 0) : 0;
       let desOjt = isEligibleD1 ? (Number(r.desertores_ojt) || 0) : 0;
@@ -8364,6 +8425,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         desertores_ojt: desOjt,
         ingresos_iop: iop,
         ingresos_iop_ftes: iopFtes,
+        docs_iop_detalle: dyn?.docs || r.docs_iop_detalle || [],
         pct_cumplimiento: rqSol > 0 ? Number(((iopFtes / rqSol) * 100).toFixed(2)) : 0,
         ultima_fecha_asistencia: ultFecha || '-',
         is_capacitacion: isExcludedD1,
