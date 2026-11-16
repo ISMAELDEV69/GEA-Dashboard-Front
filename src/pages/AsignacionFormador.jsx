@@ -181,13 +181,8 @@ export default function AsignacionFormador({ grupos = [], formadores = [], userP
     })
 
     const allList = Array.from(map.values()).sort((a, b) => (a.nombres_completos || '').localeCompare(b.nombres_completos || ''))
-
-    if (supervisorSegmento) {
-      return allList.filter(f => !f.segmento || (f.segmento || '').trim().toUpperCase() === supervisorSegmento)
-    }
-
     return allList
-  }, [equipoFormacionData, formadores, supervisorSegmento])
+  }, [equipoFormacionData, formadores])
 
   const totalGrupos = grupos.length
   const totalConFormador = useMemo(() => grupos.filter(g => g.formador_documento).length, [grupos])
