@@ -490,15 +490,15 @@ export default function App() {
       'cobertura_dotacion',
       'cartera_reclutador',
       'metas',
-      'capacidad_rys',
-      'attendance_bi',
-      'motivos_bajas',
+      'capacidad',
+      'attendancebi',
+      'motivos_bajas_bi',
       'descuentos_bi',
       'descuentos_form',
       'nomina',
-      'nomina_completar',
+      'nominas_completar',
       'asistencia',
-      'reporte_dia1'
+      'reportedia1'
     ])
 
     if (HEAVY_DATA_VIEWS.has(activeView) || isOreoModalOpen) {
