@@ -426,14 +426,21 @@ const isFormadorValido = (formador) => {
   return true;
 };
 
-// Resuelve y formatea la fecha del último corte/registro operativo de una cohorte
-const resolveUltimaFecha = (d) => {
+// Resuelve y formatea la fecha del último corte/registro operativo REAL de una cohorte
+const resolveUltimaFecha = (d, lastAsistenciaMap = null) => {
   if (!d) return '-';
+  if (lastAsistenciaMap && lastAsistenciaMap.size > 0) {
+    const code = String(d.grupo_codigo || d.codigo || '').trim().toUpperCase();
+    const camp = String(d.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const hit = lastAsistenciaMap.get(`${code}|${camp}`) || lastAsistenciaMap.get(code);
+    if (hit?.raw) {
+      return formatFechaRegistro(hit.raw) || hit.raw;
+    }
+  }
   if (d.ultima_fecha_asistencia && d.ultima_fecha_asistencia !== '-') {
     return formatFechaRegistro(d.ultima_fecha_asistencia) || d.ultima_fecha_asistencia;
   }
-  const raw = d.fecha_ingreso_op || d.fecha_inicio_ojt || d.fecha_registro || '';
-  return formatFechaRegistro(raw) || '-';
+  return '-';
 };
 
 // Resuelve la cantidad de alumnos activos al último corte de asistencia sin pase formal I-OP
@@ -603,6 +610,55 @@ export default function ResumenCapacitacion({
     window.addEventListener('gea-global-refresh', handleRefresh);
     return () => window.removeEventListener('gea-global-refresh', handleRefresh);
   }, [loadData]);
+
+  // Mapa de fecha real de último registro de asistencia por cohorte y campaña
+  const lastAsistenciaMap = useMemo(() => {
+    const map = new Map();
+    if (!Array.isArray(asistencias) || asistencias.length === 0) return map;
+    const seenCamps = new Map();
+    const parseTs = (raw) => {
+      if (!raw) return 0;
+      const s = String(raw).trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const t = new Date(s.slice(0, 10) + 'T12:00:00Z').getTime();
+        return Number.isNaN(t) ? 0 : t;
+      }
+      const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+      if (m) {
+        const t = new Date(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}T12:00:00Z`).getTime();
+        return Number.isNaN(t) ? 0 : t;
+      }
+      return 0;
+    };
+    for (let i = 0; i < asistencias.length; i++) {
+      const a = asistencias[i];
+      const code = String(a.codigo_grupo || a.grupo || '').trim().toUpperCase();
+      const camp = String(a.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const rawF = a.fecha_registro_asistencia || a.fecha;
+      const ts = parseTs(rawF);
+      if (!code || !ts) continue;
+
+      const compKey = `${code}|${camp}`;
+      const prev = map.get(compKey);
+      if (!prev || ts > prev.ts) {
+        map.set(compKey, { ts, raw: rawF });
+      }
+
+      if (!seenCamps.has(code)) {
+        seenCamps.set(code, new Set([camp]));
+        map.set(code, map.get(compKey));
+      } else {
+        const setC = seenCamps.get(code);
+        if (!setC.has(camp)) {
+          setC.add(camp);
+          map.set(code, null);
+        } else if (setC.size === 1) {
+          map.set(code, map.get(compKey));
+        }
+      }
+    }
+    return map;
+  }, [asistencias]);
 
   const normSem = (val) => {
     if (!val) return '';
@@ -1600,7 +1656,7 @@ export default function ResumenCapacitacion({
         'Semana': d.semana,
         'Estado': d.estado || (d.is_cerrado ? 'CERRADO' : 'EN CURSO'),
         'Formador': d.formador || 'Sin Asignar',
-        'Último Registro': resolveUltimaFecha(d),
+        'Último Registro': resolveUltimaFecha(d, lastAsistenciaMap),
         'Segmento': normalizeSegmento(d.segmento, d.campana),
         'Local / Sede': d.sede || 'LIMA',
         'Campaña': d.campana,
@@ -2471,13 +2527,16 @@ export default function ResumenCapacitacion({
                       </td>
                       <td className="py-2.5 px-2 text-center text-[var(--text-muted)] font-mono">{d.semana || '-'}</td>
                       <td className="py-2.5 px-3 text-center font-mono text-[11px] whitespace-nowrap">
-                        {resolveUltimaFecha(d) !== '-' ? (
-                          <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold">
-                            {resolveUltimaFecha(d)}
-                          </span>
-                        ) : (
-                          <span className="text-[var(--text-muted)] italic">-</span>
-                        )}
+                        {(() => {
+                          const ult = resolveUltimaFecha(d, lastAsistenciaMap);
+                          return ult !== '-' ? (
+                            <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold">
+                              {ult}
+                            </span>
+                          ) : (
+                            <span className="text-[var(--text-muted)] italic">-</span>
+                          );
+                        })()}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--text-secondary)]">{req}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap ? "Excluido de Nómina Reclutada" : undefined}>{isCap ? '—' : (d.total_nomina || 0)}</td>

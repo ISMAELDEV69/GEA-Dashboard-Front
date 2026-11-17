@@ -8433,15 +8433,12 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         if (typeof calib.rqFtes === 'number') rqFtesSol = calib.rqFtes;
       }
 
-      // Determinación de la última fecha de registro de la cohorte
+      // Determinación de la última fecha de registro real de la cohorte (sin sustituir con fecha_ingreso_op futura)
       let ultFecha = '';
       if (calib && calib.ultimaFecha) {
         ultFecha = calib.ultimaFecha;
       } else if (r.ultima_fecha_asistencia && String(r.ultima_fecha_asistencia).trim() !== '' && r.ultima_fecha_asistencia !== '-') {
         ultFecha = formatFechaRegistro(r.ultima_fecha_asistencia);
-      } else {
-        const rawDate = r.fecha_ingreso_op || r.fecha_inicio_ojt || r.fecha_registro || '';
-        ultFecha = formatFechaRegistro(rawDate);
       }
 
       // Activos al corte (en proceso de formación o en OJT sin pase formal I-OP y sin baja)
