@@ -347,7 +347,42 @@ export default function App() {
   }, [currentRole, navItems, activeView, handleNavigate])
 
   const hasLoadedOnceRef = useRef(false)
+  const hasLoadedHeavyRef = useRef(false)
+  const isLoadingHeavyRef = useRef(false)
+  const hasLoadedAuditRef = useRef(false)
   const lastFullFetchTimeRef = useRef(Date.now())
+
+  const loadHeavyData = useCallback(async (force = false) => {
+    if (isLoadingHeavyRef.current) return
+    if (hasLoadedHeavyRef.current && !force) return
+    isLoadingHeavyRef.current = true
+    try {
+      const [cm, p, a] = await Promise.all([
+        fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
+        fetchPostulantes({ periodoMin: '202610' }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
+        fetchAsistencias({ since: '2026-10-01' }).catch(e => { console.warn('fetchAsistencias error:', e); return [] })
+      ])
+
+      if (cm?.length) setCampanasMetas(cm)
+      if (p?.length) {
+        setPostulantes(p)
+        const gEnriched = await fetchGrupos(p).catch(e => { console.warn('fetchGrupos enriched error:', e); return null })
+        if (gEnriched?.length) setGrupos(gEnriched)
+      }
+      if (a?.length) setAsistencias(a)
+      hasLoadedHeavyRef.current = true
+      lastFullFetchTimeRef.current = Date.now()
+    } finally {
+      isLoadingHeavyRef.current = false
+    }
+  }, [])
+
+  const loadAuditData = useCallback(async (force = false) => {
+    if (hasLoadedAuditRef.current && !force) return
+    const al = await fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] })
+    if (al?.length) setAuditLogs(al)
+    hasLoadedAuditRef.current = true
+  }, [])
 
   const loadAllData = useCallback(async ({ silent = hasLoadedOnceRef.current } = {}) => {
     if (!silent) setLoading(true)
@@ -380,30 +415,8 @@ export default function App() {
       if (fInit?.length) setFormadores(fInit)
       if (gInit?.length) setGrupos(gInit)
 
-      // Desbloquear inmediatamente la UI para que el usuario nunca vea la pantalla trabada
-      if (!silent) setLoading(false)
       hasLoadedOnceRef.current = true
-
-      // ── FASE 2: Carga en Segundo Plano (Metas, Postulantes, Asistencias, Logs) ─
-      // Ventana activa optimizada (Octubre-Noviembre 2026) para frenar Egress excesivo
-      const [cm, p, a, al] = await Promise.all([
-        fetchGruposConMetas().catch(e => { console.warn('fetchGruposConMetas error:', e); return [] }),
-        fetchPostulantes({ periodoMin: '202610' }).catch(e => { console.warn('fetchPostulantes error:', e); return [] }),
-        fetchAsistencias({ since: '2026-10-01' }).catch(e => { console.warn('fetchAsistencias error:', e); return [] }),
-        fetchAuditLogs().catch(e => { console.warn('fetchAuditLogs error:', e); return [] })
-      ])
-
-      if (cm?.length) setCampanasMetas(cm)
-      if (p?.length) {
-        setPostulantes(p)
-        const gEnriched = await fetchGrupos(p).catch(e => { console.warn('fetchGrupos enriched error:', e); return null })
-        if (gEnriched?.length) setGrupos(gEnriched)
-      }
-      if (a?.length) setAsistencias(a)
-      if (al?.length) setAuditLogs(al)
-
       lastFullFetchTimeRef.current = Date.now()
-
     } catch (err) {
       console.error('Error loading data:', err)
       setError(err.message || 'Error al cargar los datos.')
@@ -418,13 +431,19 @@ export default function App() {
       setIsManualRefreshing(true)
       invalidateCache() // 1. Purga inmediatamente todo el apiCache en memoria RAM
       window.dispatchEvent(new CustomEvent('gea-global-refresh')) // 2. Notifica a vistas independientes (ConsolidadoPowerBI, MotivosBajas, etc.)
-      await loadAllData({ silent: true }) // 3. Recarga datos frescos de la BD
+      await loadAllData({ silent: true }) // 3. Recarga catálogos base
+      if (hasLoadedHeavyRef.current) {
+        await loadHeavyData(true) // 4. Recarga datos pesados solo si ya se habían abierto
+      }
+      if (hasLoadedAuditRef.current) {
+        await loadAuditData(true)
+      }
     } catch (err) {
       console.error('Error in manual refresh:', err)
     } finally {
       setIsManualRefreshing(false)
     }
-  }, [loadAllData])
+  }, [loadAllData, loadHeavyData, loadAuditData])
 
   // ── ESCUCHA DE MUTACIONES LOCALES (Actualizaciones de nómina, Día 1, etc.) ──
   useEffect(() => {
@@ -460,81 +479,43 @@ export default function App() {
     loadAllData()
   }, [effectiveSession, loadAllData])
 
-  // 2. Polling cada 15 minutos con Page Visibility API (Pausa en background, reanuda al enfocar)
-  const sessionPollOffsetMs = useRef(Math.floor(Math.random() * 60000)).current
-
+  // 2. Carga bajo demanda (Lazy Data Loading) según el módulo que el usuario abre
+  // Evita descargar postulantes, asistencias históricas y auditoría a formadores/operativos que no los necesitan
   useEffect(() => {
-    if (!effectiveSession || DB_MODE !== 'supabase') return undefined
+    if (!effectiveSession || DB_MODE !== 'supabase') return
 
-    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
-    let intervalId = null
+    const HEAVY_DATA_VIEWS = new Set([
+      'dashboard',
+      'resumen_capacitacion',
+      'cobertura_dotacion',
+      'cartera_reclutador',
+      'metas',
+      'capacidad_rys',
+      'attendance_bi',
+      'motivos_bajas',
+      'descuentos_bi',
+      'descuentos_form',
+      'nomina',
+      'nomina_completar',
+      'asistencia',
+      'reporte_dia1'
+    ])
 
-    const startPolling = () => {
-      if (intervalId) clearInterval(intervalId)
-      intervalId = setInterval(() => {
-        // Solo ejecutar llamada de red si la pestaña está visible
-        if (typeof document !== 'undefined' && !document.hidden && document.visibilityState === 'visible') {
-          loadAllData({ silent: true })
-        }
-      }, FIFTEEN_MINUTES_MS)
+    if (HEAVY_DATA_VIEWS.has(activeView) || isOreoModalOpen) {
+      loadHeavyData()
     }
 
-    const stopPolling = () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-        intervalId = null
-      }
+    if (activeView === 'auditlogs') {
+      loadAuditData()
     }
-
-    // Listener de visibilidad de pestaña: pausar en background y sincronizar al volver si pasaron > 15 min
-    const handleVisibilityChange = () => {
-      if (typeof document === 'undefined') return
-      if (!document.hidden && document.visibilityState === 'visible') {
-        const timeSinceLastFetch = Date.now() - (lastFullFetchTimeRef.current || 0)
-        if (timeSinceLastFetch >= FIFTEEN_MINUTES_MS) {
-          loadAllData({ silent: true })
-        }
-        startPolling()
-      } else {
-        stopPolling()
-      }
-    }
-
-    // Iniciar primer poll con offset de sesión (15 min + offset de 0 a 60s)
-    const initialPollTimer = setTimeout(() => {
-      if (typeof document !== 'undefined' && !document.hidden && document.visibilityState === 'visible') {
-        loadAllData({ silent: true })
-      }
-      startPolling()
-    }, FIFTEEN_MINUTES_MS + sessionPollOffsetMs)
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange)
-    }
-
-    return () => {
-      clearTimeout(initialPollTimer)
-      stopPolling()
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange)
-      }
-    }
-  }, [effectiveSession, loadAllData, sessionPollOffsetMs])
-
-  // 3. Suscripción Realtime (invalida caché local sin disparar auto-refetch masivo)
-  useEffect(() => {
-    if (!effectiveSession || DB_MODE !== 'supabase') return undefined
-    const unsubscribe = subscribeOperationalData()
-    return unsubscribe
-  }, [effectiveSession])
+  }, [effectiveSession, activeView, isOreoModalOpen, loadHeavyData, loadAuditData])
 
   const refreshCatalogs = useCallback(async () => {
-    const p = postulantes.length ? postulantes : await fetchPostulantes({ periodoMin: '202610' })
     const [r, s, c, g, f] = await Promise.all([
       fetchReclutadores(),
       fetchSedes(),
       fetchCampanas(),
-      fetchGrupos(p),
+      fetchGrupos(postulantes),
       fetchFormadores(),
     ])
     setReclutadores(r)
@@ -549,8 +530,6 @@ export default function App() {
     const saved = await insertPostulante(data)
     setPostulantes(prev => [saved, ...prev])
     await refreshCatalogs()
-    const newLogs = await fetchAuditLogs()
-    setAuditLogs(newLogs)
     return saved
   }
 
@@ -563,34 +542,22 @@ export default function App() {
       })
     }
     await refreshCatalogs()
-    const newLogs = await fetchAuditLogs()
-    setAuditLogs(newLogs)
     return saved
   }
 
   const handleEditPostulante = async (updatedData) => {
     const updated = await updatePostulante(updatedData.documento, updatedData)
     setPostulantes(prev => prev.map(p => p.documento === updatedData.documento ? updated : p))
-    const newLogs = await fetchAuditLogs()
-    setAuditLogs(newLogs)
   }
 
   const handleSaveAsistencia = async (payload) => {
     await saveAsistenciaSession(payload)
-    const [g, p, a, al, cm, f] = await Promise.all([
-      fetchGrupos(postulantes),
-      fetchPostulantes({ periodoMin: '202610' }),
-      fetchAsistencias({ since: '2026-10-01' }),
-      fetchAuditLogs(),
-      fetchGruposConMetas(),
-      fetchFormadores(),
-    ])
-    setGrupos(g)
-    setPostulantes(p)
-    setAsistencias(a)
-    setAuditLogs(al)
-    setCampanasMetas(cm)
-    setFormadores(f)
+    // Solo recargar asistencias recientes para actualizar cortes sin disparar 6 consultas pesadas
+    invalidateCache('asistencias')
+    if (hasLoadedHeavyRef.current) {
+      const a = await fetchAsistencias({ since: '2026-10-01' }).catch(() => null)
+      if (a?.length) setAsistencias(a)
+    }
   }
 
   const handleSignOut = useCallback(async () => {
