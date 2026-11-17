@@ -443,6 +443,22 @@ const resolveUltimaFecha = (d, lastAsistenciaMap = null) => {
   return '-';
 };
 
+// Resuelve la sede real de la cohorte (prioriza capacidad_rys.sede; si falta, usa la sede dominante de nóminas)
+const resolveSede = (d, sedeNominaMap = null) => {
+  if (!d) return 'LIMA';
+  const rawSede = String(d.sede || '').trim().toUpperCase();
+  if (rawSede && rawSede !== '-' && rawSede !== 'NULL' && rawSede !== 'LIMA') {
+    return rawSede;
+  }
+  if (sedeNominaMap && sedeNominaMap.size > 0) {
+    const code = String(d.grupo_codigo || d.codigo || '').trim().toUpperCase();
+    const camp = String(d.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const hit = sedeNominaMap.get(`${code}|${camp}`) || sedeNominaMap.get(code);
+    if (hit) return hit;
+  }
+  return rawSede && rawSede !== '-' && rawSede !== 'NULL' ? rawSede : 'LIMA';
+};
+
 // Resuelve la cantidad de alumnos activos al último corte de asistencia sin pase formal I-OP
 export const resolveActivosActuales = (d) => {
   if (!d) return 0;
@@ -659,6 +675,49 @@ export default function ResumenCapacitacion({
     }
     return map;
   }, [asistencias]);
+
+  // Mapa de sede dominante por cohorte y campaña desde nóminas en memoria (0 Egress adicional)
+  const sedeNominaMap = useMemo(() => {
+    const map = new Map();
+    if (!Array.isArray(postulantes) || postulantes.length === 0) return map;
+    const countsByKey = new Map();
+    const seenCamps = new Map();
+
+    for (let i = 0; i < postulantes.length; i++) {
+      const p = postulantes[i];
+      const code = String(p.grupo_codigo || p.grupo || '').trim().toUpperCase();
+      const camp = String(p.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const sede = String(p.sede || '').trim().toUpperCase();
+      if (!code || !sede || sede === '-' || sede === 'NULL') continue;
+
+      const compKey = `${code}|${camp}`;
+      if (!countsByKey.has(compKey)) countsByKey.set(compKey, new Map());
+      const sedeCounts = countsByKey.get(compKey);
+      sedeCounts.set(sede, (sedeCounts.get(sede) || 0) + 1);
+
+      if (!seenCamps.has(code)) seenCamps.set(code, new Set([camp]));
+      else seenCamps.get(code).add(camp);
+    }
+
+    for (const [compKey, sedeCounts] of countsByKey.entries()) {
+      let bestSede = '';
+      let bestCount = -1;
+      for (const [s, cnt] of sedeCounts.entries()) {
+        if (cnt > bestCount) {
+          bestCount = cnt;
+          bestSede = s;
+        }
+      }
+      if (bestSede) {
+        map.set(compKey, bestSede);
+        const code = compKey.split('|')[0];
+        if (seenCamps.get(code)?.size === 1) {
+          map.set(code, bestSede);
+        }
+      }
+    }
+    return map;
+  }, [postulantes]);
 
   const normSem = (val) => {
     if (!val) return '';
@@ -1658,7 +1717,7 @@ export default function ResumenCapacitacion({
         'Formador': d.formador || 'Sin Asignar',
         'Último Registro': resolveUltimaFecha(d, lastAsistenciaMap),
         'Segmento': normalizeSegmento(d.segmento, d.campana),
-        'Local / Sede': d.sede || 'LIMA',
+        'Local / Sede': resolveSede(d, sedeNominaMap),
         'Campaña': d.campana,
         'Grupo (GPE)': d.grupo_codigo,
         'Fecha Inicio OJT': d.fecha_inicio_ojt,
@@ -2522,7 +2581,7 @@ export default function ResumenCapacitacion({
                       <td className="py-2.5 px-3 text-[var(--text-muted)] whitespace-nowrap">{normalizeSegmento(d.segmento, d.campana)}</td>
                       <td className="py-2.5 px-3 text-[var(--text-secondary)] whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-300 border border-slate-500/20 text-[11px] font-semibold">
-                          {d.sede || 'LIMA'}
+                          {resolveSede(d, sedeNominaMap)}
                         </span>
                       </td>
                       <td className="py-2.5 px-2 text-center text-[var(--text-muted)] font-mono">{d.semana || '-'}</td>
