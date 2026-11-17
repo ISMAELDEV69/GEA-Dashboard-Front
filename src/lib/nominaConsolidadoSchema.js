@@ -772,10 +772,19 @@ export function cleanDocumento(val, rowContext = {}) {
   // 4. Eliminar comillas o apóstrofes residuales incrustados y espacios
   s = s.replace(/['"`’‘“”\s]/g, '').trim()
   
-  // 5. Determinar contexto de documento y nacionalidad
-  const tipoDoc = String(rowContext.tipo_documento || '').toUpperCase()
-  const nac = String(rowContext.nacionalidad || '').toUpperCase()
-  const isForeign = (tipoDoc && (tipoDoc.includes('CE') || tipoDoc.includes('EXTRANJ') || tipoDoc.includes('PTP') || tipoDoc.includes('PASAPORTE') || tipoDoc.includes('CEDULA') || tipoDoc !== 'DNI')) || (nac && !nac.includes('PERU'))
+  // 5. Determinar contexto de documento y nacionalidad (normalizando tildes y puntuación)
+  const normCtx = (v) => String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').trim()
+  const tipoDoc = normCtx(rowContext.tipo_documento)
+  const nac = normCtx(rowContext.nacionalidad)
+
+  const isExplicitDni = tipoDoc === 'DNI' || tipoDoc.includes('DNI') || tipoDoc.includes('DOCUMENTO NACIONAL')
+  const isExplicitForeignDoc = Boolean(tipoDoc) && (
+    tipoDoc === 'CE' || tipoDoc.includes('CARNET') || tipoDoc.includes('EXTRANJ') ||
+    tipoDoc.includes('PTP') || tipoDoc.includes('CPP') || tipoDoc.includes('PASAPORTE') ||
+    tipoDoc.includes('CEDULA')
+  )
+  const isPeruvianNac = !nac || nac.includes('PERU') || nac === 'PE' || nac === 'PER'
+  const isForeign = isExplicitForeignDoc || (!isExplicitDni && !isPeruvianNac)
 
   // 6. Normalización inteligente de ceros iniciales
   if (/^\d+$/.test(s)) {
