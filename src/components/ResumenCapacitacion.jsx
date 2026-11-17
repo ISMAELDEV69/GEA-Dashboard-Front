@@ -801,7 +801,9 @@ export default function ResumenCapacitacion({
     const dataset = (rawDataset || []).filter(g => {
       if (g.is_cancelado) return false;
       const st = norm(g.estado);
+      const area = norm(g.area_traslado);
       if (st.includes('CANCEL') || st.includes('ANULAD') || st.includes('INACT')) return false;
+      if (area.includes('CANCEL') || area.includes('ANULAD')) return false;
       return true;
     });
     
@@ -928,10 +930,12 @@ export default function ResumenCapacitacion({
     const isCampanaFiltered = !isFilterAll(filters.campana);
 
     return data.filter(d => {
-      // Excluir grupos cancelados o inactivos
+      // Excluir grupos cancelados o inactivos (por estado o área/origen)
       if (d.is_cancelado) return false;
       const stNorm = norm(d.estado);
+      const areaNorm = norm(d.area_traslado);
       if (stNorm.includes('CANCEL') || stNorm.includes('ANULAD') || stNorm.includes('INACT')) return false;
+      if (areaNorm.includes('CANCEL') || areaNorm.includes('ANULAD')) return false;
 
       // Filtro Periodo (PERIODO INGRESO OP)
       const cleanP = resolvePeriodoIngreso(d) || getGrupoPeriodo(d);
