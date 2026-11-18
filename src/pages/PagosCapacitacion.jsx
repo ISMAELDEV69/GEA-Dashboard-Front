@@ -505,8 +505,10 @@ function ConfigGrupoForm({ gruposCapacidad = [], configsExistentes = [], onSaved
       cod: codSugerido,
       fechaInicioCapa: formatFechaDDMMYYYY(capInfo?.fecha_registro || capInfo?.fecha_dia_1 || prev.fechaInicioCapa || ''),
       ingresoOperacion: formatFechaDDMMYYYY(capInfo?.fecha_ingreso_op || prev.ingresoOperacion || ''),
-      mesAfectacionCapa: prev.periodoCapa || capInfo?.periodo || '',
-      mesAfectacionBonos: capInfo?.periodo_ingreso_op || prev.periodoCapa || '',
+      mesAfectacionCapa: capInfo?.periodo_ingreso_op || prev.periodoCapa || capInfo?.periodo || '',
+      mesAfectacionBonos: (capInfo?.periodo_ingreso_op || prev.periodoCapa)
+        ? sumarMesesPeriodo(capInfo?.periodo_ingreso_op || prev.periodoCapa, 1)
+        : '',
     }))
   }
 
