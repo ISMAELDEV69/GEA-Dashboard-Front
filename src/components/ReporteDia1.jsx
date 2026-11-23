@@ -367,24 +367,24 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     setSelectedGroupDetail(row.grupo_codigo)
     setSelectedRowData(row)
     
-    // Si ya tenemos las discrepancias calculadas en memoria con nombres válidos, usarlas de inmediato
-    const hasIncomplete = row.discrepancias && row.discrepancias.some(d => !d.nombre || d.nombre.startsWith('Postulante') || d.nombre === ',')
-    if (row.discrepancias && row.discrepancias.length > 0 && !hasIncomplete) {
-      setDiscrepancias(row.discrepancias)
-      setLoadingDetails(false)
-      return
-    }
-
+    // Grupos sin discrepancias y no DESCALIBRADO → no hay nada que mostrar
     if (row.estado !== 'DESCALIBRADO' && (!row.discrepancias || row.discrepancias.length === 0)) {
       setDiscrepancias([])
       setLoadingDetails(false)
       return
     }
 
+    // Siempre consultar getDetalleCalibracion directamente desde Supabase para garantizar
+    // datos correctos (evita usar caché en RAM que puede estar incompleta para grupos históricos)
     setLoadingDetails(true)
     try {
       const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana, row.periodo, row.semana_label)
-      setDiscrepancias(detalles || row.discrepancias || [])
+      // Si getDetalleCalibracion devuelve lista vacía para un grupo DESCALIBRADO, usar caché como fallback
+      if (detalles && detalles.length > 0) {
+        setDiscrepancias(detalles)
+      } else {
+        setDiscrepancias(row.discrepancias || [])
+      }
     } catch (err) {
       console.error('Error al cargar detalles de discrepancia:', err)
       if (row.discrepancias && row.discrepancias.length > 0) {

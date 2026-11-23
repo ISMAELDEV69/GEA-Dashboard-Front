@@ -7620,24 +7620,27 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
 
       // Con registros en RAM → verificar si el earliest está DESPUÉS del Día 1 del grupo
-      const rawInicio = g.fecha_inicio_capacitacion || g.fecha_capacitacion || g.fecha_registro || g.fecha_inicio || g.fecha;
-      const inicioIso = _parseFechaQuick(rawInicio);
-      if (inicioIso) {
+      // Usar fecha_dia1 del objeto grupoInfo (viene de grupos_dia1) como referencia oficial
+      const dia1Expected = g.fecha_dia1 || null;
+      if (dia1Expected) {
         let earliestRam = null;
         for (const r of records) {
           const d = _parseFechaQuick(r.fecha_registro_asistencia || r.fecha_asistencia);
           if (d && (!earliestRam || d < earliestRam)) earliestRam = d;
         }
-        // El Día 1 real es inicioIso + 1 día hábil para GPE
-        const dia1Expected = (() => {
-          const start = new Date(inicioIso + 'T12:00:00Z');
-          if (String(c).startsWith('GPE')) {
-            start.setUTCDate(start.getUTCDate() + 1);
-            if (start.getUTCDay() === 0) start.setUTCDate(start.getUTCDate() + 1);
-          }
-          return start.toISOString().split('T')[0];
-        })();
+        // Si el earliest en RAM es posterior al Día 1 oficial → faltan los datos de Día 1
         if (!earliestRam || earliestRam > dia1Expected) {
+          codigosFaltantes.push(c);
+        }
+      } else {
+        // Sin fecha_dia1 conocida: si todos los registros en RAM son de octubre en adelante
+        // y el código es GPE (histórico típico), agregar como faltante por precaución
+        const RAM_CUTOFF = '2026-10-01';
+        let allAfterCutoff = records.every(r => {
+          const d = _parseFechaQuick(r.fecha_registro_asistencia || r.fecha_asistencia);
+          return !d || d >= RAM_CUTOFF;
+        });
+        if (allAfterCutoff && String(c).startsWith('GPE')) {
           codigosFaltantes.push(c);
         }
       }
