@@ -4674,10 +4674,20 @@ export function isFormadorAsistio(sigla) {
 export async function checkCalibracionDia1(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return
 
-  const [fecha_dia1_ref, descSet] = await Promise.all([
-    getFirstDateFormador(grupo_codigo, campana),
+  // OPCIÓN 2: Consultar grupos_dia1 primero para usar fecha_dia1 oficial
+  const [gd1Res, descSet] = await Promise.all([
+    supabase.from('grupos_dia1')
+      .select('fecha_dia1, estado_calibracion')
+      .eq('grupo_codigo', grupo_codigo)
+      .maybeSingle(),
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
+
+  // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
+  let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
+  if (!fecha_dia1_ref) {
+    fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana);
+  }
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (!rawRecAsis || rawRecAsis.length === 0) {
@@ -4832,10 +4842,20 @@ export async function getCalibracionCounts(grupo_codigo, campana) {
 export async function getCalibracionCountFast(grupo_codigo, campana) {
   if (DB_MODE !== 'supabase') return { rec: 0, form: 0 }
 
-  const [fecha_dia1_ref, descSet] = await Promise.all([
-    getFirstDateFormador(grupo_codigo, campana),
+  // OPCIÓN 2: Consultar grupos_dia1 primero para usar fecha_dia1 oficial
+  const [gd1Res, descSet] = await Promise.all([
+    supabase.from('grupos_dia1')
+      .select('fecha_dia1, estado_calibracion')
+      .eq('grupo_codigo', grupo_codigo)
+      .maybeSingle(),
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
+
+  // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
+  let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
+  if (!fecha_dia1_ref) {
+    fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana);
+  }
   
   let { data: rawRecAsis } = await supabase.from('nominas').select('documento, dia_0, dia_1, estado, status_dia_1, activo').eq('grupo_codigo', grupo_codigo).eq('campana', campana)
   if (!rawRecAsis || rawRecAsis.length === 0) {
@@ -4977,10 +4997,20 @@ export function formatNombrePostulante(recCandidate, formRecord = null, doc = ''
 export async function getDetalleCalibracion(grupo_codigo, campana, periodo = null, semana_label = null) {
   if (DB_MODE !== 'supabase') return []
 
-  const [fecha_dia1_ref, descSet] = await Promise.all([
-    getFirstDateFormador(grupo_codigo, campana),
+  // OPCIÓN 2: Consultar grupos_dia1 primero para usar fecha_dia1 oficial
+  const [gd1Res, descSet] = await Promise.all([
+    supabase.from('grupos_dia1')
+      .select('fecha_dia1, estado_calibracion')
+      .eq('grupo_codigo', grupo_codigo)
+      .maybeSingle(),
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
+
+  // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
+  let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
+  if (!fecha_dia1_ref) {
+    fecha_dia1_ref = await getFirstDateFormador(grupo_codigo, campana);
+  }
 
   let recQuery = supabase.from('nominas')
     .select('documento, dia_0, dia_1, estado, status_dia_1, activo, apellido_paterno, apellido_materno, nombres, periodo_reclutado, semana_trabajo, created_at')
@@ -5003,6 +5033,7 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
     .select('documento, fecha_registro_asistencia, sigla, motivo_baja, estado, tipo_reclutado, nombres, apellido_paterno, apellido_materno, corte, fecha_hora_registro')
     .eq('codigo_grupo', grupo_codigo)
     .order('created_at', { ascending: true })
+    .limit(5000) // Evitar truncado en grupos grandes (default Supabase = 1000)
 
   if (campana) {
     formQuery = formQuery.eq('campana', campana)
@@ -7535,18 +7566,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .in('grupo_codigo', codigos)
     ];
 
-    // Fallback directo si no hay asistencias cargadas en memoria
-    if (activeAsistencias.length === 0) {
-      promises.push(
-        supabase.from('consolidado_asistencias')
-          .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, periodo, corte, fecha_hora_registro, apellido_paterno, apellido_materno, nombres')
-          .in('codigo_grupo', codigos)
-      );
-    } else {
-      promises.push(Promise.resolve({ data: null }));
-    }
-
-    const [cfgRes, recAsisRes, nomRes, asisFallbackRes] = await Promise.all(promises);
+    const [cfgRes, recAsisRes, nomRes] = await Promise.all(promises);
     
     configAll = cfgRes.data || [];
     recAsisDia1All = (recAsisRes.data || []).map(r => ({
@@ -7560,9 +7580,87 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         tipo_reclutado: n.tipo_reclutado || n.condicion || ''
       }));
     }
-    if (asisFallbackRes?.data && activeAsistencias.length === 0) {
-      activeAsistencias = asisFallbackRes.data;
+
+    // ── OPCIÓN 1: Smart On-Demand Fetch ──────────────────────────────────────
+    // Detectar grupos cuyo Día 1 no está en RAM (por el filtro since:'2026-10-01')
+    // y traer sus asistencias completas bajo demanda desde Supabase.
+    const _parseFechaQuick = (val) => {
+      if (!val) return '';
+      val = String(val).trim();
+      if (val.includes('/')) {
+        const p = val.split('/');
+        if (p.length === 3) {
+          if (p[2].length === 4) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+          if (p[0].length === 4) return `${p[0]}-${p[1].padStart(2,'0')}-${p[2].padStart(2,'0')}`;
+        }
+      }
+      return val.substring(0, 10);
+    };
+
+    const asisMapPorCodigo = new Map();
+    for (const a of activeAsistencias) {
+      const rawCod = a.grupo_codigo || a.codigo_grupo;
+      if (!rawCod) continue;
+      const c = String(rawCod).trim().toUpperCase();
+      if (!asisMapPorCodigo.has(c)) asisMapPorCodigo.set(c, []);
+      asisMapPorCodigo.get(c).push(a);
     }
+
+    const codigosFaltantes = [];
+    for (const g of gruposInfo) {
+      const c = g.codigo || g.grupo_codigo;
+      if (!c) continue;
+      const exactC = String(c).trim().toUpperCase();
+      const records = asisMapPorCodigo.get(exactC) || [];
+
+      // Sin registros en RAM → definitivamente falta
+      if (records.length === 0) {
+        codigosFaltantes.push(c);
+        continue;
+      }
+
+      // Con registros en RAM → verificar si el earliest está DESPUÉS del Día 1 del grupo
+      const rawInicio = g.fecha_inicio_capacitacion || g.fecha_capacitacion || g.fecha_registro || g.fecha_inicio || g.fecha;
+      const inicioIso = _parseFechaQuick(rawInicio);
+      if (inicioIso) {
+        let earliestRam = null;
+        for (const r of records) {
+          const d = _parseFechaQuick(r.fecha_registro_asistencia || r.fecha_asistencia);
+          if (d && (!earliestRam || d < earliestRam)) earliestRam = d;
+        }
+        // El Día 1 real es inicioIso + 1 día hábil para GPE
+        const dia1Expected = (() => {
+          const start = new Date(inicioIso + 'T12:00:00Z');
+          if (String(c).startsWith('GPE')) {
+            start.setUTCDate(start.getUTCDate() + 1);
+            if (start.getUTCDay() === 0) start.setUTCDate(start.getUTCDate() + 1);
+          }
+          return start.toISOString().split('T')[0];
+        })();
+        if (!earliestRam || earliestRam > dia1Expected) {
+          codigosFaltantes.push(c);
+        }
+      }
+    }
+
+    if (codigosFaltantes.length > 0) {
+      const { data: missingRows, error: missingErr } = await supabase
+        .from('consolidado_asistencias')
+        .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, corte, fecha_hora_registro, apellido_paterno, apellido_materno, nombres')
+        .in('codigo_grupo', codigosFaltantes);
+      if (!missingErr && missingRows && missingRows.length > 0) {
+        // Eliminar duplicados: quitar registros de activeAsistencias que ya existan en missingRows para esos códigos
+        const codigosFaltantesSet = new Set(codigosFaltantes.map(c => String(c).trim().toUpperCase()));
+        activeAsistencias = [
+          ...activeAsistencias.filter(a => {
+            const cod = String(a.grupo_codigo || a.codigo_grupo || '').trim().toUpperCase();
+            return !codigosFaltantesSet.has(cod);
+          }),
+          ...missingRows
+        ];
+      }
+    }
+    // ── Fin OPCIÓN 1 ─────────────────────────────────────────────────────────
   }
 
   const descSet = await getDescuentosSetGlobal();
@@ -8385,14 +8483,15 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
       const area = String(r.area_traslado || '').trim().toUpperCase();
       const code = String(r.grupo_codigo || '').trim().toUpperCase();
       const isTrasladoOp = area.includes('TRASLADO') || area.includes('TDE');
+      const isOperaciones = area === 'OPERACIONES' || area.includes('OPERAC') || code.startsWith('GPOP');
       const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
 
       // Calibración oficial auditada WFM para cohortes con sobredotación o bajas D1 regularizadas
       const calib = getCalibracionOficial(code, r.campana, r.periodo_ingreso_op || r.periodo);
 
-      // Si es Reclutamiento, Traslado OP, o tiene calibración explícita de D1, participa en Día 1 y Deserción
+      // Si es Reclutamiento, Traslado OP, Operaciones, o tiene calibración explícita de D1, participa en Día 1 y Deserción
       const hasCalibD1 = calib && typeof calib.d1 === 'number';
-      const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
+      const isEligibleD1 = isReclutamiento || isTrasladoOp || isOperaciones || hasCalibD1;
       const isExcludedD1 = !isEligibleD1;
 
       const campNorm = String(r.campana || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -8464,7 +8563,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         rq_ftes_solicitado: rqFtesSol,
         meta_dia_0: isReclutamiento ? (Number(r.meta_dia_0) || 0) : 0,
         meta_dia_1: isReclutamiento ? (Number(r.meta_dia_1) || 0) : 0,
-        total_nomina: isReclutamiento ? (Number(r.total_nomina) || 0) : 0,
+        total_nomina: (isReclutamiento || isTrasladoOp || isOperaciones) ? (Number(r.total_nomina) || 0) : 0,
         asistio_dia0: isReclutamiento ? (Number(r.asistio_dia0) || 0) : 0,
         asistio_dia1: d1,
         activos_actuales: actActuales,
@@ -8481,6 +8580,7 @@ export async function fetchResumenCapacitacionOptimizado(force = false) {
         is_capacitacion: isExcludedD1,
         is_excluido_dia1: isExcludedD1,
         is_traslado_op: isTrasladoOp,
+        is_operaciones: isOperaciones,
         from_db_view: true
       };
     });
@@ -9286,11 +9386,12 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
 
     const rawArea = String(area_traslado || grupoInfo.area_traslado || '').trim().toUpperCase();
     const isTrasladoOp = rawArea.includes('TRASLADO') || rawArea.includes('TDE');
+    const isOperaciones = rawArea === 'OPERACIONES' || rawArea.includes('OPERAC') || String(grupo_codigo || '').toUpperCase().startsWith('GPOP');
     const isReclutamiento = (rawArea === 'RECLUTAMIENTO' || rawArea.includes('RECLUTA')) && !rawArea.includes('RECUPER') && !rawArea.includes('CAPACITAC') && !String(grupo_codigo || '').toUpperCase().endsWith('X');
     
     const cal = getCalibracionOficial(grupo_codigo, campana, periodoIngresoOp || grupoInfo.periodo);
     const hasCalibD1 = cal && typeof cal.d1 === 'number';
-    const isEligibleD1 = isReclutamiento || isTrasladoOp || hasCalibD1;
+    const isEligibleD1 = isReclutamiento || isTrasladoOp || isOperaciones || hasCalibD1;
     const isExcludedD1 = !isEligibleD1;
 
     results.push({
@@ -9315,6 +9416,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
       is_capacitacion: isExcludedD1,
       is_excluido_dia1: isExcludedD1,
       is_traslado_op: isTrasladoOp,
+      is_operaciones: isOperaciones,
       modalidad: (grupoInfo.modalidad || 'PRESENCIAL').toUpperCase().trim(),
       requerimiento: (() => {
         if (isGrupoCancelado) return 0;
@@ -9344,7 +9446,7 @@ export async function calculateMetricasResumenCapacitacionFast(gruposInfo, postu
           : Number(grupoInfo.rq_solicitado || 0);
         return rawRq > 0 ? rawRq : 0;
       })(),
-      total_nomina: isReclutamiento ? total_nomina : 0,
+      total_nomina: (isReclutamiento || isTrasladoOp || isOperaciones) ? total_nomina : 0,
       asistio_dia0: isReclutamiento ? asistio_dia0 : 0,
       asistio_dia1: (() => {
         if (cal && typeof cal.d1 === 'number') return cal.d1;

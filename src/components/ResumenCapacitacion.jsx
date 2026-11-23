@@ -149,17 +149,18 @@ const isAreaEligibleRq = (area) => {
 
 // Grupos que NO pertenecen a Reclutamiento puro (RECUPERADO, CAPACITACIÓN, TRASLADO o sufijo X):
 // No deben sumar a Base Día 1 ni Nómina Reclutada; SOLO deben sumar a los Ingresos a Operación (I-OP)
-// EXCEPCIÓN: TRASLADO OP (TDE) o cohortes con Día 1 / Bajas explícitas SÍ suman a Día 1 y Deserción
+// EXCEPCIÓN: TRASLADO OP (TDE), OPERACIONES (GPOP) o cohortes con Día 1 / Bajas explícitas SÍ suman a Día 1 y Deserción
 export const isGrupoExcluidoDia1 = (g) => {
   if (!g) return false;
   if (g.asistio_dia1 !== undefined && g.asistio_dia1 !== null && Number(g.asistio_dia1) > 0) return false;
-  if (g.is_traslado_op === true) return false;
+  if (g.is_traslado_op === true || g.is_operaciones === true) return false;
   const area = String(g.area_traslado || '').trim().toUpperCase();
-  if (area === 'TRASLADO OP' || area === 'TRASLADO' || area.includes('TRASLADO') || area === 'TDE') {
+  if (area === 'TRASLADO OP' || area === 'TRASLADO' || area.includes('TRASLADO') || area === 'TDE' || area === 'OPERACIONES' || area.includes('OPERAC')) {
     return false;
   }
-  if (g.is_capacitacion === true || g.is_excluido_dia1 === true) return true;
   const code = String(g.codigo || g.grupo_codigo || '').trim().toUpperCase();
+  if (code.startsWith('GPOP')) return false;
+  if (g.is_capacitacion === true || g.is_excluido_dia1 === true) return true;
   const isReclutamiento = (area === 'RECLUTAMIENTO' || area.includes('RECLUTA')) && !area.includes('RECUPER') && !area.includes('CAPACITAC') && !code.endsWith('X');
   return !isReclutamiento;
 };
@@ -2602,7 +2603,9 @@ export default function ResumenCapacitacion({
                         })()}
                       </td>
                       <td className="py-2.5 px-2 text-right font-mono text-[var(--text-secondary)]">{req}</td>
-                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap ? "Excluido de Nómina Reclutada" : undefined}>{isCap ? '—' : (d.total_nomina || 0)}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-sky-400 font-bold" title={isCap && !d.total_nomina ? "Excluido de Nómina Reclutada" : undefined}>
+                        {(d.total_nomina !== undefined && d.total_nomina > 0) ? d.total_nomina : (isCap ? '—' : (d.total_nomina || 0))}
+                      </td>
                       <td className="py-2.5 px-2 text-right font-mono text-indigo-400 font-bold" title={isCap && !d.asistio_dia1 ? "Excluido de Base Día 1" : undefined}>
                         {(d.asistio_dia1 !== undefined && d.asistio_dia1 > 0) ? d.asistio_dia1 : (isCap ? '—' : (d.asistio_dia1 || 0))}
                       </td>
