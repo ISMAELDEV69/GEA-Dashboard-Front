@@ -224,6 +224,9 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
   // ─────────────────────────────────────────────────────────────────────────────
   const filteredReportData = useMemo(() => {
     return rawReportData.filter(r => {
+      // Excluir grupos sin nómina (proyectados o sin postulantes registrados)
+      if (!r.total_nomina || Number(r.total_nomina) === 0) return false
+
       if (filters.periodo && String(r.periodo || '').trim() !== filters.periodo) {
         return false
       }
