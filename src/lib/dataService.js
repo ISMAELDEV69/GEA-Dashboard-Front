@@ -7565,8 +7565,8 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   // 1. Consultas de configuración y asistencias_dia1_reclutador
   let configAll = [];
   let recAsisDia1All = [];
-  let activePostulantes = postulantes || [];
-  let activeAsistencias = asistencias || [];
+  let activePostulantes = (postulantes && postulantes.length > 0) ? [...postulantes] : [];
+  let activeAsistencias = (asistencias && asistencias.length > 0) ? [...asistencias] : [];
 
   if (DB_MODE === 'supabase' && codigos.length > 0) {
     const promises = [
@@ -7574,13 +7574,10 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         .select('estado_calibracion, fecha_dia1, grupo_codigo, campana'),
       supabase.from('asistencias_dia1_reclutador')
         .select('postulante_documento, grupo_codigo, sigla_asistencia, motivo_baja')
-        .in('grupo_codigo', codigos),
-      supabase.from('nominas')
-        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, created_at, apellido_paterno, apellido_materno, nombres')
         .in('grupo_codigo', codigos)
     ];
 
-    const [cfgRes, recAsisRes, nomRes] = await Promise.all(promises);
+    const [cfgRes, recAsisRes] = await Promise.all(promises);
     
     configAll = cfgRes.data || [];
     recAsisDia1All = (recAsisRes.data || []).map(r => ({
@@ -7588,11 +7585,48 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       sigla_inicial: r.sigla_asistencia || 'A',
       sigla_final: r.sigla_asistencia || 'A'
     }));
-    if (nomRes?.data && nomRes.data.length > 0) {
-      activePostulantes = nomRes.data.map(n => ({
-        ...n,
-        tipo_reclutado: n.tipo_reclutado || n.condicion || ''
-      }));
+
+    // Si activePostulantes vino vacío desde el componente, cargarlo con paginación limpia
+    if (activePostulantes.length === 0) {
+      try {
+        const fullPost = await fetchPostulantes({ periodoMin: '202610' });
+        if (fullPost && fullPost.length > 0) activePostulantes = fullPost;
+      } catch (e) {
+        console.warn('Fallback fetchPostulantes en cálculo fast error:', e);
+      }
+    }
+
+    // Detectar únicamente cohortes históricas que no existan en la memoria RAM (<= 50 grupos)
+    // para evitar consultas masivas que excedan el límite de 10,000 registros de PostgREST
+    const existingPostulantesCodes = new Set(
+      (activePostulantes || []).map(p => cleanGroupCode(p.grupo_codigo || p.codigo_grupo || '')).filter(Boolean)
+    );
+    const missingNominaCodes = codigos.filter(c => !existingPostulantesCodes.has(cleanGroupCode(c)));
+
+    if (missingNominaCodes.length > 0 && missingNominaCodes.length <= 50) {
+      const { data: missingNomData } = await supabase
+        .from('nominas')
+        .select('documento, grupo_codigo, campana, segmento, dia_0, dia_1, status_dia_1, estado, condicion, activo, periodo_reclutado, semana_trabajo, created_at, apellido_paterno, apellido_materno, nombres')
+        .in('grupo_codigo', missingNominaCodes);
+      if (missingNomData && missingNomData.length > 0) {
+        const mappedNew = missingNomData.map(n => ({
+          ...n,
+          tipo_reclutado: n.tipo_reclutado || n.condicion || ''
+        }));
+        const existingDocs = new Set(activePostulantes.map(p => normDoc(p.documento)));
+        const trulyNew = mappedNew.filter(n => !existingDocs.has(normDoc(n.documento)));
+        activePostulantes = [...activePostulantes, ...trulyNew];
+      }
+    }
+
+    // Si activeAsistencias vino vacío, cargar con caché y paginación
+    if (activeAsistencias.length === 0) {
+      try {
+        const fullAsis = await fetchAsistencias({ since: '2026-10-01' });
+        if (fullAsis && fullAsis.length > 0) activeAsistencias = fullAsis;
+      } catch (e) {
+        console.warn('Fallback fetchAsistencias en cálculo fast error:', e);
+      }
     }
 
     // Mapa preliminar de grupos_dia1 para Smart Fetch
@@ -7675,7 +7709,8 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
     }
 
-    if (codigosFaltantes.length > 0) {
+    // Solo consultar faltantes puntuales (<= 50 grupos) para evitar desbordar límites
+    if (codigosFaltantes.length > 0 && codigosFaltantes.length <= 50) {
       const { data: missingRows, error: missingErr } = await supabase
         .from('consolidado_asistencias')
         .select('documento, codigo_grupo, campana, sigla, motivo_baja, estado, tipo_reclutado, fecha_registro_asistencia, corte, fecha_hora_registro, apellido_paterno, apellido_materno, nombres')
