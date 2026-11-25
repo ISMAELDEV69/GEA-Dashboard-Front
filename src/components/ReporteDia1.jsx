@@ -211,7 +211,7 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     const seen = new Set()
     for (const g of filtered) {
       const code = String(g.codigo || '').trim()
-      if (code && !seen.has(code.toUpperCase())) {
+      if (code && !code.toUpperCase().startsWith('PROY-') && !seen.has(code.toUpperCase())) {
         seen.add(code.toUpperCase())
         unique.push(g)
       }
@@ -226,6 +226,9 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     return rawReportData.filter(r => {
       // Excluir grupos sin nómina (proyectados o sin postulantes registrados)
       if (!r.total_nomina || Number(r.total_nomina) === 0) return false
+
+      // Excluir grupos proyectados explícitamente por nomenclatura (PROY-)
+      if (r.grupo_codigo && String(r.grupo_codigo).trim().toUpperCase().startsWith('PROY-')) return false
 
       if (filters.periodo && String(r.periodo || '').trim() !== filters.periodo) {
         return false
@@ -382,19 +385,10 @@ const ReporteDia1 = ({ grupos = [], postulantes = [], asistencias = [] }) => {
     setLoadingDetails(true)
     try {
       const detalles = await getDetalleCalibracion(row.grupo_codigo, row.campana, row.periodo, row.semana_label)
-      // Si getDetalleCalibracion devuelve lista vacía para un grupo DESCALIBRADO, usar caché como fallback
-      if (detalles && detalles.length > 0) {
-        setDiscrepancias(detalles)
-      } else {
-        setDiscrepancias(row.discrepancias || [])
-      }
+      setDiscrepancias(detalles || [])
     } catch (err) {
       console.error('Error al cargar detalles de discrepancia:', err)
-      if (row.discrepancias && row.discrepancias.length > 0) {
-        setDiscrepancias(row.discrepancias)
-      } else {
-        toast.error('Error al cargar detalles', err.message || 'No se pudo obtener el desglose de discrepancias.')
-      }
+      setDiscrepancias(row.discrepancias || [])
     } finally {
       setLoadingDetails(false)
     }

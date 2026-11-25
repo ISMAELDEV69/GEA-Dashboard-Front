@@ -4683,6 +4683,11 @@ export async function checkCalibracionDia1(grupo_codigo, campana) {
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
 
+  // Si el grupo ya está oficialmente CALIBRADO en grupos_dia1, no existen discrepancias
+  if (gd1Res?.data?.estado_calibracion === 'CALIBRADO') {
+    return []
+  }
+
   // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
   let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
   if (!fecha_dia1_ref) {
@@ -4851,6 +4856,11 @@ export async function getCalibracionCountFast(grupo_codigo, campana) {
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
 
+  // Si el grupo ya está oficialmente CALIBRADO en grupos_dia1, no existen discrepancias
+  if (gd1Res?.data?.estado_calibracion === 'CALIBRADO') {
+    return []
+  }
+
   // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
   let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
   if (!fecha_dia1_ref) {
@@ -5005,6 +5015,11 @@ export async function getDetalleCalibracion(grupo_codigo, campana, periodo = nul
       .maybeSingle(),
     fetchDescuentosAprobadosSet(grupo_codigo, campana)
   ]);
+
+  // Si el grupo ya está oficialmente CALIBRADO en grupos_dia1, no existen discrepancias
+  if (gd1Res?.data?.estado_calibracion === 'CALIBRADO') {
+    return []
+  }
 
   // Prioridad: fecha oficial de grupos_dia1 → fallback: getFirstDateFormador
   let fecha_dia1_ref = gd1Res?.data?.fecha_dia1 || null;
@@ -7556,8 +7571,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
   if (DB_MODE === 'supabase' && codigos.length > 0) {
     const promises = [
       supabase.from('grupos_dia1')
-        .select('estado_calibracion, fecha_dia1, grupo_codigo, campana')
-        .in('grupo_codigo', codigos),
+        .select('estado_calibracion, fecha_dia1, grupo_codigo, campana'),
       supabase.from('asistencias_dia1_reclutador')
         .select('postulante_documento, grupo_codigo, sigla_asistencia, motivo_baja')
         .in('grupo_codigo', codigos),
@@ -7579,6 +7593,20 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         ...n,
         tipo_reclutado: n.tipo_reclutado || n.condicion || ''
       }));
+    }
+
+    // Mapa preliminar de grupos_dia1 para Smart Fetch
+    const tempConfigMap = new Map();
+    if (configAll) {
+      configAll.forEach(c => {
+        const code = norm(c.grupo_codigo);
+        const cleanCode = cleanGroupCode(c.grupo_codigo);
+        const camp = norm(c.campana);
+        if (camp && code) tempConfigMap.set(`${camp}|${code}`, c);
+        if (camp && cleanCode) tempConfigMap.set(`${camp}|${cleanCode}`, c);
+        if (code && !tempConfigMap.has(code)) tempConfigMap.set(code, c);
+        if (cleanCode && !tempConfigMap.has(cleanCode)) tempConfigMap.set(cleanCode, c);
+      });
     }
 
     // ── OPCIÓN 1: Smart On-Demand Fetch ──────────────────────────────────────
@@ -7620,8 +7648,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       }
 
       // Con registros en RAM → verificar si el earliest está DESPUÉS del Día 1 del grupo
-      // Usar fecha_dia1 del objeto grupoInfo (viene de grupos_dia1) como referencia oficial
-      const dia1Expected = g.fecha_dia1 || null;
+      // Usar fecha_dia1 de grupos_dia1 o de grupoInfo como referencia oficial
+      const cfg = tempConfigMap.get(norm(c)) || tempConfigMap.get(cleanGroupCode(c));
+      const dia1Expected = cfg?.fecha_dia1 || g.fecha_dia1 || null;
       if (dia1Expected) {
         let earliestRam = null;
         for (const r of records) {
@@ -7677,6 +7706,7 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       if (camp && code) configMap.set(`${camp}|${code}`, c);
       if (camp && cleanCode) configMap.set(`${camp}|${cleanCode}`, c);
       if (code && !configMap.has(code)) configMap.set(code, c);
+      if (cleanCode && !configMap.has(cleanCode)) configMap.set(cleanCode, c);
     });
   }
 
@@ -7912,9 +7942,11 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
     const config = configMap.get(groupKey) || configMap.get(cleanGroupKey) || configMap.get(exactCode) || configMap.get(cleanCode);
     let estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
 
-    // 1. Prioridad: Fecha REAL de la primera asistencia registrada en sala (dato de verdad)
-    let fecha_dia1_ref = null;
-    if (groupFormAsisRaw.length > 0) {
+    // 1. Prioridad: Fecha oficial de grupos_dia1 (configurada y auditada en BD)
+    let fecha_dia1_ref = config?.fecha_dia1 || null;
+
+    // 2. Si no hay fecha oficial en grupos_dia1, buscar la primera fecha registrada en sala
+    if (!fecha_dia1_ref && groupFormAsisRaw.length > 0) {
       let earliestIso = null;
       for (const row of groupFormAsisRaw) {
         const dateVal = row.fecha_registro_asistencia || row.fecha_asistencia;
@@ -7932,13 +7964,9 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
       fecha_dia1_ref = earliestIso;
     }
 
-    // 2. Fallback: Configuración o fecha proyectada según capacidad_rys
+    // 3. Fallback: Configuración o fecha proyectada según capacidad_rys
     if (!fecha_dia1_ref) {
-      const cfgDia1 = config?.fecha_dia1;
-      // Descartar fechas configuradas en grupos_dia1 que sean anteriores a la apertura de esta cohorte (obsoletas)
-      if (cfgDia1 && (!fechaInicioIso || cfgDia1 >= fechaInicioIso)) {
-        fecha_dia1_ref = cfgDia1;
-      } else if (grupoInfo.fecha_dia_1 && (!fechaInicioIso || grupoInfo.fecha_dia_1 >= fechaInicioIso)) {
+      if (grupoInfo.fecha_dia_1 && (!fechaInicioIso || grupoInfo.fecha_dia_1 >= fechaInicioIso)) {
         fecha_dia1_ref = grupoInfo.fecha_dia_1;
       }
       
@@ -8164,14 +8192,26 @@ export async function calculateMetricasReporteCalibracionFast(gruposInfo, postul
         }
       }
 
-      // Conciliación Día 1: Compara la coincidencia de asistentes en sala
-      const coincideSala = asist_sala_rec === asist_sala_form;
-      if (!fecha_dia1_ref || (asist_sala_rec === 0 && asist_sala_form === 0)) {
-        estado_calibracion = 'PENDIENTE';
-      } else if (coincideSala && (asist_sala_rec > 0 || countDescuentos > 0)) {
+      // Conciliación Día 1:
+      // Si el grupo ya fue oficialmente CALIBRADO en la base de datos (grupos_dia1),
+      // respetar su estado oficial y no descalibrarlo por recorte de fechas en RAM.
+      if (config?.estado_calibracion === 'CALIBRADO') {
         estado_calibracion = 'CALIBRADO';
+        // Si las asistencias en RAM están incompletas por el filtro de fechas (asist_sala_form < asist_sala_rec),
+        // reflejar la dotación real acordada y auditada
+        if (asist_sala_form < asist_sala_rec) {
+          asist_sala_form = asist_sala_rec;
+        }
+        discrepanciasList.length = 0; // Un grupo calibrado no genera discrepancias
       } else {
-        estado_calibracion = 'DESCALIBRADO';
+        const coincideSala = asist_sala_rec === asist_sala_form;
+        if (!fecha_dia1_ref || (asist_sala_rec === 0 && asist_sala_form === 0)) {
+          estado_calibracion = config?.estado_calibracion || 'PENDIENTE';
+        } else if (coincideSala && (asist_sala_rec > 0 || countDescuentos > 0)) {
+          estado_calibracion = 'CALIBRADO';
+        } else {
+          estado_calibracion = 'DESCALIBRADO';
+        }
       }
     } else {
       // El formador aún no ha registrado asistencias en sala para este grupo
